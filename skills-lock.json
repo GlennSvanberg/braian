@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "bundle-size-optimization": {
+      "source": "TanStack/router",
+      "sourceType": "github",
+      "skillPath": "skills/bundle-size-optimization/SKILL.md",
+      "computedHash": "8eb7f895f2264247d16daa555d2bb2f02132ccbac17e84854fa71a3a6ebce0c7"
+    },
     "rust-async-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",
@@ -18,6 +24,18 @@
       "sourceType": "github",
       "skillPath": "skills/rust-testing/SKILL.md",
       "computedHash": "bd66d6441ff6d3a6acb89c902cd6a01bf58410aec3ecbc43d45409b3a3788ac8"
+    },
+    "tanstack-ai": {
+      "source": "TanStack/ai",
+      "sourceType": "github",
+      "skillPath": "skills/tanstack-ai/SKILL.md",
+      "computedHash": "ae5833375e48f07b2a1eeb9b57f6d57a5ec9d1fc8e2d091f7c4808bdbb48301f"
+    },
+    "tanstack-ai-migration": {
+      "source": "TanStack/ai",
+      "sourceType": "github",
+      "skillPath": "skills/tanstack-ai-migration/SKILL.md",
+      "computedHash": "a79d2c5b19208ede359f12a5d3311d7811cdd4afed739e7aa539a2466fe6f774"
     }
   }
 }
