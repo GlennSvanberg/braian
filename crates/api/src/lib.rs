@@ -10,35 +10,35 @@ mod auth;
 mod definitions;
 mod headers;
 mod objects;
+mod platform;
 mod problem;
 mod state;
 mod wire;
-
-use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
-use openpim_store::Store;
+use braian_store::Store;
 use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::auth::{Auth, Identity, identities_from};
-use crate::state::{AppState, ModelCache};
 
-pub use crate::auth::{IdentitySpec, parse_dev_tokens};
+pub use crate::auth::{
+    IdentitySpec, hash_password, parse_dev_tokens, random_token, token_hash, verify_password,
+};
+pub use crate::state::AppState;
 
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
 
 /// Router for one process. `identities` come from [`identities_from`].
 pub fn router(store: Store, identities: Vec<Identity>) -> axum::Router {
-    let state = AppState {
-        store,
-        identities: Arc::new(identities),
-        models: ModelCache::default(),
-    };
+    into_router(AppState::new(store, identities, None))
+}
+
+pub fn into_router(state: AppState) -> axum::Router {
     axum::Router::new()
         .route("/healthz", get(health))
         .route("/v1/me", get(me))
@@ -84,11 +84,12 @@ pub fn router(store: Store, identities: Vec<Identity>) -> axum::Router {
                 .delete(objects::delete_object),
         )
         .route("/v1/objects/{id}/changes", get(objects::object_changes))
+        .merge(platform::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state)
 }
 
-pub async fn identities(store: &Store, raw: &str) -> Result<Vec<Identity>, openpim_store::Error> {
+pub async fn identities(store: &Store, raw: &str) -> Result<Vec<Identity>, braian_store::Error> {
     identities_from(store, raw).await
 }
 
@@ -106,8 +107,11 @@ async fn health() -> StatusCode {
 struct Me {
     handle: String,
     kind: String,
+    role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     on_behalf_of: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_id: Option<uuid::Uuid>,
 }
 
 #[utoipa::path(
@@ -124,7 +128,9 @@ async fn me(Auth(identity): Auth) -> Json<Me> {
     Json(Me {
         handle: identity.handle,
         kind: identity.kind.as_str().to_owned(),
+        role: identity.role.as_str().to_owned(),
         on_behalf_of: identity.behalf_handle,
+        user_id: identity.user_id,
     })
 }
 

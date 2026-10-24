@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context;
-use openpim_store::admin::{self, PgConn};
-use openpim_store::{Actor, BatchId, BatchKind, ObjectOp, PrincipalKind, StorageForm, Store};
-use openpim_synth::{EditKind, Tier, definitions, edits, objects_iter};
+use braian_store::admin::{self, PgConn};
+use braian_store::{Actor, BatchId, BatchKind, ObjectOp, PrincipalKind, StorageForm, Store};
+use braian_synth::{EditKind, Tier, definitions, edits, objects_iter};
 use serde::Serialize;
 use serde_json::json;
 use tokio_postgres::Client;
@@ -240,7 +240,7 @@ where
 
 async fn import_all(
     store: &Store,
-    defs: &Arc<openpim_model::DefinitionSet>,
+    defs: &Arc<braian_model::DefinitionSet>,
     args: &SpikeArgs,
     batch: BatchId,
     actor: &Actor,
@@ -272,7 +272,7 @@ async fn import_all(
 
 async fn edit_interactive(
     store: &Store,
-    defs: &Arc<openpim_model::DefinitionSet>,
+    defs: &Arc<braian_model::DefinitionSet>,
     args: &SpikeArgs,
     kind: EditKind,
     range: Range<usize>,
@@ -294,7 +294,7 @@ async fn edit_interactive(
                         &actor,
                         vec![ObjectOp::Update {
                             id: edit.object_id,
-                            patch: openpim_model::ObjectPatch {
+                            patch: braian_model::ObjectPatch {
                                 values: edit.patch,
                                 groups: Default::default(),
                             },
@@ -313,7 +313,7 @@ async fn edit_interactive(
 
 async fn edit_chunked(
     store: &Store,
-    defs: &Arc<openpim_model::DefinitionSet>,
+    defs: &Arc<braian_model::DefinitionSet>,
     args: &SpikeArgs,
     kind: EditKind,
     range: Range<usize>,
@@ -336,7 +336,7 @@ async fn edit_chunked(
                 let ops: Vec<_> = edits(&defs, tier, seed, kind, cursor..end)
                     .map(|edit| ObjectOp::Update {
                         id: edit.object_id,
-                        patch: openpim_model::ObjectPatch {
+                        patch: braian_model::ObjectPatch {
                             values: edit.patch,
                             groups: Default::default(),
                         },

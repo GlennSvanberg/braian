@@ -50,4 +50,5 @@ id_type!(
     UnitFamilyId,
     "Id of a family of units that share a base unit."
 );
+id_type!(ValueListId, "Id of a shared value list.");
 id_type!(ObjectId, "Id of a stored object.");

@@ -1,0 +1,245 @@
+{
+  "model_revision": 1,
+  "languages": ["sv", "en", "de"],
+  "unit_families": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000010",
+      "key": "length",
+      "dimension": "length",
+      "base_unit": "mm",
+      "units": [
+        { "code": "mm", "factor": "1" },
+        { "code": "cm", "factor": "10" },
+        { "code": "m", "factor": "1000" }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000011",
+      "key": "mass",
+      "dimension": "mass",
+      "base_unit": "g",
+      "units": [
+        { "code": "g", "factor": "1" },
+        { "code": "kg", "factor": "1000" }
+      ]
+    }
+  ],
+  "value_lists": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000020",
+      "key": "status",
+      "labels": { "sv": "Status", "en": "Status", "de": "Status" },
+      "options": [
+        { "code": "utkast", "labels": { "sv": "Utkast", "en": "Draft", "de": "Entwurf" } },
+        { "code": "ok", "labels": { "sv": "OK", "en": "OK", "de": "OK" } },
+        { "code": "slut", "labels": { "sv": "Utgången", "en": "Discontinued", "de": "Ausgelaufen" } }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000021",
+      "key": "farg",
+      "labels": { "sv": "Färg", "en": "Colour", "de": "Farbe" },
+      "options": [
+        { "code": "svart", "labels": { "sv": "Svart", "en": "Black", "de": "Schwarz" } },
+        { "code": "gra", "labels": { "sv": "Grå", "en": "Grey", "de": "Grau" } },
+        { "code": "gron", "labels": { "sv": "Grön", "en": "Green", "de": "Grün" } },
+        { "code": "bla", "labels": { "sv": "Blå", "en": "Blue", "de": "Blau" } }
+      ]
+    }
+  ],
+  "attributes": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000100",
+      "key": "nummer",
+      "labels": { "sv": "Nummer", "en": "Number", "de": "Nummer" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 64 },
+      "index": { "searchable": true, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000101",
+      "key": "namn",
+      "labels": { "sv": "Namn", "en": "Name", "de": "Name" },
+      "language_dependent": true,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 160 },
+      "index": { "searchable": true, "filterable": false, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000102",
+      "key": "beskrivning",
+      "labels": { "sv": "Beskrivning", "en": "Description", "de": "Beschreibung" },
+      "language_dependent": true,
+      "multiple": false,
+      "kind": { "type": "text", "form": "long", "max_length": 4000 },
+      "index": { "searchable": true, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000103",
+      "key": "status",
+      "labels": { "sv": "Status", "en": "Status", "de": "Status" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "value_list", "list": "status" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000104",
+      "key": "farg",
+      "labels": { "sv": "Färg", "en": "Colour", "de": "Farbe" },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": { "type": "value_list", "list": "farg" },
+      "index": { "searchable": true, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000105",
+      "key": "vikt",
+      "labels": { "sv": "Vikt", "en": "Weight", "de": "Gewicht" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000011", "min": "0", "max": "50000" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000106",
+      "key": "langd",
+      "labels": { "sv": "Längd", "en": "Length", "de": "Länge" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000010", "min": "0", "max": "20000" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000107",
+      "key": "spann",
+      "labels": { "sv": "Spännvidd", "en": "Span", "de": "Spannweite" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "range", "unit_family": "018f0000-0000-7000-8000-000000000010" },
+      "index": { "searchable": false, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000108",
+      "key": "aktiv",
+      "labels": { "sv": "Aktiv", "en": "Active", "de": "Aktiv" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "boolean" },
+      "index": { "searchable": false, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000109",
+      "key": "lanserad",
+      "labels": { "sv": "Lanserad", "en": "Launched", "de": "Lanciert" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "date" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010a",
+      "key": "bild",
+      "labels": { "sv": "Bild", "en": "Image", "de": "Bild" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "file_ref", "media": true },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010b",
+      "key": "ersatter",
+      "labels": { "sv": "Ersätter", "en": "Replaces", "de": "Ersetzt" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "object_ref", "type_key": "artikel" },
+      "index": { "searchable": false, "filterable": true, "sortable": false }
+    }
+  ],
+  "types": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000200",
+      "key": "produkt",
+      "labels": { "sv": "Produkt", "en": "Product", "de": "Produkt" },
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": [
+        "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000101",
+        "018f0000-0000-7000-8000-000000000102",
+        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-000000000108"
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000201",
+      "key": "artikel",
+      "labels": { "sv": "Artikel", "en": "Article", "de": "Artikel" },
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": [
+        "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000101",
+        "018f0000-0000-7000-8000-000000000102",
+        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-000000000104",
+        "018f0000-0000-7000-8000-000000000108",
+        "018f0000-0000-7000-8000-000000000109",
+        "018f0000-0000-7000-8000-00000000010a",
+        "018f0000-0000-7000-8000-00000000010b"
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000202",
+      "key": "variant",
+      "labels": { "sv": "Variant", "en": "Variant", "de": "Variante" },
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": [
+        "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000101",
+        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-000000000104",
+        "018f0000-0000-7000-8000-000000000108"
+      ]
+    }
+  ],
+  "structures": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000300",
+      "key": "sortiment",
+      "groups": [
+        { "id": "018f0000-0000-7000-8000-000000000310", "key": "friluft" },
+        { "id": "018f0000-0000-7000-8000-000000000311", "key": "talt", "parent": "018f0000-0000-7000-8000-000000000310" },
+        { "id": "018f0000-0000-7000-8000-000000000312", "key": "sovsack", "parent": "018f0000-0000-7000-8000-000000000310" },
+        { "id": "018f0000-0000-7000-8000-000000000313", "key": "bygg" },
+        { "id": "018f0000-0000-7000-8000-000000000314", "key": "virke", "parent": "018f0000-0000-7000-8000-000000000313" }
+      ],
+      "classes": [
+        {
+          "id": "018f0000-0000-7000-8000-000000000321",
+          "key": "talt",
+          "group": "018f0000-0000-7000-8000-000000000311",
+          "attributes": [
+            "018f0000-0000-7000-8000-000000000106",
+            "018f0000-0000-7000-8000-000000000107",
+            "018f0000-0000-7000-8000-000000000105"
+          ]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000322",
+          "key": "sovsack",
+          "group": "018f0000-0000-7000-8000-000000000312",
+          "attributes": ["018f0000-0000-7000-8000-000000000105"]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000323",
+          "key": "virke",
+          "group": "018f0000-0000-7000-8000-000000000314",
+          "attributes": [
+            "018f0000-0000-7000-8000-000000000106",
+            "018f0000-0000-7000-8000-000000000105"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 {
-  "name": "OpenPIM",
+  "name": "Braian",
   "dockerComposeFile": ["../compose.yaml", "compose.yaml"],
   "service": "dev",
-  "workspaceFolder": "/workspaces/OpenPIM",
+  "workspaceFolder": "/workspaces/Braian",
   "shutdownAction": "stopCompose",
   "features": {
     "ghcr.io/devcontainers/features/node:1": { "version": "22" },

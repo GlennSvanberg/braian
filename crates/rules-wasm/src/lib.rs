@@ -1,10 +1,10 @@
-//! The same rules as `openpim-rules`, reachable from JavaScript.
+//! The same rules as `braian-rules`, reachable from JavaScript.
 //!
 //! Definitions and objects are JSON strings, so the WebAssembly build and the
 //! native crate run the same serde path and produce the same report.
 
-use openpim_model::{DefinitionSet, Object, ObjectPatch};
-use openpim_rules::CompiledModel;
+use braian_model::{DefinitionSet, Object, ObjectPatch};
+use braian_rules::CompiledModel;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use anyhow::Context;
-use openpim_store::admin::{self, PgConn};
-use openpim_store::{STORAGE_FORM, Store};
+use braian_store::admin::{self, PgConn};
+use braian_store::{STORAGE_FORM, Store};
 use tokio::net::TcpListener;
 
-const DATABASE: &str = "openpim_demo3";
+const DATABASE: &str = "braian_demo3";
 const TOKENS: &str = "ada:human:demo3-ada;bot:agent@ada:demo3-bot";
 
 pub async fn run(database_url: &str) -> anyhow::Result<()> {
@@ -35,8 +35,8 @@ pub async fn run(database_url: &str) -> anyhow::Result<()> {
     let mut config = admin::parse_config(database_url)?;
     config.dbname(DATABASE);
     let store = Store::connect_config(config, STORAGE_FORM).await?;
-    let identities = openpim_api::identities(&store, TOKENS).await?;
-    let app = openpim_api::router(store, identities);
+    let identities = braian_api::identities(&store, TOKENS).await?;
+    let app = braian_api::router(store, identities);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let server = tokio::spawn(async move {

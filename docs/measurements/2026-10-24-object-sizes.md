@@ -4,7 +4,7 @@ Measured from the phase 1 working tree on top of `3d79b8b` (the implementation w
 
 - Hardware: Intel Core Ultra 7 155U, 32 GB RAM, KIOXIA NVMe 1 TB. Local process, not Docker. `rustc 1.93.1`.
 - Data: 100 objects per tier, seed 1. Light = 50 attributes and 3 languages, medium = 300 and 10, heavy = 2000 and 20. 30% of attributes are language-dependent. Each object fills 60% (light 30, medium 180, heavy 1200), including the key. Text values are 32 ASCII characters, so real product text will be larger.
-- Command: `cargo run -p openpim-synth --release -- sizes --count 100` (`just measure-sizes`).
+- Command: `cargo run -p braian-synth --release -- sizes --count 100` (`just measure-sizes`).
 - Percentiles are nearest-rank: sorted samples, index `ceil(p/100 * n) - 1`.
 
 Bytes are compact JSON. Human-key sizes change only the keys inside `values`; `id`, `type_id` and `groups` stay UUIDs. The parts are the value documents a per-language storage layout would write: one language-independent object, plus one object per language. They do not include the object row.

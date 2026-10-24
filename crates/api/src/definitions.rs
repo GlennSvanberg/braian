@@ -3,13 +3,13 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, DefinitionSet, ObjectType, Structure, StructureId, TypeId, UnitFamily,
     UnitFamilyId, Uuid, delete_attribute, delete_structure, delete_type, delete_unit_family,
     set_languages, upsert_attribute, upsert_structure, upsert_type, upsert_unit_family,
 };
-use openpim_rules::CompiledModel;
-use openpim_store::{Actor, Error, WriteReceipt};
+use braian_rules::CompiledModel;
+use braian_store::{Actor, Error, WriteReceipt};
 use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -30,7 +30,7 @@ pub struct DefinitionWrite {
     path = "/v1/definitions",
     tag = "definitions",
     responses(
-        (status = 200, description = "Current definition set", body = openpim_model::DefinitionSet),
+        (status = 200, description = "Current definition set", body = braian_model::DefinitionSet),
         (status = 404, description = "No definitions stored", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -79,7 +79,7 @@ pub async fn get_definitions(
     put,
     path = "/v1/definitions",
     tag = "definitions",
-    request_body(content = openpim_model::DefinitionSet, description = "JSON or YAML definition set"),
+    request_body(content = braian_model::DefinitionSet, description = "JSON or YAML definition set"),
     responses(
         (status = 200, description = "Imported", body = DefinitionWrite),
         (status = 409, description = "Revision conflict", body = crate::problem::Problem),
@@ -134,9 +134,9 @@ pub async fn put_definitions(
     post,
     path = "/v1/attributes",
     tag = "definitions",
-    request_body(content = openpim_model::Attribute, description = "Id is optional"),
+    request_body(content = braian_model::Attribute, description = "Id is optional"),
     responses(
-        (status = 200, description = "Stored attribute", body = openpim_model::Attribute),
+        (status = 200, description = "Stored attribute", body = braian_model::Attribute),
         (status = 422, description = "The set does not compile", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -174,7 +174,7 @@ pub async fn post_attribute(
     tag = "definitions",
     params(("id" = String, Path, description = "Attribute key or id")),
     responses(
-        (status = 200, description = "Attribute", body = openpim_model::Attribute),
+        (status = 200, description = "Attribute", body = braian_model::Attribute),
         (status = 404, description = "Unknown attribute", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -197,9 +197,9 @@ pub async fn get_attribute(
     path = "/v1/attributes/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Attribute key or id")),
-    request_body(content = openpim_model::Attribute),
+    request_body(content = braian_model::Attribute),
     responses(
-        (status = 200, description = "Stored attribute", body = openpim_model::Attribute),
+        (status = 200, description = "Stored attribute", body = braian_model::Attribute),
         (status = 422, description = "The set does not compile", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -281,8 +281,8 @@ pub async fn delete_attribute_route(
     post,
     path = "/v1/types",
     tag = "definitions",
-    request_body(content = openpim_model::ObjectType, description = "Id is optional"),
-    responses((status = 200, description = "Stored type", body = openpim_model::ObjectType)),
+    request_body(content = braian_model::ObjectType, description = "Id is optional"),
+    responses((status = 200, description = "Stored type", body = braian_model::ObjectType)),
     security(("bearer" = []))
 )]
 pub async fn post_type(
@@ -306,7 +306,7 @@ pub async fn post_type(
     path = "/v1/types/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Type key or id")),
-    responses((status = 200, description = "Type", body = openpim_model::ObjectType)),
+    responses((status = 200, description = "Type", body = braian_model::ObjectType)),
     security(("bearer" = []))
 )]
 pub async fn get_type(
@@ -327,8 +327,8 @@ pub async fn get_type(
     path = "/v1/types/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Type key or id")),
-    request_body(content = openpim_model::ObjectType),
-    responses((status = 200, description = "Stored type", body = openpim_model::ObjectType)),
+    request_body(content = braian_model::ObjectType),
+    responses((status = 200, description = "Stored type", body = braian_model::ObjectType)),
     security(("bearer" = []))
 )]
 pub async fn put_type(
@@ -393,8 +393,8 @@ pub async fn delete_type_route(
     post,
     path = "/v1/structures",
     tag = "definitions",
-    request_body(content = openpim_model::Structure, description = "Id is optional. Groups and classes belong to the structure."),
-    responses((status = 200, description = "Stored structure", body = openpim_model::Structure)),
+    request_body(content = braian_model::Structure, description = "Id is optional. Groups and classes belong to the structure."),
+    responses((status = 200, description = "Stored structure", body = braian_model::Structure)),
     security(("bearer" = []))
 )]
 pub async fn post_structure(
@@ -418,7 +418,7 @@ pub async fn post_structure(
     path = "/v1/structures/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Structure key or id")),
-    responses((status = 200, description = "Structure", body = openpim_model::Structure)),
+    responses((status = 200, description = "Structure", body = braian_model::Structure)),
     security(("bearer" = []))
 )]
 pub async fn get_structure(
@@ -439,8 +439,8 @@ pub async fn get_structure(
     path = "/v1/structures/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Structure key or id")),
-    request_body(content = openpim_model::Structure),
-    responses((status = 200, description = "Stored structure", body = openpim_model::Structure)),
+    request_body(content = braian_model::Structure),
+    responses((status = 200, description = "Stored structure", body = braian_model::Structure)),
     security(("bearer" = []))
 )]
 pub async fn put_structure(
@@ -505,8 +505,8 @@ pub async fn delete_structure_route(
     post,
     path = "/v1/unit-families",
     tag = "definitions",
-    request_body(content = openpim_model::UnitFamily, description = "Id is optional"),
-    responses((status = 200, description = "Stored unit family", body = openpim_model::UnitFamily)),
+    request_body(content = braian_model::UnitFamily, description = "Id is optional"),
+    responses((status = 200, description = "Stored unit family", body = braian_model::UnitFamily)),
     security(("bearer" = []))
 )]
 pub async fn post_unit_family(
@@ -530,7 +530,7 @@ pub async fn post_unit_family(
     path = "/v1/unit-families/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Unit family key or id")),
-    responses((status = 200, description = "Unit family", body = openpim_model::UnitFamily)),
+    responses((status = 200, description = "Unit family", body = braian_model::UnitFamily)),
     security(("bearer" = []))
 )]
 pub async fn get_unit_family(
@@ -551,8 +551,8 @@ pub async fn get_unit_family(
     path = "/v1/unit-families/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Unit family key or id")),
-    request_body(content = openpim_model::UnitFamily),
-    responses((status = 200, description = "Stored unit family", body = openpim_model::UnitFamily)),
+    request_body(content = braian_model::UnitFamily),
+    responses((status = 200, description = "Stored unit family", body = braian_model::UnitFamily)),
     security(("bearer" = []))
 )]
 pub async fn put_unit_family(
@@ -624,7 +624,7 @@ pub async fn delete_unit_family_route(
 pub async fn put_languages(
     State(state): State<AppState>,
     Auth(identity): Auth,
-    Json(languages): Json<Vec<openpim_model::LanguageTag>>,
+    Json(languages): Json<Vec<braian_model::LanguageTag>>,
 ) -> Result<Json<DefinitionWrite>, Problem> {
     let (defs, receipt) = commit(&state, &identity.actor, |defs| {
         set_languages(defs, languages.clone());
@@ -649,6 +649,7 @@ async fn commit(
                 model_revision: 0,
                 languages: Vec::new(),
                 unit_families: Vec::new(),
+                value_lists: Vec::new(),
                 attributes: Vec::new(),
                 types: Vec::new(),
                 structures: Vec::new(),

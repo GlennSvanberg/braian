@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use openpim_model::{
+use braian_model::{
     AttributeId, DefinitionSet, GroupId, ObjectId, ObjectPatch, StructureId, TypeId, ValuePatch,
 };
-use openpim_rules::CompiledModel;
+use braian_rules::CompiledModel;
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -123,12 +123,12 @@ pub fn patch_from_wire(
             .attribute(id)
             .ok_or_else(|| unknown("attribute", token))?;
         let patch = if value.is_null() {
-            openpim_model::AttributePatch::Remove
+            braian_model::AttributePatch::Remove
         } else if attribute.language_dependent {
             let Some(map) = value.as_object() else {
                 attributes.insert(
                     id,
-                    openpim_model::AttributePatch::Replace {
+                    braian_model::AttributePatch::Replace {
                         value: value.clone(),
                     },
                 );
@@ -136,7 +136,7 @@ pub fn patch_from_wire(
             };
             let mut languages = BTreeMap::new();
             for (language, inner) in map {
-                let tag = openpim_model::LanguageTag::parse(language).map_err(|_| {
+                let tag = braian_model::LanguageTag::parse(language).map_err(|_| {
                     Problem::new(
                         axum::http::StatusCode::BAD_REQUEST,
                         "invalid_language",
@@ -149,9 +149,9 @@ pub fn patch_from_wire(
                     languages.insert(tag, Some(inner.clone()));
                 }
             }
-            openpim_model::AttributePatch::Languages { values: languages }
+            braian_model::AttributePatch::Languages { values: languages }
         } else {
-            openpim_model::AttributePatch::Replace {
+            braian_model::AttributePatch::Replace {
                 value: value.clone(),
             }
         };

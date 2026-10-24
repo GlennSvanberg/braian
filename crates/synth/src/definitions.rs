@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, Class, ClassId, DefinitionSet, Group, GroupId,
-    IndexFlags, LanguageTag, ObjectType, Structure, StructureId, TypeId, Unit, UnitFamily,
-    UnitFamilyId,
+    IndexFlags, LanguageTag, ObjectType, Structure, StructureId, TextForm, TypeId, Unit,
+    UnitFamily, UnitFamilyId,
 };
 use rust_decimal::Decimal;
 
@@ -97,6 +97,7 @@ pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
         multiple: false,
         kind: AttributeKind::Text {
             max_length: Some(32),
+            form: TextForm::Short,
         },
         index: IndexFlags::default(),
     });
@@ -113,6 +114,7 @@ pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
         model_revision: 1,
         languages,
         unit_families: vec![mass, length],
+        value_lists: vec![],
         attributes,
         types: vec![ObjectType {
             id: item,
@@ -175,6 +177,7 @@ fn unit_family(ids: &mut Ids, key: &str, base: &str, units: &[(&str, Decimal)]) 
     UnitFamily {
         id: UnitFamilyId::from_uuid(ids.next()),
         key: key.to_owned(),
+        dimension: Some(key.to_owned()),
         base_unit: base.to_owned(),
         units: units
             .iter()
@@ -190,6 +193,11 @@ fn kind_for(index: usize, mass: UnitFamilyId, length: UnitFamilyId) -> Attribute
     match index % 6 {
         0 => AttributeKind::Text {
             max_length: Some(if index == 0 { 64 } else { 200 }),
+            form: if index == 0 {
+                TextForm::Short
+            } else {
+                TextForm::Long
+            },
         },
         1 => {
             let generation = index / 6;
@@ -198,19 +206,23 @@ fn kind_for(index: usize, mass: UnitFamilyId, length: UnitFamilyId) -> Attribute
                 unit_family: generation.is_multiple_of(2).then_some(family),
                 min: Some(Decimal::ZERO),
                 max: Some(Decimal::from(1000)),
+                integer: false,
             }
         }
         2 => AttributeKind::ValueList {
             options: (0..5)
-                .map(|option| openpim_model::ValueOption {
+                .map(|option| braian_model::ValueOption {
                     code: format!("v{option}"),
                     labels: BTreeMap::new(),
                 })
                 .collect(),
+            list: None,
         },
         3 => AttributeKind::Boolean,
         4 => AttributeKind::Date,
-        _ => AttributeKind::FileRef,
+        _ => AttributeKind::FileRef {
+            media: index.is_multiple_of(12),
+        },
     }
 }
 

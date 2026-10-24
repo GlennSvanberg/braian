@@ -6,12 +6,12 @@ mod spike;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use braian_synth::Tier;
 use clap::{Parser, Subcommand};
-use openpim_synth::Tier;
 
 #[derive(Parser)]
 #[command(
-    name = "openpim-bench",
+    name = "braian-bench",
     about = "Phase 2 storage measurements and demos"
 )]
 struct Cli {

@@ -1,4 +1,4 @@
-# OpenPIM (arbetsnamn)
+# Braian (arbetsnamn)
 
 Öppen källkod (MIT), self-hosted datahanteringssystem för det PIM brukar användas till.
 Positionering: mellan Akeneo och Supabase. Färdiga gränssnitt som ett traditionellt PIM,
@@ -37,7 +37,7 @@ Agent, UI, realtid och webhooks kommer sedan som konsumenter av samma lager.
 ## Repo
 - Cargo-workspace i `crates/`, pnpm-workspace för `apps/` och `packages/`.
 - `model` och `rules` får inte bero på I/O; `rules` måste kompilera till `wasm32-unknown-unknown`.
-- En binär `openpim` med roller (`api`, `relay`, `indexer`, `all`) i `crates/server`.
+- En binär `braian` med roller (`api`, `relay`, `indexer`, `all`) i `crates/server`.
 - Kommandon via `just` (se `docs/dev.md`). Mätresultat i `docs/measurements/`.
 - Fasplan för kärnan i `docs/plan.md`: varje fas har `just demo-N` och ett end-to-end-test i CI.
 - Designkällan är Notion-sidan; repot dokumenterar bara det som hör ihop med koden.

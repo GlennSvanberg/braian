@@ -3,7 +3,7 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "OpenPIM",
+        title = "Braian",
         version = "0.0.0",
         description = "Write and read definitions and objects."
     ),
@@ -52,12 +52,12 @@ use utoipa::OpenApi;
         crate::objects::ChangeResponse,
         crate::definitions::DefinitionWrite,
         crate::Me,
-        openpim_model::DefinitionSet,
-        openpim_model::Attribute,
-        openpim_model::ObjectType,
-        openpim_model::Structure,
-        openpim_model::UnitFamily,
-        openpim_model::ValidationError,
+        braian_model::DefinitionSet,
+        braian_model::Attribute,
+        braian_model::ObjectType,
+        braian_model::Structure,
+        braian_model::UnitFamily,
+        braian_model::ValidationError,
     ))
 )]
 struct ApiDoc;
@@ -80,7 +80,7 @@ impl utoipa::Modify for SecurityAddon {
                     .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
                     .bearer_format("token")
                     .description(Some(
-                        "Dev token from OPENPIM_DEV_TOKENS. An agent token acts for a person."
+                        "Dev token from BRAIAN_DEV_TOKENS. An agent token acts for a person."
                             .to_owned(),
                     ))
                     .build(),

@@ -9,7 +9,7 @@ fn openapi_spec_matches_the_committed_file() {
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display())),
     )
     .expect("docs/api/openapi.json is json");
-    let generated = serde_json::to_value(openpim_api::openapi_spec()).expect("spec serializes");
+    let generated = serde_json::to_value(braian_api::openapi_spec()).expect("spec serializes");
     assert_eq!(
         committed, generated,
         "docs/api/openapi.json is stale. Run `just openapi`."

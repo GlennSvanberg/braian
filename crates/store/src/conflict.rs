@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use openpim_model::{AttributeId, AttributePatch, LanguageTag, ObjectPatch, StructureId};
+use braian_model::{AttributeId, AttributePatch, LanguageTag, ObjectPatch, StructureId};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -295,7 +295,7 @@ fn conflict_from(touch: Touch) -> Conflict {
 
 #[cfg(test)]
 mod tests {
-    use openpim_model::{AttributePatch, LanguageTag, ObjectPatch, ValuePatch};
+    use braian_model::{AttributePatch, LanguageTag, ObjectPatch, ValuePatch};
     use serde_json::json;
     use uuid::Uuid;
 
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn patch_units_follow_the_languages_in_the_patch() {
-        let defs = openpim_synth::definitions(openpim_synth::Tier::Light, 1);
+        let defs = braian_synth::definitions(braian_synth::Tier::Light, 1);
         let ctx = SplitContext::new(&defs);
         let id = defs
             .attributes

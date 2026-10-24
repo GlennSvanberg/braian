@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use braian_api::router;
+use braian_store::testing::TestDb;
 use http_body_util::BodyExt;
-use openpim_api::router;
-use openpim_store::testing::TestDb;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -13,7 +13,7 @@ const HUMAN: &str = "token-ada";
 const AGENT: &str = "token-bot";
 
 fn load_env() {
-    if std::env::var_os("OPENPIM_TEST_DATABASE_URL").is_some() {
+    if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_some() {
         return;
     }
     let Ok(start) = std::env::current_dir() else {
@@ -83,7 +83,7 @@ async fn call(
 async fn app() -> (TestDb, axum::Router) {
     load_env();
     let db = TestDb::create().await;
-    let identities = openpim_api::identities(db.store(), TOKENS).await.unwrap();
+    let identities = braian_api::identities(db.store(), TOKENS).await.unwrap();
     let app = router(db.store().clone(), identities);
     let defs = include_str!("../../../testdata/rules/definitions.json");
     let (status, _, body) = call(
@@ -128,7 +128,7 @@ async fn auth_rejects_a_missing_or_unknown_token() {
 async fn an_agent_token_without_a_person_is_rejected_at_startup() {
     load_env();
     let db = TestDb::create().await;
-    let error = openpim_api::identities(db.store(), "ada:agent:secret")
+    let error = braian_api::identities(db.store(), "ada:agent:secret")
         .await
         .unwrap_err();
     assert!(error.to_string().contains("behalf") || error.to_string().contains("@behalf"));

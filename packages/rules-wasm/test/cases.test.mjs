@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { Validator } from "../pkg/openpim_rules_wasm.js";
+import { Validator } from "../pkg/braian_rules_wasm.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../testdata/rules");
 const validator = new Validator(readFileSync(path.join(root, "definitions.json"), "utf8"));

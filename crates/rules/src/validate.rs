@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use rust_decimal::Decimal;
 use serde_json::Value;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, AttributePatch, DefinitionSet, ErrorCode, GroupId,
     LanguageTag, NumberValue, Object, ObjectPatch, StructureId, UnitFamilyId, ValidationError,
     apply_object_patch,
@@ -23,10 +23,23 @@ impl ValueIndex {
             .attributes
             .iter()
             .filter_map(|attribute| {
-                let AttributeKind::ValueList { options } = &attribute.kind else {
+                let AttributeKind::ValueList { options, list } = &attribute.kind else {
                     return None;
                 };
-                let codes = options.iter().map(|option| option.code.clone()).collect();
+                let codes = if let Some(list_key) = list {
+                    defs.value_lists
+                        .iter()
+                        .find(|item| item.key == *list_key)
+                        .map(|item| {
+                            item.options
+                                .iter()
+                                .map(|option| option.code.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    options.iter().map(|option| option.code.clone()).collect()
+                };
                 Some((attribute.id, codes))
             })
             .collect();
@@ -184,16 +197,21 @@ impl CompiledModel {
                 format!("attribute {attribute_id} is not applicable"),
             ));
         };
-        let AttributeKind::Number { unit_family, .. } = &attribute.kind else {
-            return Err(failure(
-                Some(attribute_id),
-                None,
-                None,
-                ErrorCode::WrongType,
-                format!("attribute {} is not a number", attribute.key),
-            ));
+        let unit_family = match &attribute.kind {
+            AttributeKind::Number { unit_family, .. } | AttributeKind::Range { unit_family } => {
+                *unit_family
+            }
+            _ => {
+                return Err(failure(
+                    Some(attribute_id),
+                    None,
+                    None,
+                    ErrorCode::WrongType,
+                    format!("attribute {} is not numeric", attribute.key),
+                ));
+            }
         };
-        self.to_base(attribute, *unit_family, value, None, None)
+        self.to_base(attribute, unit_family, value, None, None)
     }
 
     fn validate_attribute(
@@ -290,7 +308,7 @@ impl CompiledModel {
         errors: &mut Vec<ValidationError>,
     ) {
         match &attribute.kind {
-            AttributeKind::Text { max_length } => {
+            AttributeKind::Text { max_length, .. } => {
                 let Some(text) = value.as_str() else {
                     errors.push(wrong_type(attribute, language, index, "a string"));
                     return;
@@ -315,6 +333,7 @@ impl CompiledModel {
                 unit_family,
                 min,
                 max,
+                integer,
             } => {
                 let parsed = match parse_number(value) {
                     Ok(parsed) => parsed,
@@ -333,6 +352,16 @@ impl CompiledModel {
                         return;
                     }
                 };
+                if *integer && parsed.value.fract() != Decimal::ZERO {
+                    errors.push(failure(
+                        Some(attribute.id),
+                        language.cloned(),
+                        index,
+                        ErrorCode::NotInteger,
+                        format!("attribute {} must be a whole number", attribute.key),
+                    ));
+                    return;
+                }
                 let normalized =
                     match self.to_base(attribute, *unit_family, &parsed, language, index) {
                         Ok(normalized) => normalized,
@@ -404,12 +433,76 @@ impl CompiledModel {
                     ));
                 }
             }
-            AttributeKind::FileRef => {
+            AttributeKind::Range { unit_family } => {
+                let (min_value, max_value) = match parse_range(value) {
+                    Ok(parsed) => parsed,
+                    Err(code) => {
+                        errors.push(failure(
+                            Some(attribute.id),
+                            language.cloned(),
+                            index,
+                            code,
+                            format!("attribute {} expected a range", attribute.key),
+                        ));
+                        return;
+                    }
+                };
+                if min_value.value > max_value.value {
+                    errors.push(failure(
+                        Some(attribute.id),
+                        language.cloned(),
+                        index,
+                        ErrorCode::RangeInverted,
+                        format!("attribute {} has min greater than max", attribute.key),
+                    ));
+                    return;
+                }
+                if let Err(error) =
+                    self.to_base(attribute, *unit_family, &min_value, language, index)
+                {
+                    errors.push(error);
+                    return;
+                }
+                if let Err(error) =
+                    self.to_base(attribute, *unit_family, &max_value, language, index)
+                {
+                    errors.push(error);
+                }
+            }
+            AttributeKind::ObjectRef { .. } => {
                 let Some(text) = value.as_str() else {
-                    errors.push(wrong_type(attribute, language, index, "a file reference"));
+                    errors.push(wrong_type(
+                        attribute,
+                        language,
+                        index,
+                        "an object reference",
+                    ));
                     return;
                 };
-                if openpim_model::Uuid::parse_str(text).is_err() {
+                if braian_model::Uuid::parse_str(text).is_err() {
+                    errors.push(failure(
+                        Some(attribute.id),
+                        language.cloned(),
+                        index,
+                        ErrorCode::InvalidObjectRef,
+                        format!(
+                            "attribute {} has an invalid object reference",
+                            attribute.key
+                        ),
+                    ));
+                }
+            }
+            AttributeKind::FileRef { media } => {
+                let expected = if *media {
+                    "a media reference"
+                } else {
+                    "a file reference"
+                };
+                let Some(text) = value.as_str() else {
+                    errors.push(wrong_type(attribute, language, index, expected));
+                    return;
+                };
+                if braian_model::Uuid::parse_str(text).is_err() {
                     errors.push(failure(
                         Some(attribute.id),
                         language.cloned(),
@@ -473,6 +566,40 @@ impl CompiledModel {
             )
         })
     }
+}
+
+fn parse_range(value: &Value) -> Result<(NumberValue, NumberValue), ErrorCode> {
+    let Some(object) = value.as_object() else {
+        return Err(ErrorCode::WrongType);
+    };
+    if object
+        .keys()
+        .any(|key| key != "min" && key != "max" && key != "unit")
+    {
+        return Err(ErrorCode::WrongType);
+    }
+    let unit = match object.get("unit") {
+        None => None,
+        Some(Value::String(unit)) => Some(unit.clone()),
+        Some(_) => return Err(ErrorCode::WrongType),
+    };
+    let min = decimal_field(object.get("min"))?;
+    let max = decimal_field(object.get("max"))?;
+    Ok((
+        NumberValue {
+            value: min,
+            unit: unit.clone(),
+        },
+        NumberValue { value: max, unit },
+    ))
+}
+
+fn decimal_field(raw: Option<&Value>) -> Result<Decimal, ErrorCode> {
+    let Some(Value::String(text)) = raw else {
+        return Err(ErrorCode::InvalidDecimal);
+    };
+    text.parse::<Decimal>()
+        .map_err(|_| ErrorCode::InvalidDecimal)
 }
 
 fn parse_number(value: &Value) -> Result<NumberValue, ErrorCode> {

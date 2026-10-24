@@ -3,7 +3,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use openpim_rules::CompiledModel;
+use braian_rules::CompiledModel;
 use serde::Serialize;
 
 use crate::Tier;

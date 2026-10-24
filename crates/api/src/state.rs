@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
-use openpim_model::DefinitionSet;
-use openpim_rules::CompiledModel;
-use openpim_store::{Error, Store};
-use tokio::sync::RwLock;
+use braian_model::DefinitionSet;
+use braian_rules::CompiledModel;
+use braian_search::Typesense;
+use braian_store::{Error, Store};
+use serde_json::Value;
+use tokio::sync::{RwLock, broadcast};
 
 use crate::auth::Identity;
 use crate::problem::{Problem, store_status};
@@ -13,6 +16,49 @@ pub struct AppState {
     pub store: Store,
     pub identities: Arc<Vec<Identity>>,
     pub models: ModelCache,
+    pub search: Option<Typesense>,
+    pub live: broadcast::Sender<Value>,
+    pub cookie_secure: bool,
+    seen: Arc<Mutex<HashSet<i64>>>,
+}
+
+impl AppState {
+    pub fn new(store: Store, identities: Vec<Identity>, search: Option<Typesense>) -> Self {
+        let (live, _) = broadcast::channel(1024);
+        let cookie_secure = std::env::var("BRAIAN_COOKIE_SECURE").ok().as_deref() == Some("1");
+        Self {
+            store,
+            identities: Arc::new(identities),
+            models: ModelCache::default(),
+            search,
+            live,
+            cookie_secure,
+            seen: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    /// Broadcasts one change and delivers webhooks. A repeated `seq` is ignored
+    /// so a local write and the Kafka consumer do not notify twice.
+    pub fn emit(&self, body: Value) {
+        if let Some(seq) = body.get("seq").and_then(Value::as_i64) {
+            let mut seen = self
+                .seen
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if !seen.insert(seq) {
+                return;
+            }
+            if seen.len() > 10_000 {
+                seen.clear();
+                seen.insert(seq);
+            }
+        }
+        let _ = self.live.send(body.clone());
+        let state = self.clone();
+        tokio::spawn(async move {
+            crate::platform::deliver_webhooks(&state, &body).await;
+        });
+    }
 }
 
 pub struct CachedModel {

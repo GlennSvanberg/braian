@@ -3,16 +3,16 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use openpim_model::{AttributePatch, Object, ObjectPatch, ValuePatch};
-use openpim_rules::CompiledModel;
-use openpim_store::admin::{self, PgConn};
-use openpim_store::{ObjectOp, STORAGE_FORM, Store};
-use openpim_synth::{EditKind, Tier, definitions, edits, objects_iter};
+use braian_model::{AttributePatch, Object, ObjectPatch, ValuePatch};
+use braian_rules::CompiledModel;
+use braian_store::admin::{self, PgConn};
+use braian_store::{ObjectOp, STORAGE_FORM, Store};
+use braian_synth::{EditKind, Tier, definitions, edits, objects_iter};
 use serde_json::{Map, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-const DATABASE: &str = "openpim_latency";
+const DATABASE: &str = "braian_latency";
 const TOKENS: &str = "ada:human:latency-ada";
 const TOKEN: &str = "latency-ada";
 
@@ -31,13 +31,13 @@ pub async fn run(database_url: &str, samples: usize, seed: u64) -> anyhow::Resul
     config.dbname(DATABASE);
     let store = Store::connect_config(config, STORAGE_FORM).await?;
     let defs = definitions(Tier::Heavy, seed);
-    let identities = openpim_api::identities(&store, TOKENS).await?;
+    let identities = braian_api::identities(&store, TOKENS).await?;
     let actor = identities[0].actor.clone();
     store.put_definitions(&actor, &defs).await?;
     let model = CompiledModel::compile(&defs)
         .map_err(|errors| anyhow::anyhow!("heavy definitions: {errors:?}"))?;
 
-    let app = openpim_api::router(store.clone(), identities);
+    let app = braian_api::router(store.clone(), identities);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let server = tokio::spawn(async move {

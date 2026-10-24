@@ -28,11 +28,14 @@ pub enum ErrorCode {
     ValueNotInList,
     InvalidDate,
     InvalidFileRef,
+    InvalidObjectRef,
+    NotInteger,
+    RangeInverted,
     MissingKeyAttribute,
 }
 
 impl ErrorCode {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 21] = [
         Self::UnknownType,
         Self::UnknownStructure,
         Self::UnknownGroup,
@@ -50,6 +53,9 @@ impl ErrorCode {
         Self::ValueNotInList,
         Self::InvalidDate,
         Self::InvalidFileRef,
+        Self::InvalidObjectRef,
+        Self::NotInteger,
+        Self::RangeInverted,
         Self::MissingKeyAttribute,
     ];
 }

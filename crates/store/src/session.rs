@@ -78,7 +78,7 @@ impl Store {
         };
         let revision: i64 = row.get(0);
         let document: serde_json::Value = row.get(1);
-        let set: openpim_model::DefinitionSet = serde_json::from_value(document)
+        let set: braian_model::DefinitionSet = serde_json::from_value(document)
             .map_err(|error| Error::Definitions(error.to_string()))?;
         if i64::try_from(set.model_revision).ok() != Some(revision) {
             return Err(Error::Definitions(
@@ -92,7 +92,7 @@ impl Store {
         for row in group_rows {
             let group: i32 = row.get("part_group");
             groups.insert(
-                openpim_model::AttributeId::from_uuid(row.get("attribute_id")),
+                braian_model::AttributeId::from_uuid(row.get("attribute_id")),
                 usize::try_from(group).unwrap_or(0),
             );
         }
@@ -146,6 +146,29 @@ pub async fn drop_database(client: &tokio_postgres::Client, name: &str) -> Resul
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}' AND pid <> pg_backend_pid()"
         ))
         .await?;
+    let _ = client
+        .batch_execute(&format!(
+            "SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots \
+             WHERE database = '{name}' AND active_pid IS NOT NULL"
+        ))
+        .await;
+    let slots = client
+        .query(
+            "SELECT slot_name, active FROM pg_replication_slots WHERE database = $1",
+            &[&name],
+        )
+        .await?;
+    for slot in slots {
+        let slot_name: String = slot.get(0);
+        let active: bool = slot.get(1);
+        if active || crate::ids::plain_name(&slot_name).is_err() {
+            continue;
+        }
+        let _ = client
+            .batch_execute(&format!("SELECT pg_drop_replication_slot('{slot_name}')"))
+            .await;
+    }
+    let _ = client.batch_execute("SET statement_timeout = '3s'").await;
     client
         .batch_execute(&format!("DROP DATABASE IF EXISTS {name}"))
         .await?;

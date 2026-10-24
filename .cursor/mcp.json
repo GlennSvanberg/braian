@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "openpim-postgres": {
+    "braian-postgres": {
       "type": "stdio",
       "command": "docker",
       "args": [

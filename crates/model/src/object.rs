@@ -13,13 +13,15 @@ use crate::id::{AttributeId, GroupId, ObjectId, StructureId, TypeId};
 /// `values` is keyed by attribute id. The JSON shape of a value depends on the
 /// attribute:
 ///
-/// - text: a string
+/// - text: a string (short or long)
 /// - number: `{"value":"12.50","unit":"kg"}`, with `unit` omitted when the
-///   attribute has no unit family
+///   attribute has no unit family. Integers are exact decimals with no fraction.
+/// - range: `{"min":"1","max":"3","unit":"mm"}`
 /// - value list: the option code
 /// - boolean: `true` or `false`
 /// - date: `YYYY-MM-DD`
-/// - file reference: a UUID string
+/// - object reference: a UUIDv7 string
+/// - file or media reference: a UUID string
 ///
 /// `multiple` wraps that value in an ordered array. `language_dependent` wraps
 /// it in an object keyed by language tag, and the array sits inside the

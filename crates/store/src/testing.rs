@@ -16,14 +16,14 @@ pub struct TestDb {
 }
 
 impl TestDb {
-    /// Panics with a setup message when `OPENPIM_TEST_DATABASE_URL` is missing.
+    /// Panics with a setup message when `BRAIAN_TEST_DATABASE_URL` is missing.
     ///
     /// The URL has to reach the maintenance database (`postgres`), because the
     /// test creates and drops its own database.
     pub async fn create() -> Self {
-        let admin_url = std::env::var("OPENPIM_TEST_DATABASE_URL").unwrap_or_else(|_| {
+        let admin_url = std::env::var("BRAIAN_TEST_DATABASE_URL").unwrap_or_else(|_| {
             panic!(
-                "OPENPIM_TEST_DATABASE_URL is not set. Point it at the maintenance database, for example postgres://openpim:secret@localhost:5433/postgres"
+                "BRAIAN_TEST_DATABASE_URL is not set. Point it at the maintenance database, for example postgres://braian:secret@localhost:5433/postgres"
             )
         });
         Self::try_create(&admin_url)
@@ -33,6 +33,15 @@ impl TestDb {
 
     pub fn store(&self) -> &Store {
         self.store.as_ref().expect("test database is open")
+    }
+
+    /// Connection string for this test database, including the role password.
+    pub fn database_url(&self) -> String {
+        let base = self.admin_url.trim_end_matches('/');
+        match base.rsplit_once('/') {
+            Some((prefix, _)) => format!("{prefix}/{}", self.name),
+            None => format!("{base}/{}", self.name),
+        }
     }
 
     async fn try_create(admin_url: &str) -> Result<Self, Error> {
@@ -139,11 +148,17 @@ async fn create_template(admin_url: String) -> Result<String, Error> {
 }
 
 fn template_name() -> String {
-    let sql = include_str!("../migrations/V1__storage.sql");
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in sql.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+    let sqls = [
+        include_str!("../migrations/V1__storage.sql"),
+        include_str!("../migrations/V2__api.sql"),
+        include_str!("../migrations/V3__app.sql"),
+    ];
+    for sql in sqls {
+        for byte in sql.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
     }
     format!("tpl_{hash:016x}")
 }

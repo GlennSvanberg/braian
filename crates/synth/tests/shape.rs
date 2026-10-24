@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
-use openpim_model::{AttributeKind, DefinitionSet, ErrorCode};
-use openpim_rules::CompiledModel;
-use openpim_synth::{
+use braian_model::{AttributeKind, DefinitionSet, ErrorCode};
+use braian_rules::CompiledModel;
+use braian_synth::{
     ExportFormat, Tier, all_mutations, definitions, export, measure, objects, write_demo,
 };
 
@@ -53,7 +53,9 @@ fn tiers_have_the_planned_shape() {
                 AttributeKind::ValueList { .. } => "list",
                 AttributeKind::Boolean => "bool",
                 AttributeKind::Date => "date",
-                AttributeKind::FileRef => "file",
+                AttributeKind::FileRef { .. } => "file",
+                AttributeKind::Range { .. } => "range",
+                AttributeKind::ObjectRef { .. } => "ref",
             });
         }
         assert_eq!(shapes.len(), 7, "{shapes:?}");
@@ -121,6 +123,14 @@ fn mutations_fail_with_the_expected_error() {
             seen.insert(expected.code);
         }
         for code in ErrorCode::ALL {
+            // Integer, range and object-reference failures need attribute kinds the
+            // synthetic tiers do not generate. Those kinds are covered in braian-rules.
+            if matches!(
+                code,
+                ErrorCode::NotInteger | ErrorCode::RangeInverted | ErrorCode::InvalidObjectRef
+            ) {
+                continue;
+            }
             assert!(seen.contains(&code), "missing {code}");
         }
     }
@@ -137,7 +147,7 @@ fn heavy_objects_are_larger_than_light_ones() {
 
 #[test]
 fn demo_files_roundtrip_through_rust_validation() {
-    let dir = std::env::temp_dir().join(format!("openpim-demo-1-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("braian-demo-1-{}", std::process::id()));
     let summary = write_demo(&dir, 1).unwrap();
     assert_eq!(summary.valid, 10);
     assert_eq!(summary.broken, 4);
@@ -151,7 +161,7 @@ fn demo_files_roundtrip_through_rust_validation() {
 
 fn groups(
     model: &CompiledModel,
-) -> std::collections::BTreeMap<openpim_model::StructureId, openpim_model::GroupId> {
+) -> std::collections::BTreeMap<braian_model::StructureId, braian_model::GroupId> {
     std::collections::BTreeMap::from([
         (
             model.structure_id("catalog").unwrap(),

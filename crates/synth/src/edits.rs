@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::str::FromStr;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, AttributePatch, DefinitionSet, LanguageTag, Object,
     ObjectId, ValuePatch,
 };
@@ -274,7 +274,7 @@ fn nudge(attribute: &Attribute, value: Value) -> Value {
 
 fn nudge_scalar(attribute: &Attribute, value: Value) -> Value {
     match &attribute.kind {
-        AttributeKind::Text { max_length } => {
+        AttributeKind::Text { max_length, .. } => {
             let mut text = value.as_str().unwrap_or("").to_owned();
             let max = max_length.unwrap_or(200) as usize;
             if text.len() < max {
@@ -300,7 +300,20 @@ fn nudge_scalar(attribute: &Attribute, value: Value) -> Value {
             );
             Value::Object(map)
         }
-        AttributeKind::ValueList { options } => {
+        AttributeKind::Range { .. } => {
+            let mut map = value.as_object().cloned().unwrap_or_default();
+            let current = map
+                .get("max")
+                .and_then(Value::as_str)
+                .and_then(|text| Decimal::from_str(text).ok())
+                .unwrap_or(Decimal::ONE);
+            map.insert(
+                "max".to_owned(),
+                Value::String((current + Decimal::ONE).normalize().to_string()),
+            );
+            Value::Object(map)
+        }
+        AttributeKind::ValueList { options, .. } => {
             let current = value.as_str().unwrap_or("");
             let next = options
                 .iter()
@@ -315,7 +328,7 @@ fn nudge_scalar(attribute: &Attribute, value: Value) -> Value {
             Value::String(next)
         }
         AttributeKind::Date => Value::String(bump_date(value.as_str().unwrap_or("2024-01-01"))),
-        AttributeKind::FileRef => {
+        AttributeKind::ObjectRef { .. } | AttributeKind::FileRef { .. } => {
             let mut text = value.as_str().unwrap_or("").to_owned();
             match text.pop() {
                 Some('a') => text.push('b'),
@@ -344,8 +357,8 @@ fn bump_date(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use openpim_model::apply_value_patch;
-    use openpim_rules::CompiledModel;
+    use braian_model::apply_value_patch;
+    use braian_rules::CompiledModel;
 
     use super::*;
     use crate::{definitions, objects, objects_iter};
