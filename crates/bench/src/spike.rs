@@ -294,7 +294,12 @@ async fn edit_interactive(
                         &actor,
                         vec![ObjectOp::Update {
                             id: edit.object_id,
-                            set: edit.patch,
+                            patch: openpim_model::ObjectPatch {
+                                values: edit.patch,
+                                groups: Default::default(),
+                            },
+                            base_version: 1,
+                            read_version: 1,
                         }],
                     )
                     .await?;
@@ -331,7 +336,12 @@ async fn edit_chunked(
                 let ops: Vec<_> = edits(&defs, tier, seed, kind, cursor..end)
                     .map(|edit| ObjectOp::Update {
                         id: edit.object_id,
-                        set: edit.patch,
+                        patch: openpim_model::ObjectPatch {
+                            values: edit.patch,
+                            groups: Default::default(),
+                        },
+                        base_version: 1,
+                        read_version: 1,
                     })
                     .collect();
                 cursor = end;

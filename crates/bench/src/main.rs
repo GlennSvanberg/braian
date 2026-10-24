@@ -1,4 +1,6 @@
 mod demo;
+mod demo3;
+mod latency;
 mod spike;
 
 use std::path::PathBuf;
@@ -53,6 +55,22 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+    /// Import definitions, serve the API, and run tests/hurl/phase-3.
+    #[command(name = "demo-3")]
+    Demo3 {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+    },
+    /// Loopback HTTP latency against a direct store call, heavy tier.
+    #[command(name = "api-latency")]
+    ApiLatency {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long, default_value_t = 40)]
+        samples: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
 }
 
 #[tokio::main]
@@ -95,6 +113,14 @@ async fn main() -> anyhow::Result<()> {
         } => demo::run(&database_url, tier, count, seed)
             .await
             .context("demo-2")?,
+        Command::Demo3 { database_url } => demo3::run(&database_url).await.context("demo-3")?,
+        Command::ApiLatency {
+            database_url,
+            samples,
+            seed,
+        } => latency::run(&database_url, samples, seed)
+            .await
+            .context("api-latency")?,
     }
     Ok(())
 }

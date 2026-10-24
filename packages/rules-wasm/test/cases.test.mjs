@@ -29,10 +29,21 @@ function key(error) {
 for (const file of files) {
   test(file, () => {
     const spec = JSON.parse(readFileSync(path.join(caseDir, file), "utf8"));
+    const expected = spec.expected.map(locate).sort((left, right) => key(left).localeCompare(key(right)));
+    const warnings = (spec.warnings ?? []).map(locate).sort((left, right) => key(left).localeCompare(key(right)));
+    if (spec.patch) {
+      const report = JSON.parse(
+        validator.validate_patch(JSON.stringify(spec.object), JSON.stringify(spec.patch)),
+      );
+      const errors = report.errors.map(locate).sort((left, right) => key(left).localeCompare(key(right)));
+      const gotWarnings = report.warnings.map(locate).sort((left, right) => key(left).localeCompare(key(right)));
+      assert.deepEqual(errors, expected);
+      assert.deepEqual(gotWarnings, warnings);
+      return;
+    }
     const got = JSON.parse(validator.validate(JSON.stringify(spec.object))).map(locate);
-    const expected = spec.expected.map(locate);
     got.sort((left, right) => key(left).localeCompare(key(right)));
-    expected.sort((left, right) => key(left).localeCompare(key(right)));
     assert.deepEqual(got, expected);
+    assert.deepEqual(warnings, []);
   });
 }

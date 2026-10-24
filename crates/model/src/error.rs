@@ -8,6 +8,7 @@ use crate::language::LanguageTag;
 /// Messages are for people. Callers branch on `code`, together with the
 /// attribute, language and list index that locate the value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     UnknownType,
@@ -65,6 +66,7 @@ impl std::fmt::Display for ErrorCode {
 
 /// One validation failure, located as precisely as the value allows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ValidationError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attribute: Option<AttributeId>,

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use openpim_model::{Object, ObjectId, ValuePatch};
+use openpim_model::{Object, ObjectId, ObjectPatch};
 use serde_json::Value;
 
 use crate::ids::{BatchId, ChangeOp, PrincipalId};
@@ -16,8 +16,19 @@ pub struct StoredObject {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectOp {
     Create(Object),
-    Update { id: ObjectId, set: ValuePatch },
-    Delete { id: ObjectId },
+    /// `read_version` is the version the caller validated against.
+    /// `base_version` is the version the caller's edit started from.
+    Update {
+        id: ObjectId,
+        patch: ObjectPatch,
+        base_version: u64,
+        read_version: u64,
+    },
+    /// `base_version` conflicts with any change since that version. `None` skips the check.
+    Delete {
+        id: ObjectId,
+        base_version: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +53,14 @@ pub struct BulkRowError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrincipalRecord {
+    pub id: crate::ids::PrincipalId,
+    pub kind: crate::ids::PrincipalKind,
+    pub name: String,
+    pub handle: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChangeRow {
     pub seq: i64,
@@ -62,8 +81,11 @@ pub(crate) struct CachedDefs {
 }
 
 impl CachedDefs {
-    pub(crate) fn from_set(set: openpim_model::DefinitionSet) -> Self {
-        let split = crate::split::SplitContext::new(&set);
+    pub(crate) fn from_groups(
+        set: openpim_model::DefinitionSet,
+        groups: std::collections::HashMap<openpim_model::AttributeId, usize>,
+    ) -> Self {
+        let split = crate::split::SplitContext::with_groups(&set, &groups);
         Self { set, split }
     }
 

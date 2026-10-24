@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use futures::StreamExt;
@@ -14,10 +14,36 @@ use crate::ids::{Actor, BatchId, ChangeOp, PrincipalId, PrincipalKind};
 use crate::session::Store;
 use crate::split::{self, diff_created, diff_from_patch};
 use crate::types::{
-    BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectOp, StoredObject, WriteReceipt,
+    BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectOp, PrincipalRecord, StoredObject,
+    WriteReceipt,
 };
 
 impl Store {
+    /// Inserts a principal with a stable handle, or updates kind and name when the handle exists.
+    ///
+    /// Dev tokens use the handle so a restart does not mint a new principal.
+    pub async fn upsert_principal(
+        &self,
+        handle: &str,
+        kind: PrincipalKind,
+        name: &str,
+    ) -> Result<PrincipalId, Error> {
+        if handle.is_empty() {
+            return Err(Error::Data("principal handle is empty".into()));
+        }
+        let id = PrincipalId::new();
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (handle) DO UPDATE SET kind = EXCLUDED.kind, name = EXCLUDED.name
+                 RETURNING id",
+                &[&id.as_uuid(), &kind.as_str(), &name, &handle],
+            )
+            .await?;
+        Ok(PrincipalId::from_uuid(row.get(0)))
+    }
+
     pub async fn create_principal(
         &self,
         kind: PrincipalKind,
@@ -66,23 +92,19 @@ impl Store {
             &[&as_i64(defs.model_revision)?, &document, &batch.as_uuid()],
         )
         .await?;
-        let mut diff = Map::new();
-        if let Some(row) = &current {
-            diff.insert("before".to_owned(), row.get("definitions"));
-        }
-        diff.insert("after".to_owned(), document);
-        let seq = insert_change(
-            &tx,
-            batch,
-            None,
-            None,
-            ChangeOp::Definitions,
-            actor,
-            &Value::Object(diff),
-        )
-        .await?;
+        let previous = match &current {
+            Some(row) => Some(
+                serde_json::from_value(row.get("definitions"))
+                    .map_err(|error| Error::Definitions(error.to_string()))?,
+            ),
+            None => None,
+        };
+        let diff = definition_diff(previous.as_ref(), defs);
+        let seq =
+            insert_change(&tx, batch, None, None, ChangeOp::Definitions, actor, &diff).await?;
+        let groups = sync_attribute_parts(&tx, defs).await?;
         tx.commit().await?;
-        self.remember(Arc::new(CachedDefs::from_set(defs.clone())))
+        self.remember(Arc::new(CachedDefs::from_groups(defs.clone(), groups)))
             .await;
         Ok(WriteReceipt {
             batch_id: batch,
@@ -109,7 +131,7 @@ impl Store {
         let tx = client.transaction().await?;
         self.ensure_actor(&tx, actor).await?;
         let batch = insert_batch(&tx, actor).await?;
-        let defs = self.defs().await?;
+        let defs = self.defs_for(&tx).await?;
         let receipt = apply_ops(&tx, self.form(), &defs, batch, actor, &ops).await?;
         tx.commit().await?;
         Ok(receipt)
@@ -209,6 +231,55 @@ impl Store {
         };
         let stored = self.assemble(&**client, row).await?;
         Ok(Some(stored))
+    }
+
+    /// Raw part documents for one object. A definition change must not move a value between parts.
+    pub async fn stored_parts(&self, id: ObjectId) -> Result<BTreeMap<String, Value>, Error> {
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 ORDER BY part",
+                &[&id.as_uuid()],
+            )
+            .await?;
+        let mut parts = BTreeMap::new();
+        for row in rows {
+            parts.insert(row.get("part"), row.get("values"));
+        }
+        Ok(parts)
+    }
+
+    /// The current definition set, or [`Error::NoDefinitions`] when nothing has been stored.
+    pub async fn definition_set(&self) -> Result<openpim_model::DefinitionSet, Error> {
+        Ok(self.defs().await?.set.clone())
+    }
+
+    /// Latest stored model revision. `None` when no definitions have been stored.
+    pub async fn model_revision(&self) -> Result<Option<u64>, Error> {
+        match self.defs().await {
+            Ok(defs) => Ok(Some(defs.set.model_revision)),
+            Err(Error::NoDefinitions) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn principal(&self, id: PrincipalId) -> Result<Option<PrincipalRecord>, Error> {
+        let client = self.pool().get().await?;
+        let Some(row) = client
+            .query_opt(
+                "SELECT kind, name, handle FROM principals WHERE id = $1",
+                &[&id.as_uuid()],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PrincipalRecord {
+            id,
+            kind: PrincipalKind::parse(row.get("kind"))?,
+            name: row.get("name"),
+            handle: row.get("handle"),
+        }))
     }
 
     pub async fn changes_for(&self, id: ObjectId) -> Result<Vec<ChangeRow>, Error> {
@@ -329,6 +400,36 @@ impl Store {
         })
     }
 
+    /// Definitions visible to this transaction.
+    ///
+    /// A write reloads when another connection has committed a newer revision
+    /// than the one this process cached.
+    async fn defs_for(&self, tx: &Transaction<'_>) -> Result<Arc<CachedDefs>, Error> {
+        let row = tx
+            .query_opt(
+                "SELECT model_revision, definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1",
+                &[],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Err(Error::NoDefinitions);
+        };
+        let revision: i64 = row.get(0);
+        if let Ok(cached) = self.defs().await
+            && i64::try_from(cached.set.model_revision).ok() == Some(revision)
+        {
+            return Ok(cached);
+        }
+        let document: Value = row.get(1);
+        let set: openpim_model::DefinitionSet = serde_json::from_value(document)
+            .map_err(|error| Error::Definitions(error.to_string()))?;
+        let groups = load_groups(tx).await?;
+        let groups = split::SplitContext::assign_groups(&set, &groups);
+        let cached = Arc::new(CachedDefs::from_groups(set, groups));
+        self.remember(Arc::clone(&cached)).await;
+        Ok(cached)
+    }
+
     async fn ensure_actor(&self, tx: &Transaction<'_>, actor: &Actor) -> Result<(), Error> {
         let row = tx
             .query_opt(
@@ -392,12 +493,28 @@ async fn apply_ops(
                 let (version, seq) = insert_object(tx, form, defs, batch, actor, object).await?;
                 (object.id, version, seq)
             }
-            ObjectOp::Update { id, set } => {
-                let (version, seq) = update_object(tx, form, defs, batch, actor, *id, set).await?;
+            ObjectOp::Update {
+                id,
+                patch,
+                base_version,
+                read_version,
+            } => {
+                let (version, seq) = update_object(
+                    tx,
+                    form,
+                    defs,
+                    batch,
+                    actor,
+                    *id,
+                    patch,
+                    *base_version,
+                    *read_version,
+                )
+                .await?;
                 (*id, version, seq)
             }
-            ObjectOp::Delete { id } => {
-                let (version, seq) = delete_object(tx, batch, actor, *id).await?;
+            ObjectOp::Delete { id, base_version } => {
+                let (version, seq) = delete_object(tx, batch, actor, *id, *base_version).await?;
                 (*id, version, seq)
             }
         };
@@ -462,6 +579,7 @@ async fn insert_object(
     Ok((1, seq))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_object(
     tx: &Transaction<'_>,
     form: crate::split::StorageForm,
@@ -469,11 +587,13 @@ async fn update_object(
     batch: BatchId,
     actor: &Actor,
     id: ObjectId,
-    patch: &openpim_model::ValuePatch,
+    patch: &openpim_model::ObjectPatch,
+    base_version: u64,
+    read_version: u64,
 ) -> Result<(u64, i64), Error> {
     let row = tx
         .query_opt(
-            "SELECT version, deleted_at FROM objects WHERE id = $1 FOR UPDATE",
+            "SELECT type_id, version, deleted_at FROM objects WHERE id = $1 FOR UPDATE",
             &[&id.as_uuid()],
         )
         .await?;
@@ -484,23 +604,28 @@ async fn update_object(
     if deleted_at.is_some() {
         return Err(Error::Deleted(id));
     }
-    let affected = defs.split.affected_parts(form, patch);
-    let loaded_rows = tx
-        .query(
-            "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND part = ANY($2) FOR UPDATE",
-            &[&id.as_uuid(), &affected],
-        )
-        .await?;
-    let mut parts = split::documents_from_rows(
-        loaded_rows
-            .iter()
-            .map(|row| (row.get("part"), row.get("values"))),
-    )
-    .map_err(|message| Error::Corrupt(id, message))?;
+    let current_version = u64_from_i64(row.get("version"))?;
+    if current_version != read_version {
+        return Err(Error::StaleRead { current_version });
+    }
+    if base_version > current_version {
+        return Err(Error::BaseAhead { current_version });
+    }
+    let type_id = openpim_model::TypeId::from_uuid(row.get("type_id"));
+    let mut parts = load_parts_for_update(tx, form, defs, id, &patch.values).await?;
+    if base_version < current_version {
+        let history = changes_since(tx, id, base_version).await?;
+        let conflicts = crate::conflict::conflicts_for(&history, patch, &defs.split, form, &parts);
+        if !conflicts.is_empty() {
+            return Err(Error::Conflict {
+                current_version,
+                conflicts,
+            });
+        }
+    }
     let before = parts.clone();
-    defs.split.apply_patch(form, &mut parts, patch);
-    let existing: BTreeSet<String> = before.keys().cloned().collect();
-    for part in &existing {
+    defs.split.apply_patch(form, &mut parts, &patch.values);
+    for part in before.keys() {
         if !parts.contains_key(part) {
             tx.execute(
                 "DELETE FROM object_values WHERE object_id = $1 AND part = $2",
@@ -510,8 +635,11 @@ async fn update_object(
         }
     }
     for (part, document) in &parts {
+        if before.get(part) == Some(document) {
+            continue;
+        }
         let value = Value::Object(document.clone());
-        if existing.contains(part) {
+        if before.contains_key(part) {
             tx.execute(
                 "UPDATE object_values SET \"values\" = $3 WHERE object_id = $1 AND part = $2",
                 &[&id.as_uuid(), part, &value],
@@ -525,14 +653,38 @@ async fn update_object(
             .await?;
         }
     }
-    let version_row = tx
-        .query_one(
-            "UPDATE objects SET version = version + 1, updated_at = now() WHERE id = $1 RETURNING version",
-            &[&id.as_uuid()],
+    let placed = apply_groups(tx, id, patch).await?;
+    let revision = as_i64(defs.set.model_revision)?;
+    let key_attribute = defs
+        .set
+        .types
+        .iter()
+        .find(|object_type| object_type.id == type_id)
+        .map(|object_type| object_type.key_attribute);
+    let version_row = if key_attribute
+        .is_some_and(|attribute| patch.values.attributes.contains_key(&attribute))
+    {
+        let key = new_key(id, patch, key_attribute.expect("checked above"))?;
+        tx.query_one(
+            "UPDATE objects SET version = version + 1, updated_at = now(), model_revision = $2, key = $3 WHERE id = $1 RETURNING version",
+            &[&id.as_uuid(), &revision, &key],
         )
-        .await?;
+        .await
+        .map_err(|error| map_unique(error, type_id, &key))?
+    } else {
+        tx.query_one(
+            "UPDATE objects SET version = version + 1, updated_at = now(), model_revision = $2 WHERE id = $1 RETURNING version",
+            &[&id.as_uuid(), &revision],
+        )
+        .await?
+    };
     let version = u64_from_i64(version_row.get(0))?;
-    let diff = diff_from_patch(&defs.split, form, &before, patch);
+    let mut diff = diff_from_patch(&defs.split, form, &before, &patch.values);
+    if !placed.is_empty() {
+        diff.as_object_mut()
+            .expect("diff is an object")
+            .insert("$groups".to_owned(), Value::Object(placed));
+    }
     let seq = insert_change(
         tx,
         batch,
@@ -551,19 +703,33 @@ async fn delete_object(
     batch: BatchId,
     actor: &Actor,
     id: ObjectId,
+    base_version: Option<u64>,
 ) -> Result<(u64, i64), Error> {
     let row = tx
         .query_opt(
-            "SELECT deleted_at FROM objects WHERE id = $1 FOR UPDATE",
+            "SELECT version, deleted_at FROM objects WHERE id = $1 FOR UPDATE",
             &[&id.as_uuid()],
         )
         .await?;
     let Some(row) = row else {
         return Err(Error::NotFound(id));
     };
-    let deleted_at: Option<chrono::DateTime<chrono::Utc>> = row.get(0);
+    let deleted_at: Option<chrono::DateTime<chrono::Utc>> = row.get("deleted_at");
     if deleted_at.is_some() {
         return Err(Error::Deleted(id));
+    }
+    let current_version = u64_from_i64(row.get("version"))?;
+    if let Some(base_version) = base_version {
+        if base_version > current_version {
+            return Err(Error::BaseAhead { current_version });
+        }
+        if base_version < current_version {
+            let history = changes_since(tx, id, base_version).await?;
+            return Err(Error::Conflict {
+                current_version,
+                conflicts: crate::conflict::all_conflicts(&history),
+            });
+        }
     }
     let version_row = tx
         .query_one(
@@ -783,6 +949,321 @@ fn row_error(object: &Object, error: &Error) -> BulkRowError {
         object_id: object.id,
         key,
         message: error.to_string(),
+    }
+}
+
+async fn load_parts_for_update(
+    tx: &Transaction<'_>,
+    form: crate::split::StorageForm,
+    defs: &CachedDefs,
+    id: ObjectId,
+    patch: &openpim_model::ValuePatch,
+) -> Result<BTreeMap<String, serde_json::Map<String, Value>>, Error> {
+    let stale = defs.split.stale_parts(form, patch);
+    let rows = match form {
+        crate::split::StorageForm::Document => {
+            tx.query(
+                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND part = ANY($2) FOR UPDATE",
+                &[&id.as_uuid(), &stale.destinations],
+            )
+            .await?
+        }
+        crate::split::StorageForm::PerLanguage => {
+            tx.query(
+                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND (
+                    part = ANY($2)
+                    OR (part = '' AND \"values\" ?| $3::text[])
+                    OR (part <> '' AND \"values\" ?| $4::text[])
+                ) FOR UPDATE",
+                &[
+                    &id.as_uuid(),
+                    &stale.destinations,
+                    &stale.localized_keys,
+                    &stale.plain_keys,
+                ],
+            )
+            .await?
+        }
+        crate::split::StorageForm::PerLanguageGroup => {
+            tx.query(
+                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND (
+                    part = ANY($2)
+                    OR (part LIKE '#%' AND split_part(part, '#', 2) = ANY($3::text[]) AND \"values\" ?| $4::text[])
+                    OR (part NOT LIKE '#%' AND split_part(part, '#', 2) = ANY($5::text[]) AND \"values\" ?| $6::text[])
+                ) FOR UPDATE",
+                &[
+                    &id.as_uuid(),
+                    &stale.destinations,
+                    &stale.localized_groups,
+                    &stale.localized_keys,
+                    &stale.plain_groups,
+                    &stale.plain_keys,
+                ],
+            )
+            .await?
+        }
+    };
+    split::documents_from_rows(rows.iter().map(|row| (row.get("part"), row.get("values"))))
+        .map_err(|message| Error::Corrupt(id, message))
+}
+
+async fn load_groups(
+    tx: &Transaction<'_>,
+) -> Result<HashMap<openpim_model::AttributeId, usize>, Error> {
+    let rows = tx
+        .query("SELECT attribute_id, part_group FROM attribute_parts", &[])
+        .await?;
+    let mut groups = HashMap::new();
+    for row in rows {
+        let group: i32 = row.get(1);
+        groups.insert(
+            openpim_model::AttributeId::from_uuid(row.get(0)),
+            usize::try_from(group).unwrap_or(0),
+        );
+    }
+    Ok(groups)
+}
+
+async fn sync_attribute_parts(
+    tx: &Transaction<'_>,
+    defs: &openpim_model::DefinitionSet,
+) -> Result<HashMap<openpim_model::AttributeId, usize>, Error> {
+    let rows = tx
+        .query("SELECT attribute_id, part_group FROM attribute_parts", &[])
+        .await?;
+    let mut existing = HashMap::new();
+    for row in rows {
+        let group: i32 = row.get(1);
+        existing.insert(
+            openpim_model::AttributeId::from_uuid(row.get(0)),
+            usize::try_from(group).unwrap_or(0),
+        );
+    }
+    let assigned = split::SplitContext::assign_groups(defs, &existing);
+    for attribute in &defs.attributes {
+        let Some(group) = assigned.get(&attribute.id).copied() else {
+            continue;
+        };
+        let stored = i32::try_from(group)
+            .map_err(|_| Error::Data(format!("part group {group} does not fit in integer")))?;
+        tx.execute(
+            "INSERT INTO attribute_parts (attribute_id, part_group) VALUES ($1, $2) ON CONFLICT (attribute_id) DO NOTHING",
+            &[&attribute.id.as_uuid(), &stored],
+        )
+        .await?;
+    }
+    Ok(assigned)
+}
+
+pub(crate) async fn backfill_attribute_parts(
+    client: &mut tokio_postgres::Client,
+) -> Result<(), Error> {
+    let row = client
+        .query_one(
+            "SELECT
+                EXISTS (SELECT 1 FROM attribute_parts) AS has_parts,
+                (SELECT definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1) AS definitions",
+            &[],
+        )
+        .await?;
+    if row.get::<_, bool>("has_parts") {
+        return Ok(());
+    }
+    let Some(document) = row.get::<_, Option<Value>>("definitions") else {
+        return Ok(());
+    };
+    let set: openpim_model::DefinitionSet =
+        serde_json::from_value(document).map_err(|error| Error::Definitions(error.to_string()))?;
+    let groups = split::SplitContext::sorted_groups(&set);
+    for (id, group) in groups {
+        let stored = i32::try_from(group)
+            .map_err(|_| Error::Data(format!("part group {group} does not fit in integer")))?;
+        client
+            .execute(
+                "INSERT INTO attribute_parts (attribute_id, part_group) VALUES ($1, $2) ON CONFLICT (attribute_id) DO NOTHING",
+                &[&id.as_uuid(), &stored],
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+async fn apply_groups(
+    tx: &Transaction<'_>,
+    id: ObjectId,
+    patch: &openpim_model::ObjectPatch,
+) -> Result<Map<String, Value>, Error> {
+    if patch.groups.is_empty() {
+        return Ok(Map::new());
+    }
+    let rows = tx
+        .query(
+            "SELECT structure_id, group_id FROM object_structures WHERE object_id = $1 FOR UPDATE",
+            &[&id.as_uuid()],
+        )
+        .await?;
+    let mut current = HashMap::new();
+    for row in &rows {
+        current.insert(
+            openpim_model::StructureId::from_uuid(row.get("structure_id")),
+            openpim_model::GroupId::from_uuid(row.get("group_id")),
+        );
+    }
+    let mut diff = Map::new();
+    for (structure, group) in &patch.groups {
+        let before = current.get(structure).copied();
+        match group {
+            Some(group) => {
+                tx.execute(
+                    "INSERT INTO object_structures (object_id, structure_id, group_id) VALUES ($1, $2, $3)
+                     ON CONFLICT (object_id, structure_id) DO UPDATE SET group_id = EXCLUDED.group_id",
+                    &[&id.as_uuid(), &structure.as_uuid(), &group.as_uuid()],
+                )
+                .await?;
+            }
+            None => {
+                tx.execute(
+                    "DELETE FROM object_structures WHERE object_id = $1 AND structure_id = $2",
+                    &[&id.as_uuid(), &structure.as_uuid()],
+                )
+                .await?;
+            }
+        }
+        let mut entry = Map::new();
+        if let Some(before) = before {
+            entry.insert(
+                "before".to_owned(),
+                Value::String(before.as_uuid().to_string()),
+            );
+        }
+        entry.insert(
+            "after".to_owned(),
+            match group {
+                Some(group) => Value::String(group.as_uuid().to_string()),
+                None => Value::Null,
+            },
+        );
+        diff.insert(structure.as_uuid().to_string(), Value::Object(entry));
+    }
+    Ok(diff)
+}
+
+fn new_key(
+    id: ObjectId,
+    patch: &openpim_model::ObjectPatch,
+    attribute: openpim_model::AttributeId,
+) -> Result<String, Error> {
+    match patch.values.attributes.get(&attribute) {
+        Some(openpim_model::AttributePatch::Replace { value }) => value
+            .as_str()
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned)
+            .ok_or(Error::BadKey(id)),
+        _ => Err(Error::BadKey(id)),
+    }
+}
+
+async fn changes_since(
+    tx: &Transaction<'_>,
+    id: ObjectId,
+    base_version: u64,
+) -> Result<Vec<crate::conflict::ChangeView>, Error> {
+    let rows = tx
+        .query(
+            "SELECT version, actor, on_behalf_of, diff FROM changes WHERE object_id = $1 AND version > $2 ORDER BY version",
+            &[&id.as_uuid(), &as_i64(base_version)?],
+        )
+        .await?;
+    let mut history = Vec::new();
+    for row in rows {
+        let Some(diff) = row.get::<_, Option<Value>>("diff") else {
+            continue;
+        };
+        let version: i64 = row.get("version");
+        history.push(crate::conflict::ChangeView {
+            version: u64_from_i64(version)?,
+            actor: PrincipalId::from_uuid(row.get("actor")),
+            on_behalf_of: row
+                .get::<_, Option<Uuid>>("on_behalf_of")
+                .map(PrincipalId::from_uuid),
+            diff,
+        });
+    }
+    Ok(history)
+}
+
+fn definition_diff(before: Option<&DefinitionSet>, after: &DefinitionSet) -> Value {
+    let empty = DefinitionSet {
+        model_revision: 0,
+        languages: Vec::new(),
+        unit_families: Vec::new(),
+        attributes: Vec::new(),
+        types: Vec::new(),
+        structures: Vec::new(),
+    };
+    let before = before.unwrap_or(&empty);
+    let mut entities = Vec::new();
+    diff_entities(
+        &mut entities,
+        "attribute",
+        &before.attributes,
+        &after.attributes,
+        |item| item.id.as_uuid(),
+    );
+    diff_entities(&mut entities, "type", &before.types, &after.types, |item| {
+        item.id.as_uuid()
+    });
+    diff_entities(
+        &mut entities,
+        "structure",
+        &before.structures,
+        &after.structures,
+        |item| item.id.as_uuid(),
+    );
+    diff_entities(
+        &mut entities,
+        "unit_family",
+        &before.unit_families,
+        &after.unit_families,
+        |item| item.id.as_uuid(),
+    );
+    if before.languages != after.languages {
+        entities.push(serde_json::json!({
+            "kind": "languages",
+            "op": "update",
+        }));
+    }
+    serde_json::json!({ "entities": entities })
+}
+
+fn diff_entities<T: PartialEq>(
+    entities: &mut Vec<Value>,
+    kind: &str,
+    before: &[T],
+    after: &[T],
+    id_of: impl Fn(&T) -> Uuid,
+) {
+    let before_ids: HashMap<Uuid, &T> = before.iter().map(|item| (id_of(item), item)).collect();
+    let after_ids: HashMap<Uuid, &T> = after.iter().map(|item| (id_of(item), item)).collect();
+    let mut ids: Vec<Uuid> = before_ids
+        .keys()
+        .copied()
+        .chain(after_ids.keys().copied())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    for id in ids {
+        let op = match (before_ids.get(&id), after_ids.get(&id)) {
+            (None, Some(_)) => "create",
+            (Some(_), None) => "delete",
+            (Some(left), Some(right)) if *left != *right => "update",
+            _ => continue,
+        };
+        entities.push(serde_json::json!({
+            "kind": kind,
+            "id": id.to_string(),
+            "op": op,
+        }));
     }
 }
 

@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use openpim_model::{Object, ObjectType, TypeId, Uuid, apply_value_patch};
+use openpim_model::{
+    Attribute, AttributeId, AttributeKind, AttributePatch, IndexFlags, Object, ObjectType, TypeId,
+    Uuid, ValuePatch, apply_value_patch,
+};
 use openpim_rules::CompiledModel;
 use openpim_store::testing::TestDb;
 use openpim_store::{Actor, BatchKind, ObjectOp, PrincipalKind};
@@ -133,7 +136,13 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
     assert!(error.to_string().contains("duplicate key"), "{error}");
 
     db.store()
-        .write_batch(&who, vec![ObjectOp::Delete { id: first.id }])
+        .write_batch(
+            &who,
+            vec![ObjectOp::Delete {
+                id: first.id,
+                base_version: None,
+            }],
+        )
         .await
         .unwrap();
     let reused = Object {
@@ -179,7 +188,12 @@ async fn language_diff_records_only_the_changed_language() {
             &who,
             vec![ObjectOp::Update {
                 id: object.id,
-                set: edit.patch.clone(),
+                patch: openpim_model::ObjectPatch {
+                    values: edit.patch.clone(),
+                    groups: BTreeMap::new(),
+                },
+                base_version: 1,
+                read_version: 1,
             }],
         )
         .await
@@ -272,7 +286,13 @@ async fn soft_delete_keeps_values_and_writes_a_change() {
         .unwrap();
     let receipt = db
         .store()
-        .write_batch(&who, vec![ObjectOp::Delete { id: object.id }])
+        .write_batch(
+            &who,
+            vec![ObjectOp::Delete {
+                id: object.id,
+                base_version: None,
+            }],
+        )
         .await
         .unwrap();
     assert_eq!(receipt.versions[0].1, 2);
@@ -297,8 +317,464 @@ async fn soft_delete_keeps_values_and_writes_a_change() {
     assert!(delete.diff.is_none());
     let missing = db
         .store()
-        .write_batch(&who, vec![ObjectOp::Delete { id: object.id }])
+        .write_batch(
+            &who,
+            vec![ObjectOp::Delete {
+                id: object.id,
+                base_version: None,
+            }],
+        )
         .await
         .unwrap_err();
     assert!(missing.to_string().contains("deleted"), "{missing}");
+}
+
+#[tokio::test]
+async fn adding_attributes_does_not_move_existing_values() {
+    let (db, mut defs, who) = setup(Tier::Light, 13).await;
+    let object = objects(&defs, Tier::Light, 13, 1).pop().unwrap();
+    let sku = defs.types[0].key_attribute;
+    db.store()
+        .write_batch(&who, vec![ObjectOp::Create(object.clone())])
+        .await
+        .unwrap();
+    let before = db.store().stored_parts(object.id).await.unwrap();
+    let original_parts = parts_containing(&before, sku);
+    assert_eq!(original_parts.len(), 1);
+
+    for index in 0..150 {
+        defs.attributes.push(Attribute {
+            id: AttributeId::from_uuid(Uuid::from_u128(50_000 + index)),
+            key: format!("0{index:04}"),
+            labels: BTreeMap::new(),
+            language_dependent: false,
+            multiple: false,
+            kind: AttributeKind::Text { max_length: None },
+            index: IndexFlags::default(),
+        });
+    }
+    defs.model_revision += 1;
+    db.store().put_definitions(&who, &defs).await.unwrap();
+
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: openpim_model::ObjectPatch {
+                    values: ValuePatch {
+                        attributes: BTreeMap::from([(
+                            sku,
+                            AttributePatch::Replace {
+                                value: serde_json::json!("SKU-STABLE"),
+                            },
+                        )]),
+                    },
+                    groups: BTreeMap::new(),
+                },
+                base_version: 1,
+                read_version: 1,
+            }],
+        )
+        .await
+        .unwrap();
+
+    let after = db.store().stored_parts(object.id).await.unwrap();
+    assert_eq!(parts_containing(&after, sku), original_parts);
+    let stored = db.store().get_object(object.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.object.values.get(&sku),
+        Some(&serde_json::json!("SKU-STABLE"))
+    );
+}
+
+#[tokio::test]
+async fn edits_merge_per_attribute_language_and_structure() {
+    let (db, defs, who) = setup(Tier::Light, 17).await;
+    let object = objects(&defs, Tier::Light, 17, 1).pop().unwrap();
+    db.store()
+        .write_batch(&who, vec![ObjectOp::Create(object.clone())])
+        .await
+        .unwrap();
+    let edit = edits(&defs, Tier::Light, 17, EditKind::OneLanguage, 0..1)
+        .next()
+        .unwrap();
+    let (attribute, first_language) = match edit.patch.attributes.iter().next().unwrap() {
+        (id, openpim_model::AttributePatch::Languages { values }) => {
+            (*id, values.keys().next().unwrap().clone())
+        }
+        other => panic!("expected a language patch, got {other:?}"),
+    };
+    let other_language = defs
+        .languages
+        .iter()
+        .find(|language| *language != &first_language)
+        .unwrap()
+        .clone();
+
+    db.store()
+        .write_batch(
+            &who,
+            vec![value_update(object.id, edit.patch.clone(), 1, 1)],
+        )
+        .await
+        .unwrap();
+    let merged = db
+        .store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                object.id,
+                one_language(attribute, &other_language, serde_json::json!("other")),
+                1,
+                2,
+            )],
+        )
+        .await
+        .unwrap();
+    assert_eq!(merged.versions[0].1, 3);
+
+    let conflict = db
+        .store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                object.id,
+                one_language(attribute, &first_language, serde_json::json!("clash")),
+                1,
+                3,
+            )],
+        )
+        .await
+        .unwrap_err();
+    match conflict {
+        openpim_store::Error::Conflict {
+            current_version,
+            conflicts,
+        } => {
+            assert_eq!(current_version, 3);
+            assert!(
+                conflicts.iter().any(|conflict| {
+                    conflict.attribute == Some(attribute)
+                        && conflict.language.as_ref() == Some(&first_language)
+                }),
+                "{conflicts:?}"
+            );
+        }
+        other => panic!("expected a conflict, got {other}"),
+    }
+
+    let plain = defs
+        .attributes
+        .iter()
+        .find(|attribute| {
+            !attribute.language_dependent && attribute.id != defs.types[0].key_attribute
+        })
+        .unwrap();
+    db.store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                object.id,
+                ValuePatch {
+                    attributes: BTreeMap::from([(
+                        plain.id,
+                        AttributePatch::Replace {
+                            value: serde_json::json!("plain"),
+                        },
+                    )]),
+                },
+                1,
+                3,
+            )],
+        )
+        .await
+        .unwrap();
+    let again = db
+        .store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                object.id,
+                ValuePatch {
+                    attributes: BTreeMap::from([(
+                        plain.id,
+                        AttributePatch::Replace {
+                            value: serde_json::json!("plain-2"),
+                        },
+                    )]),
+                },
+                1,
+                4,
+            )],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(again, openpim_store::Error::Conflict { .. }),
+        "{again}"
+    );
+
+    let catalog = defs.structures[0].id;
+    let root = defs.structures[0].groups[0].id;
+    let channel = defs.structures[1].id;
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: openpim_model::ObjectPatch {
+                    values: ValuePatch::default(),
+                    groups: BTreeMap::from([(catalog, Some(root))]),
+                },
+                base_version: 4,
+                read_version: 4,
+            }],
+        )
+        .await
+        .unwrap();
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: openpim_model::ObjectPatch {
+                    values: ValuePatch::default(),
+                    groups: BTreeMap::from([(channel, None)]),
+                },
+                base_version: 4,
+                read_version: 5,
+            }],
+        )
+        .await
+        .unwrap();
+    let stored = db.store().get_object(object.id).await.unwrap().unwrap();
+    assert_eq!(stored.object.groups.get(&catalog), Some(&root));
+    assert!(!stored.object.groups.contains_key(&channel));
+    assert_eq!(stored.object.model_revision, defs.model_revision);
+
+    let placement_conflict = db
+        .store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: openpim_model::ObjectPatch {
+                    values: ValuePatch::default(),
+                    groups: BTreeMap::from([(catalog, Some(defs.structures[0].groups[1].id))]),
+                },
+                base_version: 4,
+                read_version: 6,
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(placement_conflict, openpim_store::Error::Conflict { .. }),
+        "{placement_conflict}"
+    );
+
+    let delete_conflict = db
+        .store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Delete {
+                id: object.id,
+                base_version: Some(1),
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(delete_conflict, openpim_store::Error::Conflict { .. }),
+        "{delete_conflict}"
+    );
+}
+
+#[tokio::test]
+async fn stale_read_base_ahead_key_change_and_language_removal() {
+    let (db, defs, who) = setup(Tier::Light, 19).await;
+    let mut sample = objects(&defs, Tier::Light, 19, 2);
+    let object = sample.remove(0);
+    let other = sample.remove(0);
+    db.store()
+        .write_batch(
+            &who,
+            vec![
+                ObjectOp::Create(object.clone()),
+                ObjectOp::Create(other.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let original_key = object
+        .values
+        .get(&defs.types[0].key_attribute)
+        .and_then(|value| value.as_str())
+        .unwrap()
+        .to_owned();
+    db.store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                object.id,
+                ValuePatch {
+                    attributes: BTreeMap::from([(
+                        defs.types[0].key_attribute,
+                        AttributePatch::Replace {
+                            value: serde_json::json!("SKU-NEXT"),
+                        },
+                    )]),
+                },
+                1,
+                1,
+            )],
+        )
+        .await
+        .unwrap();
+    let stale = db
+        .store()
+        .write_batch(
+            &who,
+            vec![value_update(object.id, ValuePatch::default(), 1, 1)],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            stale,
+            openpim_store::Error::StaleRead { current_version: 2 }
+        ),
+        "{stale}"
+    );
+    let ahead = db
+        .store()
+        .write_batch(
+            &who,
+            vec![value_update(object.id, ValuePatch::default(), 9, 2)],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            ahead,
+            openpim_store::Error::BaseAhead { current_version: 2 }
+        ),
+        "{ahead}"
+    );
+
+    let found = db
+        .store()
+        .get_by_key(object.type_id, "SKU-NEXT")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.object.id, object.id);
+    assert!(
+        db.store()
+            .get_by_key(object.type_id, &original_key)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let collision = db
+        .store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                other.id,
+                ValuePatch {
+                    attributes: BTreeMap::from([(
+                        defs.types[0].key_attribute,
+                        AttributePatch::Replace {
+                            value: serde_json::json!("SKU-NEXT"),
+                        },
+                    )]),
+                },
+                1,
+                1,
+            )],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(collision, openpim_store::Error::DuplicateKey { .. }),
+        "{collision}"
+    );
+
+    let edit = edits(&defs, Tier::Light, 19, EditKind::OneLanguage, 0..1)
+        .next()
+        .unwrap();
+    let (attribute, language) = match edit.patch.attributes.iter().next().unwrap() {
+        (id, openpim_model::AttributePatch::Languages { values }) => {
+            (*id, values.keys().next().unwrap().clone())
+        }
+        other => panic!("expected a language patch, got {other:?}"),
+    };
+    // The object is still at version 2. Removal uses that version as both base and read.
+    db.store()
+        .write_batch(
+            &who,
+            vec![value_update(
+                object.id,
+                clear_language(attribute, &language),
+                2,
+                2,
+            )],
+        )
+        .await
+        .unwrap();
+    let stored = db.store().get_object(object.id).await.unwrap().unwrap();
+    let value = stored
+        .object
+        .values
+        .get(&attribute)
+        .and_then(|value| value.get(language.as_str()));
+    assert_eq!(value, None);
+}
+
+fn value_update(id: openpim_model::ObjectId, values: ValuePatch, base: u64, read: u64) -> ObjectOp {
+    ObjectOp::Update {
+        id,
+        patch: openpim_model::ObjectPatch {
+            values,
+            groups: BTreeMap::new(),
+        },
+        base_version: base,
+        read_version: read,
+    }
+}
+
+fn one_language(
+    id: AttributeId,
+    language: &openpim_model::LanguageTag,
+    value: serde_json::Value,
+) -> ValuePatch {
+    let mut values = BTreeMap::new();
+    values.insert(language.clone(), Some(value));
+    ValuePatch {
+        attributes: BTreeMap::from([(id, AttributePatch::Languages { values })]),
+    }
+}
+
+fn clear_language(id: AttributeId, language: &openpim_model::LanguageTag) -> ValuePatch {
+    let mut values = BTreeMap::new();
+    values.insert(language.clone(), None);
+    ValuePatch {
+        attributes: BTreeMap::from([(id, AttributePatch::Languages { values })]),
+    }
+}
+
+fn parts_containing(parts: &BTreeMap<String, serde_json::Value>, id: AttributeId) -> Vec<String> {
+    let key = id.as_uuid().to_string();
+    parts
+        .iter()
+        .filter(|(_, document)| {
+            document
+                .as_object()
+                .is_some_and(|document| document.contains_key(&key))
+        })
+        .map(|(part, _)| part.clone())
+        .collect()
 }

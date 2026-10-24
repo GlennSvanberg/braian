@@ -95,7 +95,7 @@ fn edit_at(defs: &DefinitionSet, prepared: &Prepared, kind: EditKind, index: usi
         }
         let patch = match language {
             Some(language) => AttributePatch::Languages {
-                values: BTreeMap::from([(language.clone(), value)]),
+                values: BTreeMap::from([(language.clone(), Some(value))]),
             },
             None => AttributePatch::Replace { value },
         };

@@ -71,7 +71,12 @@ pub async fn run(database_url: &str, tier: Tier, count: usize, seed: u64) -> any
             &interactive,
             vec![ObjectOp::Update {
                 id: loaded.object.id,
-                set: edit.patch,
+                patch: openpim_model::ObjectPatch {
+                    values: edit.patch,
+                    groups: Default::default(),
+                },
+                base_version: loaded.version,
+                read_version: loaded.version,
             }],
         )
         .await?;
@@ -84,7 +89,13 @@ pub async fn run(database_url: &str, tier: Tier, count: usize, seed: u64) -> any
         .next()
         .expect("second object");
     store
-        .write_batch(&interactive, vec![ObjectOp::Delete { id: other.id }])
+        .write_batch(
+            &interactive,
+            vec![ObjectOp::Delete {
+                id: other.id,
+                base_version: None,
+            }],
+        )
         .await?;
     println!("deleted {}", other.id);
 
