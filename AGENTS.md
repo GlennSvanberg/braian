@@ -39,6 +39,7 @@ Agent, UI, realtid och webhooks kommer sedan som konsumenter av samma lager.
 - `model` och `rules` får inte bero på I/O; `rules` måste kompilera till `wasm32-unknown-unknown`.
 - En binär `openpim` med roller (`api`, `relay`, `indexer`, `all`) i `crates/server`.
 - Kommandon via `just` (se `docs/dev.md`). Mätresultat i `docs/measurements/`.
+- Fasplan för kärnan i `docs/plan.md`: varje fas har `just demo-N` och ett end-to-end-test i CI.
 - Designkällan är Notion-sidan; repot dokumenterar bara det som hör ihop med koden.
 
 ## Teknikval (2026-10-24)
