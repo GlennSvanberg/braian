@@ -8,3 +8,19 @@ publish.workspace = true
 
 [dependencies]
 openpim-model.workspace = true
+
+chrono.workspace = true
+deadpool-postgres.workspace = true
+futures.workspace = true
+refinery.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+uuid = { workspace = true, features = ["v7", "serde"] }
+
+[dev-dependencies]
+openpim-rules = { path = "../rules" }
+openpim-synth = { path = "../synth" }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
