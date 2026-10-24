@@ -7,6 +7,7 @@
 
 mod definitions;
 mod demo;
+mod edits;
 mod generate;
 mod ids;
 mod measure;
@@ -14,7 +15,8 @@ mod mutate;
 
 pub use definitions::{ExportFormat, definitions, export};
 pub use demo::{DemoSummary, write_demo};
-pub use generate::objects;
+pub use edits::{Edit, EditKind, edits};
+pub use generate::{objects, objects_iter};
 pub use measure::{SampleStats, TierMeasurement, measure};
 pub use mutate::{ExpectedError, Mutation, all_mutations, apply_mutation, mutate};
 

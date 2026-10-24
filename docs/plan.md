@@ -79,6 +79,11 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
     Each measurement file records the hardware.
   - Deletes are in scope: a soft delete recorded as a change row, so the indexer can
     remove the object later.
+  - Spike 1 (2026-10-24) stores values as one part per language and attribute group.
+    Edits write about 11–32 KB of WAL instead of about 140 KB, and they were the
+    fastest of the three forms. Import was fastest too. The cost is more WAL and
+    more disk on a full import, because the parts stay in the heap. Numbers are in
+    `docs/measurements/2026-10-24-spike-1-storage.md`.
 - **Defaults (change if they turn out wrong):**
   - Definitions are stored in Postgres as versioned rows with the global model revision.
   - The key attribute is copied to a column on `objects` with a unique constraint per type.
@@ -87,11 +92,9 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
   - The spike runs with `synchronous_commit=on`, `wal_compression=lz4` and lz4 TOAST
     compression, the same for every form.
   - `synth` also generates edit streams (one attribute, a few attributes, one language).
-- **Spike 1, first:** compare the three storage forms. Measure WAL bytes per change and
-  sustained write rate for both workloads at 5,000 heavy objects per second. The result
-  picks the storage form.
+- **Spike 1:** measured. The store uses parts per language and attribute group.
 - **Build:**
-  - `store`: migrations for `objects`, the value storage chosen by spike 1,
+  - `store`: migrations for `objects`, `object_values` (one JSONB document per part),
     `object_structures` and `changes`. `changes` is both audit trail and outbox,
     partitioned by month.
   - Every write is a batch. Every change row records `actor` and `on_behalf_of`.

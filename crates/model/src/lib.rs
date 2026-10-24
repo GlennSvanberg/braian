@@ -9,6 +9,7 @@ mod error;
 mod id;
 mod language;
 mod object;
+mod patch;
 
 pub use definition::{
     Attribute, AttributeKind, Class, DefinitionSet, Group, IndexFlags, NumberValue, ObjectType,
@@ -18,4 +19,5 @@ pub use error::{ErrorCode, ValidationError};
 pub use id::{AttributeId, ClassId, GroupId, ObjectId, StructureId, TypeId, UnitFamilyId};
 pub use language::{LanguageTag, LanguageTagError};
 pub use object::Object;
+pub use patch::{AttributePatch, ValuePatch, apply_value_patch};
 pub use uuid::Uuid;

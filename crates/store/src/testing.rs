@@ -1,0 +1,155 @@
+use std::time::Duration;
+
+use tokio::sync::OnceCell;
+use uuid::Uuid;
+
+use crate::error::Error;
+use crate::ids::plain_name;
+use crate::session::{self, PgConn, Store};
+use crate::split::StorageForm;
+
+/// One migrated database per test, cloned from a template built once per process.
+pub struct TestDb {
+    store: Option<Store>,
+    name: String,
+    admin_url: String,
+}
+
+impl TestDb {
+    /// Panics with a setup message when `OPENPIM_TEST_DATABASE_URL` is missing.
+    ///
+    /// The URL has to reach the maintenance database (`postgres`), because the
+    /// test creates and drops its own database.
+    pub async fn create() -> Self {
+        let admin_url = std::env::var("OPENPIM_TEST_DATABASE_URL").unwrap_or_else(|_| {
+            panic!(
+                "OPENPIM_TEST_DATABASE_URL is not set. Point it at the maintenance database, for example postgres://openpim:secret@localhost:5433/postgres"
+            )
+        });
+        Self::try_create(&admin_url)
+            .await
+            .unwrap_or_else(|error| panic!("could not create the test database: {error}"))
+    }
+
+    pub fn store(&self) -> &Store {
+        self.store.as_ref().expect("test database is open")
+    }
+
+    async fn try_create(admin_url: &str) -> Result<Self, Error> {
+        let template = template_database(admin_url).await?;
+        let name = format!("t{:032x}", Uuid::now_v7().as_u128());
+        plain_name(&name)?;
+        let admin = admin_conn(admin_url).await?;
+        let mut created = false;
+        let mut last_error = None;
+        for _ in 0..10 {
+            match admin
+                .client
+                .batch_execute(&format!("CREATE DATABASE {name} TEMPLATE {template}"))
+                .await
+            {
+                Ok(()) => {
+                    created = true;
+                    break;
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+        drop(admin);
+        if !created {
+            return Err(Error::Db(last_error.expect("create database error")));
+        }
+        let mut config = session::parse_config(admin_url)?;
+        config.dbname(&name);
+        let store = Store::connect_config(config, crate::STORAGE_FORM).await?;
+        Ok(Self {
+            store: Some(store),
+            name,
+            admin_url: admin_url.to_owned(),
+        })
+    }
+}
+
+impl Drop for TestDb {
+    fn drop(&mut self) {
+        self.store.take();
+        let url = self.admin_url.clone();
+        let name = self.name.clone();
+        let _ = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test cleanup runtime");
+            runtime.block_on(async {
+                for _ in 0..20 {
+                    let Ok(admin) = admin_conn(&url).await else {
+                        return;
+                    };
+                    if session::drop_database(&admin.client, &name).await.is_ok() {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            });
+        })
+        .join();
+    }
+}
+
+async fn template_database(admin_url: &str) -> Result<&'static str, Error> {
+    static TEMPLATE: OnceCell<String> = OnceCell::const_new();
+    let name = TEMPLATE
+        .get_or_try_init(|| create_template(admin_url.to_owned()))
+        .await?;
+    Ok(name.as_str())
+}
+
+async fn create_template(admin_url: String) -> Result<String, Error> {
+    let name = template_name();
+    let admin = admin_conn(&admin_url).await?;
+    admin
+        .client
+        .batch_execute("SELECT pg_advisory_lock(84210424)")
+        .await?;
+    let exists = admin
+        .client
+        .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&name])
+        .await?;
+    if exists.is_none() {
+        session::create_database(&admin.client, &name).await?;
+        let mut config = session::parse_config(&admin_url)?;
+        config.dbname(&name);
+        let store = Store::connect_config(config, StorageForm::Document).await?;
+        drop(store);
+        admin
+            .client
+            .batch_execute(&format!(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}' AND pid <> pg_backend_pid()"
+            ))
+            .await?;
+    }
+    admin
+        .client
+        .batch_execute("SELECT pg_advisory_unlock(84210424)")
+        .await?;
+    Ok(name)
+}
+
+fn template_name() -> String {
+    let sql = include_str!("../migrations/V1__storage.sql");
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in sql.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("tpl_{hash:016x}")
+}
+
+async fn admin_conn(admin_url: &str) -> Result<PgConn, Error> {
+    let mut config = session::parse_config(admin_url)?;
+    config.dbname("postgres");
+    PgConn::connect(config).await
+}

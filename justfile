@@ -52,3 +52,11 @@ test-wasm: wasm
 # Objektstorlek per nivå (lätt, medel, tung)
 measure-sizes:
     cargo run -p openpim-synth --release -- sizes --count 100
+
+# Fas 2: jämför lagringsformer. Argument skickas vidare, till exempel `--objects 300`.
+spike-1 *args:
+    cargo run -p openpim-bench --release -- spike-storage {{args}}
+
+# Fas 2: ladda syntetiska objekt och visa ändringsloggen. Nivå och antal går att byta.
+demo-2 tier="light" count="100000":
+    cargo run -p openpim-bench --release -- demo-2 --tier {{tier}} --count {{count}}
