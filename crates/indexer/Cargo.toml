@@ -1,0 +1,12 @@
+[package]
+name = "openpim-indexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+openpim-events.workspace = true
+openpim-search.workspace = true
+openpim-store.workspace = true

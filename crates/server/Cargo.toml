@@ -1,0 +1,22 @@
+[package]
+name = "openpim-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "openpim"
+path = "src/main.rs"
+
+[dependencies]
+openpim-api.workspace = true
+openpim-relay.workspace = true
+openpim-indexer.workspace = true
+
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
