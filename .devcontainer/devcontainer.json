@@ -1,0 +1,22 @@
+{
+  "name": "OpenPIM",
+  "dockerComposeFile": ["../compose.yaml", "compose.yaml"],
+  "service": "dev",
+  "workspaceFolder": "/workspaces/OpenPIM",
+  "shutdownAction": "stopCompose",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "postCreateCommand": "sudo chown -R vscode:vscode target /usr/local/cargo/registry && sudo corepack enable && cargo fetch",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "nefrob.vscode-just-syntax"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}

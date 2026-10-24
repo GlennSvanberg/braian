@@ -1,0 +1,14 @@
+/target/
+.env
+.env.*
+!.env.example
+
+node_modules/
+.pnpm-store/
+dist/
+.output/
+.vinxi/
+
+*.log
+.DS_Store
+Thumbs.db

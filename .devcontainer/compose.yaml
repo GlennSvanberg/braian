@@ -1,0 +1,25 @@
+services:
+  dev:
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
+    command: sleep infinity
+    working_dir: /workspaces/OpenPIM
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      KAFKA_BROKERS: redpanda:9092
+      TYPESENSE_URL: http://typesense:8108
+    volumes:
+      - .:/workspaces/OpenPIM:cached
+      - cargo-target:/workspaces/OpenPIM/target
+      - cargo-registry:/usr/local/cargo/registry
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+
+volumes:
+  cargo-target:
+  cargo-registry:
