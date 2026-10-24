@@ -25,7 +25,7 @@ devcontainer, CI and a read-only Postgres MCP.
 - **Demo:** `just up` brings all services up healthy.
 - **Test:** CI runs format, clippy, tests and the `wasm32-unknown-unknown` build of `rules`.
 
-## Phase 1 – Definitions, rules and synthetic data
+## Phase 1 – Definitions, rules and synthetic data (done)
 
 No I/O. This phase fixes the vocabulary the rest of the system uses.
 
@@ -70,16 +70,33 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
 
 ## Phase 2 – Storage in Postgres
 
-- **Spike 1, first:** one JSONB document per object versus values split into parts (one
-  language-independent part plus one per language). Measure WAL bytes per single-attribute
-  change and sustained write rate at 5,000 heavy objects per second. The result picks the
-  storage form.
+- **Decisions (Glenn 2026-10-24):**
+  - The 5,000 heavy objects per second target is measured as two workloads: full objects
+    inserted (import) and edits of a few attributes on existing objects (enrichment).
+  - Spike 1 compares three forms: one JSONB document per object, parts per language, and
+    parts per language and attribute group.
+  - Measurements run on the local Windows machine with Docker and count as indicative.
+    Each measurement file records the hardware.
+  - Deletes are in scope: a soft delete recorded as a change row, so the indexer can
+    remove the object later.
+- **Defaults (change if they turn out wrong):**
+  - Definitions are stored in Postgres as versioned rows with the global model revision.
+  - The key attribute is copied to a column on `objects` with a unique constraint per type.
+  - `actor` and `on_behalf_of` reference a table of people, agents and integrations. An
+    agent always has `on_behalf_of`.
+  - The spike runs with `synchronous_commit=on`, `wal_compression=lz4` and lz4 TOAST
+    compression, the same for every form.
+  - `synth` also generates edit streams (one attribute, a few attributes, one language).
+- **Spike 1, first:** compare the three storage forms. Measure WAL bytes per change and
+  sustained write rate for both workloads at 5,000 heavy objects per second. The result
+  picks the storage form.
 - **Build:**
   - `store`: migrations for `objects`, the value storage chosen by spike 1,
     `object_structures` and `changes`. `changes` is both audit trail and outbox,
     partitioned by month.
   - Every write is a batch. Every change row records `actor` and `on_behalf_of`.
   - Read a single object with its current values.
+  - Soft delete of an object as a change.
 - **Demo:** `just demo-2` loads 100,000 synthetic objects, fetches one, and shows its rows in
   `changes`.
 - **Test:** integration tests against a real Postgres, with a fresh database per test.

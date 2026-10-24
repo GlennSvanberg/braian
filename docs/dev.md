@@ -29,6 +29,9 @@ eller använd "Clone Repository in Container Volume". `target/` ligger alltid i 
 | `just dev` | Kör `openpim all` (alla roller i en process) |
 | `just check` | Format, clippy, och att `rules` kompilerar till WebAssembly |
 | `just test` | Alla tester |
+| `just demo-1` | Fas 1: generera tunga objekt och validera dem i Rust och WebAssembly |
+| `just test-wasm` | Kör `testdata/rules/` i Node genom WebAssembly-bygget |
+| `just measure-sizes` | Mät objektstorlek per nivå |
 | `just psql` | psql mot utvecklingsdatabasen |
 | `just rpk topic list` | rpk mot Redpanda |
 
@@ -36,6 +39,9 @@ eller använd "Clone Repository in Container Volume". `target/` ligger alltid i 
 
 `openpim api`, `openpim relay`, `openpim indexer` och `openpim all`.
 I utveckling kör man `all`. I drift kör man varje roll som egen process och skalar dem var för sig.
+
+`just demo-1` behöver `wasm-bindgen` 0.2.129 på `PATH` (`cargo install wasm-bindgen-cli --version 0.2.129`).
+Devcontainern installerar samma version. wasm-bindgen's Node-mål är CommonJS, så `packages/rules-wasm` har ingen `"type": "module"`; skripten är `.mjs`.
 
 ## Postgres-MCP
 
