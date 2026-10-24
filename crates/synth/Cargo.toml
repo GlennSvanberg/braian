@@ -8,5 +8,17 @@ publish.workspace = true
 
 [dependencies]
 openpim-model.workspace = true
+openpim-rules.workspace = true
 
 anyhow.workspace = true
+clap.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rust_decimal = { workspace = true, features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -18,6 +18,21 @@ jobs:
       - name: rules måste kompilera till WebAssembly
         run: cargo build -p openpim-rules -p openpim-rules-wasm --target wasm32-unknown-unknown
 
+  phase-1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,wasm-bindgen-cli@0.2.129
+      - run: just demo-1
+      - run: just test-wasm
+
   licenses:
     runs-on: ubuntu-latest
     steps:

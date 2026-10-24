@@ -1,0 +1,196 @@
+{
+  "model_revision": 1,
+  "languages": ["sv", "en-GB"],
+  "unit_families": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000010",
+      "key": "mass",
+      "base_unit": "kg",
+      "units": [
+        { "code": "kg", "factor": "1" },
+        { "code": "g", "factor": "0.001" }
+      ]
+    }
+  ],
+  "attributes": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000100",
+      "key": "sku",
+      "labels": { "sv": "Artikelnummer" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 32 },
+      "index": { "searchable": true, "filterable": false, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000101",
+      "key": "name",
+      "labels": { "sv": "Namn", "en-GB": "Name" },
+      "language_dependent": true,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 10 },
+      "index": { "searchable": true, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000102",
+      "key": "weight",
+      "labels": { "sv": "Vikt" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000010",
+        "min": "0",
+        "max": "10"
+      },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000103",
+      "key": "count",
+      "labels": { "sv": "Antal" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "number", "min": "0", "max": "100" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000104",
+      "key": "color",
+      "labels": { "sv": "Färg" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "value_list",
+        "options": [
+          { "code": "red", "labels": { "sv": "Röd", "en-GB": "Red" } },
+          { "code": "blue", "labels": { "sv": "Blå", "en-GB": "Blue" } }
+        ]
+      },
+      "index": { "searchable": false, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000105",
+      "key": "active",
+      "labels": { "sv": "Aktiv" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "boolean" },
+      "index": { "searchable": false, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000106",
+      "key": "made",
+      "labels": { "sv": "Tillverkad" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "date" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000107",
+      "key": "manual",
+      "labels": { "sv": "Manual" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "file_ref" },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000108",
+      "key": "tags",
+      "labels": { "sv": "Taggar" },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": { "type": "text", "max_length": 5 },
+      "index": { "searchable": true, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000109",
+      "key": "notes",
+      "labels": { "sv": "Anteckningar" },
+      "language_dependent": true,
+      "multiple": true,
+      "kind": { "type": "text", "max_length": 8 },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010a",
+      "key": "secret",
+      "labels": { "sv": "Hemlig" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 20 },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010b",
+      "key": "finish",
+      "labels": { "sv": "Yta" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 20 },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    }
+  ],
+  "types": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000200",
+      "key": "item",
+      "labels": { "sv": "Objekt" },
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": [
+        "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000101",
+        "018f0000-0000-7000-8000-000000000102",
+        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-000000000105",
+        "018f0000-0000-7000-8000-000000000106",
+        "018f0000-0000-7000-8000-000000000107",
+        "018f0000-0000-7000-8000-000000000108",
+        "018f0000-0000-7000-8000-000000000109"
+      ]
+    }
+  ],
+  "structures": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000300",
+      "key": "catalog",
+      "groups": [
+        { "id": "018f0000-0000-7000-8000-000000000400", "key": "root" },
+        {
+          "id": "018f0000-0000-7000-8000-000000000401",
+          "key": "child",
+          "parent": "018f0000-0000-7000-8000-000000000400"
+        }
+      ],
+      "classes": [
+        {
+          "id": "018f0000-0000-7000-8000-000000000500",
+          "key": "root",
+          "group": "018f0000-0000-7000-8000-000000000400",
+          "attributes": ["018f0000-0000-7000-8000-000000000104"]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000501",
+          "key": "child",
+          "group": "018f0000-0000-7000-8000-000000000401",
+          "attributes": ["018f0000-0000-7000-8000-00000000010b"]
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000301",
+      "key": "channel",
+      "groups": [{ "id": "018f0000-0000-7000-8000-000000000402", "key": "flat" }],
+      "classes": [
+        {
+          "id": "018f0000-0000-7000-8000-000000000502",
+          "key": "flat",
+          "group": "018f0000-0000-7000-8000-000000000402",
+          "attributes": []
+        }
+      ]
+    }
+  ]
+}

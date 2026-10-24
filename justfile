@@ -34,3 +34,21 @@ psql:
 
 rpk *args:
     docker compose exec redpanda rpk {{args}}
+
+# Bygger rules till JavaScript via WebAssembly
+wasm:
+    cargo build -p openpim-rules-wasm --release --target wasm32-unknown-unknown
+    wasm-bindgen target/wasm32-unknown-unknown/release/openpim_rules_wasm.wasm --target nodejs --out-dir packages/rules-wasm/pkg
+
+# Fas 1: tunga objekt valideras likadant i Rust och WebAssembly
+demo-1: wasm
+    cargo run -p openpim-synth --release -- demo-1 --out target/demo-1
+    node packages/rules-wasm/demo-1.mjs target/demo-1
+
+# Delade regeltestfall genom WebAssembly
+test-wasm: wasm
+    node --test packages/rules-wasm/test/cases.test.mjs
+
+# Objektstorlek per nivå (lätt, medel, tung)
+measure-sizes:
+    cargo run -p openpim-synth --release -- sizes --count 100
