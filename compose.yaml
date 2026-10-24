@@ -1,4 +1,4 @@
-name: openpim
+name: braian
 
 services:
   postgres:
@@ -75,6 +75,27 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
+
+  # Samma Kafka-API som Redpanda. `docker compose --profile kafka up -d kafka`
+  # och KAFKA_BROKERS=localhost:19093 kör relay-testet mot Apache Kafka.
+  kafka:
+    profiles: ["kafka"]
+    image: apache/kafka:3.9.1
+    ports:
+      - "19093:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:19093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
 
   typesense:
     image: typesense/typesense:30.2

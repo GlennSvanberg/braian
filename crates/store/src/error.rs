@@ -1,4 +1,4 @@
-use openpim_model::{AttributeId, LanguageTag, ObjectId, StructureId, TypeId};
+use braian_model::{AttributeId, LanguageTag, ObjectId, StructureId, TypeId};
 use serde_json::Value;
 use thiserror::Error;
 

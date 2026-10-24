@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { Validator } from "./pkg/openpim_rules_wasm.js";
+import { Validator } from "./pkg/braian_rules_wasm.js";
 
 const dir = process.argv[2];
 if (!dir) {

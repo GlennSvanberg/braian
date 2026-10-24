@@ -1,0 +1,195 @@
+[
+  {
+    "id": "018f1000-0000-7000-8000-000000000001",
+    "type": "produkt",
+    "group": "friluft",
+    "values": {
+      "nummer": "PROD-TALT",
+      "namn": { "sv": "Fjäll tält", "en": "Fjäll tents", "de": "Fjäll-Zelte" },
+      "beskrivning": { "sv": "Familj för lätta tält.", "en": "A family of light tents.", "de": "Eine Familie leichter Zelte." },
+      "status": "ok",
+      "aktiv": true
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000002",
+    "type": "produkt",
+    "group": "friluft",
+    "values": {
+      "nummer": "PROD-SOV",
+      "namn": { "sv": "Natt sovsäckar", "en": "Natt sleeping bags", "de": "Natt-Schlafsäcke" },
+      "beskrivning": { "sv": "Sovsäckar för sommar och vinter.", "en": "Sleeping bags for summer and winter.", "de": "Schlafsäcke für Sommer und Winter." },
+      "status": "ok",
+      "aktiv": true
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000003",
+    "type": "produkt",
+    "group": "bygg",
+    "values": {
+      "nummer": "PROD-VIRKE",
+      "namn": { "sv": "Konstruktionsvirke", "en": "Structural timber", "de": "Konstruktionsholz" },
+      "beskrivning": { "sv": "Hyvlat virke för stomme.", "en": "Planed timber for frames.", "de": "Gehobeltes Holz für Rahmen." },
+      "status": "ok",
+      "aktiv": true
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000011",
+    "type": "artikel",
+    "group": "talt",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000001" }],
+    "values": {
+      "nummer": "ART-TALT-2",
+      "namn": { "sv": "Tält 2 personer", "en": "2-person tent", "de": "Zelt 2 Personen" },
+      "beskrivning": { "sv": "Lätt 2-lagers tält för vandring.", "en": "Light 2-layer hiking tent.", "de": "Leichtes 2-Lagen-Zelt." },
+      "status": "ok",
+      "farg": ["gron"],
+      "aktiv": true,
+      "lanserad": "2024-04-01",
+      "bild": "018f1000-0000-7000-8000-0000000000aa",
+      "vikt": { "value": "2.4", "unit": "kg" },
+      "langd": { "value": "320", "unit": "cm" },
+      "spann": { "min": "180", "max": "220", "unit": "cm" }
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000012",
+    "type": "artikel",
+    "group": "talt",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000001" }],
+    "values": {
+      "nummer": "ART-TALT-3",
+      "namn": { "sv": "Tält 3 personer", "en": "3-person tent", "de": "Zelt 3 Personen" },
+      "beskrivning": { "sv": "Tält med absid för tre personer.", "en": "Tent with a vestibule for three.", "de": "Zelt mit Apsis für drei." },
+      "status": "utkast",
+      "farg": ["gra", "gron"],
+      "aktiv": true,
+      "lanserad": "2025-05-12",
+      "ersatter": "018f1000-0000-7000-8000-000000000011",
+      "vikt": { "value": "3100", "unit": "g" },
+      "langd": { "value": "4.1", "unit": "m" },
+      "spann": { "min": "2000", "max": "2600", "unit": "mm" }
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000013",
+    "type": "artikel",
+    "group": "sovsack",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000002" }],
+    "values": {
+      "nummer": "ART-SOV-SOM",
+      "namn": { "sv": "Sommarsovsäck", "en": "Summer sleeping bag", "de": "Sommerschlafsack" },
+      "beskrivning": { "sv": "Komfort runt 8 grader.", "en": "Comfort around 8 degrees.", "de": "Komfort um 8 Grad." },
+      "status": "ok",
+      "farg": ["bla"],
+      "aktiv": true,
+      "lanserad": "2023-06-01",
+      "vikt": { "value": "0.85", "unit": "kg" }
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000014",
+    "type": "artikel",
+    "group": "sovsack",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000002" }],
+    "values": {
+      "nummer": "ART-SOV-VIN",
+      "namn": { "sv": "Vintersovsäck", "en": "Winter sleeping bag", "de": "Winterschlafsack" },
+      "beskrivning": { "sv": "För turer under nollan.", "en": "For trips below freezing.", "de": "Für Touren unter null." },
+      "status": "ok",
+      "farg": ["svart"],
+      "aktiv": true,
+      "lanserad": "2022-11-02",
+      "vikt": { "value": "1450", "unit": "g" }
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000015",
+    "type": "artikel",
+    "group": "friluft",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000001" }],
+    "values": {
+      "nummer": "ART-REGN",
+      "namn": { "sv": "Regnjacka skal", "en": "Shell jacket", "de": "Regenjacke" },
+      "beskrivning": { "sv": "3-lagers skaljacka.", "en": "3-layer shell jacket.", "de": "3-Lagen-Jacke." },
+      "status": "ok",
+      "farg": ["svart", "gra"],
+      "aktiv": true,
+      "lanserad": "2024-08-19"
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000016",
+    "type": "artikel",
+    "group": "virke",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000003" }],
+    "values": {
+      "nummer": "ART-REGEL-45",
+      "namn": { "sv": "Regel 45×95", "en": "Stud 45×95", "de": "Kantholz 45×95" },
+      "beskrivning": { "sv": "Hyvlad gran, längd 2,4 m.", "en": "Planed spruce, length 2.4 m.", "de": "Gehobelte Fichte, 2,4 m." },
+      "status": "ok",
+      "aktiv": true,
+      "lanserad": "2021-01-15",
+      "langd": { "value": "2400", "unit": "mm" },
+      "vikt": { "value": "4.8", "unit": "kg" }
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000017",
+    "type": "artikel",
+    "group": "virke",
+    "links": [{ "kind": "article_of", "to": "018f1000-0000-7000-8000-000000000003" }],
+    "values": {
+      "nummer": "ART-REGEL-45-L",
+      "namn": { "sv": "Regel 45×95 lång", "en": "Stud 45×95 long", "de": "Kantholz 45×95 lang" },
+      "beskrivning": { "sv": "Ersätter den kortare regeln i nya stommar.", "en": "Replaces the shorter stud in new frames.", "de": "Ersetzt das kürzere Kantholz." },
+      "status": "utkast",
+      "aktiv": false,
+      "lanserad": "2026-02-01",
+      "ersatter": "018f1000-0000-7000-8000-000000000016",
+      "langd": { "value": "4.8", "unit": "m" },
+      "vikt": { "value": "9600", "unit": "g" }
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000021",
+    "type": "variant",
+    "group": "talt",
+    "links": [{ "kind": "variant_of", "to": "018f1000-0000-7000-8000-000000000001" }],
+    "values": {
+      "nummer": "VAR-TALT-2-GRON",
+      "namn": { "sv": "Tält 2 grön", "en": "Tent 2 green", "de": "Zelt 2 grün" },
+      "status": "ok",
+      "farg": ["gron"],
+      "aktiv": true
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000022",
+    "type": "variant",
+    "group": "talt",
+    "links": [{ "kind": "variant_of", "to": "018f1000-0000-7000-8000-000000000001" }],
+    "values": {
+      "nummer": "VAR-TALT-2-GRA",
+      "namn": { "sv": "Tält 2 grå", "en": "Tent 2 grey", "de": "Zelt 2 grau" },
+      "status": "ok",
+      "farg": ["gra"],
+      "aktiv": true
+    }
+  },
+  {
+    "id": "018f1000-0000-7000-8000-000000000023",
+    "type": "variant",
+    "group": "sovsack",
+    "links": [{ "kind": "variant_of", "to": "018f1000-0000-7000-8000-000000000002" }],
+    "values": {
+      "nummer": "VAR-SOV-SOM-BLA",
+      "namn": { "sv": "Sommarsovsäck blå", "en": "Summer bag blue", "de": "Sommersack blau" },
+      "status": "ok",
+      "farg": ["bla"],
+      "aktiv": true
+    }
+  }
+]

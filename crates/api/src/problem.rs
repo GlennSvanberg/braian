@@ -1,9 +1,9 @@
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use openpim_model::ValidationError;
-use openpim_rules::DefinitionError;
-use openpim_store::Error as StoreError;
+use braian_model::ValidationError;
+use braian_rules::DefinitionError;
+use braian_store::Error as StoreError;
 use serde::Serialize;
 use utoipa::ToSchema;
 

@@ -17,9 +17,25 @@ pub struct DefinitionSet {
     pub model_revision: u64,
     pub languages: Vec<LanguageTag>,
     pub unit_families: Vec<UnitFamily>,
+    /// Value lists that several attributes can share. An attribute may still
+    /// carry its options inline when it does not reference one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub value_lists: Vec<SharedValueList>,
     pub attributes: Vec<Attribute>,
     pub types: Vec<ObjectType>,
     pub structures: Vec<Structure>,
+}
+
+/// A value list defined once and referenced by attributes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SharedValueList {
+    pub id: crate::id::ValueListId,
+    pub key: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
+    pub labels: BTreeMap<LanguageTag, String>,
+    pub options: Vec<ValueOption>,
 }
 
 /// Units that convert to one base unit by multiplication.
@@ -33,8 +49,18 @@ pub struct DefinitionSet {
 pub struct UnitFamily {
     pub id: UnitFamilyId,
     pub key: String,
+    /// Shared dimension such as `length` or `mass`. Families with the same
+    /// dimension convert through their base unit. Empty means the key is the dimension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<String>,
     pub base_unit: String,
     pub units: Vec<Unit>,
+}
+
+impl UnitFamily {
+    pub fn dimension(&self) -> &str {
+        self.dimension.as_deref().unwrap_or(self.key.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,11 +107,14 @@ pub struct IndexFlags {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AttributeKind {
     /// Plain text. Length is counted in Unicode scalar values, not bytes.
+    /// `form` is `short` or `long`. Language dependence is the attribute flag.
     Text {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_length: Option<u32>,
+        #[serde(default, skip_serializing_if = "TextForm::is_short")]
+        form: TextForm,
     },
-    /// Exact decimal. `min` and `max` are in the base unit when the attribute has one.
+    /// Exact decimal or integer. `min` and `max` are in the base unit when the attribute has one.
     Number {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unit_family: Option<UnitFamilyId>,
@@ -95,15 +124,55 @@ pub enum AttributeKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
         max: Option<Decimal>,
+        /// When true the entered value must be a whole number. Storage stays decimal.
+        #[serde(default, skip_serializing_if = "is_false")]
+        integer: bool,
     },
+    /// A closed interval. The value is `{min, max, unit?}`.
+    Range {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_family: Option<UnitFamilyId>,
+    },
+    /// Options are inline, or `list` names a [`SharedValueList`] key.
     ValueList {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         options: Vec<ValueOption>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        list: Option<String>,
     },
     Boolean,
     /// Calendar date, stored as `YYYY-MM-DD`.
     Date,
-    /// Reference to a file. The file itself is not modeled in phase 1.
-    FileRef,
+    /// Reference to another object. `type_key` limits the picker; rules check the id shape.
+    ObjectRef {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        type_key: Option<String>,
+    },
+    /// File or media reference. The bytes live outside the object.
+    FileRef {
+        #[serde(default, skip_serializing_if = "is_false")]
+        media: bool,
+    },
+}
+
+/// Short text is one line. Long text is a multi-line value. Both are plain text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TextForm {
+    #[default]
+    Short,
+    Long,
+}
+
+impl TextForm {
+    pub fn is_short(&self) -> bool {
+        matches!(self, Self::Short)
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

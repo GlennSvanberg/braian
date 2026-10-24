@@ -1,4 +1,4 @@
-//! Validation rules for OpenPIM definitions and objects.
+//! Validation rules for Braian definitions and objects.
 //!
 //! The same crate compiles to `wasm32-unknown-unknown`. It does no I/O.
 //! Rules live only on attributes. A class decides which attributes apply,

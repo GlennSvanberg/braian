@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, DefinitionSet, ErrorCode, GroupId, LanguageTag, Object,
     StructureId, TypeId, UnitFamilyId,
 };
-use openpim_rules::CompiledModel;
+use braian_rules::CompiledModel;
 use rand::RngExt;
 use rust_decimal::Decimal;
 use serde_json::{Map, Value};
@@ -191,7 +191,8 @@ fn apply(
                 matches!(
                     attribute.kind,
                     AttributeKind::Text {
-                        max_length: Some(_)
+                        max_length: Some(_),
+                        ..
                     }
                 ) && !attribute.multiple
                     && !attribute.language_dependent
@@ -199,6 +200,7 @@ fn apply(
             });
             let AttributeKind::Text {
                 max_length: Some(max),
+                ..
             } = attribute.kind
             else {
                 unreachable!("predicate checked the text kind");
@@ -316,7 +318,7 @@ fn apply(
         }
         Mutation::InvalidFileRef => {
             let attribute = find(model, object, |attribute| {
-                matches!(attribute.kind, AttributeKind::FileRef)
+                matches!(attribute.kind, AttributeKind::FileRef { .. })
             });
             let (value, tag, index) = place(
                 &attribute,

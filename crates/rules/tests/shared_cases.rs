@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use openpim_model::{AttributeId, ErrorCode, LanguageTag, Object, ObjectPatch};
-use openpim_rules::CompiledModel;
+use braian_model::{AttributeId, ErrorCode, LanguageTag, Object, ObjectPatch};
+use braian_rules::CompiledModel;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +69,7 @@ fn shared_cases_match_rust_rules() {
     }
 }
 
-fn located(errors: Vec<openpim_model::ValidationError>) -> Vec<Located> {
+fn located(errors: Vec<braian_model::ValidationError>) -> Vec<Located> {
     sorted(
         errors
             .into_iter()

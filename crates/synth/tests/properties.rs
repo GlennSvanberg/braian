@@ -1,5 +1,5 @@
-use openpim_rules::CompiledModel;
-use openpim_synth::{Tier, definitions, objects};
+use braian_rules::CompiledModel;
+use braian_synth::{Tier, definitions, objects};
 use proptest::prelude::*;
 
 proptest! {

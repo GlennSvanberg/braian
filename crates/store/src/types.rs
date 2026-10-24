@@ -1,5 +1,5 @@
+use braian_model::{Object, ObjectId, ObjectPatch};
 use chrono::{DateTime, Utc};
-use openpim_model::{Object, ObjectId, ObjectPatch};
 use serde_json::Value;
 
 use crate::ids::{BatchId, ChangeOp, PrincipalId};
@@ -76,14 +76,14 @@ pub struct ChangeRow {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CachedDefs {
-    pub(crate) set: openpim_model::DefinitionSet,
+    pub(crate) set: braian_model::DefinitionSet,
     pub(crate) split: crate::split::SplitContext,
 }
 
 impl CachedDefs {
     pub(crate) fn from_groups(
-        set: openpim_model::DefinitionSet,
-        groups: std::collections::HashMap<openpim_model::AttributeId, usize>,
+        set: braian_model::DefinitionSet,
+        groups: std::collections::HashMap<braian_model::AttributeId, usize>,
     ) -> Self {
         let split = crate::split::SplitContext::with_groups(&set, &groups);
         Self { set, split }

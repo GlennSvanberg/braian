@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use braian_model::{DefinitionSet, Object, ObjectId, TypeId};
 use futures::StreamExt;
-use openpim_model::{DefinitionSet, Object, ObjectId, TypeId};
 use serde_json::{Map, Value};
 use tokio_postgres::Transaction;
 use tokio_postgres::binary_copy::BinaryCopyInWriter;
@@ -250,7 +250,7 @@ impl Store {
     }
 
     /// The current definition set, or [`Error::NoDefinitions`] when nothing has been stored.
-    pub async fn definition_set(&self) -> Result<openpim_model::DefinitionSet, Error> {
+    pub async fn definition_set(&self) -> Result<braian_model::DefinitionSet, Error> {
         Ok(self.defs().await?.set.clone())
     }
 
@@ -387,8 +387,8 @@ impl Store {
                     .iter()
                     .map(|group| {
                         (
-                            openpim_model::StructureId::from_uuid(group.get("structure_id")),
-                            openpim_model::GroupId::from_uuid(group.get("group_id")),
+                            braian_model::StructureId::from_uuid(group.get("structure_id")),
+                            braian_model::GroupId::from_uuid(group.get("group_id")),
                         )
                     })
                     .collect(),
@@ -421,7 +421,7 @@ impl Store {
             return Ok(cached);
         }
         let document: Value = row.get(1);
-        let set: openpim_model::DefinitionSet = serde_json::from_value(document)
+        let set: braian_model::DefinitionSet = serde_json::from_value(document)
             .map_err(|error| Error::Definitions(error.to_string()))?;
         let groups = load_groups(tx).await?;
         let groups = split::SplitContext::assign_groups(&set, &groups);
@@ -565,7 +565,8 @@ async fn insert_object(
         )
         .await?;
     }
-    let diff = diff_created(&object.values);
+    let mut diff = diff_created(&object.values);
+    attach_created_groups(&mut diff, &object.groups);
     let seq = insert_change(
         tx,
         batch,
@@ -587,7 +588,7 @@ async fn update_object(
     batch: BatchId,
     actor: &Actor,
     id: ObjectId,
-    patch: &openpim_model::ObjectPatch,
+    patch: &braian_model::ObjectPatch,
     base_version: u64,
     read_version: u64,
 ) -> Result<(u64, i64), Error> {
@@ -611,7 +612,7 @@ async fn update_object(
     if base_version > current_version {
         return Err(Error::BaseAhead { current_version });
     }
-    let type_id = openpim_model::TypeId::from_uuid(row.get("type_id"));
+    let type_id = braian_model::TypeId::from_uuid(row.get("type_id"));
     let mut parts = load_parts_for_update(tx, form, defs, id, &patch.values).await?;
     if base_version < current_version {
         let history = changes_since(tx, id, base_version).await?;
@@ -740,7 +741,7 @@ async fn delete_object(
     let version = u64_from_i64(version_row.get(0))?;
     let seq = tx
         .query_one(
-            "INSERT INTO changes (batch_id, object_id, version, op, actor, on_behalf_of, diff) VALUES ($1, $2, $3, $4, $5, $6, NULL) RETURNING seq",
+            "INSERT INTO changes (batch_id, object_id, version, op, actor, on_behalf_of, diff, kind) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7) RETURNING seq",
             &[
                 &batch.as_uuid(),
                 &id.as_uuid(),
@@ -748,6 +749,7 @@ async fn delete_object(
                 &ChangeOp::Delete.as_str(),
                 &actor.actor.as_uuid(),
                 &actor.on_behalf_of.map(PrincipalId::as_uuid),
+                &actor.kind.as_str(),
             ],
         )
         .await?;
@@ -781,7 +783,9 @@ async fn copy_creates(
         for (structure, group) in &object.groups {
             structure_rows.push((object.id.as_uuid(), structure.as_uuid(), group.as_uuid()));
         }
-        change_rows.push((object.id.as_uuid(), diff_created(&object.values)));
+        let mut diff = diff_created(&object.values);
+        attach_created_groups(&mut diff, &object.groups);
+        change_rows.push((object.id.as_uuid(), diff));
     }
 
     let sink = tx
@@ -844,7 +848,7 @@ async fn copy_creates(
     let batch_id = batch.as_uuid();
     let sink = tx
         .copy_in(
-            "COPY changes (batch_id, object_id, version, op, actor, on_behalf_of, diff) FROM STDIN WITH (FORMAT binary)",
+            "COPY changes (batch_id, object_id, version, op, actor, on_behalf_of, diff, kind) FROM STDIN WITH (FORMAT binary)",
         )
         .await?;
     let mut writer = std::pin::pin!(BinaryCopyInWriter::new(
@@ -857,8 +861,10 @@ async fn copy_creates(
             Type::UUID,
             Type::UUID,
             Type::JSONB,
+            Type::TEXT,
         ],
     ));
+    let kind = actor.kind.as_str();
     for (object_id, diff) in &change_rows {
         writer
             .as_mut()
@@ -870,6 +876,7 @@ async fn copy_creates(
                 &actor_id,
                 &behalf,
                 diff,
+                &kind,
             ])
             .await?;
     }
@@ -904,7 +911,7 @@ async fn insert_change(
 ) -> Result<i64, Error> {
     let row = tx
         .query_one(
-            "INSERT INTO changes (batch_id, object_id, version, op, actor, on_behalf_of, diff) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING seq",
+            "INSERT INTO changes (batch_id, object_id, version, op, actor, on_behalf_of, diff, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING seq",
             &[
                 &batch.as_uuid(),
                 &object.map(ObjectId::as_uuid),
@@ -913,6 +920,7 @@ async fn insert_change(
                 &actor.actor.as_uuid(),
                 &actor.on_behalf_of.map(PrincipalId::as_uuid),
                 &diff,
+                &actor.kind.as_str(),
             ],
         )
         .await?;
@@ -957,7 +965,7 @@ async fn load_parts_for_update(
     form: crate::split::StorageForm,
     defs: &CachedDefs,
     id: ObjectId,
-    patch: &openpim_model::ValuePatch,
+    patch: &braian_model::ValuePatch,
 ) -> Result<BTreeMap<String, serde_json::Map<String, Value>>, Error> {
     let stale = defs.split.stale_parts(form, patch);
     let rows = match form {
@@ -1009,7 +1017,7 @@ async fn load_parts_for_update(
 
 async fn load_groups(
     tx: &Transaction<'_>,
-) -> Result<HashMap<openpim_model::AttributeId, usize>, Error> {
+) -> Result<HashMap<braian_model::AttributeId, usize>, Error> {
     let rows = tx
         .query("SELECT attribute_id, part_group FROM attribute_parts", &[])
         .await?;
@@ -1017,7 +1025,7 @@ async fn load_groups(
     for row in rows {
         let group: i32 = row.get(1);
         groups.insert(
-            openpim_model::AttributeId::from_uuid(row.get(0)),
+            braian_model::AttributeId::from_uuid(row.get(0)),
             usize::try_from(group).unwrap_or(0),
         );
     }
@@ -1026,8 +1034,8 @@ async fn load_groups(
 
 async fn sync_attribute_parts(
     tx: &Transaction<'_>,
-    defs: &openpim_model::DefinitionSet,
-) -> Result<HashMap<openpim_model::AttributeId, usize>, Error> {
+    defs: &braian_model::DefinitionSet,
+) -> Result<HashMap<braian_model::AttributeId, usize>, Error> {
     let rows = tx
         .query("SELECT attribute_id, part_group FROM attribute_parts", &[])
         .await?;
@@ -1035,7 +1043,7 @@ async fn sync_attribute_parts(
     for row in rows {
         let group: i32 = row.get(1);
         existing.insert(
-            openpim_model::AttributeId::from_uuid(row.get(0)),
+            braian_model::AttributeId::from_uuid(row.get(0)),
             usize::try_from(group).unwrap_or(0),
         );
     }
@@ -1072,7 +1080,7 @@ pub(crate) async fn backfill_attribute_parts(
     let Some(document) = row.get::<_, Option<Value>>("definitions") else {
         return Ok(());
     };
-    let set: openpim_model::DefinitionSet =
+    let set: braian_model::DefinitionSet =
         serde_json::from_value(document).map_err(|error| Error::Definitions(error.to_string()))?;
     let groups = split::SplitContext::sorted_groups(&set);
     for (id, group) in groups {
@@ -1091,7 +1099,7 @@ pub(crate) async fn backfill_attribute_parts(
 async fn apply_groups(
     tx: &Transaction<'_>,
     id: ObjectId,
-    patch: &openpim_model::ObjectPatch,
+    patch: &braian_model::ObjectPatch,
 ) -> Result<Map<String, Value>, Error> {
     if patch.groups.is_empty() {
         return Ok(Map::new());
@@ -1105,8 +1113,8 @@ async fn apply_groups(
     let mut current = HashMap::new();
     for row in &rows {
         current.insert(
-            openpim_model::StructureId::from_uuid(row.get("structure_id")),
-            openpim_model::GroupId::from_uuid(row.get("group_id")),
+            braian_model::StructureId::from_uuid(row.get("structure_id")),
+            braian_model::GroupId::from_uuid(row.get("group_id")),
         );
     }
     let mut diff = Map::new();
@@ -1150,11 +1158,11 @@ async fn apply_groups(
 
 fn new_key(
     id: ObjectId,
-    patch: &openpim_model::ObjectPatch,
-    attribute: openpim_model::AttributeId,
+    patch: &braian_model::ObjectPatch,
+    attribute: braian_model::AttributeId,
 ) -> Result<String, Error> {
     match patch.values.attributes.get(&attribute) {
-        Some(openpim_model::AttributePatch::Replace { value }) => value
+        Some(braian_model::AttributePatch::Replace { value }) => value
             .as_str()
             .filter(|key| !key.is_empty())
             .map(str::to_owned)
@@ -1197,12 +1205,20 @@ fn definition_diff(before: Option<&DefinitionSet>, after: &DefinitionSet) -> Val
         model_revision: 0,
         languages: Vec::new(),
         unit_families: Vec::new(),
+        value_lists: Vec::new(),
         attributes: Vec::new(),
         types: Vec::new(),
         structures: Vec::new(),
     };
     let before = before.unwrap_or(&empty);
     let mut entities = Vec::new();
+    diff_entities(
+        &mut entities,
+        "value_list",
+        &before.value_lists,
+        &after.value_lists,
+        |item| item.id.as_uuid(),
+    );
     diff_entities(
         &mut entities,
         "attribute",
@@ -1234,6 +1250,26 @@ fn definition_diff(before: Option<&DefinitionSet>, after: &DefinitionSet) -> Val
         }));
     }
     serde_json::json!({ "entities": entities })
+}
+
+fn attach_created_groups(
+    diff: &mut Value,
+    groups: &std::collections::BTreeMap<braian_model::StructureId, braian_model::GroupId>,
+) {
+    if groups.is_empty() {
+        return;
+    }
+    let Some(object) = diff.as_object_mut() else {
+        return;
+    };
+    let mut placed = Map::new();
+    for (structure, group) in groups {
+        placed.insert(
+            structure.as_uuid().to_string(),
+            serde_json::json!({ "after": group.as_uuid().to_string() }),
+        );
+    }
+    object.insert("$groups".to_owned(), Value::Object(placed));
 }
 
 fn diff_entities<T: PartialEq>(

@@ -4,8 +4,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use openpim_model::{Object, ObjectId, Uuid, ValidationError};
-use openpim_store::{Conflict, Error, ObjectOp, PrincipalId, StoredObject, WriteReceipt};
+use braian_model::{Object, ObjectId, Uuid, ValidationError};
+use braian_store::{Conflict, Error, ObjectOp, PrincipalId, StoredObject, WriteReceipt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -75,7 +75,7 @@ pub struct ChangeResponse {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct IncludeQuery {
-    include: Option<String>,
+    pub(crate) include: Option<String>,
 }
 
 #[utoipa::path(
@@ -124,6 +124,14 @@ pub async fn create_object(
         deleted_at: None,
         object,
     };
+    note(
+        &state,
+        "create",
+        stored.object.id.as_uuid(),
+        stored.version,
+        receipt.last_seq,
+        &body.object_type,
+    );
     Ok(object_response(&cached, &stored, receipt.last_seq, false))
 }
 
@@ -209,13 +217,21 @@ pub async fn patch_object(
         {
             Ok(receipt) => {
                 let mut object = stored.object;
-                openpim_model::apply_object_patch(&mut object, &patch);
+                braian_model::apply_object_patch(&mut object, &patch);
                 let stored = StoredObject {
                     key: String::new(),
                     version: version_of(&receipt, id),
                     deleted_at: None,
                     object,
                 };
+                note(
+                    &state,
+                    "update",
+                    id.as_uuid(),
+                    stored.version,
+                    receipt.last_seq,
+                    &type_key(&cached.defs, stored.object.type_id),
+                );
                 return Ok(object_response(&cached, &stored, receipt.last_seq, false));
             }
             Err(Error::StaleRead { .. }) => continue,
@@ -279,10 +295,29 @@ pub async fn delete_object(
         }
         Err(error) => return Err(store_status(error)),
     };
+    let version = version_of(&receipt, id);
+    note(
+        &state,
+        "delete",
+        id.as_uuid(),
+        version,
+        receipt.last_seq,
+        "",
+    );
     Ok(Json(DeletedResponse {
-        version: version_of(&receipt, id),
+        version,
         seq: receipt.last_seq,
     }))
+}
+
+fn note(state: &AppState, op: &str, id: Uuid, version: u64, seq: i64, type_key: &str) {
+    state.emit(serde_json::json!({
+        "seq": seq,
+        "op": op,
+        "object_id": id,
+        "version": version,
+        "type": type_key,
+    }));
 }
 
 #[utoipa::path(

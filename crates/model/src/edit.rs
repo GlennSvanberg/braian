@@ -89,6 +89,7 @@ mod tests {
             model_revision: 1,
             languages: vec![LanguageTag::parse("sv").unwrap()],
             unit_families: vec![],
+            value_lists: vec![],
             attributes: vec![],
             types: vec![],
             structures: vec![],
@@ -102,7 +103,10 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
-            kind: AttributeKind::Text { max_length: None },
+            kind: AttributeKind::Text {
+                max_length: None,
+                form: crate::definition::TextForm::Short,
+            },
             index: IndexFlags::default(),
         }
     }

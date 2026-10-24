@@ -12,17 +12,26 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
+      - name: librdkafka build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
+          if [ ! -e /usr/include/curl ]; then sudo ln -s /usr/include/x86_64-linux-gnu/curl /usr/include/curl; fi
+          if [ ! -e /usr/lib/x86_64-linux-gnu/libstdc++.so ]; then
+            so=$(echo /usr/lib/gcc/x86_64-linux-gnu/*/libstdc++.so)
+            sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
+          fi
       - name: Start Postgres
         run: |
           cat > .env << 'EOF'
-          POSTGRES_USER=openpim
-          POSTGRES_PASSWORD=openpim
-          POSTGRES_DB=openpim
-          POSTGRES_READONLY_PASSWORD=openpim-readonly
+          POSTGRES_USER=braian
+          POSTGRES_PASSWORD=braian
+          POSTGRES_DB=braian
+          POSTGRES_READONLY_PASSWORD=braian-readonly
           POSTGRES_HOST_PORT=5433
           TYPESENSE_API_KEY=ci
-          DATABASE_URL=postgres://openpim:openpim@localhost:5433/openpim
-          OPENPIM_TEST_DATABASE_URL=postgres://openpim:openpim@localhost:5433/postgres
+          DATABASE_URL=postgres://braian:braian@localhost:5433/braian
+          BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
           EOF
           docker compose up -d --wait postgres
       - run: cargo fmt --all --check
@@ -30,10 +39,10 @@ jobs:
       - name: Test
         run: cargo test --workspace
         env:
-          OPENPIM_TEST_DATABASE_URL: postgres://openpim:openpim@localhost:5433/postgres
-          DATABASE_URL: postgres://openpim:openpim@localhost:5433/openpim
+          BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
+          DATABASE_URL: postgres://braian:braian@localhost:5433/braian
       - name: rules måste kompilera till WebAssembly
-        run: cargo build -p openpim-rules -p openpim-rules-wasm --target wasm32-unknown-unknown
+        run: cargo build -p braian-rules -p braian-rules-wasm --target wasm32-unknown-unknown
 
   phase-1:
     runs-on: ubuntu-latest
@@ -63,14 +72,14 @@ jobs:
       - name: Start Postgres
         run: |
           cat > .env << 'EOF'
-          POSTGRES_USER=openpim
-          POSTGRES_PASSWORD=openpim
-          POSTGRES_DB=openpim
-          POSTGRES_READONLY_PASSWORD=openpim-readonly
+          POSTGRES_USER=braian
+          POSTGRES_PASSWORD=braian
+          POSTGRES_DB=braian
+          POSTGRES_READONLY_PASSWORD=braian-readonly
           POSTGRES_HOST_PORT=5433
           TYPESENSE_API_KEY=ci
-          DATABASE_URL=postgres://openpim:openpim@localhost:5433/openpim
-          OPENPIM_TEST_DATABASE_URL=postgres://openpim:openpim@localhost:5433/postgres
+          DATABASE_URL=postgres://braian:braian@localhost:5433/braian
+          BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
           EOF
           docker compose up -d --wait postgres
       - run: just demo-2
@@ -95,17 +104,106 @@ jobs:
       - name: Start Postgres
         run: |
           cat > .env << 'EOF'
-          POSTGRES_USER=openpim
-          POSTGRES_PASSWORD=openpim
-          POSTGRES_DB=openpim
-          POSTGRES_READONLY_PASSWORD=openpim-readonly
+          POSTGRES_USER=braian
+          POSTGRES_PASSWORD=braian
+          POSTGRES_DB=braian
+          POSTGRES_READONLY_PASSWORD=braian-readonly
           POSTGRES_HOST_PORT=5433
           TYPESENSE_API_KEY=ci
-          DATABASE_URL=postgres://openpim:openpim@localhost:5433/openpim
-          OPENPIM_TEST_DATABASE_URL=postgres://openpim:openpim@localhost:5433/postgres
+          DATABASE_URL=postgres://braian:braian@localhost:5433/braian
+          BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
           EOF
           docker compose up -d --wait postgres
       - run: just demo-3
+
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: librdkafka build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
+          if [ ! -e /usr/include/curl ]; then sudo ln -s /usr/include/x86_64-linux-gnu/curl /usr/include/curl; fi
+          if [ ! -e /usr/lib/x86_64-linux-gnu/libstdc++.so ]; then
+            so=$(echo /usr/lib/gcc/x86_64-linux-gnu/*/libstdc++.so)
+            sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
+          fi
+      - name: Start Postgres, Redpanda and Typesense
+        run: |
+          cat > .env << 'EOF'
+          POSTGRES_USER=braian
+          POSTGRES_PASSWORD=braian
+          POSTGRES_DB=braian
+          POSTGRES_READONLY_PASSWORD=braian-readonly
+          POSTGRES_HOST_PORT=5433
+          TYPESENSE_API_KEY=ci
+          DATABASE_URL=postgres://braian:braian@localhost:5433/braian
+          BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
+          KAFKA_BROKERS=localhost:19092
+          TYPESENSE_URL=http://localhost:8108
+          EOF
+          docker compose up -d --wait postgres redpanda typesense
+      - name: Relay keeps commit order across a restart
+        run: cargo test -p braian-relay --test order -- --test-threads=1
+        env:
+          BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
+          DATABASE_URL: postgres://braian:braian@localhost:5433/braian
+          KAFKA_BROKERS: localhost:19092
+      - name: Indexer converges and reindex swaps the alias
+        run: cargo test -p braian-indexer --test converge -- --test-threads=1
+        env:
+          BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
+          DATABASE_URL: postgres://braian:braian@localhost:5433/braian
+          TYPESENSE_URL: http://localhost:8108
+          TYPESENSE_API_KEY: ci
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.25.0
+      - name: Playwright smoke against the running app
+        env:
+          DATABASE_URL: postgres://braian:braian@localhost:5433/braian
+          KAFKA_BROKERS: localhost:19092
+          TYPESENSE_URL: http://localhost:8108
+          TYPESENSE_API_KEY: ci
+          BRAIAN_API_ADDR: 127.0.0.1:8090
+          BRAIAN_DEMO_EMAIL: admin@braian.local
+          BRAIAN_DEMO_PASSWORD: braian-demo
+          BRAIAN_DEMO_TOKEN: braian-demo-token
+          BRAIAN_AGENT_MOCK: "1"
+        run: |
+          cargo build -p braian-server
+          cargo run -p braian-server -- all > /tmp/braian-all.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8090/healthz && break; sleep 2; done
+          curl -sf http://127.0.0.1:8090/healthz
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/web exec vite dev --host 127.0.0.1 --port 3000 > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 40); do curl -sf -o /dev/null http://127.0.0.1:3000 && break; sleep 1; done
+          pnpm --dir apps/web exec playwright install --with-deps chromium
+          pnpm --dir apps/web exec playwright test
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.25.0
+      - name: Typecheck and unit tests
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/web exec tsc --noEmit
+          pnpm --dir apps/web exec vitest run
 
   licenses:
     runs-on: ubuntu-latest

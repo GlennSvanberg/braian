@@ -2,13 +2,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
+use braian_model::{DefinitionSet, Object};
+use braian_rules::CompiledModel;
+use braian_synth::{ExportFormat, Tier, definitions, export, measure, objects, write_demo};
 use clap::{Parser, Subcommand};
-use openpim_model::{DefinitionSet, Object};
-use openpim_rules::CompiledModel;
-use openpim_synth::{ExportFormat, Tier, definitions, export, measure, objects, write_demo};
 
 #[derive(Parser)]
-#[command(name = "openpim-synth", about = "Deterministic synthetic OpenPIM data")]
+#[command(name = "braian-synth", about = "Deterministic synthetic Braian data")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

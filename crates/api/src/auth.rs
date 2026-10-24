@@ -1,4 +1,4 @@
-//! Dev tokens from `OPENPIM_DEV_TOKENS`.
+//! Dev tokens from `BRAIAN_DEV_TOKENS`.
 //!
 //! Each entry is `handle:kind[@behalf]:token`, separated by `;`. An agent entry
 //! always names the person it acts for. Tokens are compared without cutting the
@@ -6,12 +6,17 @@
 
 use std::fmt;
 
+use argon2::password_hash::{PasswordHash, SaltString};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use openpim_store::{Actor, BatchKind, Error, PrincipalId, PrincipalKind, Store};
+use braian_store::{Actor, BatchKind, Error, PrincipalId, PrincipalKind, Store};
+use sha2::{Digest, Sha256};
 
 use crate::problem::Problem;
 use crate::state::AppState;
+
+pub const SESSION_COOKIE: &str = "braian_session";
 
 #[derive(Clone)]
 pub struct Identity {
@@ -20,6 +25,43 @@ pub struct Identity {
     pub kind: PrincipalKind,
     pub behalf_handle: Option<String>,
     pub actor: Actor,
+    pub role: Role,
+    pub user_id: Option<uuid::Uuid>,
+}
+
+/// What a caller is allowed to do. Admin includes editor, editor includes viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Admin,
+    Editor,
+    Viewer,
+}
+
+impl Role {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "admin" => Self::Admin,
+            "editor" => Self::Editor,
+            _ => Self::Viewer,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::Editor => "editor",
+            Self::Viewer => "viewer",
+        }
+    }
+
+    pub fn allows(self, required: Self) -> bool {
+        matches!(
+            (self, required),
+            (Self::Admin, _)
+                | (Self::Editor, Self::Editor | Self::Viewer)
+                | (Self::Viewer, Self::Viewer)
+        )
+    }
 }
 
 impl fmt::Debug for Identity {
@@ -30,6 +72,7 @@ impl fmt::Debug for Identity {
             .field("kind", &self.kind)
             .field("behalf_handle", &self.behalf_handle)
             .field("actor", &self.actor.actor)
+            .field("role", &self.role)
             .finish()
     }
 }
@@ -44,7 +87,7 @@ pub fn parse_dev_tokens(raw: &str) -> Result<Vec<IdentitySpec>, String> {
         specs.push(parse_one(entry)?);
     }
     if specs.is_empty() {
-        return Err("OPENPIM_DEV_TOKENS is empty".into());
+        return Err("BRAIAN_DEV_TOKENS is empty".into());
     }
     Ok(specs)
 }
@@ -140,6 +183,12 @@ pub async fn identities_from(store: &Store, raw: &str) -> Result<Vec<Identity>, 
                 kind: BatchKind::Interactive,
                 source: "api".into(),
             },
+            role: if spec.kind == PrincipalKind::Human {
+                Role::Admin
+            } else {
+                Role::Editor
+            },
+            user_id: None,
         });
     }
     Ok(identities)
@@ -154,22 +203,155 @@ impl FromRequestParts<AppState> for Auth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let header = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok());
-        let Some(token) = header.and_then(|value| value.strip_prefix("Bearer ")) else {
+        if let Some(token) = bearer(parts) {
+            if let Some(identity) = state
+                .identities
+                .iter()
+                .find(|identity| constant_time_eq(identity.token.as_bytes(), token.as_bytes()))
+            {
+                return Ok(Auth(identity.clone()));
+            }
+            if let Some(identity) = identity_for_api_token(state, token).await? {
+                return Ok(Auth(identity));
+            }
             return Err(Problem::unauthorized());
-        };
-        let Some(identity) = state
-            .identities
-            .iter()
-            .find(|identity| constant_time_eq(identity.token.as_bytes(), token.as_bytes()))
-        else {
-            return Err(Problem::unauthorized());
-        };
-        Ok(Auth(identity.clone()))
+        }
+        if let Some(token) = cookie(parts, SESSION_COOKIE)
+            && let Some(identity) = identity_for_session(state, &token).await?
+        {
+            return Ok(Auth(identity));
+        }
+        Err(Problem::unauthorized())
     }
+}
+
+pub fn hash_password(password: &str) -> Result<String, String> {
+    let mut salt_bytes = [0u8; 16];
+    getrandom::fill(&mut salt_bytes).map_err(|error| error.to_string())?;
+    let salt = SaltString::encode_b64(&salt_bytes).map_err(|error| error.to_string())?;
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|error| error.to_string())
+}
+
+pub fn verify_password(hash: &str, password: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(hash) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
+}
+
+pub fn token_hash(token: &str) -> Vec<u8> {
+    Sha256::digest(token.as_bytes()).to_vec()
+}
+
+pub fn random_token() -> String {
+    let mut bytes = [0u8; 32];
+    if getrandom::fill(&mut bytes).is_err() {
+        let first = uuid::Uuid::now_v7();
+        let second = uuid::Uuid::now_v7();
+        bytes[..16].copy_from_slice(first.as_bytes());
+        bytes[16..].copy_from_slice(second.as_bytes());
+    }
+    hex::encode(bytes)
+}
+
+fn bearer(parts: &Parts) -> Option<&str> {
+    parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
+pub fn cookie(parts: &Parts, name: &str) -> Option<String> {
+    let header = parts
+        .headers
+        .get(axum::http::header::COOKIE)?
+        .to_str()
+        .ok()?;
+    for part in header.split(';') {
+        let (key, value) = part.trim().split_once('=')?;
+        if key == name {
+            return Some(value.to_owned());
+        }
+    }
+    None
+}
+
+fn identity_from_user(
+    user: &braian_store::UserRecord,
+    kind: PrincipalKind,
+    actor: PrincipalId,
+    behalf: Option<PrincipalId>,
+    source: &str,
+) -> Identity {
+    Identity {
+        token: String::new(),
+        handle: user.email.clone(),
+        kind,
+        behalf_handle: None,
+        actor: Actor {
+            actor,
+            on_behalf_of: behalf,
+            kind: BatchKind::Interactive,
+            source: source.to_owned(),
+        },
+        role: Role::parse(&user.role),
+        user_id: Some(user.id),
+    }
+}
+
+async fn identity_for_session(state: &AppState, token: &str) -> Result<Option<Identity>, Problem> {
+    let user = state
+        .store
+        .user_for_session(&token_hash(token))
+        .await
+        .map_err(crate::problem::store_status)?;
+    Ok(user
+        .map(|user| identity_from_user(&user, PrincipalKind::Human, user.principal_id, None, "ui")))
+}
+
+async fn identity_for_api_token(
+    state: &AppState,
+    token: &str,
+) -> Result<Option<Identity>, Problem> {
+    let found = state
+        .store
+        .api_token(&token_hash(token))
+        .await
+        .map_err(crate::problem::store_status)?;
+    let Some((principal, owner, kind)) = found else {
+        return Ok(None);
+    };
+    let principal_kind = if kind == "agent" {
+        PrincipalKind::Agent
+    } else {
+        PrincipalKind::Integration
+    };
+    let mut identity = identity_from_user(
+        &owner,
+        principal_kind,
+        principal,
+        Some(owner.principal_id),
+        if kind == "agent" { "agent" } else { "api" },
+    );
+    identity.behalf_handle = Some(owner.email.clone());
+    identity.handle = format!("{kind}:{principal}");
+    Ok(Some(identity))
+}
+
+pub fn session_cookie(token: &str, secure: bool) -> String {
+    let secure = if secure { "; Secure" } else { "" };
+    format!("{SESSION_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=1209600{secure}")
+}
+
+pub fn clear_session_cookie(secure: bool) -> String {
+    let secure = if secure { "; Secure" } else { "" };
+    format!("{SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{secure}")
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {

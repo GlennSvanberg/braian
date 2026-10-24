@@ -1,18 +1,15 @@
 use std::collections::BTreeMap;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, AttributePatch, IndexFlags, Object, ObjectType, TypeId,
     Uuid, ValuePatch, apply_value_patch,
 };
-use openpim_rules::CompiledModel;
-use openpim_store::testing::TestDb;
-use openpim_store::{Actor, BatchKind, ObjectOp, PrincipalKind};
-use openpim_synth::{EditKind, Tier, definitions, edits, objects, objects_iter};
+use braian_rules::CompiledModel;
+use braian_store::testing::TestDb;
+use braian_store::{Actor, BatchKind, ObjectOp, PrincipalKind};
+use braian_synth::{EditKind, Tier, definitions, edits, objects, objects_iter};
 
-fn actor(
-    principal: openpim_store::PrincipalId,
-    behalf: Option<openpim_store::PrincipalId>,
-) -> Actor {
+fn actor(principal: braian_store::PrincipalId, behalf: Option<braian_store::PrincipalId>) -> Actor {
     Actor {
         actor: principal,
         on_behalf_of: behalf,
@@ -21,7 +18,7 @@ fn actor(
     }
 }
 
-async fn setup(tier: Tier, seed: u64) -> (TestDb, openpim_model::DefinitionSet, Actor) {
+async fn setup(tier: Tier, seed: u64) -> (TestDb, braian_model::DefinitionSet, Actor) {
     let db = TestDb::create().await;
     let defs = definitions(tier, seed);
     let human = db
@@ -98,7 +95,7 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
 
     let first = objects(&defs, Tier::Light, 4, 1).pop().unwrap();
     let mut other = first.clone();
-    other.id = openpim_model::ObjectId::from_uuid(Uuid::now_v7());
+    other.id = braian_model::ObjectId::from_uuid(Uuid::now_v7());
     other.type_id = second;
     other.groups.clear();
     other.values.retain(|id, _| *id == key_attribute);
@@ -125,7 +122,7 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
     );
 
     let duplicate = Object {
-        id: openpim_model::ObjectId::from_uuid(Uuid::now_v7()),
+        id: braian_model::ObjectId::from_uuid(Uuid::now_v7()),
         ..first.clone()
     };
     let error = db
@@ -146,7 +143,7 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
         .await
         .unwrap();
     let reused = Object {
-        id: openpim_model::ObjectId::from_uuid(Uuid::now_v7()),
+        id: braian_model::ObjectId::from_uuid(Uuid::now_v7()),
         ..first
     };
     db.store()
@@ -188,7 +185,7 @@ async fn language_diff_records_only_the_changed_language() {
             &who,
             vec![ObjectOp::Update {
                 id: object.id,
-                patch: openpim_model::ObjectPatch {
+                patch: braian_model::ObjectPatch {
                     values: edit.patch.clone(),
                     groups: BTreeMap::new(),
                 },
@@ -209,7 +206,7 @@ async fn language_diff_records_only_the_changed_language() {
     let changes = db.store().changes_for(object.id).await.unwrap();
     let update = changes
         .iter()
-        .find(|change| change.op == openpim_store::ChangeOp::Update)
+        .find(|change| change.op == braian_store::ChangeOp::Update)
         .unwrap();
     let diff = update.diff.as_ref().unwrap().as_object().unwrap();
     assert_eq!(diff.len(), 1);
@@ -312,7 +309,7 @@ async fn soft_delete_keeps_values_and_writes_a_change() {
         .await
         .unwrap()
         .into_iter()
-        .find(|change| change.op == openpim_store::ChangeOp::Delete)
+        .find(|change| change.op == braian_store::ChangeOp::Delete)
         .unwrap();
     assert!(delete.diff.is_none());
     let missing = db
@@ -349,7 +346,10 @@ async fn adding_attributes_does_not_move_existing_values() {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
-            kind: AttributeKind::Text { max_length: None },
+            kind: AttributeKind::Text {
+                max_length: None,
+                form: braian_model::TextForm::Short,
+            },
             index: IndexFlags::default(),
         });
     }
@@ -361,7 +361,7 @@ async fn adding_attributes_does_not_move_existing_values() {
             &who,
             vec![ObjectOp::Update {
                 id: object.id,
-                patch: openpim_model::ObjectPatch {
+                patch: braian_model::ObjectPatch {
                     values: ValuePatch {
                         attributes: BTreeMap::from([(
                             sku,
@@ -400,7 +400,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
         .next()
         .unwrap();
     let (attribute, first_language) = match edit.patch.attributes.iter().next().unwrap() {
-        (id, openpim_model::AttributePatch::Languages { values }) => {
+        (id, braian_model::AttributePatch::Languages { values }) => {
             (*id, values.keys().next().unwrap().clone())
         }
         other => panic!("expected a language patch, got {other:?}"),
@@ -448,7 +448,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
         .await
         .unwrap_err();
     match conflict {
-        openpim_store::Error::Conflict {
+        braian_store::Error::Conflict {
             current_version,
             conflicts,
         } => {
@@ -511,7 +511,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
         .await
         .unwrap_err();
     assert!(
-        matches!(again, openpim_store::Error::Conflict { .. }),
+        matches!(again, braian_store::Error::Conflict { .. }),
         "{again}"
     );
 
@@ -523,7 +523,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
             &who,
             vec![ObjectOp::Update {
                 id: object.id,
-                patch: openpim_model::ObjectPatch {
+                patch: braian_model::ObjectPatch {
                     values: ValuePatch::default(),
                     groups: BTreeMap::from([(catalog, Some(root))]),
                 },
@@ -538,7 +538,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
             &who,
             vec![ObjectOp::Update {
                 id: object.id,
-                patch: openpim_model::ObjectPatch {
+                patch: braian_model::ObjectPatch {
                     values: ValuePatch::default(),
                     groups: BTreeMap::from([(channel, None)]),
                 },
@@ -559,7 +559,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
             &who,
             vec![ObjectOp::Update {
                 id: object.id,
-                patch: openpim_model::ObjectPatch {
+                patch: braian_model::ObjectPatch {
                     values: ValuePatch::default(),
                     groups: BTreeMap::from([(catalog, Some(defs.structures[0].groups[1].id))]),
                 },
@@ -570,7 +570,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
         .await
         .unwrap_err();
     assert!(
-        matches!(placement_conflict, openpim_store::Error::Conflict { .. }),
+        matches!(placement_conflict, braian_store::Error::Conflict { .. }),
         "{placement_conflict}"
     );
 
@@ -586,7 +586,7 @@ async fn edits_merge_per_attribute_language_and_structure() {
         .await
         .unwrap_err();
     assert!(
-        matches!(delete_conflict, openpim_store::Error::Conflict { .. }),
+        matches!(delete_conflict, braian_store::Error::Conflict { .. }),
         "{delete_conflict}"
     );
 }
@@ -642,10 +642,7 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
         .await
         .unwrap_err();
     assert!(
-        matches!(
-            stale,
-            openpim_store::Error::StaleRead { current_version: 2 }
-        ),
+        matches!(stale, braian_store::Error::StaleRead { current_version: 2 }),
         "{stale}"
     );
     let ahead = db
@@ -657,10 +654,7 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
         .await
         .unwrap_err();
     assert!(
-        matches!(
-            ahead,
-            openpim_store::Error::BaseAhead { current_version: 2 }
-        ),
+        matches!(ahead, braian_store::Error::BaseAhead { current_version: 2 }),
         "{ahead}"
     );
 
@@ -699,7 +693,7 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
         .await
         .unwrap_err();
     assert!(
-        matches!(collision, openpim_store::Error::DuplicateKey { .. }),
+        matches!(collision, braian_store::Error::DuplicateKey { .. }),
         "{collision}"
     );
 
@@ -707,7 +701,7 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
         .next()
         .unwrap();
     let (attribute, language) = match edit.patch.attributes.iter().next().unwrap() {
-        (id, openpim_model::AttributePatch::Languages { values }) => {
+        (id, braian_model::AttributePatch::Languages { values }) => {
             (*id, values.keys().next().unwrap().clone())
         }
         other => panic!("expected a language patch, got {other:?}"),
@@ -734,10 +728,10 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
     assert_eq!(value, None);
 }
 
-fn value_update(id: openpim_model::ObjectId, values: ValuePatch, base: u64, read: u64) -> ObjectOp {
+fn value_update(id: braian_model::ObjectId, values: ValuePatch, base: u64, read: u64) -> ObjectOp {
     ObjectOp::Update {
         id,
-        patch: openpim_model::ObjectPatch {
+        patch: braian_model::ObjectPatch {
             values,
             groups: BTreeMap::new(),
         },
@@ -748,7 +742,7 @@ fn value_update(id: openpim_model::ObjectId, values: ValuePatch, base: u64, read
 
 fn one_language(
     id: AttributeId,
-    language: &openpim_model::LanguageTag,
+    language: &braian_model::LanguageTag,
     value: serde_json::Value,
 ) -> ValuePatch {
     let mut values = BTreeMap::new();
@@ -758,7 +752,7 @@ fn one_language(
     }
 }
 
-fn clear_language(id: AttributeId, language: &openpim_model::LanguageTag) -> ValuePatch {
+fn clear_language(id: AttributeId, language: &braian_model::LanguageTag) -> ValuePatch {
     let mut values = BTreeMap::new();
     values.insert(language.clone(), None);
     ValuePatch {

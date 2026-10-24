@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "OpenPIM",
+    "title": "Braian",
     "description": "Write and read definitions and objects.",
     "license": {
       "name": "MIT",
@@ -1210,11 +1210,14 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "Plain text. Length is counted in Unicode scalar values, not bytes.",
+            "description": "Plain text. Length is counted in Unicode scalar values, not bytes.\n`form` is `short` or `long`. Language dependence is the attribute flag.",
             "required": [
               "type"
             ],
             "properties": {
+              "form": {
+                "$ref": "#/components/schemas/TextForm"
+              },
               "max_length": {
                 "type": [
                   "integer",
@@ -1233,11 +1236,15 @@
           },
           {
             "type": "object",
-            "description": "Exact decimal. `min` and `max` are in the base unit when the attribute has one.",
+            "description": "Exact decimal or integer. `min` and `max` are in the base unit when the attribute has one.",
             "required": [
               "type"
             ],
             "properties": {
+              "integer": {
+                "type": "boolean",
+                "description": "When true the entered value must be a whole number. Storage stays decimal."
+              },
               "max": {
                 "type": [
                   "string",
@@ -1270,11 +1277,42 @@
           },
           {
             "type": "object",
+            "description": "A closed interval. The value is `{min, max, unit?}`.",
             "required": [
-              "options",
               "type"
             ],
             "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "range"
+                ]
+              },
+              "unit_family": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UnitFamilyId"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Options are inline, or `list` names a [`SharedValueList`] key.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "list": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "options": {
                 "type": "array",
                 "items": {
@@ -1320,11 +1358,35 @@
           },
           {
             "type": "object",
-            "description": "Reference to a file. The file itself is not modeled in phase 1.",
+            "description": "Reference to another object. `type_key` limits the picker; rules check the id shape.",
             "required": [
               "type"
             ],
             "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "object_ref"
+                ]
+              },
+              "type_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "File or media reference. The bytes live outside the object.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "media": {
+                "type": "boolean"
+              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -1526,6 +1588,13 @@
             "items": {
               "$ref": "#/components/schemas/UnitFamily"
             }
+          },
+          "value_lists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SharedValueList"
+            },
+            "description": "Value lists that several attributes can share. An attribute may still\ncarry its options inline when it does not reference one of these."
           }
         },
         "additionalProperties": false
@@ -1587,6 +1656,9 @@
           "value_not_in_list",
           "invalid_date",
           "invalid_file_ref",
+          "invalid_object_ref",
+          "not_integer",
+          "range_inverted",
           "missing_key_attribute"
         ]
       },
@@ -1650,7 +1722,8 @@
         "type": "object",
         "required": [
           "handle",
-          "kind"
+          "kind",
+          "role"
         ],
         "properties": {
           "handle": {
@@ -1664,6 +1737,16 @@
               "string",
               "null"
             ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -1841,6 +1924,40 @@
           }
         }
       },
+      "SharedValueList": {
+        "type": "object",
+        "description": "A value list defined once and referenced by attributes.",
+        "required": [
+          "id",
+          "key",
+          "labels",
+          "options"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ValueListId"
+          },
+          "key": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueOption"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "Structure": {
         "type": "object",
         "description": "A hierarchy of groups plus the classes attached to those groups.",
@@ -1877,6 +1994,14 @@
         "format": "uuid",
         "description": "Id of a structure."
       },
+      "TextForm": {
+        "type": "string",
+        "description": "Short text is one line. Long text is a multi-line value. Both are plain text.",
+        "enum": [
+          "short",
+          "long"
+        ]
+      },
       "TypeId": {
         "type": "string",
         "format": "uuid",
@@ -1911,6 +2036,13 @@
         "properties": {
           "base_unit": {
             "type": "string"
+          },
+          "dimension": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shared dimension such as `length` or `mass`. Families with the same\ndimension convert through their base unit. Empty means the key is the dimension."
           },
           "id": {
             "$ref": "#/components/schemas/UnitFamilyId"
@@ -1975,6 +2107,11 @@
           }
         }
       },
+      "ValueListId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of a shared value list."
+      },
       "ValueOption": {
         "type": "object",
         "required": [
@@ -2003,7 +2140,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "token",
-        "description": "Dev token from OPENPIM_DEV_TOKENS. An agent token acts for a person."
+        "description": "Dev token from BRAIAN_DEV_TOKENS. An agent token acts for a person."
       }
     }
   },

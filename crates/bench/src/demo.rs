@@ -1,11 +1,11 @@
 use std::time::Instant;
 
-use openpim_store::admin::{self, PgConn};
-use openpim_store::{Actor, BatchKind, ObjectOp, PrincipalKind, STORAGE_FORM, Store};
-use openpim_synth::{EditKind, Tier, definitions, edits, objects_iter};
+use braian_store::admin::{self, PgConn};
+use braian_store::{Actor, BatchKind, ObjectOp, PrincipalKind, STORAGE_FORM, Store};
+use braian_synth::{EditKind, Tier, definitions, edits, objects_iter};
 
 pub async fn run(database_url: &str, tier: Tier, count: usize, seed: u64) -> anyhow::Result<()> {
-    let database = "openpim_demo";
+    let database = "braian_demo";
     let mut admin_config = admin::parse_config(database_url)?;
     admin_config.dbname("postgres");
     let admin = PgConn::connect(admin_config).await?;
@@ -71,7 +71,7 @@ pub async fn run(database_url: &str, tier: Tier, count: usize, seed: u64) -> any
             &interactive,
             vec![ObjectOp::Update {
                 id: loaded.object.id,
-                patch: openpim_model::ObjectPatch {
+                patch: braian_model::ObjectPatch {
                     values: edit.patch,
                     groups: Default::default(),
                 },

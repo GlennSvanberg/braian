@@ -3,7 +3,7 @@
 Indicative numbers from one Windows machine, with Postgres in Docker. They compare creating one heavy object, and patching three attributes, over loopback HTTP and by calling the store in the same process. They are not a proof of the phase 6 targets.
 
 - Hardware: Intel Core Ultra 7 155U (12 cores, 14 threads), 32 GB RAM, KIOXIA KXG8AZNV1T02 NVMe, Windows 11. The bench process ran on the host. Postgres ran in Docker Desktop. `rustc 1.93.1`.
-- Command: `cargo run -p openpim-bench --release -- api-latency --samples 40`. Database `openpim_latency`, heavy tier, seed 1. Three warmup creates ran first and are not in the table.
+- Command: `cargo run -p braian-bench --release -- api-latency --samples 40`. Database `braian_latency`, heavy tier, seed 1. Three warmup creates ran first and are not in the table.
 - HTTP is one keep-alive connection to `127.0.0.1` on a free port. The API validates every write. The direct store call does not. A separate row times validation alone, on one heavy object, in the bench process.
 - Each sample is one object. Creates use a fresh object. Patches take the first three attributes of the synthetic mixed edit and apply them to an object that was inserted beforehand and not patched by another sample. The HTTP creates ran before the direct creates, and the HTTP patches before the direct patches, so the later samples see a larger table.
 - Percentile: sort the 40 durations and take index `ceil(p * 39)`. With 40 samples, p99 is only the slow end of this run.

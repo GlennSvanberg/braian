@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use openpim_model::{AttributeId, DefinitionSet};
-use openpim_rules::CompiledModel;
+use braian_model::{AttributeId, DefinitionSet};
+use braian_rules::CompiledModel;
 use serde_json::{Map, Value};
 
 use crate::Tier;
@@ -125,7 +125,7 @@ impl std::fmt::Display for SampleStats {
     }
 }
 
-fn human_values(object: &openpim_model::Object, defs: &DefinitionSet) -> Value {
+fn human_values(object: &braian_model::Object, defs: &DefinitionSet) -> Value {
     let mut values = Map::new();
     for (id, value) in &object.values {
         let key = defs
@@ -146,7 +146,7 @@ fn human_values(object: &openpim_model::Object, defs: &DefinitionSet) -> Value {
 }
 
 fn split(
-    object: &openpim_model::Object,
+    object: &braian_model::Object,
     defs: &DefinitionSet,
     localized: &HashSet<AttributeId>,
 ) -> (Map<String, Value>, Vec<Map<String, Value>>) {

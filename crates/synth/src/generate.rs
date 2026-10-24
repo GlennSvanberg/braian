@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, DefinitionSet, GroupId, Object, ObjectId, StructureId,
     TypeId, UnitFamily,
 };
-use openpim_rules::CompiledModel;
+use braian_rules::CompiledModel;
 use rand::RngExt;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -201,9 +201,43 @@ fn scalar(
             };
             number_json(entered, Some(&unit.code))
         }
-        AttributeKind::ValueList { options } => {
-            let pick = rng.random_range(0..options.len());
-            Value::String(options[pick].code.clone())
+        AttributeKind::ValueList { options, list } => {
+            let options = if options.is_empty() {
+                list.as_ref()
+                    .and_then(|key| defs.value_lists.iter().find(|item| item.key == *key))
+                    .map(|item| item.options.as_slice())
+                    .unwrap_or(&[])
+            } else {
+                options.as_slice()
+            };
+            let pick = if options.is_empty() {
+                0
+            } else {
+                rng.random_range(0..options.len())
+            };
+            Value::String(
+                options
+                    .get(pick)
+                    .map(|option| option.code.clone())
+                    .unwrap_or_default(),
+            )
+        }
+        AttributeKind::Range { unit_family } => {
+            let min = Decimal::from((shifted % 20) + 1);
+            let max = min + Decimal::from(5);
+            let unit = unit_family.and_then(|family_id| {
+                defs.unit_families
+                    .iter()
+                    .find(|family| family.id == family_id)
+                    .map(|family| family.base_unit.clone())
+            });
+            let mut map = serde_json::Map::new();
+            map.insert("min".into(), Value::String(min.to_string()));
+            map.insert("max".into(), Value::String(max.to_string()));
+            if let Some(unit) = unit {
+                map.insert("unit".into(), Value::String(unit));
+            }
+            Value::Object(map)
         }
         AttributeKind::Boolean => Value::Bool(rng.random()),
         AttributeKind::Date => {
@@ -211,7 +245,10 @@ fn scalar(
             let day = (shifted % 28) + 1;
             Value::String(format!("2024-{month:02}-{day:02}"))
         }
-        AttributeKind::FileRef => Value::String(
+        AttributeKind::ObjectRef { .. } => {
+            Value::String(crate::ids::Ids::new(index as u64 ^ salt).next().to_string())
+        }
+        AttributeKind::FileRef { .. } => Value::String(
             Ids::new(index as u64 ^ attribute.key.len() as u64 ^ salt)
                 .next()
                 .to_string(),
@@ -219,7 +256,7 @@ fn scalar(
     }
 }
 
-fn sample_unit<'a>(family: &'a UnitFamily, key: &str) -> &'a openpim_model::Unit {
+fn sample_unit<'a>(family: &'a UnitFamily, key: &str) -> &'a braian_model::Unit {
     let alternate = key.as_bytes().last().is_some_and(|byte| byte % 2 == 1);
     if alternate {
         family

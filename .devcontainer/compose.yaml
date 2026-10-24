@@ -4,15 +4,15 @@ services:
       context: .devcontainer
       dockerfile: Dockerfile
     command: sleep infinity
-    working_dir: /workspaces/OpenPIM
+    working_dir: /workspaces/Braian
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       KAFKA_BROKERS: redpanda:9092
       TYPESENSE_URL: http://typesense:8108
     volumes:
-      - .:/workspaces/OpenPIM:cached
-      - cargo-target:/workspaces/OpenPIM/target
+      - .:/workspaces/Braian:cached
+      - cargo-target:/workspaces/Braian/target
       - cargo-registry:/usr/local/cargo/registry
     depends_on:
       postgres:

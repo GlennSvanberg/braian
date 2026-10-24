@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use openpim_model::{AttributeId, AttributePatch, DefinitionSet, ValuePatch};
+use braian_model::{AttributeId, AttributePatch, DefinitionSet, ValuePatch};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -612,8 +612,8 @@ pub fn documents_from_rows(
 
 #[cfg(test)]
 mod tests {
-    use openpim_model::apply_value_patch;
-    use openpim_synth::{EditKind, Tier, definitions, edits, objects};
+    use braian_model::apply_value_patch;
+    use braian_synth::{EditKind, Tier, definitions, edits, objects};
 
     use super::*;
 
@@ -694,14 +694,17 @@ mod tests {
         let original = SplitContext::sorted_groups(&defs);
         let mut expanded = defs.clone();
         for index in 0..150 {
-            expanded.attributes.push(openpim_model::Attribute {
-                id: openpim_model::AttributeId::from_uuid(uuid::Uuid::from_u128(index + 1)),
+            expanded.attributes.push(braian_model::Attribute {
+                id: braian_model::AttributeId::from_uuid(uuid::Uuid::from_u128(index + 1)),
                 key: format!("0{index:04}"),
                 labels: Default::default(),
                 language_dependent: false,
                 multiple: false,
-                kind: openpim_model::AttributeKind::Text { max_length: None },
-                index: openpim_model::IndexFlags::default(),
+                kind: braian_model::AttributeKind::Text {
+                    max_length: None,
+                    form: braian_model::TextForm::Short,
+                },
+                index: braian_model::IndexFlags::default(),
             });
         }
         let assigned = SplitContext::assign_groups(&expanded, &original);

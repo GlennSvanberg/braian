@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use openpim_model::{
+use braian_model::{
     Attribute, AttributeId, AttributeKind, DefinitionSet, GroupId, StructureId, TypeId,
     UnitFamilyId,
 };
@@ -49,7 +49,7 @@ pub struct CompiledModel {
     structure_keys: HashMap<String, StructureId>,
     groups: HashMap<GroupId, GroupInfo>,
     group_keys: HashMap<(String, String), GroupId>,
-    languages: HashSet<openpim_model::LanguageTag>,
+    languages: HashSet<braian_model::LanguageTag>,
     units: HashMap<UnitFamilyId, UnitInfo>,
     values: ValueIndex,
 }
@@ -66,7 +66,7 @@ impl CompiledModel {
         Ok(index(defs))
     }
 
-    pub fn languages(&self) -> &[openpim_model::LanguageTag] {
+    pub fn languages(&self) -> &[braian_model::LanguageTag] {
         &self.defs.languages
     }
 
@@ -127,7 +127,7 @@ impl CompiledModel {
         Some(ids)
     }
 
-    pub(crate) fn is_known_language(&self, tag: &openpim_model::LanguageTag) -> bool {
+    pub(crate) fn is_known_language(&self, tag: &braian_model::LanguageTag) -> bool {
         self.languages.contains(tag)
     }
 
@@ -266,9 +266,9 @@ fn index(defs: &DefinitionSet) -> CompiledModel {
 }
 
 fn check(defs: &DefinitionSet, errors: &mut Vec<DefinitionError>) {
-    let mut ids: HashMap<openpim_model::Uuid, &'static str> = HashMap::new();
+    let mut ids: HashMap<braian_model::Uuid, &'static str> = HashMap::new();
     let mut remember =
-        |id: openpim_model::Uuid, kind: &'static str, errors: &mut Vec<DefinitionError>| {
+        |id: braian_model::Uuid, kind: &'static str, errors: &mut Vec<DefinitionError>| {
             if let Some(previous) = ids.insert(id, kind) {
                 errors.push(error(format!("{kind} id {id} duplicates a {previous} id")));
             }
@@ -278,6 +278,21 @@ fn check(defs: &DefinitionSet, errors: &mut Vec<DefinitionError>) {
     for language in &defs.languages {
         if !languages.insert(language.clone()) {
             errors.push(error(format!("duplicate language {language}")));
+        }
+    }
+
+    let mut list_keys = HashSet::new();
+    for list in &defs.value_lists {
+        remember(list.id.as_uuid(), "value list", errors);
+        unique_key(&mut list_keys, &list.key, "value list", errors);
+        let mut codes = HashSet::new();
+        for option in &list.options {
+            if option.code.is_empty() || !codes.insert(option.code.clone()) {
+                errors.push(error(format!(
+                    "value list {} has an empty or duplicate code",
+                    list.key
+                )));
+            }
         }
     }
 
@@ -338,44 +353,72 @@ fn check(defs: &DefinitionSet, errors: &mut Vec<DefinitionError>) {
                 attribute.key
             )));
         }
-        if let AttributeKind::Number {
-            unit_family,
-            min,
-            max,
-        } = &attribute.kind
+        let unit_family = match &attribute.kind {
+            AttributeKind::Number { unit_family, .. } | AttributeKind::Range { unit_family } => {
+                *unit_family
+            }
+            _ => None,
+        };
+        if let Some(family) = unit_family
+            && !family_ids.contains(&family)
         {
-            if let Some(family) = unit_family
-                && !family_ids.contains(family)
-            {
-                errors.push(error(format!(
-                    "attribute {} references unknown unit family {family}",
-                    attribute.key
-                )));
-            }
-            if let (Some(min), Some(max)) = (min, max)
-                && min > max
-            {
-                errors.push(error(format!(
-                    "attribute {} has min greater than max",
-                    attribute.key
-                )));
-            }
+            errors.push(error(format!(
+                "attribute {} references unknown unit family {family}",
+                attribute.key
+            )));
         }
-        if let AttributeKind::ValueList { options } = &attribute.kind {
-            let mut codes = HashSet::new();
-            for option in options {
-                if option.code.is_empty() {
+        if let AttributeKind::Number { min, max, .. } = &attribute.kind
+            && let (Some(min), Some(max)) = (min, max)
+            && min > max
+        {
+            errors.push(error(format!(
+                "attribute {} has min greater than max",
+                attribute.key
+            )));
+        }
+        if let AttributeKind::ValueList { options, list } = &attribute.kind {
+            if let Some(list_key) = list {
+                if !defs.value_lists.iter().any(|item| item.key == *list_key) {
                     errors.push(error(format!(
-                        "attribute {} has an empty value-list code",
+                        "attribute {} references unknown value list {list_key}",
                         attribute.key
                     )));
-                } else if !codes.insert(option.code.clone()) {
+                }
+                if !options.is_empty() {
                     errors.push(error(format!(
-                        "attribute {} has duplicate value-list code {}",
-                        attribute.key, option.code
+                        "attribute {} uses shared list {list_key} and cannot also carry options",
+                        attribute.key
                     )));
                 }
+            } else {
+                let mut codes = HashSet::new();
+                for option in options {
+                    if option.code.is_empty() {
+                        errors.push(error(format!(
+                            "attribute {} has an empty value-list code",
+                            attribute.key
+                        )));
+                    } else if !codes.insert(option.code.clone()) {
+                        errors.push(error(format!(
+                            "attribute {} has duplicate value-list code {}",
+                            attribute.key, option.code
+                        )));
+                    }
+                }
             }
+        }
+        if let AttributeKind::ObjectRef {
+            type_key: Some(type_key),
+        } = &attribute.kind
+            && !defs
+                .types
+                .iter()
+                .any(|object_type| object_type.key == *type_key)
+        {
+            errors.push(error(format!(
+                "attribute {} references unknown type {type_key}",
+                attribute.key
+            )));
         }
     }
 
@@ -492,7 +535,7 @@ fn unique_key(
 ) {
     if key.is_empty() {
         errors.push(error(format!("empty {kind} key")));
-    } else if openpim_model::Uuid::parse_str(key).is_ok() {
+    } else if braian_model::Uuid::parse_str(key).is_ok() {
         errors.push(error(format!(
             "{kind} key {key} must not be a UUID, so a value can be addressed by key or id"
         )));
@@ -512,7 +555,7 @@ fn unique_refs(ids: &[AttributeId], owner: &str, kind: &str, errors: &mut Vec<De
     }
 }
 
-fn has_cycle(groups: &[openpim_model::Group]) -> bool {
+fn has_cycle(groups: &[braian_model::Group]) -> bool {
     let known: HashSet<GroupId> = groups.iter().map(|group| group.id).collect();
     let parent: HashMap<GroupId, GroupId> = groups
         .iter()
@@ -545,7 +588,7 @@ fn error(message: String) -> DefinitionError {
 mod tests {
     use std::collections::BTreeMap;
 
-    use openpim_model::{
+    use braian_model::{
         Attribute, AttributeId, AttributeKind, Class, ClassId, DefinitionSet, ErrorCode, Group,
         GroupId, IndexFlags, LanguageTag, NumberValue, Object, ObjectId, ObjectType, Structure,
         StructureId, TypeId, Unit, UnitFamily, UnitFamilyId, Uuid, ValueOption,
@@ -572,6 +615,7 @@ mod tests {
             multiple: false,
             kind: AttributeKind::Text {
                 max_length: Some(32),
+                form: braian_model::TextForm::Short,
             },
             index: IndexFlags::default(),
         }
@@ -583,6 +627,7 @@ mod tests {
             model_revision: 1,
             languages: vec![tag("sv")],
             unit_families: vec![],
+            value_lists: vec![],
             attributes: vec![sku.clone()],
             types: vec![ObjectType {
                 id: TypeId::from_uuid(id(2)),
@@ -630,6 +675,7 @@ mod tests {
             language_dependent: true,
             kind: AttributeKind::Text {
                 max_length: Some(3),
+                form: braian_model::TextForm::Long,
             },
             ..name.clone()
         });
@@ -647,11 +693,11 @@ mod tests {
         languages.insert(LanguageTag::parse("en-GB").unwrap(), Some(json!("ok")));
         let report = model.validate_patch(
             &object,
-            &openpim_model::ObjectPatch {
-                values: openpim_model::ValuePatch {
+            &braian_model::ObjectPatch {
+                values: braian_model::ValuePatch {
                     attributes: BTreeMap::from([(
                         name.id,
-                        openpim_model::AttributePatch::Languages { values: languages },
+                        braian_model::AttributePatch::Languages { values: languages },
                     )]),
                 },
                 groups: BTreeMap::new(),
@@ -725,6 +771,7 @@ mod tests {
         defs.unit_families.push(UnitFamily {
             id: UnitFamilyId::from_uuid(id(20)),
             key: "mass".to_owned(),
+            dimension: Some("mass".to_owned()),
             base_unit: "kg".to_owned(),
             units: vec![Unit {
                 code: "g".to_owned(),
@@ -759,6 +806,7 @@ mod tests {
                         labels: BTreeMap::new(),
                     },
                 ],
+                list: None,
             },
             index: IndexFlags::default(),
         });
@@ -791,6 +839,7 @@ mod tests {
         defs.unit_families.push(UnitFamily {
             id: family,
             key: "mass".to_owned(),
+            dimension: Some("mass".to_owned()),
             base_unit: "kg".to_owned(),
             units: vec![
                 Unit {
@@ -814,6 +863,7 @@ mod tests {
                 unit_family: Some(family),
                 min: Some(Decimal::ZERO),
                 max: Some(Decimal::from(10)),
+                integer: false,
             },
             index: IndexFlags::default(),
         });
@@ -919,6 +969,84 @@ mod tests {
             vec![(sku, json!("SKU-1")), (color.id, json!("red"))],
         );
         assert!(model.validate(&color_on_root).is_empty());
+    }
+
+    #[test]
+    fn integer_range_and_object_ref_have_their_own_codes() {
+        let mut defs = minimal();
+        let family = UnitFamilyId::from_uuid(id(20));
+        defs.unit_families.push(UnitFamily {
+            id: family,
+            key: "length".to_owned(),
+            dimension: Some("length".to_owned()),
+            base_unit: "mm".to_owned(),
+            units: vec![Unit {
+                code: "mm".to_owned(),
+                factor: Decimal::ONE,
+            }],
+        });
+        let count = AttributeId::from_uuid(id(21));
+        let span = AttributeId::from_uuid(id(22));
+        let link = AttributeId::from_uuid(id(23));
+        defs.attributes.push(Attribute {
+            id: count,
+            key: "count".to_owned(),
+            labels: BTreeMap::new(),
+            language_dependent: false,
+            multiple: false,
+            kind: AttributeKind::Number {
+                unit_family: None,
+                min: None,
+                max: None,
+                integer: true,
+            },
+            index: IndexFlags::default(),
+        });
+        defs.attributes.push(Attribute {
+            id: span,
+            key: "span".to_owned(),
+            labels: BTreeMap::new(),
+            language_dependent: false,
+            multiple: false,
+            kind: AttributeKind::Range {
+                unit_family: Some(family),
+            },
+            index: IndexFlags::default(),
+        });
+        defs.attributes.push(Attribute {
+            id: link,
+            key: "replaces".to_owned(),
+            labels: BTreeMap::new(),
+            language_dependent: false,
+            multiple: false,
+            kind: AttributeKind::ObjectRef {
+                type_key: Some("item".to_owned()),
+            },
+            index: IndexFlags::default(),
+        });
+        defs.types[0].attributes.extend([count, span, link]);
+        let model = CompiledModel::compile(&defs).unwrap();
+        let sku = AttributeId::from_uuid(id(1));
+        let mut values = BTreeMap::new();
+        values.insert(sku, json!("SKU-1"));
+        values.insert(count, json!({"value": "1.5"}));
+        values.insert(span, json!({"min": "9", "max": "2", "unit": "mm"}));
+        values.insert(link, json!("not-an-id"));
+        let object = Object {
+            id: ObjectId::from_uuid(id(9)),
+            type_id: TypeId::from_uuid(id(2)),
+            model_revision: 1,
+            groups: BTreeMap::new(),
+            values,
+        };
+        let codes: Vec<_> = model
+            .validate(&object)
+            .into_iter()
+            .map(|error| error.code)
+            .collect();
+        assert!(codes.contains(&ErrorCode::NotInteger));
+        assert!(codes.contains(&ErrorCode::RangeInverted));
+        assert!(codes.contains(&ErrorCode::InvalidObjectRef));
     }
 
     fn object(

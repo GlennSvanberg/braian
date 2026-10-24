@@ -17,6 +17,25 @@ built in order. Everything here is a direction and can change as measurements co
 - Postgres is the only source of truth. From phase 4 on, every demo can wipe Redpanda and
   Typesense and rebuild them from Postgres.
 
+## Decisions recorded while building phases 4–6 (2026-10-24)
+
+- The product name is Braian. The GitHub repository name stays as it is. The CLI binary is `braian`.
+- Spike 2 picked one Typesense collection with a field per language. Numbers are in
+  `docs/measurements/2026-10-24-spike-2-index.md`. The index stores the base-unit value as a
+  float; the exact decimal stays in Postgres.
+- The relay confirms the replication slot from inside the read loop (200 ms). A crash can
+  replay a short tail. Consumers are idempotent. The order test allows that replay and
+  requires the new sequence numbers with no gaps.
+- The same relay test talks to whatever `KAFKA_BROKERS` points at. `compose.yaml` has an
+  Apache Kafka profile (`docker compose --profile kafka up -d kafka`, port 19093).
+- Phase 6 is the bulk job endpoint with per-row progress and errors. The scale proof
+  (5 000/s, 1M, 10M) is not part of this cut.
+- `braian all` seeds, then starts the relay, the indexer and the live consumer when
+  `KAFKA_BROKERS` is set, and serves the API. Default listen address is `127.0.0.1:8090`
+  because Redpanda Console owns 8080.
+- An agent is never a change type. The actor is a person; `via` is `agent` or `api`.
+  Operations that need approval, and every agent write, become a proposal.
+
 ## Phase 0 – Skeleton (done)
 
 Cargo workspace, compose stack (Postgres, Redpanda, Redpanda Console, Typesense),
@@ -127,7 +146,7 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
   - Object JSON accepts a key or an id. Responses use keys. Definition keys must not
     parse as UUIDs, so the two forms stay unambiguous. The client may send a UUIDv7 as
     the object id; otherwise the server generates one. One object per request.
-  - Identity is a dev token from `OPENPIM_DEV_TOKENS`
+  - Identity is a dev token from `BRAIAN_DEV_TOKENS`
     (`handle:kind[@behalf]:token`, separated by `;`). An agent token always names the
     person it acts for. Tokens are compared in constant time and are not logged.
   - OpenAPI is generated with utoipa and checked in. `just openapi` rewrites
@@ -141,8 +160,9 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
   - A write response carries `version`, `seq`, `model_revision`, `warnings` and an `ETag`.
   - The API re-reads and validates at most three times when the object changed after it
     was read (`StaleRead`). The client's base version is only the conflict check.
-  - `all` starts the API only, until relay and indexer exist.
-- **Demo:** `just demo-3` creates `openpim_demo3`, serves the API on a free port, and runs
+  - `all` seeds, then starts the relay, the indexer and the live consumer when Kafka is
+    configured, and serves the API.
+- **Demo:** `just demo-3` creates `braian_demo3`, serves the API on a free port, and runs
   `tests/hurl/phase-3` with Hurl.
 - **Test:** API tests through the router against Postgres, the store conflict matrix, and
   a check that `docs/api/openapi.json` matches the code. The same Hurl files run in CI.
@@ -177,7 +197,7 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
   - `search`: our own search interface with a Typesense implementation.
   - Search and listing through our API, with an option to wait until the index has reached
     a given sequence number (read your own writes).
-  - `openpim reindex` rebuilds from Postgres into a new collection and switches the alias.
+  - `braian reindex` rebuilds from Postgres into a new collection and switches the alias.
 - **Demo:** `just demo-5` saves an object, then searches for it using the sequence number
   the save returned. Then it deletes the Typesense data, runs reindex, and search works again.
 - **Test:**
@@ -194,13 +214,10 @@ Spike 3 and Step 1.5 are the same thing: the whole chain under load.
   - `bench` drives the load and reports p50, p95 and p99.
 - **Demo:** `just demo-6` runs a bulk job of heavy objects. While it runs, an interactive
   edit is made and timed until it is visible in search.
-- **Done when:**
-  - Sustained 5,000 heavy objects per second in bulk.
-  - Interactive edits visible in search within 5 seconds (p95) while the bulk job runs.
-  - Write rate, index lag and search latency for 1 million objects are recorded in
-    `docs/measurements/`, then repeated for 10 million.
+- **Cut (2026-10-24):** the bulk endpoint and its job row are in. The scale proof is deferred.
+  There is no 5 000/s or 1M/10M measurement in this cut.
 
-This closes Step 1.
+This closes the runnable core. Scale proof stays a later measurement, not a blocker.
 
 ## After the core (outline)
 
