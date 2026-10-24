@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use openpim_model::{AttributeId, ErrorCode, LanguageTag, Object};
+use openpim_model::{AttributeId, ErrorCode, LanguageTag, Object, ObjectPatch};
 use openpim_rules::CompiledModel;
 use serde::Deserialize;
 
@@ -9,7 +9,11 @@ use serde::Deserialize;
 struct Case {
     name: String,
     object: Object,
+    #[serde(default)]
+    patch: Option<ObjectPatch>,
     expected: Vec<Located>,
+    #[serde(default)]
+    warnings: Vec<Located>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -43,8 +47,31 @@ fn shared_cases_match_rust_rules() {
 
     for path in cases {
         let case: Case = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        let mut got = model
-            .validate(&case.object)
+        let (errors, warnings) = match &case.patch {
+            Some(patch) => {
+                let report = model.validate_patch(&case.object, patch);
+                (report.errors, report.warnings)
+            }
+            None => (model.validate(&case.object), Vec::new()),
+        };
+        assert_eq!(
+            located(errors),
+            sorted(case.expected),
+            "{} errors",
+            case.name
+        );
+        assert_eq!(
+            located(warnings),
+            sorted(case.warnings),
+            "{} warnings",
+            case.name
+        );
+    }
+}
+
+fn located(errors: Vec<openpim_model::ValidationError>) -> Vec<Located> {
+    sorted(
+        errors
             .into_iter()
             .map(|error| Located {
                 attribute: error.attribute,
@@ -52,12 +79,13 @@ fn shared_cases_match_rust_rules() {
                 index: error.index,
                 code: error.code,
             })
-            .collect::<Vec<_>>();
-        let mut expected = case.expected;
-        got.sort_by_key(location_key);
-        expected.sort_by_key(location_key);
-        assert_eq!(got, expected, "{}", case.name);
-    }
+            .collect(),
+    )
+}
+
+fn sorted(mut errors: Vec<Located>) -> Vec<Located> {
+    errors.sort_by_key(location_key);
+    errors
 }
 
 fn location_key(error: &Located) -> (String, String, usize, ErrorCode) {

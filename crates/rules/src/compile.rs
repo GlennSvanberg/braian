@@ -492,6 +492,10 @@ fn unique_key(
 ) {
     if key.is_empty() {
         errors.push(error(format!("empty {kind} key")));
+    } else if openpim_model::Uuid::parse_str(key).is_ok() {
+        errors.push(error(format!(
+            "{kind} key {key} must not be a UUID, so a value can be addressed by key or id"
+        )));
     } else if !seen.insert(key.to_owned()) {
         errors.push(error(format!("duplicate {kind} key {key}")));
     }
@@ -603,6 +607,66 @@ mod tests {
             values: BTreeMap::from([(AttributeId::from_uuid(id(1)), json!("SKU-1"))]),
         };
         assert!(model.validate(&object).is_empty());
+    }
+
+    #[test]
+    fn rejects_a_key_that_parses_as_a_uuid() {
+        let mut defs = minimal();
+        defs.attributes[0].key = "018f0000-0000-7000-8000-000000000100".into();
+        let errors = CompiledModel::compile(&defs).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("must not be a UUID"))
+        );
+    }
+
+    #[test]
+    fn a_patch_warns_about_errors_it_does_not_touch() {
+        let mut defs = minimal();
+        defs.languages.push(LanguageTag::parse("en-GB").unwrap());
+        let name = text_attribute(8, "name");
+        defs.attributes.push(Attribute {
+            language_dependent: true,
+            kind: AttributeKind::Text {
+                max_length: Some(3),
+            },
+            ..name.clone()
+        });
+        defs.types[0].attributes.push(name.id);
+        let model = CompiledModel::compile(&defs).unwrap();
+        let sku = AttributeId::from_uuid(id(1));
+        let object = Object {
+            id: ObjectId::from_uuid(id(9)),
+            type_id: TypeId::from_uuid(id(2)),
+            model_revision: 1,
+            groups: BTreeMap::new(),
+            values: BTreeMap::from([(sku, json!("SKU-1")), (name.id, json!({"sv": "1234"}))]),
+        };
+        let mut languages = BTreeMap::new();
+        languages.insert(LanguageTag::parse("en-GB").unwrap(), Some(json!("ok")));
+        let report = model.validate_patch(
+            &object,
+            &openpim_model::ObjectPatch {
+                values: openpim_model::ValuePatch {
+                    attributes: BTreeMap::from([(
+                        name.id,
+                        openpim_model::AttributePatch::Languages { values: languages },
+                    )]),
+                },
+                groups: BTreeMap::new(),
+            },
+        );
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.warnings.len(), 1);
+        assert_eq!(report.warnings[0].code, ErrorCode::TextTooLong);
+        assert_eq!(
+            report.warnings[0]
+                .language
+                .as_ref()
+                .map(LanguageTag::as_str),
+            Some("sv")
+        );
     }
 
     #[test]

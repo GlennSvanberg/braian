@@ -74,6 +74,21 @@ impl<'de> Deserialize<'de> for LanguageTag {
     }
 }
 
+#[cfg(feature = "openapi")]
+impl utoipa::PartialSchema for LanguageTag {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::schema::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .description(Some(
+                "BCP 47 language tag with an optional region, for example sv or en-GB",
+            ))
+            .into()
+    }
+}
+
+#[cfg(feature = "openapi")]
+impl utoipa::ToSchema for LanguageTag {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageTagError {
     tag: String,

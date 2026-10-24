@@ -20,6 +20,8 @@ openpim-relay = { path = "crates/relay" }
 openpim-indexer = { path = "crates/indexer" }
 
 anyhow = "1"
+axum = { version = "0.8", features = ["json", "macros"] }
+tower = { version = "0.5", features = ["util"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 deadpool-postgres = "0.14"
@@ -38,5 +40,6 @@ tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-serde_json-
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", default-features = false, features = ["std", "serde"] }
+utoipa = { version = "5", features = ["macros", "uuid"] }
 # Keep this in lockstep with wasm-bindgen-cli in the devcontainer, justfile and CI.
 wasm-bindgen = "=0.2.129"

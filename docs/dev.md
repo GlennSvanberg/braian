@@ -35,6 +35,8 @@ eller använd "Clone Repository in Container Volume". `target/` ligger alltid i 
 | `just demo-2` | Fas 2: ladda 100 000 lätta objekt, hämta, ändra och radera |
 | `just demo-2 tier=medium count=1000` | Samma demo med annan nivå och annat antal |
 | `just spike-1` | Fas 2: jämför tre lagringsformer. Körs inte i CI |
+| `just demo-3` | Fas 3: starta API:t och kör Hurl-filerna i `tests/hurl/phase-3` |
+| `just openapi` | Skriv om `docs/api/openapi.json` från koden |
 | `just psql` | psql mot utvecklingsdatabasen |
 | `just rpk topic list` | rpk mot Redpanda |
 
@@ -44,6 +46,10 @@ eller använd "Clone Repository in Container Volume". `target/` ligger alltid i 
 I utveckling kör man `all`. I drift kör man varje roll som egen process och skalar dem var för sig.
 
 `just demo-2` skriver till databasen `openpim_demo` och rör inte databasen `openpim`. Nivån är lätt som standard. Medel och tung väljs med `tier`, och antalet objekt med `count`.
+
+`just demo-3` skapar databasen `openpim_demo3`, startar API:t på en ledig port och kör `hurl --test` mot `tests/hurl/phase-3`. Hurl 8.0.1 ska finnas på `PATH`. På Windows: `winget install Orange-OpenSource.Hurl`.
+
+`openpim api` läser `DATABASE_URL`, `OPENPIM_DEV_TOKENS` och `OPENPIM_API_ADDR` (standard `127.0.0.1:8080`). Redpanda Console använder också port 8080, så sätt `OPENPIM_API_ADDR` när båda kör. `openpim openapi` skriver OpenAPI-dokumentet. `openpim all` startar bara API:t tills relay och indexer finns.
 
 `just spike-1` mäter import och ändringar för ett dokument, en del per språk, och en del per språk och attributgrupp. Standard är tung nivå, 20 000 objekt och 2 000 ändringar per ändringstyp. Argument efter kommandot skickas vidare, till exempel `just spike-1 --objects 300`. Resultatet skrivs till `target/spike-1.json`. Spiken körs inte i CI. Siffrorna är indikativa när Postgres körs i Docker.
 

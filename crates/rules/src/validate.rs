@@ -4,8 +4,9 @@ use rust_decimal::Decimal;
 use serde_json::Value;
 
 use openpim_model::{
-    Attribute, AttributeId, AttributeKind, DefinitionSet, ErrorCode, GroupId, LanguageTag,
-    NumberValue, Object, StructureId, UnitFamilyId, ValidationError,
+    Attribute, AttributeId, AttributeKind, AttributePatch, DefinitionSet, ErrorCode, GroupId,
+    LanguageTag, NumberValue, Object, ObjectPatch, StructureId, UnitFamilyId, ValidationError,
+    apply_object_patch,
 };
 
 use crate::compile::CompiledModel;
@@ -112,6 +113,25 @@ impl CompiledModel {
                 )
         });
         errors
+    }
+
+    /// Validates the object as it would be after `patch`.
+    ///
+    /// Errors on attributes, languages, the key or placement that the patch
+    /// touches block the write. Errors that were already there are warnings.
+    pub fn validate_patch(&self, current: &Object, patch: &ObjectPatch) -> PatchReport {
+        let mut next = current.clone();
+        apply_object_patch(&mut next, patch);
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+        for error in self.validate(&next) {
+            if blocks_patch(patch, &error) {
+                errors.push(error);
+            } else {
+                warnings.push(error);
+            }
+        }
+        PatchReport { errors, warnings }
     }
 
     fn placement(
@@ -495,6 +515,33 @@ fn wrong_type(
         ErrorCode::WrongType,
         format!("attribute {} expected {expected}", attribute.key),
     )
+}
+
+/// Errors that block a patch, and errors that were already on the object.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PatchReport {
+    pub errors: Vec<ValidationError>,
+    pub warnings: Vec<ValidationError>,
+}
+
+fn blocks_patch(patch: &ObjectPatch, error: &ValidationError) -> bool {
+    if matches!(
+        error.code,
+        ErrorCode::UnknownStructure | ErrorCode::UnknownGroup
+    ) {
+        return !patch.groups.is_empty();
+    }
+    let Some(attribute) = error.attribute else {
+        return false;
+    };
+    match patch.values.attributes.get(&attribute) {
+        Some(AttributePatch::Languages { values }) => match &error.language {
+            Some(language) => values.contains_key(language),
+            None => true,
+        },
+        Some(AttributePatch::Replace { .. } | AttributePatch::Remove) => true,
+        None => false,
+    }
 }
 
 fn failure(

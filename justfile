@@ -60,3 +60,15 @@ spike-1 *args:
 # Fas 2: ladda syntetiska objekt och visa ändringsloggen. Nivå och antal går att byta.
 demo-2 tier="light" count="100000":
     cargo run -p openpim-bench --release -- demo-2 --tier {{tier}} --count {{count}}
+
+# Fas 3: Hurl mot API:t i en ny databas, openpim_demo3.
+demo-3:
+    cargo run -p openpim-bench --release -- demo-3
+
+# Skriv docs/api/openapi.json från koden.
+openapi:
+    cargo run -p openpim-server -- openapi --out docs/api/openapi.json
+
+# Fas 3: HTTP-latens mot ett direkt store-anrop, tung nivå.
+api-latency:
+    cargo run -p openpim-bench --release -- api-latency

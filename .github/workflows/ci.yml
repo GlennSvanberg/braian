@@ -75,6 +75,38 @@ jobs:
           docker compose up -d --wait postgres
       - run: just demo-2
 
+  phase-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Install Hurl
+        run: |
+          curl -fsSL -o /tmp/hurl.tar.gz https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/hurl.tar.gz -C /tmp
+          sudo find /tmp -type f -name hurl -exec mv {} /usr/local/bin/hurl \;
+          sudo chmod +x /usr/local/bin/hurl
+          hurl --version
+      - name: Start Postgres
+        run: |
+          cat > .env << 'EOF'
+          POSTGRES_USER=openpim
+          POSTGRES_PASSWORD=openpim
+          POSTGRES_DB=openpim
+          POSTGRES_READONLY_PASSWORD=openpim-readonly
+          POSTGRES_HOST_PORT=5433
+          TYPESENSE_API_KEY=ci
+          DATABASE_URL=postgres://openpim:openpim@localhost:5433/openpim
+          OPENPIM_TEST_DATABASE_URL=postgres://openpim:openpim@localhost:5433/postgres
+          EOF
+          docker compose up -d --wait postgres
+      - run: just demo-3
+
   licenses:
     runs-on: ubuntu-latest
     steps:

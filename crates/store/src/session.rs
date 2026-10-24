@@ -41,6 +41,7 @@ impl Store {
         client
             .batch_execute("SELECT ensure_change_partitions(3)")
             .await?;
+        crate::ops::backfill_attribute_parts(&mut client).await?;
         drop(client);
         handle.abort();
 
@@ -84,7 +85,19 @@ impl Store {
                 "stored revision does not match the document".into(),
             ));
         }
-        let cached = Arc::new(CachedDefs::from_set(set));
+        let group_rows = client
+            .query("SELECT attribute_id, part_group FROM attribute_parts", &[])
+            .await?;
+        let mut groups = std::collections::HashMap::new();
+        for row in group_rows {
+            let group: i32 = row.get("part_group");
+            groups.insert(
+                openpim_model::AttributeId::from_uuid(row.get("attribute_id")),
+                usize::try_from(group).unwrap_or(0),
+            );
+        }
+        let groups = crate::split::SplitContext::assign_groups(&set, &groups);
+        let cached = Arc::new(CachedDefs::from_groups(set, groups));
         *self.definitions.write().await = Some(Arc::clone(&cached));
         Ok(cached)
     }

@@ -1,7 +1,21 @@
-use openpim_model::{ObjectId, TypeId};
+use openpim_model::{AttributeId, LanguageTag, ObjectId, StructureId, TypeId};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::ids::PrincipalId;
+
+/// One attribute, language or placement that changed since the caller's base version.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Conflict {
+    pub attribute: Option<AttributeId>,
+    pub language: Option<LanguageTag>,
+    pub structure: Option<StructureId>,
+    pub version: u64,
+    pub actor: PrincipalId,
+    pub on_behalf_of: Option<PrincipalId>,
+    /// Value after the conflicting change. `Null` means it was cleared.
+    pub current: Option<Value>,
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -25,6 +39,15 @@ pub enum Error {
     NotFound(ObjectId),
     #[error("object {0} is deleted")]
     Deleted(ObjectId),
+    #[error("conflict at version {current_version}")]
+    Conflict {
+        current_version: u64,
+        conflicts: Vec<Conflict>,
+    },
+    #[error("object changed since it was read (version {current_version})")]
+    StaleRead { current_version: u64 },
+    #[error("base version is ahead of {current_version}")]
+    BaseAhead { current_version: u64 },
     #[error("object {0} has no string key")]
     BadKey(ObjectId),
     #[error("unknown type {0}")]

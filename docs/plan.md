@@ -107,22 +107,47 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
 
 ## Phase 3 – API for writing and reading
 
-- **Build:**
-  - `api` (axum) with a generated OpenAPI spec.
-  - Definitions: create and update, each change bumping a global model revision. Changes
-    to definitions go through the same batch and change log as data.
-  - Objects: create and update with validation always on.
-  - Concurrent edits merge per attribute: the client sends the base version it started
-    from, and the server checks `changes` for edits to the same attributes since then.
-  - `GET` for a single object, served from Postgres.
-  - A simple dev token as identity, so `actor` is always set. Real roles come later.
-- **Demo:** `just demo-3` runs a script (or an `.http` file) that:
-  - creates definitions and an object;
-  - sends an invalid write and gets a clear, per-attribute error;
-  - makes two concurrent edits to different attributes, which merge;
-  - makes two concurrent edits to the same attribute, which returns a conflict.
-- **Test:** API end-to-end tests, plus a check that the committed OpenAPI spec matches the
-  code.
+- **Decisions:**
+  - Concurrent edits merge per attribute and language. Two edits conflict only when they
+    touch the same language of the same attribute, or the same language-independent
+    attribute. A multi-valued attribute is one unit per language.
+  - `PATCH` sends the changed values. JSON `null` clears a value or one language.
+    `If-Match` is the object version the client started from. A missing `If-Match` on
+    `PATCH` is 428. `DELETE` takes an optional `If-Match`; when it is sent, any change
+    since that version is a conflict.
+  - Every definition change is allowed, including a breaking one. A write is blocked
+    only by errors on the attributes and languages it touches, plus type, key attribute
+    and placement when the patch touches them. Errors that were already there come back
+    as warnings, on writes and on `GET`.
+  - Values for attributes that no longer apply stay in storage. `GET` hides them unless
+    the client sends `?include=inapplicable`.
+  - Definitions have per-entity endpoints and a whole-set import, JSON or YAML. One
+    request is one batch and one model revision. A per-entity write that loses a
+    revision race retries once. A whole-set import does not retry; it returns 409.
+  - Object JSON accepts a key or an id. Responses use keys. Definition keys must not
+    parse as UUIDs, so the two forms stay unambiguous. The client may send a UUIDv7 as
+    the object id; otherwise the server generates one. One object per request.
+  - Identity is a dev token from `OPENPIM_DEV_TOKENS`
+    (`handle:kind[@behalf]:token`, separated by `;`). An agent token always names the
+    person it acts for. Tokens are compared in constant time and are not logged.
+  - OpenAPI is generated with utoipa and checked in. `just openapi` rewrites
+    `docs/api/openapi.json`.
+  - Attribute part groups are stable. Adding an attribute does not move an existing one
+    to another part. A definition change stores the list of entities that changed, not
+    the whole set.
+- **Defaults:**
+  - Routes live under `/v1`. Errors are `application/problem+json`. 422 is validation,
+    409 is a conflict or a duplicate key, 410 is a deleted object.
+  - A write response carries `version`, `seq`, `model_revision`, `warnings` and an `ETag`.
+  - The API re-reads and validates at most three times when the object changed after it
+    was read (`StaleRead`). The client's base version is only the conflict check.
+  - `all` starts the API only, until relay and indexer exist.
+- **Demo:** `just demo-3` creates `openpim_demo3`, serves the API on a free port, and runs
+  `tests/hurl/phase-3` with Hurl.
+- **Test:** API tests through the router against Postgres, the store conflict matrix, and
+  a check that `docs/api/openapi.json` matches the code. The same Hurl files run in CI.
+- **Done when:** `just demo-3` passes, the API tests and the OpenAPI check pass, and API
+  latency is recorded in `docs/measurements/`.
 
 ## Phase 4 – Relay to Redpanda
 

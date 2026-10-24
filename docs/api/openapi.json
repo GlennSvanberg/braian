@@ -1,0 +1,2024 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenPIM",
+    "description": "Write and read definitions and objects.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "health",
+        "responses": {
+          "204": {
+            "description": "The process is up"
+          }
+        }
+      }
+    },
+    "/v1/attributes": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_attribute",
+        "requestBody": {
+          "description": "Id is optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Attribute"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attribute"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The set does not compile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/attributes/{id}": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "get_attribute",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attribute key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attribute"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_attribute",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attribute key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Attribute"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attribute"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The set does not compile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_attribute_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attribute key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/definitions": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "get_definitions",
+        "responses": {
+          "200": {
+            "description": "Current definition set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionSet"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No definitions stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_definitions",
+        "requestBody": {
+          "description": "JSON or YAML definition set",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Imported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The set does not compile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/languages": {
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_languages",
+        "requestBody": {
+          "description": "BCP 47 language tags, in order",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Languages replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "The token's principal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/objects": {
+      "post": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "create_object",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateObject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{id}": {
+      "get": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "get_object",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Pass `inapplicable` to include values that no longer apply",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "delete_object",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "When set, any newer change is a conflict",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Already deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "patch_object",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Object version the edit started from",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchObject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "If-Match is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{id}/changes": {
+      "get": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "object_changes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Change log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "This OpenAPI document"
+          }
+        }
+      }
+    },
+    "/v1/structures": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_structure",
+        "requestBody": {
+          "description": "Id is optional. Groups and classes belong to the structure.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Structure"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures/{id}": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "get_structure",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_structure",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Structure"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_structure_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/types": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_type",
+        "requestBody": {
+          "description": "Id is optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectType"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectType"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/types/{id}": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "get_type",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Type key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectType"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_type",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Type key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectType"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectType"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_type_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Type key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/unit-families": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_unit_family",
+        "requestBody": {
+          "description": "Id is optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnitFamily"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored unit family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnitFamily"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/unit-families/{id}": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "get_unit_family",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Unit family key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unit family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnitFamily"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_unit_family",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Unit family key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnitFamily"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored unit family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnitFamily"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_unit_family_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Unit family key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Attribute": {
+        "type": "object",
+        "description": "One attribute in the global pool.\n\nRules live only here. A class decides that the attribute applies to an\nobject; it does not add or override rules. A value is stored once per\nobject even when several structures make the attribute apply.",
+        "required": [
+          "id",
+          "key",
+          "labels",
+          "language_dependent",
+          "multiple",
+          "kind",
+          "index"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/AttributeId"
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexFlags"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttributeKind"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "language_dependent": {
+            "type": "boolean"
+          },
+          "multiple": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AttributeId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of an attribute in the global pool."
+      },
+      "AttributeKind": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Plain text. Length is counted in Unicode scalar values, not bytes.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "max_length": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Exact decimal. `min` and `max` are in the base unit when the attribute has one.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "max": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "min": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "number"
+                ]
+              },
+              "unit_family": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UnitFamilyId"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "options",
+              "type"
+            ],
+            "properties": {
+              "options": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ValueOption"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "value_list"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "boolean"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Calendar date, stored as `YYYY-MM-DD`.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "date"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Reference to a file. The file itself is not modeled in phase 1.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "file_ref"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ChangeResponse": {
+        "type": "object",
+        "required": [
+          "seq",
+          "op",
+          "actor"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "object"
+          },
+          "on_behalf_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "op": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "Class": {
+        "type": "object",
+        "description": "A class adds its attributes to one group, and to every group below it.\n\nThat is applicability, not value inheritance: an object placed in a child\ngroup uses the ancestor class's attributes, but never its values.",
+        "required": [
+          "id",
+          "key",
+          "group",
+          "attributes"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttributeId"
+            }
+          },
+          "group": {
+            "$ref": "#/components/schemas/GroupId"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ClassId"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClassId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of a class. A class belongs to exactly one group."
+      },
+      "ConflictBody": {
+        "type": "object",
+        "description": "One overlapping edit, named with keys where the model still has them.",
+        "required": [
+          "version",
+          "actor"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "attribute": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current": {
+            "type": "object"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "on_behalf_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "structure": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateObject": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object"
+          }
+        }
+      },
+      "DefinitionSet": {
+        "type": "object",
+        "description": "A definition set is the import and export file for the model.\n\nAuthored through the API from phase 3 on, and stored as JSON or YAML in git.\n`model_revision` increases by one for every change to the set.",
+        "required": [
+          "model_revision",
+          "languages",
+          "unit_families",
+          "attributes",
+          "types",
+          "structures"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attribute"
+            }
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LanguageTag"
+            }
+          },
+          "model_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Structure"
+            }
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectType"
+            }
+          },
+          "unit_families": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnitFamily"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DefinitionWrite": {
+        "type": "object",
+        "required": [
+          "model_revision",
+          "seq"
+        ],
+        "properties": {
+          "model_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DeletedResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "seq"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Machine-readable validation failure.\n\nMessages are for people. Callers branch on `code`, together with the\nattribute, language and list index that locate the value.",
+        "enum": [
+          "unknown_type",
+          "unknown_structure",
+          "unknown_group",
+          "attribute_not_applicable",
+          "wrong_type",
+          "expected_list",
+          "expected_language_map",
+          "language_not_allowed",
+          "text_too_long",
+          "invalid_decimal",
+          "unit_required",
+          "unit_not_allowed",
+          "below_min",
+          "above_max",
+          "value_not_in_list",
+          "invalid_date",
+          "invalid_file_ref",
+          "missing_key_attribute"
+        ]
+      },
+      "Group": {
+        "type": "object",
+        "required": [
+          "id",
+          "key"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/GroupId"
+          },
+          "key": {
+            "type": "string"
+          },
+          "parent": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GroupId"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "GroupId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of a group inside one structure."
+      },
+      "IndexFlags": {
+        "type": "object",
+        "description": "Which parts of the attribute are copied into the search index.",
+        "required": [
+          "searchable",
+          "filterable",
+          "sortable"
+        ],
+        "properties": {
+          "filterable": {
+            "type": "boolean"
+          },
+          "searchable": {
+            "type": "boolean"
+          },
+          "sortable": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LanguageTag": {
+        "type": "string",
+        "description": "BCP 47 language tag with an optional region, for example sv or en-GB"
+      },
+      "Me": {
+        "type": "object",
+        "required": [
+          "handle",
+          "kind"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "on_behalf_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ObjectResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "groups",
+          "values",
+          "version",
+          "seq",
+          "model_revision",
+          "warnings"
+        ],
+        "properties": {
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "type": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            }
+          }
+        }
+      },
+      "ObjectType": {
+        "type": "object",
+        "description": "An object type. There are no built-in types such as article or product.\n\n`key_attribute` is the human key, unique within the type. The database\nenforces that uniqueness; phase 1 only checks that the attribute is\nsingle-valued, language-independent text and that a value is present.",
+        "required": [
+          "id",
+          "key",
+          "labels",
+          "key_attribute",
+          "attributes"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttributeId"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/TypeId"
+          },
+          "key": {
+            "type": "string"
+          },
+          "key_attribute": {
+            "$ref": "#/components/schemas/AttributeId"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PatchObject": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "values": {
+            "type": "object"
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "`application/problem+json` body. Callers branch on `code`.",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConflictBody"
+            }
+          },
+          "current_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "definition_errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            }
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            }
+          }
+        }
+      },
+      "Structure": {
+        "type": "object",
+        "description": "A hierarchy of groups plus the classes attached to those groups.",
+        "required": [
+          "id",
+          "key",
+          "groups",
+          "classes"
+        ],
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Class"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Group"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/StructureId"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StructureId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of a structure."
+      },
+      "TypeId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of an object type."
+      },
+      "Unit": {
+        "type": "object",
+        "required": [
+          "code",
+          "factor"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "factor": {
+            "type": "string",
+            "description": "Multiplier into the base unit. Serialized as a decimal string."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnitFamily": {
+        "type": "object",
+        "description": "Units that convert to one base unit by multiplication.\n\n`factor` turns an entered value into the base unit: 5000 g with factor\n0.001 is 5 kg. The base unit itself has factor 1. Filters and sorting use\nthe base-unit value; the entered value and unit are what gets stored.",
+        "required": [
+          "id",
+          "key",
+          "base_unit",
+          "units"
+        ],
+        "properties": {
+          "base_unit": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/UnitFamilyId"
+          },
+          "key": {
+            "type": "string"
+          },
+          "units": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Unit"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnitFamilyId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Id of a family of units that share a base unit."
+      },
+      "ValidationError": {
+        "type": "object",
+        "description": "One validation failure, located as precisely as the value allows.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "attribute": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AttributeId"
+              }
+            ]
+          },
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "language": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanguageTag"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ValueOption": {
+        "type": "object",
+        "required": [
+          "code",
+          "labels"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "token",
+        "description": "Dev token from OPENPIM_DEV_TOKENS. An agent token acts for a person."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "meta",
+      "description": "Process and caller"
+    },
+    {
+      "name": "definitions",
+      "description": "Versioned model. One request is one revision."
+    },
+    {
+      "name": "objects",
+      "description": "Object values. Addresses accept a key or an id; responses use keys."
+    }
+  ]
+}

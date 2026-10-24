@@ -14,9 +14,11 @@ path = "src/main.rs"
 openpim-api.workspace = true
 openpim-relay.workspace = true
 openpim-indexer.workspace = true
+openpim-store.workspace = true
 
 anyhow.workspace = true
+axum.workspace = true
 clap.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

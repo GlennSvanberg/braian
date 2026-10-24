@@ -9,3 +9,4 @@ mod date;
 mod validate;
 
 pub use compile::{CompiledModel, DefinitionError};
+pub use validate::PatchReport;

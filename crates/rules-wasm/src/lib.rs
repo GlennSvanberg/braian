@@ -3,7 +3,7 @@
 //! Definitions and objects are JSON strings, so the WebAssembly build and the
 //! native crate run the same serde path and produce the same report.
 
-use openpim_model::{DefinitionSet, Object};
+use openpim_model::{DefinitionSet, Object, ObjectPatch};
 use openpim_rules::CompiledModel;
 use wasm_bindgen::prelude::*;
 
@@ -33,5 +33,17 @@ impl Validator {
             serde_json::from_str(object_json).map_err(|err| JsValue::from_str(&err.to_string()))?;
         Ok(serde_json::to_string(&self.model.validate(&object))
             .expect("validation report serializes"))
+    }
+
+    /// JSON `{errors, warnings}` for a patch. Same report as the native crate.
+    pub fn validate_patch(&self, object_json: &str, patch_json: &str) -> Result<String, JsValue> {
+        let object: Object =
+            serde_json::from_str(object_json).map_err(|err| JsValue::from_str(&err.to_string()))?;
+        let patch: ObjectPatch =
+            serde_json::from_str(patch_json).map_err(|err| JsValue::from_str(&err.to_string()))?;
+        Ok(
+            serde_json::to_string(&self.model.validate_patch(&object, &patch))
+                .expect("patch report serializes"),
+        )
     }
 }
