@@ -29,10 +29,30 @@ devcontainer, CI and a read-only Postgres MCP.
 
 No I/O. This phase fixes the vocabulary the rest of the system uses.
 
+- **Decisions (Glenn 2026-10-24):**
+  - Any attribute type can be multi-valued; the definition says so. Multiple values are an
+    ordered list.
+  - A structure group gets the classes of all its ancestor groups. This decides which
+    attributes apply; values are never inherited.
+  - Languages are BCP 47 codes with optional region (`sv`, `sv-SE`, `en-GB`). No fallback
+    between languages in storage or index.
+  - Numbers with units are stored as entered (value and unit). The index also gets the value
+    normalized to the base unit, so filters and sorting work across units.
+  - Definitions are authored through the API, and can be imported and exported as JSON or
+    YAML files that live in git.
+  - Synthetic tiers: light = 50 attributes and 3 languages, medium = 300 attributes and
+    10 languages, heavy = 2000 attributes and 20 languages. In all tiers 30% of attributes
+    are language-dependent and 60% of applicable attributes are filled.
+- **Defaults (change if they turn out wrong):**
+  - Numbers are exact decimals, not floats.
+  - Value lists have a stable code and a label per language; the stored value is the code.
+  - Text is plain text in v1. Rich text comes later.
+  - Each type declares one key attribute, unique within the type and enforced by the database.
+  - Validation errors are returned per attribute and language, with a machine-readable code.
 - **Build:**
   - `model`: types, a global attribute pool, structures with groups and classes, and
     attributes marked as language-dependent or not.
-  - Attribute types: text, number with unit, value list, boolean, file reference.
+  - Attribute types: text, number with unit, value list, boolean, date, file reference.
   - Index flags on attributes: searchable, filterable, sortable.
   - `rules`: validation of type, length, value list and unit. Rules live only on the
     attribute; a class only decides which attributes apply.
