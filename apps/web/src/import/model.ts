@@ -55,6 +55,69 @@ export function matchBanner(columns: ColumnLine[]): { matched: number; total: nu
   return { matched, total, marked }
 }
 
+export function matchSummary(columns: ColumnLine[]): string {
+  const { matched, total, marked } = matchBanner(columns)
+  if (total === 0) return 'No columns in this file.'
+  if (marked === 0 && matched === total) {
+    return total === 1 ? 'The column is mapped.' : `All ${total} columns are mapped.`
+  }
+  if (marked === 0) return `${matched} of ${total} columns are mapped.`
+  const look = marked === 1 ? '1 needs a look' : `${marked} need a look`
+  return `${matched} of ${total} columns are mapped. ${look}.`
+}
+
+export function mappingRank(column: ColumnLine | undefined): number {
+  if (!column || column.target === 'unmapped') return 0
+  if (column.low || column.confidence < 0.6) return 1
+  return 2
+}
+
+export function confidenceTone(column: ColumnLine | undefined): 'ok' | 'warn' | 'low' | 'manual' | 'unmapped' {
+  if (!column || column.target === 'unmapped') return 'unmapped'
+  if (column.source === 'manual') return 'manual'
+  if (column.low || column.confidence < 0.6) return 'low'
+  if (column.confidence < 0.9) return 'warn'
+  return 'ok'
+}
+
+export function showTypeConfidence(
+  selected: string,
+  suggested: string | null | undefined,
+  confidence: number | null | undefined,
+): number | null {
+  if (!suggested || selected !== suggested || confidence == null) return null
+  if (confidence >= 0.995) return null
+  return confidence
+}
+
+export function dedupedTargets<T extends { id: string; label: string }>(targets: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const target of targets) {
+    if (seen.has(target.label)) continue
+    seen.add(target.label)
+    out.push(target)
+  }
+  return out
+}
+
+export function alternativeChoices(
+  column: ColumnLine,
+  targets: Array<{ id: string; label: string }>,
+): Array<{ id: string; label: string; p: number }> {
+  const chosen = targets.find((target) => target.id === column.target)?.label
+  const seen = new Set<string>()
+  if (chosen) seen.add(chosen)
+  const out: Array<{ id: string; label: string; p: number }> = []
+  for (const alt of column.alternatives ?? []) {
+    const label = targets.find((target) => target.id === alt.value)?.label ?? alt.value
+    if (seen.has(label)) continue
+    seen.add(label)
+    out.push({ id: alt.value, label, p: alt.p })
+  }
+  return out
+}
+
 export function setTarget(
   columns: ColumnLine[],
   col: number,
