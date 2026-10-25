@@ -596,6 +596,29 @@ impl Store {
         Ok(rows.iter().map(job_json).collect())
     }
 
+    pub async fn list_proposals(&self) -> Result<Vec<Value>, Error> {
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT id, title, source, status, conflict, created_at FROM proposals ORDER BY created_at DESC LIMIT 50",
+                &[],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "id": row.get::<_, Uuid>("id"),
+                    "title": row.get::<_, String>("title"),
+                    "source": row.get::<_, String>("source"),
+                    "status": row.get::<_, String>("status"),
+                    "conflict": row.get::<_, bool>("conflict"),
+                    "created_at": row.get::<_, DateTime<Utc>>("created_at"),
+                })
+            })
+            .collect())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn create_proposal(
         &self,
@@ -818,6 +841,17 @@ impl Store {
             });
         }
         Ok(entries)
+    }
+
+    pub async fn keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>, Error> {
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT key FROM objects WHERE starts_with(key, $1) AND deleted_at IS NULL",
+                &[&prefix],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
 
     pub async fn count_attribute_usage(&self, attribute_id: Uuid) -> Result<i64, Error> {

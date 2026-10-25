@@ -5,7 +5,7 @@
 1. Kopiera `.env.example` till `.env` och byt alla värden. `.env` är gitignorerad.
 2. Öppna repot i devcontainern (Cursor/VS Code: "Reopen in Container").
    Postgres, Redpanda, Redpanda Console och Typesense startar automatiskt.
-3. `just` listar alla kommandon.
+3. `pnpm install` en gång, sedan `just dev`. `just` listar alla kommandon.
 
 På Windows går bind mounts från `C:\` långsamt. Klona hellre repot i WSL-filsystemet,
 eller använd "Clone Repository in Container Volume". `target/` ligger alltid i en egen volym.

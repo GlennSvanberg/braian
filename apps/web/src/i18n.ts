@@ -46,6 +46,10 @@ export const sv = {
   history: 'Historik',
   asOf: 'Som den var',
   impact: 'Konsekvens',
+  calculate: 'Beräkna',
+  all: 'Alla',
+  pickClass: 'Välj en klass i trädet.',
+  attributes: 'Attribut',
   jobs: 'Jobb',
   batches: 'Batchlogg',
   proposals: 'Förslag',
@@ -67,6 +71,15 @@ export const sv = {
   split: 'Dela',
   send: 'Skicka',
   model: 'Modell',
+  before: 'Före',
+  after: 'Efter',
+  assortment: 'Sortiment',
+  affected: 'Berörda objekt',
+  samples: 'Urval',
+  origin: 'Ursprung',
+  pickObject: 'Sök nummer eller namn',
+  rows: 'rader',
+  classMoved: 'Klassen flyttades',
 } as const
 
 export type MessageKey = keyof typeof sv

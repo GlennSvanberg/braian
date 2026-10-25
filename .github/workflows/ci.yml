@@ -166,27 +166,21 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.25.0
-      - name: Playwright smoke against the running app
+      - name: Playwright smoke against an isolated database
         env:
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
-          KAFKA_BROKERS: localhost:19092
+          POSTGRES_USER: braian
           TYPESENSE_URL: http://localhost:8108
           TYPESENSE_API_KEY: ci
-          BRAIAN_API_ADDR: 127.0.0.1:8090
           BRAIAN_DEMO_EMAIL: admin@braian.local
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
         run: |
           cargo build -p braian-server
-          cargo run -p braian-server -- all > /tmp/braian-all.log 2>&1 &
-          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8090/healthz && break; sleep 2; done
-          curl -sf http://127.0.0.1:8090/healthz
           pnpm install --frozen-lockfile
-          pnpm --dir apps/web exec vite dev --host 127.0.0.1 --port 3000 > /tmp/vite.log 2>&1 &
-          for i in $(seq 1 40); do curl -sf -o /dev/null http://127.0.0.1:3000 && break; sleep 1; done
           pnpm --dir apps/web exec playwright install --with-deps chromium
-          pnpm --dir apps/web exec playwright test
+          node scripts/e2e.mjs
 
   web:
     runs-on: ubuntu-latest
