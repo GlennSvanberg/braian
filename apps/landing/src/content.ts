@@ -13,9 +13,9 @@ export const nav = [
 
 export const hero = {
   eyebrow: 'Open-source product data · MIT · Self-hosted',
-  title: 'Every click is instant.',
-  titleAccent: 'And it understands you.',
-  lede: 'Braian is a product data system that keeps up with you. Views, searches and filters open at once, across the whole catalog. Press Ctrl+K, say what you want, and it does the work in your session.',
+  title: 'Open-source PIM where',
+  titleAccent: 'every click is instant.',
+  lede: 'A system that understands you, and keeps making your work easier.',
   proof: [
     { value: '64 ms', label: 'save to searchable, p50' },
     { value: '20 ms', label: 'save to every open session, p50' },
@@ -49,7 +49,7 @@ export const speed = {
 
 export const agent = {
   eyebrow: 'Ctrl+K',
-  title: 'The system understands you',
+  title: 'An agent that does the work, you approve',
   lede: 'Say what you want in plain words. The agent works in the Ctrl+K panel, in the workspace you already have open, and leaves its work for you to review.',
   points: [
     {
