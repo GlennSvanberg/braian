@@ -67,7 +67,7 @@ test('final surfaces', async ({ page }) => {
 
   await page.getByTestId('object-row').filter({ hasText: 'ART-' }).first().click()
   await page.getByRole('button', { name: 'Graph' }).click()
-  await expect(page.locator('svg[data-testid=graph]')).toBeVisible()
+  await expect(page.locator('canvas[data-testid=graph]')).toBeVisible()
   await page.screenshot({ path: `${shots}/graph.png` })
 
   await page.getByRole('button', { name: 'History' }).click()

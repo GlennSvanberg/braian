@@ -1110,10 +1110,24 @@ export function GraphView({ session }: { session: PanesSession }) {
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}/graph`),
     enabled: Boolean(session.objectId),
   })
+  const object = useQuery({
+    queryKey: ['object', session.objectId],
+    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    enabled: Boolean(session.objectId),
+  })
   if (!session.objectId) return <StateNote tone="empty" title={copy.graphEmpty} testId="graph" />
-  if (graph.isError) return <StateNote tone="error" title={copy.graphError} testId="graph" />
-  if (!graph.data) return <StateNote tone="loading" title={copy.graphLoading} testId="graph" />
-  return <GraphMap data={graph.data} defs={defs.data} onOpen={(id) => { if (id) session.setObjectId(id) }} />
+  if (graph.isError || object.isError) return <StateNote tone="error" title={copy.graphError} testId="graph" />
+  if (!graph.data || !object.data) return <StateNote tone="loading" title={copy.graphLoading} testId="graph" />
+  return (
+    <GraphMap
+      data={graph.data}
+      values={(object.data.values as Json) ?? {}}
+      defs={defs.data}
+      onOpen={(id) => {
+        if (id) session.setObjectId(id)
+      }}
+    />
+  )
 }
 
 export function HistoryView({ session }: { session: PanesSession }) {
