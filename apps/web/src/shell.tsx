@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
 import { ApiError, api, type Json } from './api'
-import { sv } from './i18n'
+import { viewDisplayTitle, workspaceDisplayName } from './demo-labels'
+import { copy } from './i18n'
 import { dockTab, isSplit, type LayoutNode, type Zone } from './layout'
 import {
   DataModel,
@@ -81,7 +82,7 @@ export function Shell() {
   }, [theme])
 
   const push = (line: string) => {
-    const stamp = new Date().toLocaleTimeString('sv-SE', { hour12: false })
+    const stamp = new Date().toLocaleTimeString('en-GB', { hour12: false })
     const text = `${stamp} ${line}`
     if (statusRef.current) statusRef.current.textContent = text
     const log = logRef.current
@@ -92,7 +93,7 @@ export function Shell() {
 
   const workspaces = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => api<{ workspaces: Array<{ id: string; name: string }> }>('/v1/workspaces'),
+    queryFn: () => api<{ workspaces: Array<{ id: string; name: string; share_token?: string }> }>('/v1/workspaces'),
     enabled: booted && me.isSuccess,
   })
   useEffect(() => {
@@ -124,7 +125,7 @@ export function Shell() {
       }, 200)
     }
     source.onerror = () => {
-      if (source.readyState === EventSource.CLOSED) push(sv.offline)
+      if (source.readyState === EventSource.CLOSED) push(copy.offline)
     }
     return () => {
       clearTimeout(pending)
@@ -172,7 +173,7 @@ export function Shell() {
     openWorkspace: setWorkspaceId,
   }
 
-  if (!booted || me.isLoading) return <p className="pane-body">{sv.loading}</p>
+  if (!booted || me.isLoading) return <p className="pane-body">{copy.loading}</p>
   if (me.isError || !me.data) return <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
   const user = me.data
   const userName = user.display_name || user.handle || user.email || ''
@@ -195,7 +196,7 @@ export function Shell() {
   return (
     <div className="app" style={{ zoom }}>
       <header className="top">
-        <div className="brand">{sv.product}</div>
+        <div className="brand">{copy.product}</div>
         <nav className="tabs">
           {workspaces.data?.workspaces.map((item, index) => (
             <button
@@ -203,40 +204,40 @@ export function Shell() {
               className={item.id === workspaceId ? 'tab active' : 'tab'}
               onClick={() => setWorkspaceId(item.id)}
             >
-              {item.name}
+              {workspaceDisplayName(item.name, item.share_token)}
               <span className="icon-btn"> {index < 9 ? index + 1 : ''}</span>
             </button>
           ))}
         </nav>
         <span className="spacer" />
-        <button className="icon-btn" onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}>{sv.zoom}</button>
+        <button className="icon-btn" onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}>{copy.zoom}</button>
         <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? sv.themeLight : sv.themeDark}
+          {theme === 'dark' ? copy.themeLight : copy.themeDark}
         </button>
-        <button className="icon-btn" onClick={() => setAgentOpen(true)}>{sv.agent}</button>
+        <button className="icon-btn" onClick={() => setAgentOpen(true)}>{copy.agent}</button>
         <span>{userName}</span>
         <button
           className="icon-btn"
           onClick={() => void api('/v1/logout', { method: 'POST' }).then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))}
         >
-          {sv.signOut}
+          {copy.signOut}
         </button>
       </header>
       <main className="workspace">
         {workspace.data ? (
           <LayoutView node={workspace.data.layout} workspace={workspace.data} session={session} onLayout={saveLayout} />
         ) : (
-          <p>{sv.loading}</p>
+          <p>{copy.loading}</p>
         )}
       </main>
       <pre className="activity" data-testid="activity-log" ref={logRef} />
       <footer className="status">
         <span>{userEmail}</span>
         <span>{user.role}</span>
-        <span data-testid="live-flag">{sv.connected}</span>
-        {workspace.data?.locked ? <span>{sv.locked}</span> : null}
+        <span data-testid="live-flag">{copy.connected}</span>
+        {workspace.data?.locked ? <span>{copy.locked}</span> : null}
         <span className="grow" />
-        <span ref={statusRef}>{sv.activity}</span>
+        <span ref={statusRef}>{copy.activity}</span>
       </footer>
       {palette ? <Palette session={session} onClose={() => setPalette(false)} onAsk={() => { setPalette(false); setAgentOpen(true) }} /> : null}
       {help ? <Help onClose={() => setHelp(false)} /> : null}
@@ -256,15 +257,15 @@ function Login({ onDone }: { onDone: () => void }) {
           event.preventDefault()
           void api('/v1/login', { method: 'POST', body: JSON.stringify({ email, password }) })
             .then(onDone)
-            .catch(() => setError(sv.loginFailed))
+            .catch(() => setError(copy.loginFailed))
         }}
       >
-        <strong>{sv.product}</strong>
-        <h1>{sv.loginTitle}</h1>
-        <label>{sv.email}<input data-testid="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <label>{sv.password}<input data-testid="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-        {error ? <p className="error">{error}</p> : <p>{sv.loginHint}</p>}
-        <button className="primary" type="submit">{sv.signIn}</button>
+        <strong>{copy.product}</strong>
+        <h1>{copy.loginTitle}</h1>
+        <label>{copy.email}<input data-testid="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+        <label>{copy.password}<input data-testid="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        {error ? <p className="error">{error}</p> : <p>{copy.loginHint}</p>}
+        <button className="primary" type="submit">{copy.signIn}</button>
       </form>
     </div>
   )
@@ -388,7 +389,7 @@ function Pane({
               }}
               onDragEnd={() => setDockDrag(null)}
             >
-              {tab?.title ?? id}
+              {viewDisplayTitle(tab?.title ?? id)}
             </button>
           )
         })}
@@ -400,7 +401,7 @@ function Pane({
           event.preventDefault()
         }}
       >
-        {view ? <ViewBody view={view} session={session} workspace={workspace} /> : <p>{sv.empty}</p>}
+        {view ? <ViewBody view={view} session={session} workspace={workspace} /> : <p>{copy.empty}</p>}
         {dockId && !workspace.locked ? (
           <div className="drop" data-testid="drop-overlay">
             {(['left', 'right', 'top', 'bottom', 'center'] as Zone[]).map((zone) => (
@@ -495,8 +496,8 @@ function Dashboard() {
   )
   return (
     <div data-testid="dashboard">
-      <p>{sv.dashboard}: {String(stats.data?.objects ?? 0)}</p>
-      {rows.length > 0 ? <Chart definition={definition} height={220} ariaLabel={sv.dashboard} /> : <p>{sv.empty}</p>}
+      <p>{copy.dashboard}: {String(stats.data?.objects ?? 0)}</p>
+      {rows.length > 0 ? <Chart definition={definition} height={220} ariaLabel={copy.dashboard} /> : <p>{copy.empty}</p>}
     </div>
   )
 }
@@ -518,31 +519,106 @@ function BatchLog() {
 function EmbedView({ session, view }: { session: Session; view: View }) {
   const template = String(view.state.url ?? '')
   const src = template.replace('{object}', session.objectId ?? '').replace('{key}', session.objectId ?? '').replace('{token}', 'session')
-  if (!src) return <p>{sv.empty}</p>
-  return <iframe title={sv.product} src={src} style={{ width: '100%', height: '100%', border: 0 }} />
+  if (!src) return <p>{copy.empty}</p>
+  return <iframe title={copy.product} src={src} style={{ width: '100%', height: '100%', border: 0 }} />
 }
 
 function Palette({ session, onClose, onAsk }: { session: Session; onClose: () => void; onAsk: () => void }) {
   const [q, setQ] = useState('')
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const armed = useRef(false)
   const found = useQuery({
     queryKey: ['palette', q],
     queryFn: () => api<{ objects: Json[] }>(`/v1/objects?q=${encodeURIComponent(q)}&limit=20`),
     enabled: q.length > 0,
   })
   const ops = useQuery({ queryKey: ['ops'], queryFn: () => api<{ operations: Json[] }>('/v1/operations') })
+  const hits = [
+    ...(found.data?.objects ?? []).map((row) => ({
+      id: String(row.id),
+      kind: 'object' as const,
+      label: `${String(row.key)} · ${String(row.type)}`,
+      run: () => {
+        session.setObjectId(String(row.id))
+        onClose()
+      },
+    })),
+    { id: 'ask', kind: 'command' as const, label: copy.askAgent, run: onAsk },
+    ...(ops.data?.operations ?? []).slice(0, 6).map((op) => ({
+      id: String(op.name),
+      kind: 'command' as const,
+      label: String(op.title),
+      run: () => {},
+    })),
+  ]
+  const hitsRef = useRef(hits)
+  hitsRef.current = hits
+  const resultKey = hits.filter((hit) => hit.kind === 'object').map((hit) => hit.id).join('\n')
+  const activeIndex = hits.findIndex((hit) => hit.id === activeId)
+  useEffect(() => {
+    if (!armed.current) return
+    const list = hitsRef.current
+    const selected = list.find((hit) => hit.id === activeId)
+    if (selected?.kind === 'object') return
+    const first = list.find((hit) => hit.kind === 'object')
+    if (first) setActiveId(first.id)
+  }, [resultKey, activeId])
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>('.hit.on')?.scrollIntoView({ block: 'nearest' })
+  }, [activeId])
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Enter') return
+    event.preventDefault()
+    if (hits.length === 0) return
+    if (event.key === 'Enter') {
+      const chosen = !armed.current || activeIndex < 0 ? 0 : activeIndex
+      hits[chosen]?.run()
+      return
+    }
+    const next = event.key === 'ArrowDown'
+      ? (!armed.current || activeIndex < 0 ? 0 : Math.min(activeIndex + 1, hits.length - 1))
+      : (!armed.current || activeIndex < 0 ? hits.length - 1 : Math.max(activeIndex - 1, 0))
+    armed.current = true
+    setActiveId(hits[next].id)
+  }
+
   return (
     <div className="palette" data-testid="palette" onClick={onClose}>
-      <form onClick={(event) => event.stopPropagation()} onSubmit={(event) => event.preventDefault()}>
-        <input data-testid="palette-input" autoFocus placeholder={sv.commandPlaceholder} value={q} onChange={(event) => setQ(event.target.value)} />
-        {(found.data?.objects ?? []).map((row) => (
-          <button key={String(row.id)} className="hit" onClick={() => { session.setObjectId(String(row.id)); onClose() }}>
-            {String(row.key)} · {String(row.type)}
-          </button>
-        ))}
-        <button className="hit" onClick={onAsk}>{sv.askAgent}</button>
-        {(ops.data?.operations ?? []).slice(0, 6).map((op) => (
-          <button key={String(op.name)} className="hit" type="button">{String(op.title)}</button>
-        ))}
+      <form onClick={(event) => event.stopPropagation()} onSubmit={(event) => event.preventDefault()} onKeyDown={onKeyDown}>
+        <input
+          data-testid="palette-input"
+          autoFocus
+          autoComplete="off"
+          role="combobox"
+          aria-expanded={hits.length > 0}
+          aria-controls="palette-list"
+          aria-activedescendant={activeIndex >= 0 ? `palette-hit-${activeIndex}` : undefined}
+          placeholder={copy.commandPlaceholder}
+          value={q}
+          onChange={(event) => {
+            setQ(event.target.value)
+            setActiveId(null)
+            armed.current = false
+          }}
+        />
+        <div className="palette-list" id="palette-list" role="listbox" ref={listRef}>
+          {hits.map((hit, index) => (
+            <button
+              key={hit.id}
+              id={`palette-hit-${index}`}
+              type="button"
+              role="option"
+              aria-selected={index === activeIndex}
+              className={index === activeIndex ? 'hit on' : 'hit'}
+              onMouseEnter={() => setActiveId(hit.id)}
+              onClick={hit.run}
+            >
+              {hit.label}
+            </button>
+          ))}
+        </div>
       </form>
     </div>
   )
@@ -552,11 +628,11 @@ function Help({ onClose }: { onClose: () => void }) {
   return (
     <div className="help" onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()}>
-        <strong>{sv.shortcuts}</strong>
-        <p><kbd>Ctrl</kbd>+<kbd>K</kbd> {sv.commandPlaceholder}</p>
-        <p><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> arbetsytor</p>
-        <p><kbd>F1</kbd> {sv.shortcuts}</p>
-        <button onClick={onClose}>{sv.close}</button>
+        <strong>{copy.shortcuts}</strong>
+        <p><kbd>Ctrl</kbd>+<kbd>K</kbd> {copy.commandPlaceholder}</p>
+        <p><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> workspaces</p>
+        <p><kbd>F1</kbd> {copy.shortcuts}</p>
+        <button onClick={onClose}>{copy.close}</button>
       </div>
     </div>
   )
@@ -570,8 +646,8 @@ function AgentPanel({ onClose, session }: { onClose: () => void; session: Sessio
   return (
     <aside className="agent" data-testid="agent">
       <header>
-        <span>{sv.agent} · {status.data?.model ?? 'gpt-6-luna'}</span>
-        <button onClick={onClose}>{sv.close}</button>
+        <span>{copy.agent} · {status.data?.model ?? 'gpt-6-luna'}</span>
+        <button onClick={onClose}>{copy.close}</button>
       </header>
       <div className="log">
         {status.data && !status.data.available ? <p className="bubble assistant">{status.data.reply}</p> : null}
@@ -591,7 +667,7 @@ function AgentPanel({ onClose, session }: { onClose: () => void; session: Sessio
           setLines(history)
           setInput('')
           setPending(true)
-          session.push(`${sv.agent}: ${text}`)
+          session.push(`${copy.agent}: ${text}`)
           void api<{ reply?: string; tools?: Json[] }>('/v1/agent', {
             method: 'POST',
             body: JSON.stringify({
@@ -603,17 +679,17 @@ function AgentPanel({ onClose, session }: { onClose: () => void; session: Sessio
                 .map((tool) => `${String(tool.name)}: ${JSON.stringify(tool.result)}`)
                 .join('\n')
               const reply = [result.reply, tools].filter(Boolean).join('\n')
-              setLines([...history, { role: 'assistant', text: reply || sv.agentEmpty }])
+              setLines([...history, { role: 'assistant', text: reply || copy.agentEmpty }])
             })
             .catch((error: unknown) => {
-              const message = error instanceof ApiError ? error.message : sv.agentEmpty
+              const message = error instanceof ApiError ? error.message : copy.agentEmpty
               setLines([...history, { role: 'assistant', text: message }])
             })
             .finally(() => setPending(false))
         }}
       >
-        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder={sv.askAgent} />
-        <button className="primary" type="submit">{sv.send}</button>
+        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder={copy.askAgent} />
+        <button className="primary" type="submit">{copy.send}</button>
       </form>
     </aside>
   )

@@ -32,6 +32,7 @@ Agent, UI, realtid och webhooks kommer sedan som konsumenter av samma lager.
 ## Regler för agenter
 - Inga hemligheter i repo, loggar eller chatt. Använd en gitignorerad .env.
 - Mät, gissa inte: prestandapåståenden ska ha siffror.
+- UI-texter ska vara på engelska: webbappens chrome (`apps/web/src/i18n.ts`, `copy`), strängar som användaren ser från API:t (fel, agent, operationsnamn i paletten), samt seedade visningsnamn för arbetsytor, vyer och demo-yta. Katalogvärden och attributetiketter per språk (sv/en/de) följer datamodellen; översätt inte demoobjekt till engelska bara för att UI är engelskt.
 
 
 ## Repo

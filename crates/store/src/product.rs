@@ -754,6 +754,17 @@ impl Store {
         Ok(())
     }
 
+    pub async fn set_proposal_title(&self, id: Uuid, title: &str) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "UPDATE proposals SET title = $2 WHERE id = $1",
+                &[&id, &title],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_relation(
         &self,
         from_id: ObjectId,

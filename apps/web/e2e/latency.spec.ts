@@ -8,7 +8,7 @@ async function login(page: Page) {
   await page.goto('/')
   await page.getByTestId('email').fill(demo.email)
   await page.getByTestId('password').fill(demo.password)
-  await page.getByRole('button', { name: 'Logga in' }).click()
+  await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
   return Date.now() - started
 }

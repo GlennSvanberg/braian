@@ -8,8 +8,8 @@ function Preview() {
   const params = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
   return (
     <main style={{ fontFamily: 'system-ui', padding: 12 }}>
-      <p>Inbäddad vy</p>
-      <p>objekt {params.get('object') ?? '—'}</p>
+      <p>Embedded view</p>
+      <p>object {params.get('object') ?? '—'}</p>
     </main>
   )
 }

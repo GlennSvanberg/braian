@@ -11,7 +11,7 @@ export const Route = createRootRoute({
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
   component: () => (
-    <html lang="sv">
+    <html lang="en">
       <head>
         <HeadContent />
       </head>
