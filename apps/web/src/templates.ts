@@ -51,9 +51,10 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
     summary: 'Dashboard and the setup list',
     views: [
       { type: 'dashboard', title: 'Overview', state: {} },
+      { type: 'usage', title: 'Usage', state: {} },
       { type: 'data_model', title: 'To do', state: { checklist: ['languages', 'units', 'types', 'import'] } },
     ],
-    layout: (ids) => splitPair('horizontal', 0.5, tabGroup([ids[0]]), tabGroup([ids[1]])),
+    layout: (ids) => splitPair('horizontal', 0.5, tabGroup([ids[0], ids[1]]), tabGroup([ids[2]])),
   },
 ]
 

@@ -14,6 +14,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
+  if (!headers.has('x-braian-telemetry')) headers.set('x-braian-telemetry', 'client')
   const response = await fetch(path, { ...init, headers, credentials: 'include' })
   if (response.status === 204) return undefined as T
   const type = response.headers.get('content-type') ?? ''

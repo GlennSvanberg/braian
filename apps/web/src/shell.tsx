@@ -20,8 +20,10 @@ import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, t
 import { ConsequenceHost } from './consequence'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
+import { recordOperation, startTelemetry } from './telemetry'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
+import { UsageView } from './usage'
 import {
   LAYOUT_ENVIRONMENT,
   canonicalDoc,
@@ -122,6 +124,7 @@ export function Shell() {
     setBooted(true)
     const stored = readStore<string>('braian.theme', 'dark')
     setTheme(stored === 'light' ? 'light' : 'dark')
+    startTelemetry()
   }, [])
   useEffect(() => {
     if (!booted) return
@@ -627,6 +630,7 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'history') return <HistoryView session={session} />
   if (view.type === 'data_model') return <DataModel view={view} />
   if (view.type === 'dashboard') return <Dashboard />
+  if (view.type === 'usage') return <UsageView />
   if (view.type === 'proposal') return <ProposalView session={session} />
   if (view.type === 'batch_log') return <BatchLog />
   if (view.type === 'job_history') return <JobHistory view={view} />
@@ -726,7 +730,10 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                     tabIndex={-1}
                     className={selected ? 'tree-row on' : 'tree-row'}
                     style={{ paddingLeft: 8 + row.depth * 16 }}
-                    onClick={() => session.setGroup(`${structureKey}:${row.key}`)}
+                    onClick={() => {
+                      session.setGroup(`${structureKey}:${row.key}`)
+                      recordOperation({ operation: 'ui.filter', explicit: 'search' })
+                    }}
                   >
                     {Array.from({ length: row.depth }, (_, level) => (
                       <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />

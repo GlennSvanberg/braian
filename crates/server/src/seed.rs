@@ -187,6 +187,7 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
             )
             .await?;
     }
+    store.register_view_type("usage", "Usage", None).await?;
     save_views(store).await?;
     store
         .save_assortment(
@@ -237,6 +238,7 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
     )
     .await?;
     seed_proposal(store, user.principal_id).await?;
+    store.seed_usage_demo().await?;
     Ok(())
 }
 
@@ -293,7 +295,10 @@ fn layout(workspace: &str) -> Value {
         _ => split(
             "horizontal",
             0.5,
-            tabs(&["018f2000-0000-7000-8000-000000000101"]),
+            tabs(&[
+                "018f2000-0000-7000-8000-000000000101",
+                "018f2000-0000-7000-8000-000000000103",
+            ]),
             tabs(&["018f2000-0000-7000-8000-000000000102"]),
         ),
     }
@@ -308,6 +313,15 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "Overview",
             "main",
             0,
+            json!({}),
+        ),
+        (
+            "018f2000-0000-7000-8000-000000000103",
+            "018f2000-0000-7000-8000-000000000001",
+            "usage",
+            "Usage",
+            "main",
+            1,
             json!({}),
         ),
         (

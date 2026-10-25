@@ -27,6 +27,7 @@ braian-search = { path = "crates/search" }
 braian-api = { path = "crates/api" }
 braian-relay = { path = "crates/relay" }
 braian-indexer = { path = "crates/indexer" }
+braian-telemetry = { path = "crates/telemetry" }
 
 anyhow = "1"
 argon2 = "0.5"

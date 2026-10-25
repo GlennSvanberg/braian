@@ -1469,3 +1469,19 @@ button, .pane-tab, .hit, .class-row, .attr-card {
   box-shadow: var(--inset);
 }
 .model-field small { color: var(--muted); }
+.usage { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding: 4px 2px 12px; }
+.usage svg rect { fill: var(--accent); }
+.usage svg text { fill: var(--muted); font-size: 11px; }
+.usage-note { margin: 0; color: var(--text-2); }
+.usage table { width: 100%; border-collapse: collapse; }
+.usage th, .usage td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.usage th.num, .usage td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.usage-share { display: flex; height: 8px; overflow: hidden; border-radius: var(--r-sm); background: var(--surface); }
+.usage-share span { display: block; height: 100%; }
+.usage-share .share-human { background: var(--accent); }
+.usage-share .share-agent { background: var(--info); }
+.usage-share .share-integration { background: var(--ok); }
+.usage-legend { display: flex; gap: 12px; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.usage-settings { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.usage-settings label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+.usage-settings input { width: 120px; }

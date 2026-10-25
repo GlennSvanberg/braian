@@ -29,7 +29,7 @@ export async function streamAgent(
   const response = await fetch('/v1/agent', {
     method: 'POST',
     credentials: 'include',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream', 'x-braian-telemetry': 'client' },
     body: JSON.stringify(agentRequestBody(messages)),
     signal,
   })

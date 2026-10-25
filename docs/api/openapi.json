@@ -1206,6 +1206,15 @@
         ]
       }
     },
+    "/v1/telemetry": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Enqueue usage events. Drops when the queue is full.",
+        "responses": {}
+      }
+    },
     "/v1/tokens": {
       "post": {
         "tags": [
@@ -1513,6 +1522,31 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Task usage aggregated by task type",
+        "responses": {}
+      }
+    },
+    "/v1/usage/settings": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Raw-event retention and the inactivity gap",
+        "responses": {}
+      },
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Update raw-event retention and the inactivity gap",
+        "responses": {}
       }
     },
     "/v1/view-types": {

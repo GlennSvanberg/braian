@@ -1,4 +1,5 @@
 import type { Json } from './api'
+import { recordFromUi } from './telemetry'
 
 export type UiEvent = { name: string; args: Json }
 
@@ -11,18 +12,19 @@ export function onUi(listener: (event: UiEvent) => void) {
   }
 }
 
-export function dispatchUi(name: string, args: Json = {}) {
+export function dispatchUi(name: string, args: Json = {}, options?: { record?: boolean }) {
   const event = { name, args }
   for (const listener of listeners) listener(event)
+  if (options?.record !== false) recordFromUi(name, args)
   return event
 }
 
-export function applyUiResult(result: unknown) {
+export function applyUiResult(result: unknown, options?: { record?: boolean }) {
   if (!result || typeof result !== 'object') return false
   const record = result as Json
   if (record.ui !== true || typeof record.name !== 'string') return false
   const args = record.args && typeof record.args === 'object' ? (record.args as Json) : {}
-  dispatchUi(record.name, args)
+  dispatchUi(record.name, args, options)
   return true
 }
 

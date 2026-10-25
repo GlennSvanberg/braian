@@ -325,6 +325,7 @@ dependencies = [
  "braian-rules",
  "braian-search",
  "braian-store",
+ "braian-telemetry",
  "chrono",
  "futures",
  "getrandom 0.3.4",
@@ -476,6 +477,7 @@ dependencies = [
  "braian-rules",
  "braian-search",
  "braian-store",
+ "braian-telemetry",
  "clap",
  "mimalloc",
  "serde_json",
@@ -519,6 +521,21 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "uuid",
+]
+
+[[package]]
+name = "braian-telemetry"
+version = "0.0.0"
+dependencies = [
+ "braian-store",
+ "chrono",
+ "rdkafka",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

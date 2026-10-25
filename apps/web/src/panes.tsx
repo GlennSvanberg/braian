@@ -18,6 +18,7 @@ import { exportPayload, runExport, saveWorkbook } from './export'
 import { copy, uiLanguage } from './i18n'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
+import { recordOperation } from './telemetry'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishSelection, publishTable } from './ui-context'
 
@@ -114,6 +115,14 @@ export function ObjectTable({
     const timer = setTimeout(() => setQueryText(filter), 120)
     return () => clearTimeout(timer)
   }, [filter])
+  const sawSearch = useRef(false)
+  useEffect(() => {
+    if (!sawSearch.current) {
+      sawSearch.current = true
+      return
+    }
+    recordOperation({ operation: 'search', explicit: 'search' })
+  }, [queryText])
 
   useEffect(() => {
     if (workspace.locked) return
@@ -257,26 +266,53 @@ export function ObjectTable({
       lang: session.language,
     })
     session.push(copy.exportStarted)
+    const started = performance.now()
     void runExport(body)
       .then((blob) => {
         saveWorkbook(blob)
+        recordOperation({ operation: 'ui.export', result: 'ok', durationMs: performance.now() - started })
         session.push(copy.exportReady)
       })
       .catch((error: unknown) => {
+        recordOperation({ operation: 'ui.export', result: 'error', durationMs: performance.now() - started })
         session.push(error instanceof Error ? error.message : copy.exportFailed)
       })
   }
   const mass = useMutation({
-    mutationFn: () =>
-      api<Json>('/v1/operations/mass_edit', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: 'Status OK',
-          ids: selected,
-          type: [...byIndex.values()].find((row) => selected.includes(row.id))?.type ?? 'artikel',
-          values: { status: 'ok' },
-        }),
-      }),
+    mutationFn: async () => {
+      const started = performance.now()
+      const ids = selected.slice(0, 64)
+      try {
+        const result = await api<Json>('/v1/operations/mass_edit', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: 'Status OK',
+            ids: selected,
+            type: [...byIndex.values()].find((row) => selected.includes(row.id))?.type ?? 'artikel',
+            values: { status: 'ok' },
+          }),
+        })
+        recordOperation({
+          operation: 'mass_edit',
+          explicit: 'mass_edit',
+          objectIds: ids,
+          objectCount: selected.length,
+          result: 'ok',
+          durationMs: performance.now() - started,
+        })
+        return result
+      } catch (error) {
+        recordOperation({
+          operation: 'mass_edit',
+          explicit: 'mass_edit',
+          objectIds: ids,
+          objectCount: selected.length,
+          result: 'error',
+          durationMs: performance.now() - started,
+        })
+        throw error
+      }
+    },
     onSuccess: (result) => {
       session.setProposalId(String(result.id))
       session.push(`${copy.proposals} ${result.id}`)
@@ -370,6 +406,7 @@ export function ObjectTable({
     const row = rowAt(index)
     if (!row) return
     session.setObjectId(row.id)
+    recordOperation({ operation: 'get_object', objectIds: [row.id] })
     if (event.shiftKey) setSelected((current) => (current.includes(row.id) ? current : [...current, row.id]))
     else if (event.metaKey || event.ctrlKey) {
       setSelected((current) => (current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id]))
@@ -395,7 +432,10 @@ export function ObjectTable({
     event.preventDefault()
     if (event.key === 'Enter') {
       const row = rowAt(active)
-      if (row) session.setObjectId(row.id)
+      if (row) {
+        session.setObjectId(row.id)
+        recordOperation({ operation: 'get_object', objectIds: [row.id] })
+      }
       return
     }
     const next = event.key === 'ArrowDown'
@@ -610,7 +650,7 @@ export function ObjectTable({
       </div>
       {menu ? (
         <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="context-menu" role="menu">
-          <button type="button" onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
+          <button type="button" onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); recordOperation({ operation: 'get_object', objectIds: [menu.id] }); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
           <button type="button" onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
           <button type="button" onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
           <button type="button" onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
@@ -777,11 +817,15 @@ function NewObject({ session }: { session: PanesSession }) {
           .then((created) => {
             setError('')
             setOpen(false)
+            recordOperation({ operation: 'create_object', objectIds: [String(created.id)], result: 'ok' })
             session.setObjectId(String(created.id))
             session.push(`${copy.saved} ${nummer}`)
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
           })
-          .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
+          .catch((reason: unknown) => {
+            recordOperation({ operation: 'create_object', result: 'error' })
+            setError(reason instanceof ApiError ? reason.message : copy.validation)
+          })
       }}
     >
       <input data-testid="new-nummer" value={nummer} onChange={(event) => setNummer(event.target.value)} placeholder={copy.numberPlaceholder} />
@@ -865,13 +909,27 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   }
   const confirm = () => {
     if (!pendingId) return
+    const started = performance.now()
+    const objectId = session.objectId
     void api<Json>(`/v1/proposals/${pendingId}/accept`, { method: 'POST', body: '{}' })
       .then((result) => {
         const failed = (result.failed as Json[] | undefined) ?? []
         if (failed.length > 0) {
+          recordOperation({
+            operation: 'accept_proposal',
+            objectIds: objectId ? [objectId] : [],
+            result: 'error',
+            durationMs: performance.now() - started,
+          })
           setError(String(failed[0]?.detail ?? copy.validation))
           return
         }
+        recordOperation({
+          operation: 'accept_proposal',
+          objectIds: objectId ? [objectId] : [],
+          result: 'ok',
+          durationMs: performance.now() - started,
+        })
         setDraft({})
         setPendingId(null)
         setError('')
@@ -880,7 +938,15 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         void queryClient.invalidateQueries({ queryKey: ['object', session.objectId] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
       })
-      .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
+      .catch((reason: unknown) => {
+        recordOperation({
+          operation: 'accept_proposal',
+          objectIds: objectId ? [objectId] : [],
+          result: 'error',
+          durationMs: performance.now() - started,
+        })
+        setError(reason instanceof ApiError ? reason.message : copy.validation)
+      })
   }
   const status = textValue(values.status)
   const number = textValue(values.nummer)

@@ -134,6 +134,26 @@ impl utoipa::Modify for PlatformPaths {
                 "Download a finished xlsx export",
             ),
             (HttpMethod::Get, "/v1/stats", "Object counts by type"),
+            (
+                HttpMethod::Post,
+                "/v1/telemetry",
+                "Enqueue usage events. Drops when the queue is full.",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/usage",
+                "Task usage aggregated by task type",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/usage/settings",
+                "Raw-event retention and the inactivity gap",
+            ),
+            (
+                HttpMethod::Put,
+                "/v1/usage/settings",
+                "Update raw-event retention and the inactivity gap",
+            ),
             (HttpMethod::Get, "/v1/workspaces", "List workspaces"),
             (
                 HttpMethod::Post,

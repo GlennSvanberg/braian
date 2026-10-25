@@ -15,6 +15,7 @@ import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem 
 import { publishProposal } from './proposal-bus'
 import { stepText } from './steps'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
+import { armExplicit, objectIdsFrom, recordOperation } from './telemetry'
 import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
 
 type SessionLike = {
@@ -97,6 +98,10 @@ export function CommandPalette({
   const activeRow = active == null ? undefined : rows[active]
 
   useEffect(() => {
+    if (found.dataUpdatedAt === 0) return
+    recordOperation({ operation: 'search', explicit: 'search' })
+  }, [found.dataUpdatedAt])
+  useEffect(() => {
     if (stack.length > 0 || mode !== 'list') return
     const index = rows.findIndex((row) => row.sourceId === 'model:command')
     if (index >= 0) setActive(index)
@@ -113,11 +118,18 @@ export function CommandPalette({
       void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
     }
     if (id === 'model:command') {
+      const started = performance.now()
       void api<Json>('/v1/operations/model.command', {
         method: 'POST',
         body: JSON.stringify({ text: query }),
       })
         .then((result) => {
+          recordOperation({
+            operation: 'model.command',
+            explicit: 'command',
+            result: 'ok',
+            durationMs: performance.now() - started,
+          })
           const proposalId = String(result.proposal_id ?? result.id ?? '')
           if (!proposalId) return
           publishProposal(proposalId)
@@ -125,6 +137,12 @@ export function CommandPalette({
           onClose()
         })
         .catch((reason: unknown) => {
+          recordOperation({
+            operation: 'model.command',
+            explicit: 'command',
+            result: 'error',
+            durationMs: performance.now() - started,
+          })
           session.push(reason instanceof Error ? reason.message : 'The draft has no steps')
         })
       return
@@ -143,20 +161,20 @@ export function CommandPalette({
     }
     if (id.startsWith('workspace:')) {
       const workspaceId = id.slice('workspace:'.length)
-      dispatchUi('ui.open_workspace', { id: workspaceId })
+      command('ui.open_workspace', { id: workspaceId })
       session.openWorkspace(workspaceId)
       onClose()
       return
     }
     if (id.startsWith('layout:')) {
       const rest = id.slice('layout:'.length)
-      if (rest.startsWith('focus:')) dispatchUi('focus', { direction: rest.slice('focus:'.length) })
-      else dispatchUi(rest, {})
+      if (rest.startsWith('focus:')) command('focus', { direction: rest.slice('focus:'.length) })
+      else command(rest, {})
       onClose()
       return
     }
     if (id.startsWith('view:')) {
-      dispatchUi('ui.open_view', { id: id.slice(5), zone: 'center' })
+      command('ui.open_view', { id: id.slice(5), zone: 'center' })
       onClose()
       return
     }
@@ -164,7 +182,7 @@ export function CommandPalette({
       const template = workspaceTemplates.find((item) => item.id === id.slice('template:'.length))
       if (!template) return
       void createWorkspaceFromTemplate(template).then((workspaceId) => {
-        dispatchUi('ui.open_template', { template: template.id, id: workspaceId })
+        command('ui.open_template', { template: template.id, id: workspaceId })
         session.openWorkspace(workspaceId)
         session.push(`Workspace ${template.name}`)
       })
@@ -172,22 +190,22 @@ export function CommandPalette({
       return
     }
     if (id === 'object:open') {
-      dispatchUi('ui.open_view', { title: 'Detail', zone: 'center' })
+      command('ui.open_view', { title: 'Detail', zone: 'center' })
       onClose()
       return
     }
     if (id === 'object:right') {
-      dispatchUi('ui.place', { title: 'Detail', zone: 'right' })
+      command('ui.place', { title: 'Detail', zone: 'right' })
       onClose()
       return
     }
     if (id === 'object:history') {
-      dispatchUi('ui.open_view', { title: 'History', zone: 'center' })
+      command('ui.open_view', { title: 'History', zone: 'center' })
       onClose()
       return
     }
     if (id === 'object:graph') {
-      dispatchUi('ui.open_view', { title: 'Graph', zone: 'center' })
+      command('ui.open_view', { title: 'Graph', zone: 'center' })
       onClose()
       return
     }
@@ -198,7 +216,7 @@ export function CommandPalette({
       return
     }
     if (id === 'theme:light' || id === 'theme:dark') {
-      dispatchUi('ui.set_theme', { theme: id.endsWith('light') ? 'light' : 'dark' })
+      command('ui.set_theme', { theme: id.endsWith('light') ? 'light' : 'dark' })
       onClose()
     }
   }
@@ -238,6 +256,7 @@ export function CommandPalette({
   const ask = async (text: string) => {
     const prompt = text.trim()
     if (!prompt || running) return
+    recordOperation({ operation: 'agent.command', explicit: 'command' })
     const history = editing == null ? [...turns, { role: 'user' as const, text: prompt }] : turns.map((turn, index) => (index === editing ? { ...turn, text: prompt } : turn))
     setTurns(history.filter((turn) => turn.role === 'user' || turn.role === 'assistant'))
     setEditing(null)
@@ -559,6 +578,11 @@ function groupBlocks(rows: PaletteItem[]) {
     .filter((group) => group.rows.length > 0)
 }
 
+function command(name: string, args: Json = {}) {
+  armExplicit('command')
+  dispatchUi(name, args)
+}
+
 function highlight(text: string, query: string) {
   const needle = query.trim()
   if (!needle) return text
@@ -592,13 +616,20 @@ function applyEvent(
   }
   if (event.type === 'tool' && event.result) {
     const result = event.result
-    if (result.ui === true) applyUiResult(result)
-    else     if (event.name) {
-      const op = uiOperations.find((name) => name.replaceAll('.', '_') === event.name) ?? event.name
-      if (op.startsWith('ui.') && op !== 'ui.get_context' && op !== 'ui.get_selection') {
-        dispatchUi(op, (result.args as Json) ?? {})
-      }
+    const op = event.name
+      ? uiOperations.find((name) => name.replaceAll('.', '_') === event.name) ?? event.name
+      : ''
+    const visible = op !== '' && op !== 'ui.get_context' && op !== 'ui.get_selection'
+    if (visible) {
+      recordOperation({
+        operation: op,
+        actor: 'agent',
+        objectIds: objectIdsFrom(op, { ...(event.args ?? {}), ...((result.args as Json) ?? {}) }),
+        result: result.error || result.isError ? 'error' : 'ok',
+      })
     }
+    if (result.ui === true) applyUiResult(result, { record: false })
+    else if (visible && op.startsWith('ui.')) dispatchUi(op, (result.args as Json) ?? {}, { record: false })
     const proposalId = String(result.proposal_id ?? (result.needs_approval ? result.id ?? '' : ''))
     if (proposalId) void loadProposal(proposalId, setProposal, session)
   }

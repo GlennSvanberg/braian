@@ -5,6 +5,7 @@ import {
   History,
   LayoutDashboard,
   ListChecks,
+  Timer,
   ListTree,
   ScrollText,
   Table2,
@@ -48,6 +49,7 @@ export function ViewGlyph({ type }: { type: string }) {
   if (type === 'history') return <History {...props} />
   if (type === 'data_model') return <Boxes {...props} />
   if (type === 'dashboard') return <LayoutDashboard {...props} />
+  if (type === 'usage') return <Timer {...props} />
   if (type === 'proposal') return <ScrollText {...props} />
   if (type === 'batch_log') return <ScrollText {...props} />
   if (type === 'job_history') return <ListChecks {...props} />

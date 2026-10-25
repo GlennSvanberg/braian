@@ -6,6 +6,7 @@ import { Kbd } from './components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
 import { viewDisplayTitle } from './demo-labels'
 import { copy } from './i18n'
+import { recordOperation } from './telemetry'
 import {
   activate,
   applyLayoutCommand,
@@ -349,6 +350,7 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
                     return
                   }
                   if (frame.docRef.current.zoom) return
+                  recordOperation({ operation: 'ui.open_view' })
                   frame.commit(activateDoc(frame.docRef.current, id))
                   if (pendingActive.current) window.clearTimeout(pendingActive.current.timer)
                   const timer = window.setTimeout(() => {

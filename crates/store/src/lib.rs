@@ -13,6 +13,7 @@ mod product;
 mod scan;
 mod session;
 mod split;
+mod telemetry;
 pub mod testing;
 mod types;
 
@@ -23,6 +24,9 @@ pub use product::{HistoryEntry, ProposalRow, RelaySlotStatus, UserRecord};
 pub use scan::{EXPORT_CHUNK, ExportObject, ExportOrder, ExportScan};
 pub use session::{DbLane, HeldConnection, PoolConfig, Store};
 pub use split::StorageForm;
+pub use telemetry::{
+    SegmentEvent, UsageByType, UsageEventRow, UsageSettings, UsageSummary, UsageTrend,
+};
 
 /// Connections used to create the databases the spike and the tests measure.
 pub mod admin {

@@ -6,6 +6,7 @@ use braian_model::{DefinitionSet, ObjectId};
 use braian_rules::CompiledModel;
 use braian_search::Typesense;
 use braian_store::{Error, Store};
+use braian_telemetry::{Assigner, UsageEvent};
 use serde_json::{Value, json};
 use tokio::sync::{RwLock, broadcast, mpsc};
 use uuid::Uuid;
@@ -32,6 +33,9 @@ pub struct AppState {
     seen: Arc<Mutex<SeqSeen>>,
     live_tx: mpsc::Sender<Value>,
     index_tx: Option<mpsc::Sender<IndexJob>>,
+    /// Separate from the live queue and the change log. `None` in benches.
+    pub usage_tx: Option<mpsc::Sender<Vec<UsageEvent>>>,
+    pub usage_assign: Arc<Mutex<Assigner>>,
 }
 
 /// Remembers recent change seqs and forgets the oldest when the cap is hit.
@@ -190,6 +194,8 @@ impl AppState {
             seen: Arc::new(Mutex::new(SeqSeen::new(SEQ_SEEN_CAP))),
             live_tx,
             index_tx,
+            usage_tx: None,
+            usage_assign: Arc::new(Mutex::new(Assigner::new(300_000))),
         }
     }
 

@@ -16,6 +16,7 @@ mod objects;
 mod platform;
 mod problem;
 mod state;
+mod usage;
 mod wire;
 
 use axum::Json;
@@ -90,6 +91,7 @@ pub fn into_router(state: AppState) -> axum::Router {
         )
         .route("/v1/objects/{id}/changes", get(objects::object_changes))
         .merge(platform::routes())
+        .merge(usage::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(middleware::from_fn_with_state(
             state.clone(),

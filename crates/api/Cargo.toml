@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 braian-indexer.workspace = true
 braian-model = { workspace = true, features = ["openapi"] }
+braian-telemetry.workspace = true
 braian-rules.workspace = true
 braian-search.workspace = true
 braian-store.workspace = true
@@ -35,6 +36,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 braian-store.workspace = true
 
 axum.workspace = true
+chrono.workspace = true
 http-body-util = "0.1"
 serde_json.workspace = true
 serde_norway.workspace = true

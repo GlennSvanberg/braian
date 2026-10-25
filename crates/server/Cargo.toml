@@ -20,6 +20,7 @@ braian-relay.workspace = true
 braian-rules.workspace = true
 braian-search.workspace = true
 braian-store.workspace = true
+braian-telemetry.workspace = true
 
 anyhow.workspace = true
 axum.workspace = true

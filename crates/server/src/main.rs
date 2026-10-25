@@ -34,6 +34,8 @@ enum Command {
     Seed,
     /// API, relay, indexer and seed.
     All,
+    /// Usage consumer. Reads braian.telemetry.ui only.
+    Telemetry,
     /// Print the OpenAPI document as JSON.
     Openapi {
         #[arg(long)]
@@ -68,7 +70,8 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Api => {
-            let (state, addr) = prepare(false).await?;
+            let (mut state, addr) = prepare(false).await?;
+            attach_usage(&mut state);
             serve(state, addr).await
         }
         Command::Relay => relay().await,
@@ -85,7 +88,8 @@ async fn main() -> anyhow::Result<()> {
             seed::run(&store, typesense().as_ref()).await
         }
         Command::All => {
-            let (state, addr) = prepare(true).await?;
+            let (mut state, addr) = prepare(true).await?;
+            attach_usage(&mut state);
             let store = state.store.clone();
             let brokers = std::env::var("KAFKA_BROKERS").ok();
             if let Some(brokers) = brokers.clone() {
@@ -103,9 +107,20 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
                 let live = state.clone();
+                let live_brokers = brokers.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = run_live(live, &brokers).await {
+                    if let Err(error) = run_live(live, &live_brokers).await {
                         tracing::error!(%error, "live stream stopped");
+                    }
+                });
+                let telemetry_store = store.clone();
+                let telemetry_brokers = brokers.clone();
+                tokio::spawn(async move {
+                    let classifier = braian_telemetry::ClassifierMode::from_env();
+                    if let Err(error) =
+                        braian_telemetry::run(telemetry_store, &telemetry_brokers, classifier).await
+                    {
+                        tracing::error!(%error, "telemetry stopped");
                     }
                 });
             } else {
@@ -115,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
             }
             serve(state, addr).await
         }
+        Command::Telemetry => telemetry().await,
         Command::Openapi { .. } => unreachable!("handled above"),
     }
 }
@@ -133,6 +149,33 @@ async fn prepare(seed_first: bool) -> anyhow::Result<(AppState, SocketAddr)> {
         .unwrap_or_else(|_| "127.0.0.1:8090".into())
         .parse()?;
     Ok((AppState::new(store, identities, search), addr))
+}
+
+fn attach_usage(state: &mut AppState) {
+    if let Ok(brokers) = std::env::var("KAFKA_BROKERS")
+        && !brokers.is_empty()
+    {
+        state.usage_tx = Some(braian_telemetry::spawn_publisher(&brokers));
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        if let Ok(settings) = state.store.usage_settings().await
+            && let Ok(mut assigner) = state.usage_assign.lock()
+        {
+            assigner.set_gap(i64::from(settings.inactivity_gap_seconds) * 1000);
+        }
+    });
+}
+
+async fn telemetry() -> anyhow::Result<()> {
+    let brokers = std::env::var("KAFKA_BROKERS")?;
+    braian_telemetry::run(
+        connect().await?,
+        &brokers,
+        braian_telemetry::ClassifierMode::from_env(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error))
 }
 
 async fn serve(state: AppState, addr: SocketAddr) -> anyhow::Result<()> {

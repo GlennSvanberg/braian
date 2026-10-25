@@ -720,14 +720,59 @@ async fn call_operation(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(name): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, Problem> {
-    Ok(Json(execute(&state, &identity, &name, &body).await?))
+    // The browser reports its own events. This branch is for MCP-style and
+    // direct API callers, and it only enqueues after the operation returns.
+    if !crate::usage::client_reports(&headers) {
+        let started = std::time::Instant::now();
+        match execute(&state, &identity, &name, &body).await {
+            Ok(value) => {
+                crate::usage::note_operation(
+                    &state,
+                    &identity,
+                    crate::usage::OperationNote {
+                        name: &name,
+                        args: &body,
+                        result: "ok",
+                        outcome: &value,
+                        elapsed: started.elapsed(),
+                        explicit: None,
+                        actor_override: None,
+                        object_count: None,
+                    },
+                );
+                Ok(Json(value))
+            }
+            Err(problem) => {
+                let outcome = json!({ "code": problem.code });
+                crate::usage::note_operation(
+                    &state,
+                    &identity,
+                    crate::usage::OperationNote {
+                        name: &name,
+                        args: &body,
+                        result: "error",
+                        outcome: &outcome,
+                        elapsed: started.elapsed(),
+                        explicit: None,
+                        actor_override: None,
+                        object_count: None,
+                    },
+                );
+                Err(problem)
+            }
+        }
+    } else {
+        Ok(Json(execute(&state, &identity, &name, &body).await?))
+    }
 }
 
 async fn mcp(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
@@ -751,16 +796,55 @@ async fn mcp(
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let name = operation_for_tool(name).unwrap_or(name);
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            let report = !crate::usage::client_reports(&headers);
+            let started = std::time::Instant::now();
             match execute(&state, &identity, name, &args).await {
-                Ok(value) => json!({
-                    "content": [{ "type": "text", "text": value.to_string() }],
-                    "structuredContent": value,
-                    "isError": false
-                }),
-                Err(problem) => json!({
-                    "content": [{ "type": "text", "text": problem.detail }],
-                    "isError": true
-                }),
+                Ok(value) => {
+                    if report {
+                        crate::usage::note_operation(
+                            &state,
+                            &identity,
+                            crate::usage::OperationNote {
+                                name,
+                                args: &args,
+                                result: "ok",
+                                outcome: &value,
+                                elapsed: started.elapsed(),
+                                explicit: None,
+                                actor_override: None,
+                                object_count: None,
+                            },
+                        );
+                    }
+                    json!({
+                        "content": [{ "type": "text", "text": value.to_string() }],
+                        "structuredContent": value,
+                        "isError": false
+                    })
+                }
+                Err(problem) => {
+                    if report {
+                        let outcome = json!({ "code": problem.code });
+                        crate::usage::note_operation(
+                            &state,
+                            &identity,
+                            crate::usage::OperationNote {
+                                name,
+                                args: &args,
+                                result: "error",
+                                outcome: &outcome,
+                                elapsed: started.elapsed(),
+                                explicit: None,
+                                actor_override: None,
+                                object_count: None,
+                            },
+                        );
+                    }
+                    json!({
+                        "content": [{ "type": "text", "text": problem.detail }],
+                        "isError": true
+                    })
+                }
             }
         }
         other => {
@@ -779,6 +863,7 @@ async fn mcp(
 async fn agent(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    headers: HeaderMap,
     Json(body): Json<AgentBody>,
 ) -> Result<Response, Problem> {
     require(&identity, Role::Viewer)?;
@@ -788,8 +873,9 @@ async fn agent(
         let identity = identity.clone();
         let messages = body.messages;
         let context = body.context;
+        let report = !crate::usage::client_reports(&headers);
         tokio::spawn(async move {
-            drive_agent(&state, &identity, messages, context, &tx).await;
+            drive_agent(&state, &identity, messages, context, &tx, report).await;
         });
         let frames = stream::unfold(rx, |mut rx| async move {
             let event = rx.recv().await?;
@@ -804,7 +890,15 @@ async fn agent(
             .body(Body::from_stream(frames))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()));
     }
-    drive_agent(&state, &identity, body.messages, body.context, &tx).await;
+    drive_agent(
+        &state,
+        &identity,
+        body.messages,
+        body.context,
+        &tx,
+        !crate::usage::client_reports(&headers),
+    )
+    .await;
     drop(tx);
     let mut reply = String::new();
     let mut available = true;
@@ -852,6 +946,7 @@ async fn drive_agent(
     incoming: Vec<Value>,
     context: Value,
     tx: &tokio::sync::mpsc::UnboundedSender<Value>,
+    report: bool,
 ) {
     // A question about the marked row is answered from the snapshot. That
     // skips the model, so it cannot open a list or claim the screen is invisible.
@@ -903,6 +998,7 @@ async fn drive_agent(
             "args": args,
             "state": "run"
         }));
+        let started = std::time::Instant::now();
         let result = if let Some(value) = context_tool_result(operation, &args, Some(&context)) {
             value
         } else {
@@ -910,6 +1006,23 @@ async fn drive_agent(
                 .await
                 .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }))
         };
+        if report {
+            let ok = result.get("code").is_none() && result.get("error").is_none();
+            crate::usage::note_operation(
+                state,
+                identity,
+                crate::usage::OperationNote {
+                    name: operation,
+                    args: &args,
+                    result: if ok { "ok" } else { "error" },
+                    outcome: &result,
+                    elapsed: started.elapsed(),
+                    explicit: None,
+                    actor_override: Some(braian_telemetry::ActorKind::Agent),
+                    object_count: None,
+                },
+            );
+        }
         let _ = tx.send(json!({ "type": "tool", "name": operation, "result": result }));
         let proposed = result.get("proposal_id").is_some()
             || result.get("needs_approval").and_then(Value::as_bool) == Some(true)
@@ -1997,6 +2110,7 @@ async fn job_run(
 async fn bulk(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    headers: HeaderMap,
     Json(body): Json<BulkBody>,
 ) -> Result<(StatusCode, Json<Value>), Problem> {
     require(&identity, Role::Editor)?;
@@ -2037,9 +2151,23 @@ async fn bulk(
     let actor = identity.actor.clone();
     let job_state = state.clone();
     let chunk = state.bulk.chunk();
+    let report = !crate::usage::client_reports(&headers);
+    let started = std::time::Instant::now();
+    let kind = identity.kind;
     tokio::spawn(async move {
         reservation
-            .finish(run_bulk(job_state, id, actor, objects, chunk))
+            .finish(run_bulk(
+                job_state,
+                id,
+                actor,
+                objects,
+                BulkJob {
+                    chunk_size: chunk,
+                    report,
+                    started,
+                    kind,
+                },
+            ))
             .await;
     });
     Ok((
@@ -2058,14 +2186,27 @@ pub(crate) fn emit_job(state: &AppState, id: Uuid, status: &str, done: i32, tota
     }));
 }
 
+struct BulkJob {
+    chunk_size: usize,
+    report: bool,
+    started: std::time::Instant,
+    kind: braian_store::PrincipalKind,
+}
+
 async fn run_bulk(
     state: AppState,
     id: Uuid,
     actor: Actor,
     objects: Vec<CreateObject>,
-    chunk_size: usize,
+    job: BulkJob,
 ) {
     let store = state.store.on_bulk();
+    let BulkJob {
+        chunk_size,
+        report,
+        started,
+        kind,
+    } = job;
     let total = i32::try_from(objects.len()).unwrap_or(i32::MAX);
     emit_job(&state, id, "running", 0, total);
     let mut errors = Vec::new();
@@ -2080,6 +2221,20 @@ async fn run_bulk(
                 .finish_job_run(id, "failed", 0, &error.to_string(), &json!([]))
                 .await;
             emit_job(&state, id, "failed", 0, total);
+            if report {
+                crate::usage::note_bulk(
+                    &state,
+                    crate::usage::BulkNote {
+                        principal: actor.actor.as_uuid(),
+                        on_behalf_of: actor.on_behalf_of.map(|id| id.as_uuid()),
+                        kind,
+                        object_count: u32::try_from(total).unwrap_or(0),
+                        result: "error",
+                        elapsed: started.elapsed(),
+                        audit_batch_id: None,
+                    },
+                );
+            }
             return;
         }
     };
@@ -2144,6 +2299,21 @@ async fn run_bulk(
         )
         .await;
     emit_job(&state, id, status, done, total);
+    if report {
+        let result = if status == "succeeded" { "ok" } else { "error" };
+        crate::usage::note_bulk(
+            &state,
+            crate::usage::BulkNote {
+                principal: actor.actor.as_uuid(),
+                on_behalf_of: actor.on_behalf_of.map(|id| id.as_uuid()),
+                kind,
+                object_count: u32::try_from(done).unwrap_or(0),
+                result,
+                elapsed: started.elapsed(),
+                audit_batch_id: Some(batch.as_uuid()),
+            },
+        );
+    }
 }
 
 fn create_op(cached: &crate::state::CachedModel, body: &CreateObject) -> Result<ObjectOp, Problem> {
