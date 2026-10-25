@@ -1,7 +1,19 @@
 import { Button, ButtonLink } from '@/components/ui/button'
 import { Mark } from '@/components/mark'
-import { architecture, demoUrl, features, licenseUrl, repoUrl, surfaces } from '@/content'
-import { Stage } from '@/stage'
+import {
+  agentPoints,
+  apiPoints,
+  audiences,
+  demoUrl,
+  flowReturns,
+  flowSources,
+  flowSteps,
+  licenseUrl,
+  modelPoints,
+  nav,
+  repoUrl,
+} from '@/content'
+import { measuredLabel, measuredSets, measurementsDoc } from '@/data/measurements'
 
 export function App() {
   return (
@@ -16,15 +28,11 @@ export function App() {
             Braian
           </a>
           <nav className="section-nav" aria-label="Sections">
-            <a className="nav-link" href="#how">
-              How it works
-            </a>
-            <a className="nav-link" href="#features">
-              Features
-            </a>
-            <a className="nav-link" href="#use">
-              Use cases
-            </a>
+            {nav.map((item) => (
+              <a key={item.href} className="nav-link" href={item.href}>
+                {item.label}
+              </a>
+            ))}
           </nav>
           <div className="spacer" />
           <ButtonLink variant="ghost" href={repoUrl}>
@@ -40,10 +48,12 @@ export function App() {
         </header>
         <main id="content">
           <Hero />
-          <How />
-          <Features />
+          <Agent />
+          <Model />
+          <Api />
+          <Flow />
           <UseCases />
-          <Architecture />
+          <Measured />
         </main>
         <footer className="sheet footer">
           <div className="footer-brand">
@@ -57,12 +67,15 @@ export function App() {
             <a href={demoUrl}>Try the demo</a>
             <a href={repoUrl}>View on GitHub</a>
             <a href={licenseUrl}>MIT License</a>
+            <a href={measurementsDoc.href}>{measurementsDoc.label}</a>
           </nav>
           <nav className="footer-links" aria-label="On this page">
-            <a href="#how">How it works</a>
-            <a href="#features">Features</a>
-            <a href="#use">Use cases</a>
-            <a href="#architecture">Architecture</a>
+            {nav.map((item) => (
+              <a key={item.href} href={item.href}>
+                {item.label}
+              </a>
+            ))}
+            <a href="#use">Who it is for</a>
           </nav>
         </footer>
       </div>
@@ -90,66 +103,149 @@ function Hero() {
             View on GitHub
           </ButtonLink>
         </div>
-        <p className="note">One operation, from the UI, the API, or an agent.</p>
+        <p className="note">You host it. You extend it.</p>
       </div>
-      <Stage />
+      <figure className="sheet sheet-xl video-slot">
+        <div className="video-frame">
+          <figcaption>
+            <p className="eyebrow">Demo video</p>
+            <p>A recording of the product will sit here.</p>
+          </figcaption>
+        </div>
+      </figure>
     </section>
   )
 }
 
-function How() {
+function Agent() {
   return (
-    <section className="section" id="how" aria-labelledby="how-title">
+    <section className="section" id="agent" aria-labelledby="agent-title">
       <div className="section-head">
-        <h2 id="how-title">One operation, every surface</h2>
+        <h2 id="agent-title">Agent as a first-class citizen</h2>
         <p className="lede">
-          Every action is one shared operation, whether it comes from the UI, Ctrl+K, the built-in
-          agent, the API, or an external MCP client.
+          The agent works in your session, on the records you have open. You remain the person on
+          the record.
         </p>
       </div>
-      <div className="sheet how">
-        <ul className="surfaces">
-          {surfaces.map((item) => (
+      <ol className="point-grid point-grid-5">
+        {agentPoints.map((point) => (
+          <li key={point.title} className="sheet point">
+            <h3>{point.title}</h3>
+            <p>{point.body}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function Model() {
+  return (
+    <section className="section" id="model" aria-labelledby="model-title">
+      <div className="section-head">
+        <h2 id="model-title">A model you define</h2>
+        <p className="lede">
+          Create the entities and attributes the catalog needs. A value can carry more than one
+          language.
+        </p>
+      </div>
+      <ul className="point-grid point-grid-3">
+        {modelPoints.map((point) => (
+          <li key={point.title} className="sheet point">
+            <h3>{point.title}</h3>
+            <p>{point.body}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function Api() {
+  return (
+    <section className="section" id="api" aria-labelledby="api-title">
+      <div className="section-head">
+        <h2 id="api-title">An API you can build on</h2>
+        <p className="lede">
+          Braian runs headless. Developers add features against the API and the event stream. It is
+          built for the agentic era, where that kind of change should ship quickly.
+        </p>
+      </div>
+      <ul className="point-grid point-grid-2">
+        {apiPoints.map((point) => (
+          <li key={point.title} className="sheet point">
+            <h3 className={point.title.startsWith('/') ? 'mono' : undefined}>{point.title}</h3>
+            <p>{point.body}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function Flow() {
+  return (
+    <section className="section" id="flow" aria-labelledby="flow-title">
+      <div className="section-head">
+        <h2 id="flow-title">How data moves</h2>
+        <p className="lede">
+          A write from the UI, the agent, the API, or MCP follows one path into search. Live
+          updates and events come back out.
+        </p>
+      </div>
+      <figure className="sheet flow" aria-labelledby="flow-title">
+        <p className="sr-only">
+          UI, Agent, API, and MCP write into Postgres. A relay reads logical replication and
+          publishes to Redpanda on an interactive lane and a bulk lane. The indexer reads both
+          lanes and updates Typesense search. SSE sends live updates back to the UI. /subscribe
+          sends events to external consumers.
+        </p>
+        <ol className="pipe">
+          <li>
+            <div className="node writers">
+              <strong>Writers</strong>
+              <ul>
+                {flowSources.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </div>
+            <span className="chev" aria-hidden="true" />
+          </li>
+          {flowSteps.map((step, index) => (
+            <li key={step.name} className={'lanes' in step ? 'wide' : undefined}>
+              <div className="node">
+                <strong>{step.name}</strong>
+                <span>{step.detail}</span>
+                {'lanes' in step ? (
+                  <span className="lanes">
+                    {step.lanes.map((lane) => (
+                      <span key={lane} className="lane">
+                        {lane}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
+              </div>
+              {index < flowSteps.length - 1 ? (
+                <span className="chev" aria-hidden="true" />
+              ) : (
+                <span className="chev chev-end" aria-hidden="true" />
+              )}
+            </li>
+          ))}
+        </ol>
+        <p className="flow-label">Comes back</p>
+        <ul className="returns">
+          {flowReturns.map((item) => (
             <li key={item.name}>
-              <b>{item.name}</b>
+              <strong>{item.name}</strong>
               <span>{item.detail}</span>
             </li>
           ))}
         </ul>
-        <p className="same">Same operation.</p>
-        <div className="split-notes">
-          <article>
-            <h3>On behalf of a person</h3>
-            <p>An agent always acts for a user. That person stays the actor on the record.</p>
-          </article>
-          <article>
-            <h3>Proposals a person accepts</h3>
-            <p>
-              Edits become proposals. A person accepts them — a single change, a bulk edit, or an
-              undo.
-            </p>
-          </article>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function Features() {
-  return (
-    <section className="section" id="features" aria-labelledby="features-title">
-      <div className="section-head">
-        <h2 id="features-title">What you work in</h2>
-        <p className="lede">The workspace is the product. The API speaks the same language.</p>
-      </div>
-      <ul className="feature-grid">
-        {features.map((feature) => (
-          <li key={feature.title} className="sheet feature">
-            <h3>{feature.title}</h3>
-            <p>{feature.body}</p>
-          </li>
-        ))}
-      </ul>
+        <p className="stack">Rust on the server. TanStack Start in the app.</p>
+      </figure>
     </section>
   )
 }
@@ -160,43 +256,54 @@ function UseCases() {
       <div className="section-head">
         <h2 id="use-title">Who it is for</h2>
       </div>
-      <div className="use-grid">
-        <article className="sheet feature">
-          <h3>Product data teams</h3>
-          <p>
-            Wholesalers, retailers, and manufacturers. Items, attributes, languages, and structure —
-            the work a PIM is for — on a system you host.
-          </p>
-        </article>
-        <article className="sheet feature">
-          <h3>Developers</h3>
-          <p>
-            An open PIM that is API-first and MCP-first. The operations your tools call are the
-            operations the UI calls.
-          </p>
-        </article>
-      </div>
+      <ul className="point-grid point-grid-2">
+        {audiences.map((audience) => (
+          <li key={audience.title} className="sheet point">
+            <h3>{audience.title}</h3>
+            <p>{audience.body}</p>
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
 
-function Architecture() {
+function Measured() {
   return (
-    <section className="section" id="architecture" aria-labelledby="arch-title">
+    <section className="section" id="measured" aria-labelledby="measured-title">
       <div className="section-head">
-        <h2 id="arch-title">How a change moves</h2>
+        <h2 id="measured-title">{measuredLabel}</h2>
+        <p className="lede">
+          Recorded runs. Hardware and data size are part of each figure.{' '}
+          <a className="text-link" href={measurementsDoc.href}>
+            {measurementsDoc.label}
+          </a>
+        </p>
       </div>
-      <div className="sheet arch-sheet">
-        <ol className="arch">
-          {architecture.map((step, index) => (
-            <li key={step.name}>
-              <span className="step">{index + 1}</span>
-              <h3>{step.name}</h3>
-              <p>{step.body}</p>
-            </li>
-          ))}
-        </ol>
-        <p className="stack">Rust on the server. TanStack Start in the app.</p>
+      <div className="measured-grid">
+        {measuredSets.map((set) => (
+          <article key={set.id} className="sheet measured-set" aria-labelledby={`set-${set.id}`}>
+            <header className="set-head">
+              <h3 id={`set-${set.id}`}>{set.name}</h3>
+              <p>
+                {set.hardware}, {set.dataSize}
+              </p>
+              <p>
+                Recorded {set.recordedOn}
+                {set.conditions ? `. ${set.conditions}.` : '.'}
+              </p>
+            </header>
+            <ul className="figures">
+              {set.figures.map((figure) => (
+                <li key={`${figure.value}-${figure.label}`}>
+                  <p className="figure-value">{figure.value}</p>
+                  <p className="figure-label">{figure.label}</p>
+                  {figure.note ? <p className="figure-note">{figure.note}</p> : null}
+                </li>
+              ))}
+            </ul>
+          </article>
+        ))}
       </div>
     </section>
   )
