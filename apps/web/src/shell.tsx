@@ -282,7 +282,7 @@ function Login({ onDone }: { onDone: () => void }) {
           {copy.password}
           <Input data-testid="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
-        {error ? <p className="error">{error}</p> : <p>{copy.loginHint}</p>}
+        {error ? <p className="error">{error}</p> : <p className="hint">{copy.loginHint}</p>}
         <Button type="submit">{copy.signIn}</Button>
       </form>
     </div>
