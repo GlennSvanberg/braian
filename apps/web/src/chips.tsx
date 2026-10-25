@@ -1,0 +1,55 @@
+import {
+  AppWindow,
+  Boxes,
+  FileText,
+  History,
+  LayoutDashboard,
+  ListChecks,
+  ListTree,
+  ScrollText,
+  Table2,
+  Waypoints,
+} from 'lucide-react'
+import type { ReactNode } from 'react'
+import { textValue, type Json } from './api'
+
+export type ChipTone = 'neutral' | 'ok' | 'warn' | 'danger' | 'info'
+
+export function statusTone(value: string): ChipTone {
+  const text = value.trim().toLowerCase()
+  if (['ok', 'active', 'published', 'done', 'accepted', 'complete', 'succeeded', 'valid', 'giltig'].includes(text)) return 'ok'
+  if (['utkast', 'draft', 'pending', 'warn', 'warning', 'review'].includes(text)) return 'warn'
+  if (['slut', 'error', 'failed', 'danger', 'rejected', 'invalid', 'conflict', 'discontinued', 'deleted'].includes(text)) return 'danger'
+  if (['info', 'running', 'queued', 'open'].includes(text)) return 'info'
+  return 'neutral'
+}
+
+export function MetaChip({ tone = 'neutral', children }: { tone?: ChipTone; children: ReactNode }) {
+  return <span className={`meta-chip ${tone}`}>{children}</span>
+}
+
+export function optionLabel(defs: Json | undefined, listKey: string, code: string, language = 'en') {
+  const list = ((defs?.value_lists as Json[] | undefined) ?? []).find((item) => String(item.key) === listKey)
+  const option = ((list?.options as Json[] | undefined) ?? []).find((item) => String(item.code) === code)
+  return textValue(option?.labels, language) || code
+}
+
+export function typeLabel(defs: Json | undefined, key: string, language = 'en') {
+  const type = ((defs?.types as Json[] | undefined) ?? []).find((item) => String(item.key) === key)
+  return textValue(type?.labels, language) || key
+}
+
+export function ViewGlyph({ type }: { type: string }) {
+  const props = { size: 14, 'aria-hidden': true as const }
+  if (type === 'structure_tree') return <ListTree {...props} />
+  if (type === 'object_table') return <Table2 {...props} />
+  if (type === 'object_detail') return <FileText {...props} />
+  if (type === 'graph') return <Waypoints {...props} />
+  if (type === 'history') return <History {...props} />
+  if (type === 'data_model') return <Boxes {...props} />
+  if (type === 'dashboard') return <LayoutDashboard {...props} />
+  if (type === 'proposal') return <ScrollText {...props} />
+  if (type === 'batch_log') return <ScrollText {...props} />
+  if (type === 'job_history') return <ListChecks {...props} />
+  return <AppWindow {...props} />
+}

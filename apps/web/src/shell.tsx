@@ -4,7 +4,7 @@ import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
-import { Moon, Sun } from 'lucide-react'
+import { ChevronDown, ChevronRight, Moon, Sun } from 'lucide-react'
 import { api, type Json } from './api'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { Button } from './components/ui/button'
@@ -104,7 +104,6 @@ export function Shell() {
   const [statusLine, setStatusLine] = useState<string>(copy.activity)
   const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai'>(null)
   const [help, setHelp] = useState(false)
-  const [zoom, setZoom] = useState(1)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [doc, setDoc] = useState<LayoutDoc | null>(null)
   const docRef = useRef<LayoutDoc | null>(null)
@@ -123,9 +122,10 @@ export function Shell() {
     setTheme(stored === 'light' ? 'light' : 'dark')
   }, [])
   useEffect(() => {
+    if (!booted) return
     document.documentElement.dataset.theme = theme
     writeStore('braian.theme', theme)
-  }, [theme])
+  }, [theme, booted])
 
   const push = (line: string) => {
     const stamp = new Date().toLocaleTimeString('en-GB', { hour12: false })
@@ -431,7 +431,7 @@ export function Shell() {
   }
 
   return (
-    <div className="app" style={{ zoom }}>
+    <div className="app">
       <header className="top">
         <div className="brand">
           <img src="/brand/braian-mark.svg" alt="" width={16} height={16} />
@@ -449,18 +449,17 @@ export function Shell() {
               }}
             >
               {workspaceDisplayName(item.name, item.share_token)}
-              <span className="icon-btn"> {index < 9 ? index + 1 : ''}</span>
+              {index < 9 ? <span className="tab-index">{index + 1}</span> : null}
             </button>
           ))}
         </nav>
         <span className="spacer" />
-        <button className="icon-btn" onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}>{copy.zoom}</button>
         <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? <Sun aria-hidden="true" size={14} /> : <Moon aria-hidden="true" size={14} />}
           {theme === 'dark' ? copy.themeLight : copy.themeDark}
         </button>
         <button className="icon-btn" onClick={() => setPaletteMode('ai')}>{copy.agent}</button>
-        <span>{userName}</span>
+        <span className="who">{userName}</span>
         <button
           className="icon-btn"
           onClick={() => void api('/v1/logout', { method: 'POST' }).then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))}
@@ -612,8 +611,20 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
 
 function StructureTree({ session, view }: { session: Session; view: View }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const expanded = (view.state.expanded as string[] | undefined) ?? []
+  const counts = useQuery({
+    queryKey: ['group-counts'],
+    queryFn: () => api<Json>('/v1/search?group=groups&per_page=1'),
+  })
+  const [openKeys, setOpenKeys] = useState<string[]>(() => (view.state.expanded as string[] | undefined) ?? [])
   const structures = (defs.data?.structures as Json[] | undefined) ?? []
+  const countOf = (structure: string, key: string) => {
+    const groups = (counts.data?.groups as Json[] | undefined) ?? []
+    const hit = groups.find((group) => String(group.key) === `${structure}:${key}`)
+    return Number(hit?.found ?? 0)
+  }
+  const toggle = (key: string) => {
+    setOpenKeys((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
+  }
   return (
     <div
       className="tree"
@@ -621,7 +632,7 @@ function StructureTree({ session, view }: { session: Session; view: View }) {
       tabIndex={0}
       onKeyDown={(event) => {
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) return
-        const buttons = [...event.currentTarget.querySelectorAll('button')]
+        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.tree-row')]
         const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
         if (event.key === 'Enter') {
           if (index >= 0) buttons[index]?.click()
@@ -640,27 +651,54 @@ function StructureTree({ session, view }: { session: Session; view: View }) {
     >
       {structures.map((structure) => {
         const groups = (structure.groups as Json[]) ?? []
-        const keyById = new Map(groups.map((group) => [String(group.id), String(group.key)]))
+        const structureKey = String(structure.key)
+        const renderGroup = (parent: string | undefined, depth: number) =>
+          groups
+            .filter((group) => (parent ? String(group.parent ?? '') === parent : !group.parent))
+            .map((group) => {
+              const key = String(group.key)
+              const id = String(group.id)
+              const kids = groups.some((item) => String(item.parent ?? '') === id)
+              const open = openKeys.includes(key)
+              const count = countOf(structureKey, key)
+              const selected = session.group === `${structureKey}:${key}`
+              return (
+                <div key={id} className="tree-branch">
+                  <button
+                    type="button"
+                    className={selected ? 'tree-row on' : 'tree-row'}
+                    style={{ paddingLeft: 8 + depth * 16 }}
+                    onClick={() => session.setGroup(`${structureKey}:${key}`)}
+                  >
+                    {Array.from({ length: depth }, (_, level) => (
+                      <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />
+                    ))}
+                    {kids ? (
+                      <span
+                        className="tree-chevron"
+                        aria-hidden="true"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          toggle(key)
+                        }}
+                      >
+                        {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+                      </span>
+                    ) : (
+                      <span className="tree-chevron" aria-hidden="true" />
+                    )}
+                    <span className="tree-label">{key}</span>
+                    {count > 0 ? <span className="tree-count">{count}</span> : null}
+                  </button>
+                  {kids && open ? renderGroup(id, depth + 1) : null}
+                </div>
+              )
+            })
         return (
-        <div key={String(structure.key)}>
-          <strong>{String(structure.key)}</strong>
-          {groups.map((group) => {
-            const key = String(group.key)
-            const parentKey = group.parent ? keyById.get(String(group.parent)) : undefined
-            const open = !group.parent || expanded.includes(parentKey ?? '') || expanded.includes(key)
-            if (!open) return null
-            return (
-              <button
-                key={key}
-                className={session.group === `${structure.key}:${key}` ? 'on' : ''}
-                style={{ paddingLeft: group.parent ? 16 : 4 }}
-                onClick={() => session.setGroup(`${structure.key}:${key}`)}
-              >
-                {key}
-              </button>
-            )
-          })}
-        </div>
+          <div key={structureKey}>
+            <strong>{structureKey}</strong>
+            {renderGroup(undefined, 0)}
+          </div>
         )
       })}
     </div>
