@@ -63,6 +63,7 @@ pub struct DeletedResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ChangeResponse {
     pub seq: i64,
+    pub at: String,
     pub version: Option<u64>,
     pub op: String,
     pub actor: String,
@@ -343,6 +344,7 @@ pub async fn object_changes(
     for row in rows {
         changes.push(ChangeResponse {
             seq: row.seq,
+            at: row.at.to_rfc3339(),
             version: row.version,
             op: row.op.as_str().to_owned(),
             actor: principal_name(&state, row.actor).await?,
