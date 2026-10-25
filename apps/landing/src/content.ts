@@ -20,13 +20,13 @@ export const hero = {
     { value: '64 ms', label: 'save to searchable, p50' },
     { value: '20 ms', label: 'save to every open session, p50' },
   ],
-  caption: 'Animated mock-up of the demo workspace. A screen recording will replace it.',
+  caption: 'Demo workspace',
 } as const
 
 export const speed = {
   eyebrow: 'For the people in the catalog',
   title: 'No waiting between clicks',
-  lede: 'A legacy PIM opens fast, then makes you wait on every click, view and search. In Braian the tree, the table, the detail and the history stay instant across the whole catalog.',
+  lede: 'Tree, table, detail, and search stay instant.',
   points: [
     {
       title: 'Jump anywhere',
@@ -50,7 +50,7 @@ export const speed = {
 export const agent = {
   eyebrow: 'Ctrl+K',
   title: 'An agent that does the work, you approve',
-  lede: 'Say what you want in plain words. The agent works in the Ctrl+K panel, in the workspace you already have open, and leaves its work for you to review.',
+  lede: 'Nothing is saved until you press Save.',
   points: [
     {
       title: 'Works where you are',
@@ -91,9 +91,9 @@ export const agentSession = {
 
 export const architecture = {
   eyebrow: 'For developers',
-  title: 'An architecture you’ll be proud of',
-  lede: 'One write path. One change log. Everything else is a consumer you can replace, rebuild, or write yourself.',
-  stack: 'Rust on the server. TanStack Start in the app. Postgres, Redpanda and Typesense underneath.',
+  title: 'One write path',
+  lede: 'Everything else is a consumer.',
+  stack: ['Rust', 'TanStack Start', 'Postgres', 'Redpanda', 'Typesense'],
   principles: [
     {
       title: 'One operation registry',
@@ -128,13 +128,13 @@ export const architecture = {
   ],
   job: {
     title: 'A job is two requests',
-    body: 'Listen for changes, write the result back through the operation the UI uses. Validation, history and the responsible person come with it.',
+    body: 'Listen for changes, then write back through the same operation.',
     code: [
-      '# listen to every committed change',
+      '# listen',
       'curl -N "$BRAIAN/v1/stream" \\',
       '  -H "authorization: Bearer $TOKEN"',
       '',
-      '# write back through the same operation as the UI',
+      '# write back',
       'curl "$BRAIAN/v1/operations/patch_object" \\',
       '  -H "authorization: Bearer $TOKEN" \\',
       '  -H "content-type: application/json" \\',
@@ -145,7 +145,7 @@ export const architecture = {
 
 export const openSource = {
   title: 'Open source. Yours to run.',
-  lede: 'MIT licensed and self-hosted. Read the code, fork it, change it, and run it on your own servers. Do what you want with it.',
+  lede: 'MIT licensed and self-hosted.',
   facts: ['MIT license', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
   code: [
     'git clone https://github.com/GlennSvanberg/openpim',
