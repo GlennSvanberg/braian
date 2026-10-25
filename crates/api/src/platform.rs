@@ -85,85 +85,85 @@ fn registry() -> &'static [Operation] {
     &[
         Operation {
             name: "search",
-            title: "Sök objekt",
+            title: "Search objects",
             permission: Role::Viewer,
             needs_approval: false,
         },
         Operation {
             name: "get_object",
-            title: "Öppna objekt",
+            title: "Open object",
             permission: Role::Viewer,
             needs_approval: false,
         },
         Operation {
             name: "list_objects",
-            title: "Lista objekt",
+            title: "List objects",
             permission: Role::Viewer,
             needs_approval: false,
         },
         Operation {
             name: "create_object",
-            title: "Skapa objekt",
+            title: "Create object",
             permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
             name: "patch_object",
-            title: "Ändra objekt",
+            title: "Edit object",
             permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
             name: "mass_edit",
-            title: "Massändra",
+            title: "Mass edit",
             permission: Role::Editor,
             needs_approval: true,
         },
         Operation {
             name: "rollback",
-            title: "Återställ",
+            title: "Restore",
             permission: Role::Editor,
             needs_approval: true,
         },
         Operation {
             name: "accept_proposal",
-            title: "Godkänn förslag",
+            title: "Accept proposal",
             permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
             name: "discard_proposal",
-            title: "Förkasta förslag",
+            title: "Discard proposal",
             permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
             name: "history",
-            title: "Historik",
+            title: "History",
             permission: Role::Viewer,
             needs_approval: false,
         },
         Operation {
             name: "impact",
-            title: "Konsekvensanalys",
+            title: "Impact analysis",
             permission: Role::Viewer,
             needs_approval: false,
         },
         Operation {
             name: "set_relation",
-            title: "Sätt relation",
+            title: "Set relation",
             permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
             name: "save_workspace",
-            title: "Spara arbetsyta",
+            title: "Save workspace",
             permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
             name: "export",
-            title: "Exportera tabell",
+            title: "Export table",
             permission: Role::Viewer,
             needs_approval: false,
         },
@@ -399,13 +399,13 @@ async fn agent(
         return Ok(Json(json!({
             "available": false,
             "model": std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into()),
-            "reply": "Ingen modell är kopplad. Sätt OPENAI_API_KEY för att prata med agenten. Förslag, massändring och återställning fungerar ändå via operationerna."
+            "reply": "No model is connected. Set OPENAI_API_KEY to talk to the agent. Proposals, mass edit, and restore still work via operations."
         })));
     }
     let model = std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into());
     let mut messages = vec![json!({
         "role": "system",
-        "content": "Du är Braian-agenten. Du agerar alltid för den inloggade personen. Skrivande ändringar ska bli förslag, inte direkta skrivningar. Svara på svenska."
+        "content": "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. Reply in English."
     })];
     messages.extend(body.messages);
     let client = reqwest::Client::new();
@@ -456,9 +456,9 @@ async fn agent(
     }
     if reply.is_empty() {
         reply = if tool_results.is_empty() {
-            "Modellen svarade utan text.".into()
+            "The model replied without text.".into()
         } else {
-            "Agenten körde verktyg men modellen gav ingen text.".into()
+            "The agent ran tools but the model returned no text.".into()
         };
     }
     Ok(Json(json!({
@@ -576,7 +576,7 @@ async fn post_openai(
             Problem::new(
                 StatusCode::BAD_GATEWAY,
                 "agent",
-                "Modellen gick inte att nå. Kontrollera nätverket och försök igen.",
+                "The model could not be reached. Check the network and try again.",
             )
         })?;
     let status = response.status();
@@ -585,7 +585,7 @@ async fn post_openai(
         Problem::new(
             StatusCode::BAD_GATEWAY,
             "agent",
-            "Modellen svarade men svaret gick inte att läsa.",
+            "The model replied but the response could not be read.",
         )
     })?;
     if !status.is_success() {
@@ -598,7 +598,7 @@ async fn post_openai(
         Problem::new(
             StatusCode::BAD_GATEWAY,
             "agent",
-            "Modellen svarade med något som inte var JSON.",
+            "The model replied with something that was not JSON.",
         )
     })
 }
@@ -613,9 +613,9 @@ fn openai_error(status: StatusCode, body: &str) -> String {
                 .map(str::to_owned)
         })
         .filter(|message| !message.is_empty())
-        .unwrap_or_else(|| "okänt fel".into());
+        .unwrap_or_else(|| "unknown error".into());
     format!(
-        "Modellen svarade inte. OpenAI ({status}) sa: {}",
+        "The model did not reply. OpenAI ({status}) said: {}",
         clip(&message, 240)
     )
 }
@@ -1152,7 +1152,7 @@ async fn bulk(
     }
     state
         .store
-        .register_job_type("bulk.write", "Massinläsning", &[], None)
+        .register_job_type("bulk.write", "Bulk write", &[], None)
         .await
         .map_err(store_status)?;
     let id = Uuid::now_v7();
@@ -1617,7 +1617,7 @@ async fn rollback(
         .store
         .create_proposal(
             proposal_id,
-            "Återställning",
+            "Restore",
             "rollback",
             identity.actor.actor,
             identity.actor.on_behalf_of,
@@ -2392,7 +2392,7 @@ async fn propose_operation(
                 .store
                 .create_proposal(
                     id,
-                    "Agentförslag",
+                    "Agent proposal",
                     "agent",
                     identity.actor.actor,
                     identity.actor.on_behalf_of,
@@ -2458,7 +2458,7 @@ async fn mass_edit(
         .store
         .create_proposal(
             id,
-            body.title.as_deref().unwrap_or("Massändring"),
+            body.title.as_deref().unwrap_or("Mass edit"),
             "mass_edit",
             identity.actor.actor,
             identity.actor.on_behalf_of,
@@ -2783,7 +2783,7 @@ mod tests {
         )
         .await
         .expect_err("status");
-        assert!(error.detail.contains("Modellen svarade inte"));
+        assert!(error.detail.contains("The model did not reply"));
         assert!(error.detail.contains("reasoning_effort must be none"));
     }
 
@@ -2792,7 +2792,7 @@ mod tests {
         let mut last = None;
         for _ in 0..40 {
             match post_openai(&client, url, key, body).await {
-                Err(problem) if problem.detail.contains("gick inte att nå") => {
+                Err(problem) if problem.detail.contains("could not be reached") => {
                     last = Some(problem);
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }

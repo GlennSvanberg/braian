@@ -129,7 +129,8 @@ textarea { min-height: 64px; width: 100%; resize: vertical; }
 .palette, .help, .login { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: grid; place-items: start center; padding-top: 12vh; z-index: 30; }
 .palette form, .help div, .login form { width: min(640px, 92vw); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); padding: 8px; display: grid; gap: 6px; }
 .palette input { padding: 6px; }
-.hit { text-align: left; border: none; background: transparent; }
+.palette-list { display: grid; gap: 2px; max-height: min(52vh, 440px); overflow: auto; }
+.hit { text-align: left; border: none; background: transparent; width: 100%; }
 .hit:hover, .hit.on { background: var(--select); color: var(--select-text); }
 .activity { max-height: 120px; overflow: auto; border-top: 1px solid var(--line); background: var(--panel); font-family: ui-monospace, monospace; font-size: 11px; padding: 4px 8px; }
 .agent { position: fixed; right: 8px; bottom: 28px; width: min(380px, 92vw); height: 420px; background: var(--panel); border: 1px solid var(--purple); box-shadow: var(--shadow); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; z-index: 25; }

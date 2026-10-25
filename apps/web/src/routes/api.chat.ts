@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { sv } from '../i18n'
+import { copy } from '../i18n'
 
 function modelName() {
   return process.env.BRAIAN_AGENT_MODEL?.trim() || 'gpt-6-luna'
@@ -31,10 +31,10 @@ export const Route = createFileRoute('/api/chat')({
         Response.json({
           available: available(),
           model: modelName(),
-          reply: available() ? '' : sv.agentUnavailable,
+          reply: available() ? '' : copy.agentUnavailable,
         }),
       POST: async ({ request }) => {
-        if (!available()) return eventStream(sv.agentUnavailable)
+        if (!available()) return eventStream(copy.agentUnavailable)
         const body = await request.text()
         const cookie = request.headers.get('cookie') ?? ''
         const apiBase = process.env.BRAIAN_API_PROXY ?? 'http://127.0.0.1:8090'
@@ -45,8 +45,8 @@ export const Route = createFileRoute('/api/chat')({
         })
         const payload = (await response.json().catch(() => ({}))) as { reply?: string; detail?: string }
         const text = response.ok
-          ? payload.reply || sv.agentEmpty
-          : payload.detail || 'Modellen svarade inte.'
+          ? payload.reply || copy.agentEmpty
+          : payload.detail || 'The model did not reply.'
         return eventStream(text)
       },
     },

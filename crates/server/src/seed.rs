@@ -53,6 +53,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         kind: BatchKind::Interactive,
         source: "seed".into(),
     };
+    seed_demo_surface(store, &user).await?;
     match store.definition_set().await {
         Err(Error::NoDefinitions) => {
             let defs: DefinitionSet = serde_json::from_str(DEFINITIONS)?;
@@ -136,28 +137,38 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         seed_catalog(store, &actor, &model, defs.model_revision, target).await?;
     }
 
+    if let Some(search) = search {
+        braian_indexer::reindex(store, search).await?;
+    }
+    Ok(())
+}
+
+async fn seed_demo_surface(
+    store: &Store,
+    user: &braian_store::UserRecord,
+) -> anyhow::Result<()> {
     let workspaces = [
         (
             "018f2000-0000-7000-8000-000000000001",
-            "Sätt upp systemet",
+            "Set up the system",
             true,
             "braian-setup",
         ),
         (
             "018f2000-0000-7000-8000-000000000002",
-            "Datamodell",
+            "Data model",
             false,
             "braian-model",
         ),
         (
             "018f2000-0000-7000-8000-000000000003",
-            "Berika objekt",
+            "Enrich objects",
             false,
             "braian-enrich",
         ),
         (
             "018f2000-0000-7000-8000-000000000004",
-            "Granska",
+            "Review",
             false,
             "braian-review",
         ),
@@ -179,14 +190,14 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?,
             user.id,
-            "Tält",
+            "Tents",
             &json!({ "type": "artikel", "group": "sortiment:talt" }),
         )
         .await?;
     store
         .register_job_type(
             "dq.status",
-            "Statuskontroll",
+            "Status check",
             &["status".into()],
             Some(Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?),
         )
@@ -195,19 +206,19 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2")?,
             user.id,
-            "Virke",
+            "Timber",
             &json!({ "type": "artikel", "group": "sortiment:virke" }),
         )
         .await?;
     store
         .register_view_type(
             "leverantor",
-            "Leverantör",
+            "Supplier",
             Some("https://example.invalid/embed?object={object}&token={token}"),
         )
         .await?;
     store
-        .register_job_type("bulk.write", "Masskrivning", &["status".into()], None)
+        .register_job_type("bulk.write", "Bulk write", &["status".into()], None)
         .await?;
     seed_job_run(
         store,
@@ -224,9 +235,6 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
     )
     .await?;
     seed_proposal(store, user.principal_id).await?;
-    if let Some(search) = search {
-        braian_indexer::reindex(store, search).await?;
-    }
     Ok(())
 }
 
@@ -274,7 +282,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000101",
             "018f2000-0000-7000-8000-000000000001",
             "dashboard",
-            "Översikt",
+            "Overview",
             "main",
             0,
             json!({}),
@@ -283,7 +291,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000102",
             "018f2000-0000-7000-8000-000000000001",
             "data_model",
-            "Att göra",
+            "To do",
             "main",
             1,
             json!({"checklist": ["languages", "units", "types", "import"]}),
@@ -292,7 +300,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000201",
             "018f2000-0000-7000-8000-000000000002",
             "data_model",
-            "Struktur",
+            "Structure",
             "left",
             0,
             json!({"mode": "tree"}),
@@ -301,7 +309,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000202",
             "018f2000-0000-7000-8000-000000000002",
             "data_model",
-            "Klass",
+            "Class",
             "right",
             0,
             json!({"mode": "editor"}),
@@ -310,7 +318,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000203",
             "018f2000-0000-7000-8000-000000000002",
             "data_model",
-            "Konsekvens",
+            "Impact",
             "right",
             1,
             json!({"mode": "impact"}),
@@ -319,7 +327,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000301",
             "018f2000-0000-7000-8000-000000000003",
             "structure_tree",
-            "Sortiment",
+            "Assortment",
             "left",
             0,
             json!({"expanded": ["friluft", "bygg"]}),
@@ -328,7 +336,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000302",
             "018f2000-0000-7000-8000-000000000003",
             "object_table",
-            "Objekt",
+            "Objects",
             "center",
             0,
             json!({"columns": ["nummer", "namn", "type", "status", "farg", "vikt", "langd"], "sort": "nummer"}),
@@ -337,7 +345,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000303",
             "018f2000-0000-7000-8000-000000000003",
             "object_detail",
-            "Detalj",
+            "Detail",
             "right",
             0,
             json!({"language": "sv"}),
@@ -346,7 +354,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000304",
             "018f2000-0000-7000-8000-000000000003",
             "graph",
-            "Graf",
+            "Graph",
             "right",
             1,
             json!({}),
@@ -355,7 +363,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000305",
             "018f2000-0000-7000-8000-000000000003",
             "history",
-            "Historik",
+            "History",
             "right",
             2,
             json!({}),
@@ -364,7 +372,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000401",
             "018f2000-0000-7000-8000-000000000004",
             "proposal",
-            "Förslag",
+            "Proposals",
             "left",
             0,
             json!({}),
@@ -373,7 +381,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000402",
             "018f2000-0000-7000-8000-000000000004",
             "batch_log",
-            "Batchlogg",
+            "Batch log",
             "right",
             0,
             json!({}),
@@ -382,7 +390,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000403",
             "018f2000-0000-7000-8000-000000000004",
             "job_history",
-            "Jobb",
+            "Jobs",
             "right",
             1,
             json!({"type": "bulk.write"}),
@@ -391,7 +399,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000404",
             "018f2000-0000-7000-8000-000000000003",
             "embed",
-            "Externt",
+            "External",
             "right",
             3,
             json!({"url": "/embed/preview?object={object}&key={key}"}),
@@ -650,13 +658,16 @@ async fn seed_job_run(
 ) -> anyhow::Result<()> {
     let id = Uuid::parse_str(id)?;
     if store.job_run(id).await?.is_some() {
+        store
+            .finish_job_run(id, "succeeded", 48, "synthetic run", &json!([]))
+            .await?;
         return Ok(());
     }
     store
         .create_job_run(id, type_key, None, actor, None, 48)
         .await?;
     store
-        .finish_job_run(id, "succeeded", 48, "syntetisk körning", &json!([]))
+        .finish_job_run(id, "succeeded", 48, "synthetic run", &json!([]))
         .await?;
     Ok(())
 }
@@ -664,6 +675,7 @@ async fn seed_job_run(
 async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> {
     let id = Uuid::parse_str("018f2000-0000-7000-8000-0000000000c1")?;
     if store.proposal(id).await?.is_some() {
+        store.set_proposal_title(id, "Accept ART-TALT-3").await?;
         return Ok(());
     }
     let object_id = ObjectId::from_uuid(Uuid::parse_str("018f1000-0000-7000-8000-000000000012")?);
@@ -674,7 +686,7 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
     store
         .create_proposal(
             id,
-            "Godkänn ART-TALT-3",
+            "Accept ART-TALT-3",
             "user",
             actor,
             None,

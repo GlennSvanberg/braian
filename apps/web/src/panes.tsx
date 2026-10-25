@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, textValue, type Json } from './api'
-import { sv } from './i18n'
+import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
+import { copy, uiLanguage } from './i18n'
 
 export type PanesSession = {
   group: string | null
@@ -28,9 +29,9 @@ export type PanesWorkspace = { id: string; locked?: boolean }
 type ObjRow = { id: string; key: string; type: string; version: string; name: string; status: string }
 
 const columns = [
-  { id: 'key', header: 'Nummer', size: 160, sort: 'a_nummer' },
-  { id: 'name', header: 'Namn', size: 280, sort: 'a_namn__sv' },
-  { id: 'type', header: 'Typ', size: 90, sort: 'type_key' },
+  { id: 'key', header: 'Number', size: 160, sort: 'a_nummer' },
+  { id: 'name', header: 'Name', size: 280, sort: 'a_namn__sv' },
+  { id: 'type', header: 'Type', size: 90, sort: 'type_key' },
   { id: 'status', header: 'Status', size: 96, sort: 'a_status' },
   { id: 'version', header: 'Version', size: 72, sort: 'version' },
 ]
@@ -162,7 +163,7 @@ export function ObjectTable({
       }),
     onSuccess: (result) => {
       session.setProposalId(String(result.id))
-      session.push(`${sv.proposals} ${result.id}`)
+      session.push(`${copy.proposals} ${result.id}`)
     },
   })
 
@@ -179,15 +180,15 @@ export function ObjectTable({
       <div className="toolbar">
         <input
           data-testid="quick-filter"
-          placeholder={sv.searchPlaceholder}
+          placeholder={copy.searchPlaceholder}
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         />
         <label>
-          {sv.groupBy}
+          {copy.groupBy}
           <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
             <option value="">—</option>
-            <option value="type_key">typ</option>
+            <option value="type_key">type</option>
             <option value="a_status">status</option>
           </select>
         </label>
@@ -198,7 +199,7 @@ export function ObjectTable({
             session.setGroup(null)
           }}
         >
-          {sv.all}
+          {copy.all}
         </button>
         {(assortments.data?.assortments ?? []).map((item) => (
           <button
@@ -210,10 +211,10 @@ export function ObjectTable({
               session.setGroup(query.group ? String(query.group) : null)
             }}
           >
-            {String(item.name)}
+            {assortmentDisplayName(String(item.name))}
           </button>
         ))}
-        <button onClick={() => mass.mutate()} disabled={selected.length === 0}>{sv.massEdit}</button>
+        <button onClick={() => mass.mutate()} disabled={selected.length === 0}>{copy.massEdit}</button>
         <button
           onClick={() => {
             void api<Blob>('/v1/export', {
@@ -229,10 +230,10 @@ export function ObjectTable({
             })
           }}
         >
-          {sv.export}
+          {copy.export}
         </button>
         <NewObject session={session} />
-        <span className="icon-btn" data-testid="row-count">{found} {sv.rows}</span>
+        <span className="icon-btn" data-testid="row-count">{found} {copy.rows}</span>
       </div>
       <div className="grid" ref={parent}>
         <div className="head">
@@ -325,12 +326,12 @@ export function ObjectTable({
         )}
       </div>
       {probe.isError ? <p className="error">{(probe.error as Error).message}</p> : null}
-      {!probe.isLoading && found === 0 ? <p>{sv.noRows}</p> : null}
+      {!probe.isLoading && found === 0 ? <p>{copy.noRows}</p> : null}
       {menu ? (
         <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="context-menu">
-          <button onClick={() => { session.setObjectId(menu.id); setMenu(null) }}>{sv.open}</button>
-          <button onClick={() => { void queryClient.invalidateQueries({ queryKey: ['history', menu.id] }); setMenu(null) }}>{sv.history}</button>
-          <button onClick={() => setMenu(null)}>{sv.close}</button>
+          <button onClick={() => { session.setObjectId(menu.id); setMenu(null) }}>{copy.open}</button>
+          <button onClick={() => { void queryClient.invalidateQueries({ queryKey: ['history', menu.id] }); setMenu(null) }}>{copy.history}</button>
+          <button onClick={() => setMenu(null)}>{copy.close}</button>
         </div>
       ) : null}
     </div>
@@ -401,7 +402,7 @@ function NewObject({ session }: { session: PanesSession }) {
   const [nummer, setNummer] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
-  if (!open) return <button onClick={() => setOpen(true)}>{sv.newObject}</button>
+  if (!open) return <button onClick={() => setOpen(true)}>{copy.newObject}</button>
   return (
     <form
       className="toolbar"
@@ -420,14 +421,14 @@ function NewObject({ session }: { session: PanesSession }) {
             setError('')
             setOpen(false)
             session.setObjectId(String(created.id))
-            session.push(`${sv.saved} ${nummer}`)
+            session.push(`${copy.saved} ${nummer}`)
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
           })
-          .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : sv.validation))
+          .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
       }}
     >
       <input data-testid="new-nummer" value={nummer} onChange={(event) => setNummer(event.target.value)} placeholder="nummer" />
-      <button className="primary" type="submit" data-testid="create-object">{sv.save}</button>
+      <button className="primary" type="submit" data-testid="create-object">{copy.save}</button>
       {error ? <span className="error" data-testid="validation-error">{error}</span> : null}
     </form>
   )
@@ -444,8 +445,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const [draft, setDraft] = useState<Json>({})
   const [error, setError] = useState('')
   useEffect(() => setDraft({}), [session.objectId])
-  if (!session.objectId) return <p>{sv.detail}</p>
-  if (!object.data) return <p>{sv.loading}</p>
+  if (!session.objectId) return <p>{copy.detail}</p>
+  if (!object.data) return <p>{copy.loading}</p>
   const values = { ...((object.data.values as Json) ?? {}), ...draft }
   const attributes = (defs.data?.attributes as Json[] | undefined) ?? []
   const lists = (defs.data?.value_lists as Json[] | undefined) ?? []
@@ -459,11 +460,11 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       .then(() => {
         setDraft({})
         setError('')
-        session.push(`${sv.saved} ${textValue((object.data?.values as Json)?.nummer) || object.data?.id}`)
+        session.push(`${copy.saved} ${textValue((object.data?.values as Json)?.nummer) || object.data?.id}`)
         void queryClient.invalidateQueries({ queryKey: ['object', session.objectId] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
       })
-      .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : sv.validation))
+      .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
   }
   return (
     <form
@@ -478,7 +479,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       {Object.keys(values).map((key) => {
         const attribute = attributes.find((item) => item.key === key)
         const kind = (attribute?.kind as Json) ?? {}
-        const label = textValue((attribute?.labels as Json) ?? key, 'sv') || key
+        const label = textValue((attribute?.labels as Json) ?? key, uiLanguage) || key
         return (
           <div key={key} className="field">
             <label>{label}</label>
@@ -499,8 +500,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       })}
       {error ? <p className="error" data-testid="detail-error">{error}</p> : null}
       <div className="toolbar">
-        <button className="primary" type="submit" data-testid="save-object">{sv.save}</button>
-        <button type="button" onClick={() => setDraft({})}>{sv.discard}</button>
+        <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
+        <button type="button" onClick={() => setDraft({})}>{copy.discard}</button>
       </div>
     </form>
   )
@@ -510,7 +511,7 @@ function optionsFor(lists: Json[], key: string) {
   const list = lists.find((item) => item.key === key)
   return ((list?.options as Json[]) ?? []).map((option) => ({
     code: String(option.code),
-    label: textValue(option.labels, 'sv') || String(option.code),
+    label: textValue(option.labels, uiLanguage) || String(option.code),
   }))
 }
 
@@ -643,7 +644,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
       <input
         data-testid="object-ref"
         value={open ? q : label}
-        placeholder={sv.pickObject}
+        placeholder={copy.pickObject}
         onFocus={() => {
           setOpen(true)
           setQ('')
@@ -681,7 +682,7 @@ export function GraphView({ session }: { session: PanesSession }) {
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}/graph`),
     enabled: Boolean(session.objectId),
   })
-  if (!graph.data) return <p data-testid="graph">{sv.graph}</p>
+  if (!graph.data) return <p data-testid="graph">{copy.graph}</p>
   const relations = (graph.data.relations as Json[]) ?? []
   const attributes = (graph.data.attributes as Json[]) ?? []
   return (
@@ -703,8 +704,8 @@ export function GraphView({ session }: { session: PanesSession }) {
         {attributes.map((attribute) => {
           const source = ((attribute.sources as Json[]) ?? [])[0] ?? {}
           const origin = source.class
-            ? `${sv.origin}: ${String(source.class)} / ${String(source.structure ?? '')}`
-            : `${sv.origin}: ${String(source.from ?? 'typ')}`
+            ? `${copy.origin}: ${String(source.class)} / ${String(source.structure ?? '')}`
+            : `${copy.origin}: ${String(source.from ?? 'type')}`
           return (
             <p key={String(attribute.key)}>
               <b>{String(attribute.label ?? attribute.key)}</b> {origin}
@@ -751,7 +752,7 @@ export function HistoryView({ session }: { session: PanesSession }) {
   return (
     <div data-testid="history">
       <label>
-        {sv.asOf}
+        {copy.asOf}
         <input
           data-testid="as-of"
           type="range"
@@ -761,12 +762,12 @@ export function HistoryView({ session }: { session: PanesSession }) {
           onChange={(event) => setSeq(Number(event.target.value))}
         />
       </label>
-      <button data-testid="rollback" onClick={() => rollback.mutate()}>{sv.rollback}</button>
+      <button data-testid="rollback" onClick={() => rollback.mutate()}>{copy.rollback}</button>
       <div className="timeline">
         {rows.map((row) => (
           <article key={String(row.seq)} className={Number(row.seq) === current ? 'selected' : ''}>
             <strong>#{String(row.seq)}</strong> {String(row.op)} · {String(row.actor ?? '')}
-            {row.on_behalf_of ? ` för ${String(row.on_behalf_of)}` : ''}
+            {row.on_behalf_of ? ` for ${String(row.on_behalf_of)}` : ''}
           </article>
         ))}
       </div>
@@ -774,8 +775,8 @@ export function HistoryView({ session }: { session: PanesSession }) {
         <thead>
           <tr>
             <th />
-            <th>{sv.before}</th>
-            <th>{sv.after}</th>
+            <th>{copy.before}</th>
+            <th>{copy.after}</th>
           </tr>
         </thead>
         <tbody>
@@ -852,7 +853,7 @@ export function DataModel({ view }: { view: PanesView }) {
     const types = ((defs.data?.types as Json[]) ?? []).map((item) => String(item.key)).join(', ')
     return (
       <div data-testid="data-model">
-        <strong>{sv.dataModel}</strong>
+        <strong>{copy.dataModel}</strong>
         <ul>
           {(view.state.checklist as string[]).map((item) => (
             <li key={item}>{item}</li>
@@ -873,14 +874,14 @@ export function DataModel({ view }: { view: PanesView }) {
       body: JSON.stringify({ id: structure.id, key: structure.key, groups: structure.groups, classes }),
     })
       .then(() => {
-        setMessage(sv.classMoved)
+        setMessage(copy.classMoved)
         void queryClient.invalidateQueries({ queryKey: ['definitions'] })
       })
-      .catch((reason: unknown) => setMessage(reason instanceof ApiError ? reason.message : sv.validation))
+      .catch((reason: unknown) => setMessage(reason instanceof ApiError ? reason.message : copy.validation))
   }
   return (
     <div data-testid="data-model">
-      <p>{sv.dataModel}{mode ? ` · ${mode}` : ''}</p>
+      <p>{copy.dataModel}{mode ? ` · ${mode}` : ''}</p>
       {mode === 'tree' || mode === '' ? (
         ((defs.data?.structures as Json[]) ?? []).map((structure) => (
           <div key={String(structure.key)} className="tree">
@@ -934,7 +935,7 @@ export function DataModel({ view }: { view: PanesView }) {
           }}
         >
           <input data-testid="impact-attribute" value={attribute} onChange={(event) => setAttribute(event.target.value)} />
-          <button type="submit" data-testid="impact-run">{sv.calculate}</button>
+          <button type="submit" data-testid="impact-run">{copy.calculate}</button>
           {selectedClass ? (
             <button type="button" data-testid="impact-class" onClick={() => impact.mutate({ remove_class: selectedClass })}>
               {selectedClass}
@@ -945,8 +946,8 @@ export function DataModel({ view }: { view: PanesView }) {
       {message ? <p>{message}</p> : null}
       {impact.data ? (
         <div data-testid="impact-result">
-          <p>{sv.affected}: {String(impact.data.affected_objects)} · ogiltiga {String(impact.data.invalid_objects)}</p>
-          <p>{sv.samples}: {((impact.data.samples as Json[]) ?? []).map((item) => String(item.key)).join(', ')}</p>
+          <p>{copy.affected}: {String(impact.data.affected_objects)} · {copy.invalid} {String(impact.data.invalid_objects)}</p>
+          <p>{copy.samples}: {((impact.data.samples as Json[]) ?? []).map((item) => String(item.key)).join(', ')}</p>
           {((impact.data.jobs as Json[]) ?? []).map((job) => (
             <p key={String(job.key)}>{String(job.title)} · {((job.reads_fields as string[]) ?? []).join(', ')}</p>
           ))}
@@ -971,16 +972,16 @@ function ClassEditor({ defs, selectedClass }: { defs: Json | undefined; selected
   const structures = (defs?.structures as Json[]) ?? []
   const attributes = (defs?.attributes as Json[]) ?? []
   const found = structures.flatMap((structure) => (structure.classes as Json[]) ?? []).find((item) => item.key === selectedClass)
-  if (!found) return <p data-testid="class-editor">{sv.pickClass}</p>
+  if (!found) return <p data-testid="class-editor">{copy.pickClass}</p>
   const ids = (found.attributes as string[]) ?? []
   return (
     <div data-testid="class-editor">
       <strong>{selectedClass}</strong>
-      <p>{sv.attributes}</p>
+      <p>{copy.attributes}</p>
       <ul>
         {ids.map((id) => {
           const attribute = attributes.find((item) => item.id === id)
-          const label = textValue((attribute?.labels as Json) ?? undefined, 'sv') || String(attribute?.key ?? id)
+          const label = textValue((attribute?.labels as Json) ?? undefined, uiLanguage) || String(attribute?.key ?? id)
           return <li key={id}>{label}</li>
         })}
       </ul>
@@ -1008,11 +1009,11 @@ export function JobHistory({ view }: { view: PanesView }) {
       <div className="toolbar">
         {(types.data?.job_types ?? []).map((item) => (
           <button key={String(item.key)} className={item.key === key ? 'primary' : ''} onClick={() => setKey(String(item.key))}>
-            {String(item.title)}
+            {jobTypeDisplayTitle(String(item.title))}
           </button>
         ))}
       </div>
-      {(runs.data?.runs ?? []).length === 0 ? <p>{sv.noRows}</p> : null}
+      {(runs.data?.runs ?? []).length === 0 ? <p>{copy.noRows}</p> : null}
       {(runs.data?.runs ?? []).map((row) => (
         <article key={String(row.id)}>
           {String(row.status)} {String(row.progress_done ?? '')}/{String(row.progress_total ?? '')} {String(row.log ?? '')}
@@ -1045,7 +1046,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
         method: 'POST',
         body: JSON.stringify(rows && rows.length > 0 ? { rows } : {}),
       }),
-    onSuccess: () => session.push(sv.acceptAll),
+    onSuccess: () => session.push(copy.acceptAll),
   })
   if (!session.proposalId) {
     return (
@@ -1055,7 +1056,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
             {String(row.title)} · {String(row.status)} · {String(row.source)}
           </button>
         ))}
-        {(list.data?.proposals ?? []).length === 0 ? <p>{sv.proposals}</p> : null}
+        {(list.data?.proposals ?? []).length === 0 ? <p>{copy.proposals}</p> : null}
       </div>
     )
   }
@@ -1064,8 +1065,8 @@ export function ProposalView({ session }: { session: PanesSession }) {
     <div data-testid="proposal">
       <div className="toolbar">
         <strong className={proposal.data?.source === 'agent' ? 'draft-agent' : 'draft-user'}>{String(proposal.data?.title ?? '')}</strong>
-        <button data-testid="accept-all" onClick={() => accept.mutate(undefined)}>{sv.acceptAll}</button>
-        <button onClick={() => accept.mutate(picked)}>{sv.acceptSelected}</button>
+        <button data-testid="accept-all" onClick={() => accept.mutate(undefined)}>{copy.acceptAll}</button>
+        <button onClick={() => accept.mutate(picked)}>{copy.acceptSelected}</button>
       </div>
       {rows.map((row) => (
         <label key={String(row.id)} className={row.conflict ? 'error' : row.status === 'pending' ? 'draft-agent' : ''}>
@@ -1079,7 +1080,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
             }
           />
           {String(row.object_key ?? row.object_id)} · {String(row.status)}
-          {row.conflict ? ` · ${sv.conflict}` : ''}
+          {row.conflict ? ` · ${copy.conflict}` : ''}
         </label>
       ))}
     </div>

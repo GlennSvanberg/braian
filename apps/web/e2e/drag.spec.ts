@@ -15,7 +15,7 @@ async function login(page: Page) {
   await page.goto('/')
   await page.getByTestId('email').fill(demo.email)
   await page.getByTestId('password').fill(demo.password)
-  await page.getByRole('button', { name: 'Logga in' }).click()
+  await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
 }
 
@@ -43,7 +43,7 @@ async function saveWorkspace(request: APIRequestContext, workspace: Workspace) {
 
 test('column width is restored after reload', async ({ page }) => {
   await login(page)
-  const before = await workspaceByName(page.request, 'Berika objekt')
+  const before = await workspaceByName(page.request, 'Enrich objects')
   const view = before.views.find((item) => item.type === 'object_table')
   if (!view) throw new Error('missing object table')
   const handle = page.getByTestId('resize-name')
@@ -54,7 +54,7 @@ test('column width is restored after reload', async ({ page }) => {
   await page.mouse.move(box.x + 70, box.y + box.height / 2)
   await page.mouse.up()
   await expect.poll(async () => {
-    const current = await workspaceByName(page.request, 'Berika objekt')
+    const current = await workspaceByName(page.request, 'Enrich objects')
     const table = current.views.find((item) => item.id === view.id)?.state.table as { sizes?: { name?: number } } | undefined
     return table?.sizes?.name ?? 0
   }).toBeGreaterThan(200)
@@ -77,10 +77,10 @@ test('column width is restored after reload', async ({ page }) => {
 
 test('dragging a pane tab docks it and can be restored', async ({ page }) => {
   await login(page)
-  const before = await workspaceByName(page.request, 'Berika objekt')
+  const before = await workspaceByName(page.request, 'Enrich objects')
   const dividers = await page.getByTestId('split-divider').count()
   try {
-    const tab = page.locator('.pane-tab', { hasText: 'Graf' })
+    const tab = page.locator('.pane-tab', { hasText: 'Graph' })
     const box = await tab.boundingBox()
     if (!box) throw new Error('missing graf tab')
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -106,18 +106,18 @@ test('drag a class onto another group and show impact', async ({ page }) => {
   const defs = await page.request.get('/v1/definitions')
   const original = ((await defs.json()) as { structures: Array<{ key: string }> }).structures.find((item) => item.key === 'sortiment')
   try {
-    await page.getByRole('button', { name: 'Datamodell' }).click()
+    await page.getByRole('button', { name: 'Data model' }).click()
     const tree = page.getByTestId('data-model').first()
     await expect(tree.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
     await tree.getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-bygg'))
-    await expect(tree).toContainText('Klassen flyttades')
+    await expect(tree).toContainText('The class was moved')
     await expect(tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
     await tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-sovsack'))
     await expect(tree.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
-    await page.locator('.pane-tab', { hasText: 'Konsekvens' }).click()
+    await page.locator('.pane-tab', { hasText: 'Impact' }).click()
     await page.getByTestId('impact-run').click()
-    await expect(page.getByTestId('impact-result')).toContainText('Berörda objekt')
-    await expect(page.getByTestId('impact-result')).toContainText('Statuskontroll')
+    await expect(page.getByTestId('impact-result')).toContainText('Affected objects')
+    await expect(page.getByTestId('impact-result')).toContainText('Status check')
   } finally {
     if (original) {
       await page.request.put('/v1/structures/sortiment', { data: original })
