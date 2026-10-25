@@ -162,6 +162,8 @@
       "id": "018f0000-0000-7000-8000-000000000200",
       "key": "produkt",
       "labels": { "sv": "Produkt", "en": "Product", "de": "Produkt" },
+      "singular": { "sv": "Produkt", "en": "Product", "de": "Produkt" },
+      "plural": { "sv": "Produkter", "en": "Products", "de": "Produkte" },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
         "018f0000-0000-7000-8000-000000000100",
@@ -175,6 +177,8 @@
       "id": "018f0000-0000-7000-8000-000000000201",
       "key": "artikel",
       "labels": { "sv": "Artikel", "en": "Article", "de": "Artikel" },
+      "singular": { "sv": "Artikel", "en": "Article", "de": "Artikel" },
+      "plural": { "sv": "Artiklar", "en": "Articles", "de": "Artikel" },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
         "018f0000-0000-7000-8000-000000000100",
@@ -192,6 +196,8 @@
       "id": "018f0000-0000-7000-8000-000000000202",
       "key": "variant",
       "labels": { "sv": "Variant", "en": "Variant", "de": "Variante" },
+      "singular": { "sv": "Variant", "en": "Variant", "de": "Variante" },
+      "plural": { "sv": "Varianter", "en": "Variants", "de": "Varianten" },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
         "018f0000-0000-7000-8000-000000000100",

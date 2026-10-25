@@ -6,7 +6,9 @@
 
 mod conflict;
 mod error;
+mod gauge;
 mod ids;
+mod imports;
 mod ops;
 mod pressure;
 mod product;
@@ -18,6 +20,7 @@ mod types;
 
 pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind};
+pub use imports::{ImportRowIn, ImportRowOut, ImportSession};
 pub use pressure::InteractiveGuard;
 pub use product::{HistoryEntry, ProposalRow, RelaySlotStatus, UserRecord};
 pub use scan::{EXPORT_CHUNK, ExportObject, ExportOrder, ExportScan};

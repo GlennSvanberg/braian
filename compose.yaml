@@ -112,3 +112,5 @@ volumes:
   postgres-data:
   redpanda-data:
   typesense-data:
+  # Import files are spooled on the API host (BRAIAN_IMPORT_DIR, default ./data/imports).
+  # There is no API service in this file yet; mount that directory when one is added.

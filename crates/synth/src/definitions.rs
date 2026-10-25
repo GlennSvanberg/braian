@@ -145,6 +145,8 @@ pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> Definitio
             id: item,
             key: "item".to_owned(),
             labels: label(&label_language, "Item".to_owned()),
+            singular: Default::default(),
+            plural: Default::default(),
             key_attribute: buckets[0][0],
             attributes: buckets[0].clone(),
         }],

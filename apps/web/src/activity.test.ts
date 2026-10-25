@@ -8,6 +8,9 @@ describe('activity', () => {
     expect(line).toContain('ART-1')
     expect(line).not.toContain('{')
     expect(objectIdFromLive(JSON.stringify({ object_id: 'abc' }))).toBe('abc')
+    expect(humanizeLive(JSON.stringify({ op: 'update', type: 'produkt', key: 'PROD-1' }), 'Product')).toBe(
+      'live · Updated Product PROD-1',
+    )
   })
 
   it('summarises a bulk fold and a lagged stream', () => {
@@ -20,5 +23,7 @@ describe('activity', () => {
     expect(humanizeLive(JSON.stringify({ op: 'job', status: 'running', done: 2, total: 8 }))).toBe(
       'live · Job running 2/8',
     )
+    expect(humanizeLive(JSON.stringify({ op: 'import', id: 'session-1', status: 'diffing' }))).toBe('')
+    expect(objectIdFromLive(JSON.stringify({ op: 'import', id: 'session-1' }))).toBeNull()
   })
 })

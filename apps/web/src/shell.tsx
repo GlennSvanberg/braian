@@ -7,6 +7,9 @@ import { Chart } from '@tanstack/react-charts'
 import { ChevronDown, ChevronRight, Moon, Sun } from 'lucide-react'
 import { api, type Json } from './api'
 import { humanizeLive, objectIdFromLive } from './activity'
+import { ImportScreen } from './import/view'
+import { dropImportFiles, onImportLive, openImport, resumeImport, setImportDrag } from './import/controller'
+import { importRefreshesObjects, isFileDrag } from './import/model'
 import { SearchRefresh } from './live-refresh'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
@@ -20,6 +23,7 @@ import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, t
 import { ConsequenceHost } from './consequence'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
+import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
 import {
@@ -62,8 +66,11 @@ type Session = {
   setGroup: (value: string | null) => void
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
+  listType: string | null
+  setListType: (value: string | null) => void
   push: (line: string) => void
   openWorkspace: (id: string) => void
+  openTypeView: (typeId: string) => void
 }
 
 function readStore<T>(key: string, fallback: T): T {
@@ -100,6 +107,7 @@ export function Shell() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [group, setGroup] = useState<string | null>(null)
   const [objectId, setObjectId] = useState<string | null>(null)
+  const [listType, setListType] = useState<string | null>(null)
   const [proposalId, setProposalId] = useState<string | null>(null)
   const [logText, setLogText] = useState('')
   const [liveState, setLiveState] = useState('closed')
@@ -115,8 +123,54 @@ export function Shell() {
   const placeOverride = useRef<Place | undefined>(undefined)
   const loadedFor = useRef('')
   const applyRef = useRef<(name: string, args: Record<string, unknown>) => void>(() => {})
+  const openTypeViewRef = useRef<(typeId: string) => void>(() => {})
+  const migratedRef = useRef(new Set<string>())
   const paletteModeRef = useRef(paletteMode)
   paletteModeRef.current = paletteMode
+
+  useEffect(() => {
+    const files = (event: DragEvent) => isFileDrag(event.dataTransfer?.types ?? [])
+    let depth = 0
+    const enter = (event: DragEvent) => {
+      if (!files(event)) return
+      event.preventDefault()
+      depth += 1
+      setImportDrag(true)
+    }
+    const over = (event: DragEvent) => {
+      if (!files(event)) return
+      event.preventDefault()
+    }
+    const leave = (event: DragEvent) => {
+      if (!files(event)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setImportDrag(false)
+    }
+    const drop = (event: DragEvent) => {
+      if (!files(event)) return
+      event.preventDefault()
+      depth = 0
+      setImportDrag(false)
+      const list = [...(event.dataTransfer?.files ?? [])]
+      if (list.length > 0) dropImportFiles(list)
+    }
+    const open = () => openImport()
+    window.addEventListener('dragenter', enter)
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    window.addEventListener('braian-import-open', open)
+    const params = new URLSearchParams(window.location.search)
+    const sessionId = params.get('import')
+    if (sessionId && !params.get('importPreview')) void resumeImport(sessionId)
+    return () => {
+      window.removeEventListener('dragenter', enter)
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+      window.removeEventListener('braian-import-open', open)
+    }
+  }, [])
 
   useEffect(() => {
     setBooted(true)
@@ -151,6 +205,17 @@ export function Shell() {
     queryFn: () => api<Workspace>(`/v1/workspaces/${workspaceId}`),
     enabled: Boolean(workspaceId),
   })
+  const defs = useQuery({
+    queryKey: ['definitions'],
+    queryFn: () => api<Json>('/v1/definitions'),
+    enabled: booted && me.isSuccess,
+    staleTime: 60_000,
+  })
+  const opened = useQuery({
+    queryKey: ['object', objectId],
+    queryFn: () => api<Json>(`/v1/objects/${objectId}`),
+    enabled: Boolean(objectId),
+  })
 
   useEffect(() => {
     if (!booted || !me.isSuccess) return
@@ -170,7 +235,12 @@ export function Shell() {
       setLiveState('message')
       const id = objectIdFromLive(event.data)
       if (id) flashObject(id)
-      push(humanizeLive(event.data))
+      onImportLive(event.data)
+      const sentence = humanizeLive(event.data, singularFromLive(event.data, queryClient.getQueryData<Json>(['definitions'])))
+      if (sentence) push(sentence)
+      if (importRefreshesObjects(event.data)) {
+        void queryClient.invalidateQueries({ queryKey: ['objects'] })
+      }
       refresh.onEvent(event.data)
     }
     source.onerror = () => {
@@ -379,21 +449,45 @@ export function Shell() {
     })
   }, [queryClient])
 
+  useEffect(() => {
+    const current = workspace.data
+    if (!current || !defs.data || migratedRef.current.has(current.id)) return
+    const types = typeNames(defs.data)
+    if (types.length === 0) return
+    const patch = migrateSavedWorkspace(current, current.views, types)
+    migratedRef.current.add(current.id)
+    if (!patch.changed) return
+    void persistWorkspaceMigration(current, patch).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
+      void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+    })
+  }, [workspace.data, defs.data, queryClient])
+
   const session: Session = {
     group,
     objectId,
     proposalId,
     language: 'sv',
     activity: [],
+    listType,
     setGroup,
     setObjectId,
+    setListType,
     setProposalId,
     push,
     openWorkspace: setWorkspaceId,
+    openTypeView: (typeId) => openTypeViewRef.current(typeId),
   }
 
   if (!booted || me.isLoading) return <p className="pane-body">{copy.loading}</p>
-  if (me.isError || !me.data) return <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+  if (me.isError || !me.data) {
+    return (
+      <>
+        <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+        <ImportScreen />
+      </>
+    )
+  }
   const user = me.data
   const userName = user.display_name || user.handle || user.email || ''
   const userEmail = user.email || user.handle || ''
@@ -435,6 +529,52 @@ export function Shell() {
         document.querySelector<HTMLElement>(`[data-pane="${CSS.escape(focus)}"]`)?.focus()
       })
     }
+  }
+  const typeCatalog = typeNames(defs.data)
+  const openTypeKey = String(opened.data?.type ?? '')
+  openTypeViewRef.current = (typeId: string) => {
+    const surfaceNow = workspaceRef.current
+    const docNow = docRef.current
+    if (!surfaceNow || !docNow) return
+    const type = typeNames(queryClient.getQueryData<Json>(['definitions'])).find((item) => item.id === typeId)
+    if (!type) return
+    void (async () => {
+      let views = surfaceNow.views
+      let found = views.find((view) => view.type === 'object_table' && (String(view.state.object_type ?? '') === type.id || String(view.state.type_key ?? '') === type.key))
+      if (!found) {
+        const id = crypto.randomUUID()
+        const created: View = {
+          id,
+          type: 'object_table',
+          title: type.plural,
+          pane: 'center',
+          position: views.length,
+          state: {
+            object_type: type.id,
+            type_key: type.key,
+            columns: ['nummer', 'namn', 'type', 'status', 'farg', 'vikt', 'langd'],
+            sort: 'nummer',
+          },
+        }
+        await api('/v1/views', {
+          method: 'POST',
+          body: JSON.stringify({ ...created, workspace_id: surfaceNow.id }),
+        })
+        views = [...views, created]
+        const nextSurface = { ...surfaceNow, views }
+        workspaceRef.current = nextSurface
+        queryClient.setQueryData(['workspace', surfaceNow.id], nextSurface)
+        found = created
+      }
+      const current = docRef.current
+      if (!current) return
+      const result = applyLayoutCommand(current, 'ui.open_view', { id: found.id, zone: 'center' }, {
+        views: views.map((view) => ({ id: view.id, title: view.title, type: view.type })),
+        canonical: canonicalRef.current,
+        place: placeOverride.current,
+      })
+      if (result.handled && result.doc !== current) commitDoc(result.doc)
+    })()
   }
 
   const toggleLock = (item: ListedWorkspace) => {
@@ -496,7 +636,7 @@ export function Shell() {
         {doc && surface ? (
           <WorkspaceDock
             doc={doc}
-            views={surface.views}
+            views={surface.views.map((view) => ({ ...view, title: displayViewTitle(view, typeCatalog, openTypeKey) }))}
             onChange={commitDoc}
             renderView={(item) => {
               const full = surface.views.find((view) => view.id === item.id)
@@ -555,7 +695,7 @@ export function Shell() {
           <button
             type="button"
             onClick={() => {
-              const template = workspaceTemplates[0]
+              const template = workspaceTemplates(typeCatalog)[0]
               if (!template) return
               void createWorkspaceFromTemplate(template).then((id) => {
                 void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
@@ -579,7 +719,8 @@ export function Shell() {
           <button type="button" onClick={() => setTabMenu(null)}>{copy.close}</button>
         </div>
       ) : null}
-      {help ? <Help onClose={() => setHelp(false)} /> : null}
+      <ImportScreen />
+      {help ? <Help onClose={() => setHelp(false)} placeholder={commandPlaceholder(typeCatalog)} /> : null}
       <Toaster theme={theme} />
     </div>
   )
@@ -809,12 +950,56 @@ function EmbedView({ session, view }: { session: Session; view: View }) {
 
 
 
-function Help({ onClose }: { onClose: () => void }) {
+function singularFromLive(raw: string, defs: Json | undefined) {
+  try {
+    const event = JSON.parse(raw) as Record<string, unknown>
+    const key = typeof event.type === 'string' ? event.type : ''
+    return key ? singularOf(defs, key) || undefined : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function persistWorkspaceMigration(
+  workspace: Workspace,
+  patch: { name?: string; views: Array<{ id: string; title: string; state: Json }> },
+) {
+  if (patch.name && patch.name !== workspace.name) {
+    await api('/v1/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: workspace.id,
+        name: patch.name,
+        locked: workspace.locked,
+        share_token: workspace.share_token,
+        layout: workspace.layout ?? { tabs: [] },
+      }),
+    })
+  }
+  for (const view of patch.views) {
+    const full = workspace.views.find((item) => item.id === view.id)
+    if (!full) continue
+    await api('/v1/views', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: full.id,
+        workspace_id: workspace.id,
+        type: full.type,
+        title: view.title,
+        pane: full.pane ?? 'center',
+        position: full.position ?? 0,
+        state: view.state,
+      }),
+    })
+  }
+}
+
+function Help({ onClose, placeholder }: { onClose: () => void; placeholder: string }) {
   return (
     <div className="help" onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()}>
         <strong>{copy.shortcuts}</strong>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>K</Kbd> {copy.commandPlaceholder}</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>K</Kbd> {placeholder}</p>
         <p><Kbd>Ctrl</Kbd>+<Kbd>J</Kbd> {copy.agent}</p>
         <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+arrows move the focused view</p>
         <p><Kbd>Alt</Kbd>+arrows focus the neighbour</p>

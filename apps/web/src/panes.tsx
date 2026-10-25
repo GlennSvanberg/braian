@@ -18,6 +18,15 @@ import { exportPayload, runExport, saveWorkbook } from './export'
 import { diffLines, historyTitle, isCreate, relativeTime } from './field-diff'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
+import {
+  emptyDetail,
+  emptyGraph,
+  isGenericObjectTitle,
+  newObjectLabel,
+  singularOf,
+  typeNames,
+  typeOfView,
+} from './type-labels'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { dispatchUi, onUi } from './ui-bus'
@@ -28,6 +37,8 @@ export type PanesSession = {
   objectId: string | null
   proposalId: string | null
   language: string
+  listType?: string | null
+  setListType?: (value: string | null) => void
   setGroup: (value: string | null) => void
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
@@ -173,7 +184,13 @@ export function ObjectTable({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const filterBy = session.group ? `groups:=${session.group}` : ''
+  const names = typeNames(defs.data, uiLanguage)
+  const bound = typeOfView(view, names) ?? (isGenericObjectTitle(view.title) ? names[0] : undefined)
+  const typeKey = bound?.key ?? ''
+  useEffect(() => {
+    session.setListType?.(typeKey || null)
+  }, [session, typeKey])
+  const filterBy = [typeKey ? `type_key:=${typeKey}` : '', session.group ? `groups:=${session.group}` : ''].filter(Boolean).join(' && ')
   const probe = useQuery({
     queryKey: ['objects', queryText, filterBy, sort, groupBy, 1],
     queryFn: () => loadPage(queryText, filterBy, sort, groupBy, 1),
@@ -483,7 +500,7 @@ export function ObjectTable({
             />
           </div>
         )}
-        <NewObject session={session} />
+        <NewObject session={session} typeKey={typeKey} singular={bound?.singular} />
         <span className="row-count" data-testid="row-count">{found} {copy.rows}</span>
       </div>
       <div
@@ -756,12 +773,12 @@ function TableFilters({
   )
 }
 
-function NewObject({ session }: { session: PanesSession }) {
+function NewObject({ session, typeKey, singular }: { session: PanesSession; typeKey?: string; singular?: string }) {
   const [open, setOpen] = useState(false)
   const [nummer, setNummer] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
-  if (!open) return <button onClick={() => setOpen(true)}>{copy.newObject}</button>
+  if (!open) return <button onClick={() => setOpen(true)}>{newObjectLabel(singular)}</button>
   return (
     <form
       className="create-row"
@@ -771,7 +788,7 @@ function NewObject({ session }: { session: PanesSession }) {
         void api<Json>('/v1/objects', {
           method: 'POST',
           body: JSON.stringify({
-            type: 'artikel',
+            type: typeKey || 'artikel',
             groups: group ? { sortiment: group } : { sortiment: 'friluft' },
             values: { nummer, namn: { sv: nummer, en: nummer, de: nummer }, status: 'utkast' },
           }),
@@ -825,7 +842,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   if (!session.objectId) {
     return (
       <div className="detail-empty" data-testid="detail-empty">
-        <p>{copy.detailEmpty}</p>
+        <p>{emptyDetail(typeNames(defs.data, uiLanguage), session.listType)}</p>
         <ul>
           <li><kbd>↑</kbd><kbd>↓</kbd> {copy.detailKeysMove}</li>
           <li><kbd>Enter</kbd> {copy.detailKeysOpen}</li>
@@ -944,6 +961,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     >
       <div className="detail-scroll">
         <header className="detail-head">
+          <p className="detail-kicker">{singularOf(defs.data, String(object.data.type), uiLanguage)}</p>
           <div className="detail-title">
             <strong>{name || number}</strong>
             {number ? <span className="detail-id">{number}</span> : null}
@@ -1261,7 +1279,7 @@ export function GraphView({ session }: { session: PanesSession }) {
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
     enabled: Boolean(session.objectId),
   })
-  if (!session.objectId) return <StateNote tone="empty" title={copy.graphEmpty} testId="graph" />
+  if (!session.objectId) return <StateNote tone="empty" title={emptyGraph(typeNames(defs.data, uiLanguage), session.listType)} testId="graph" />
   if (graph.isError || object.isError) return <StateNote tone="error" title={copy.graphError} testId="graph" />
   if (!graph.data || !object.data) return <StateNote tone="loading" title={copy.graphLoading} testId="graph" />
   return (

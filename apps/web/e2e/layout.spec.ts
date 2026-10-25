@@ -13,14 +13,14 @@ async function login(page: Page) {
   await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByTestId('dock')).toBeVisible()
-  await expect(page.locator('.pane-tab', { hasText: 'Objects' })).toBeVisible()
+  await expect(page.locator('.pane-tab', { hasText: 'Products' })).toBeVisible()
 }
 
 async function enrich(page: Page): Promise<Workspace> {
   const listed = await page.request.get('/v1/workspaces')
   const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
-  const row = body.workspaces.find((item) => item.name === 'Enrich objects')
-  if (!row) throw new Error('missing workspace Enrich objects')
+  const row = body.workspaces.find((item) => item.name === 'Enrich')
+  if (!row) throw new Error('missing workspace Enrich')
   const full = await page.request.get(`/v1/workspaces/${row.id}`)
   return (await full.json()) as Workspace
 }
@@ -174,16 +174,16 @@ test('double-click a tab maximizes that view and restores the layout', async ({ 
   await pane.getByTestId('pane-maximize').hover()
   await expect(page.getByRole('tooltip')).toContainText('Maximize')
   await expect(page.getByRole('tooltip')).toContainText('Z')
-  const tab = pane.locator('.pane-tab', { hasText: 'Objects' })
+  const tab = pane.locator('.pane-tab', { hasText: 'Products' })
   await tab.hover()
   await expect(page.getByRole('tooltip')).toContainText('Double-click to maximize')
   await tab.dblclick()
   await expect(dock).toHaveAttribute('data-zoom', table.id)
   await expect(page.locator('section.pane')).toHaveCount(1)
   await expect(page.locator('.pane-tab')).toHaveCount(1)
-  await expect(page.locator('.pane-tab', { hasText: 'Objects' })).toBeVisible()
+  await expect(page.locator('.pane-tab', { hasText: 'Products' })).toBeVisible()
   await expect(page.locator('.pane-tab', { hasText: 'Graph' })).toHaveCount(0)
-  await page.locator('.pane-tab', { hasText: 'Objects' }).dblclick()
+  await page.locator('.pane-tab', { hasText: 'Products' }).dblclick()
   await expect(dock).toHaveAttribute('data-zoom', '')
   expect(await leaves(page)).toBe(beforeLeaves)
   const restored = page.locator('section.pane').filter({ has: page.locator(`[data-tab="${table.id}"]`) })

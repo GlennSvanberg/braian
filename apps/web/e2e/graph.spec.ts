@@ -16,7 +16,18 @@ async function login(page: Page) {
   await expect(page.getByTestId('object-table')).toBeVisible()
 }
 
+async function openArticles(page: Page) {
+  await page.keyboard.press('Control+k')
+  await expect(page.getByTestId('palette')).toBeVisible()
+  await page.getByTestId('palette-input').fill('Articles view')
+  const entry = page.getByTestId('palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' })
+  await entry.first().click()
+  await expect(page.getByTestId('palette')).toHaveCount(0)
+  await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible()
+}
+
 async function openTent(page: Page) {
+  await openArticles(page)
   await page.getByTestId('quick-filter').fill('ART-TALT-2')
   const row = page.getByTestId('object-row').filter({ hasText: 'ART-TALT-2' }).first()
   await expect(row).toBeVisible()
@@ -32,7 +43,7 @@ test('force-directed graph', async ({ page }) => {
   await login(page)
   await openTent(page)
 
-  for (const kind of ['object', 'class', 'group', 'value', 'assortment']) {
+  for (const kind of ['type-artikel', 'class', 'group', 'value', 'assortment']) {
     await expect(page.getByTestId(`legend-${kind}`)).toBeVisible()
     await expect(page.getByTestId(`legend-${kind}`)).toHaveAttribute('aria-pressed', 'true')
   }
@@ -110,5 +121,5 @@ test('force-directed graph', async ({ page }) => {
   await page.getByRole('button', { name: 'Close full size' }).click()
   await page.getByRole('button', { name: 'Dark' }).click()
   await page.getByTestId('quick-filter').fill('')
-  await page.locator('.pane-tab', { hasText: 'Detail' }).first().click()
+  await page.locator('[data-view-type="object_detail"]').first().click()
 })

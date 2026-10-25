@@ -15,8 +15,12 @@ async function login(page: Page) {
 }
 
 async function tour(page: Page, theme: 'dark' | 'light') {
+  await page.keyboard.press('Control+k')
+  await page.getByTestId('palette-input').fill('Articles view')
+  await page.getByTestId('palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' }).first().click()
+  await expect(page.getByTestId('palette')).toHaveCount(0)
   await page.getByRole('button', { name: 'All', exact: true }).click()
-  await expect(page.getByTestId('row-count')).toContainText('3013')
+  await expect(page.getByTestId('row-count')).toBeVisible()
   await page.screenshot({ path: `${shots}/workspace-${theme}.png` })
 
   await page.keyboard.press('Control+k')
@@ -30,7 +34,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
   await expect(page.getByTestId('object-row').first()).toContainText('ART-TALT')
   const tent = page.getByTestId('object-row').filter({ hasText: 'ART-TALT-3' })
   await ((await tent.count()) > 0 ? tent.first() : page.getByTestId('object-row').first()).click()
-  await page.getByRole('button', { name: 'Detail' }).click()
+  await page.locator('[data-view-type="object_detail"]').first().click()
   await expect(page.locator('.langs b').first()).toHaveText('sv')
   await expect(page.getByTestId('object-ref')).toHaveValue(/ART-TALT-2/)
   await page.screenshot({ path: `${shots}/detail-${theme}.png` })
@@ -65,7 +69,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
   await expect(page.getByTestId('jobs')).toContainText('succeeded')
   await page.screenshot({ path: `${shots}/jobs-${theme}.png` })
 
-  await page.getByRole('button', { name: 'Enrich objects' }).click()
+  await page.getByRole('button', { name: 'Enrich' }).click()
 }
 
 test('clean catalog screenshots', async ({ page }) => {

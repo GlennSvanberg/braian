@@ -47,7 +47,7 @@ test('final data-model and polish shots', async ({ page }) => {
   await page.screenshot({ path: `${shots}/agent-consequence.png` })
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  await page.getByRole('button', { name: 'Enrich objects' }).click()
+  await page.getByRole('button', { name: 'Enrich' }).click()
   await page.getByTestId('object-row').first().click()
   await expect(page.getByTestId('object-detail')).toBeVisible()
   await page.screenshot({ path: `${shots}/detail-dark.png` })

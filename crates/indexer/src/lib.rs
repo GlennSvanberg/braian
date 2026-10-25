@@ -6,12 +6,19 @@
 //! import refuses an older `seq`, so the two lanes can write at the same time.
 //!
 //! `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH` and
-//! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the interactive lane. The bulk lane
-//! uses `BRAIAN_INDEXER_BULK_BATCH`, `BRAIAN_INDEXER_BULK_IMPORT_BATCH` and
-//! `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY`, which are larger so a mass import
-//! is not stuck at one small HTTP call per flush. Before a bulk import the
-//! lane waits until the interactive topic is drained, up to
-//! `BRAIAN_INDEXER_BULK_YIELD_MAX_MS`, and then imports anyway.
+//! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the interactive lane. That lane
+//! writes through its own HTTP client, so a bulk import's connection cannot
+//! hold the upsert.
+//!
+//! The bulk lane reads `BRAIAN_INDEXER_BULK_BATCH` events, then imports them
+//! in short waves. `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (default 100, capped at
+//! 200) and `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` (default 1, capped at 2)
+//! size one wave. A 4×500 import held Typesense for the whole batch, and the
+//! wait before the flush did nothing once that import was in flight. Before
+//! each wave the lane waits, up to `BRAIAN_INDEXER_BULK_YIELD_MAX_MS`, while
+//! the interactive topic still has events or another process has interactive
+//! requests in `interactive_pressure`. A busy wave is a single batch of at
+//! most 100 documents.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -55,8 +62,8 @@ impl Default for IndexerConfig {
             import_batch: 100,
             import_concurrency: 4,
             bulk_batch_size: 2_000,
-            bulk_import_batch: 500,
-            bulk_import_concurrency: 4,
+            bulk_import_batch: 100,
+            bulk_import_concurrency: 1,
             bulk_yield_max: Duration::from_millis(100),
         }
     }
@@ -73,14 +80,14 @@ impl IndexerConfig {
                 defaults.import_concurrency,
             ),
             bulk_batch_size: positive_env("BRAIAN_INDEXER_BULK_BATCH", defaults.bulk_batch_size),
-            bulk_import_batch: positive_env(
+            bulk_import_batch: cap_bulk_batch(positive_env(
                 "BRAIAN_INDEXER_BULK_IMPORT_BATCH",
                 defaults.bulk_import_batch,
-            ),
-            bulk_import_concurrency: positive_env(
+            )),
+            bulk_import_concurrency: cap_bulk_concurrency(positive_env(
                 "BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY",
                 defaults.bulk_import_concurrency,
-            ),
+            )),
             bulk_yield_max: duration_env(
                 "BRAIAN_INDEXER_BULK_YIELD_MAX_MS",
                 defaults.bulk_yield_max,
@@ -232,8 +239,8 @@ impl Shared {
     async fn flush(
         &self,
         pending: &HashMap<String, ChangeEvent>,
-        import_batch: usize,
-        import_concurrency: usize,
+        pace: &LanePace,
+        drain: &InteractiveDrain,
     ) -> anyhow::Result<()> {
         let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
         let Some(cached) = self.compiled().await? else {
@@ -243,14 +250,31 @@ impl Shared {
         let ids = object_ids(pending.values().cloned());
         let stored = self.store.get_objects(&ids).await?;
         let docs = documents(&cached.model, &cached.defs, &stored, pending);
-        import_batched(
-            &self.search,
-            self.search.alias(),
-            &docs,
-            import_batch,
-            import_concurrency,
-        )
-        .await?;
+        let plan = WavePlan {
+            batch: pace.import_batch,
+            concurrency: pace.import_concurrency,
+            yield_max: pace.bulk_yield_max,
+        };
+        if pace.kind == LaneKind::Bulk {
+            import_waves(
+                &self.search,
+                &self.store,
+                Some(drain),
+                self.search.alias(),
+                &docs,
+                plan,
+            )
+            .await?;
+        } else {
+            import_batched(
+                &self.search.interactive_writer(),
+                self.search.alias(),
+                &docs,
+                plan.batch,
+                plan.concurrency,
+            )
+            .await?;
+        }
         self.store.set_indexer_seq(max_seq).await?;
         Ok(())
     }
@@ -368,6 +392,7 @@ impl InteractiveDrain {
         self.pending.load(Ordering::Acquire) > 0 || self.flushing.load(Ordering::Acquire)
     }
 
+    #[cfg(test)]
     async fn wait_for_idle(&self, max_wait: Duration) {
         let started = Instant::now();
         loop {
@@ -406,6 +431,7 @@ impl InteractiveDrain {
 
 /// Bulk import waits while the interactive lane still has events or is flushing,
 /// and only until `max_wait`. After that it imports anyway.
+#[cfg(test)]
 pub(crate) fn bulk_import_waits(
     interactive_pending: usize,
     interactive_flushing: bool,
@@ -414,6 +440,124 @@ pub(crate) fn bulk_import_waits(
 ) -> bool {
     let busy = interactive_pending > 0 || interactive_flushing;
     busy && waited < max_wait
+}
+
+/// One Typesense import wave. `batch` is documents per call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ImportWave {
+    pub batch: usize,
+    pub concurrency: usize,
+}
+
+/// Largest bulk import the indexer will send, even when the env asks for more.
+const BULK_BATCH_CAP: usize = 200;
+const BULK_CONCURRENCY_CAP: usize = 2;
+/// While an interactive edit is waiting, one wave is a single batch of this size.
+const BUSY_BATCH_CAP: usize = 100;
+
+pub(crate) fn cap_bulk_batch(batch: usize) -> usize {
+    batch.clamp(1, BULK_BATCH_CAP)
+}
+
+pub(crate) fn cap_bulk_concurrency(concurrency: usize) -> usize {
+    concurrency.clamp(1, BULK_CONCURRENCY_CAP)
+}
+
+/// The next bulk wave.
+///
+/// Idle waves stay inside the caps. A busy interactive lane forces one call
+/// of at most [`BUSY_BATCH_CAP`] documents, so the upsert waits out one short
+/// import instead of several large ones already in flight.
+pub(crate) fn bulk_import_wave(
+    batch: usize,
+    concurrency: usize,
+    interactive_busy: bool,
+) -> ImportWave {
+    let batch = cap_bulk_batch(batch);
+    let concurrency = cap_bulk_concurrency(concurrency);
+    if interactive_busy {
+        ImportWave {
+            batch: batch.min(BUSY_BATCH_CAP),
+            concurrency: 1,
+        }
+    } else {
+        ImportWave { batch, concurrency }
+    }
+}
+
+pub(crate) fn wave_end(offset: usize, docs: usize, wave: ImportWave) -> usize {
+    let span = wave.batch.saturating_mul(wave.concurrency).max(1);
+    offset.saturating_add(span).min(docs)
+}
+
+/// A wave waits while interactive events are pending or another process has
+/// interactive requests in flight, and only until `max_wait`.
+pub(crate) fn bulk_wave_waits(
+    events_pending: bool,
+    pressure: usize,
+    waited: Duration,
+    max_wait: Duration,
+) -> bool {
+    (events_pending || pressure > 0) && waited < max_wait
+}
+
+struct WavePlan {
+    batch: usize,
+    concurrency: usize,
+    yield_max: Duration,
+}
+
+fn wave_is_busy(drain: Option<&InteractiveDrain>, store: &Store) -> bool {
+    drain.is_some_and(InteractiveDrain::busy) || store.interactive_pressure() > 0
+}
+
+async fn wait_for_gap(drain: Option<&InteractiveDrain>, store: &Store, max_wait: Duration) {
+    let started = Instant::now();
+    loop {
+        let events_pending = drain.is_some_and(InteractiveDrain::busy);
+        if !bulk_wave_waits(
+            events_pending,
+            store.interactive_pressure(),
+            started.elapsed(),
+            max_wait,
+        ) {
+            return;
+        }
+        let left = max_wait.saturating_sub(started.elapsed());
+        if left.is_zero() {
+            return;
+        }
+        tokio::time::sleep(left.min(Duration::from_millis(5))).await;
+    }
+}
+
+async fn import_waves(
+    search: &Typesense,
+    store: &Store,
+    drain: Option<&InteractiveDrain>,
+    collection: &str,
+    docs: &[Value],
+    plan: WavePlan,
+) -> anyhow::Result<()> {
+    if docs.is_empty() {
+        return Ok(());
+    }
+    let mut offset = 0;
+    while offset < docs.len() {
+        wait_for_gap(drain, store, plan.yield_max).await;
+        let wave = bulk_import_wave(plan.batch, plan.concurrency, wave_is_busy(drain, store));
+        let end = wave_end(offset, docs.len(), wave);
+        import_batched(
+            search,
+            collection,
+            &docs[offset..end],
+            wave.batch,
+            wave.concurrency,
+        )
+        .await?;
+        offset = end;
+    }
+    Ok(())
 }
 
 async fn run_lane(
@@ -490,12 +634,8 @@ async fn commit_pending(
     if pace.kind == LaneKind::Interactive {
         drain.set_pending(pending.len());
         drain.set_flushing(true);
-    } else {
-        drain.wait_for_idle(pace.bulk_yield_max).await;
     }
-    shared
-        .flush(pending, pace.import_batch, pace.import_concurrency)
-        .await?;
+    shared.flush(pending, pace, drain).await?;
     subscription.commit()?;
     pending.clear();
     if pace.kind == LaneKind::Interactive {
@@ -678,12 +818,17 @@ async fn reindex_with(
                 )
             })
             .collect();
-        import_batched(
+        import_waves(
             search,
+            store,
+            None,
             &name,
             &docs,
-            config.bulk_import_batch,
-            config.bulk_import_concurrency,
+            WavePlan {
+                batch: config.bulk_import_batch,
+                concurrency: config.bulk_import_concurrency,
+                yield_max: config.bulk_yield_max,
+            },
         )
         .await?;
         after = ids.last().map(|id| id.as_uuid());
@@ -708,7 +853,7 @@ pub async fn index_objects(
     ids: &[ObjectId],
     seq: i64,
 ) -> anyhow::Result<()> {
-    index_objects_in(store, search, ids, seq, true).await
+    index_objects_in(store, search, ids, seq, true, false).await
 }
 
 async fn index_objects_in(
@@ -717,6 +862,7 @@ async fn index_objects_in(
     ids: &[ObjectId],
     seq: i64,
     advance_seq: bool,
+    interactive: bool,
 ) -> anyhow::Result<()> {
     let defs = store.definition_set().await?;
     let model = CompiledModel::compile(&defs)
@@ -749,9 +895,14 @@ async fn index_objects_in(
     }
     let config = IndexerConfig::from_env();
     let docs = documents(&model, &defs, &stored, &pending);
+    let writer = if interactive {
+        search.interactive_writer()
+    } else {
+        search.clone()
+    };
     import_batched(
-        search,
-        search.alias(),
+        &writer,
+        writer.alias(),
         &docs,
         config.import_batch,
         config.import_concurrency,
@@ -774,7 +925,7 @@ pub async fn index_written(
     ids: &[ObjectId],
     seq: i64,
 ) -> anyhow::Result<()> {
-    index_objects_in(store, search, ids, seq, false).await
+    index_objects_in(store, search, ids, seq, false, true).await
 }
 
 /// Used by tests that want the indexed document for one object without Kafka.
@@ -901,15 +1052,67 @@ mod tests {
     }
 
     #[test]
-    fn bulk_import_defaults_are_larger_than_the_interactive_lane() {
+    fn bulk_import_defaults_are_short_waves_inside_a_larger_read() {
         let config = IndexerConfig::default();
         assert!(config.bulk_batch_size > config.batch_size);
-        assert!(config.bulk_import_batch > config.import_batch);
-        assert!(config.bulk_import_concurrency >= config.import_concurrency);
+        assert_eq!(config.bulk_import_batch, 100);
+        assert_eq!(config.bulk_import_concurrency, 1);
+        assert!(config.bulk_batch_size > config.bulk_import_batch);
+        assert!((100..=200).contains(&config.bulk_import_batch));
+    }
+
+    #[test]
+    fn a_configured_4_by_500_import_is_capped_and_shrinks_when_interactive_is_pending() {
+        assert_eq!(cap_bulk_batch(500), 200);
+        assert_eq!(cap_bulk_concurrency(4), 2);
         assert_eq!(
-            config.bulk_batch_size,
-            config.bulk_import_batch * config.bulk_import_concurrency
+            bulk_import_wave(500, 4, false),
+            ImportWave {
+                batch: 200,
+                concurrency: 2
+            }
         );
+        assert_eq!(
+            bulk_import_wave(500, 4, true),
+            ImportWave {
+                batch: 100,
+                concurrency: 1
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(150, 1, false),
+            ImportWave {
+                batch: 150,
+                concurrency: 1
+            }
+        );
+    }
+
+    #[test]
+    fn bulk_docs_are_split_so_the_next_wave_can_wait() {
+        let wave = bulk_import_wave(150, 1, false);
+        let total = 1_000;
+        let mut offset = 0;
+        let mut waves = 0;
+        while offset < total {
+            let end = wave_end(offset, total, wave);
+            assert!(end > offset);
+            assert!(end - offset <= wave.batch * wave.concurrency);
+            offset = end;
+            waves += 1;
+        }
+        assert!(waves > 1, "the flush was one import");
+        assert_eq!(waves, 7);
+    }
+
+    #[test]
+    fn a_wave_waits_for_events_or_for_pressure_from_another_process() {
+        let max = Duration::from_millis(100);
+        assert!(!bulk_wave_waits(false, 0, Duration::ZERO, max));
+        assert!(bulk_wave_waits(true, 0, Duration::ZERO, max));
+        assert!(bulk_wave_waits(false, 2, Duration::from_millis(40), max));
+        assert!(!bulk_wave_waits(true, 4, max, max));
+        assert!(!bulk_wave_waits(false, 4, Duration::from_millis(150), max));
     }
 
     #[tokio::test]

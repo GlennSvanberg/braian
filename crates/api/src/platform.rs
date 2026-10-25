@@ -413,6 +413,12 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.update_type",
+            title: "Update type names",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
             name: "model.create_class",
             title: "Create class",
             permission: Role::Editor,
@@ -700,14 +706,25 @@ async fn create_token(
     })))
 }
 
-async fn list_operations(Auth(identity): Auth) -> Result<Json<Value>, Problem> {
+async fn configured_types(state: &AppState) -> Vec<braian_model::ObjectType> {
+    match state.models.get(&state.store).await {
+        Ok(cached) => cached.defs.types.clone(),
+        Err(_) => Vec::new(),
+    }
+}
+
+async fn list_operations(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
+    let types = configured_types(&state).await;
     let ops = registry()
         .iter()
         .map(|op| {
             json!({
                 "name": op.name,
-                "title": op.title,
+                "title": braian_model::operation_title(op.title, &types, "en"),
                 "permission": op.permission.as_str(),
                 "needs_approval": op.needs_approval || agent_must_propose(&identity, op),
             })
@@ -733,6 +750,7 @@ async fn mcp(
     require(&identity, Role::Viewer)?;
     let id = body.get("id").cloned().unwrap_or(Value::Null);
     let method = body.get("method").and_then(Value::as_str).unwrap_or("");
+    let types = configured_types(&state).await;
     let result = match method {
         "initialize" => json!({
             "protocolVersion": "2025-06-18",
@@ -742,7 +760,7 @@ async fn mcp(
         "tools/list" => json!({
             "tools": registry().iter().filter(|op| exposed_to_agent(op)).map(|op| json!({
                 "name": tool_name(op.name),
-                "description": op.title,
+                "description": braian_model::operation_title(op.title, &types, "en"),
                 "inputSchema": { "type": "object" }
             })).collect::<Vec<_>>()
         }),
@@ -879,7 +897,15 @@ async fn drive_agent(
     messages.extend(incoming);
     let client = reqwest::Client::new();
     let url = openai_responses_url();
-    let payload = match post_openai(&client, &url, &key, &responses_body(&model, &messages)).await {
+    let types = configured_types(state).await;
+    let payload = match post_openai(
+        &client,
+        &url,
+        &key,
+        &responses_body(&model, &messages, &types),
+    )
+    .await
+    {
         Ok(payload) => payload,
         Err(problem) => {
             let _ = tx.send(json!({ "type": "error", "text": problem.detail }));
@@ -974,7 +1000,7 @@ fn openai_responses_url() -> String {
     format!("{base}/v1/responses")
 }
 
-fn responses_body(model: &str, messages: &[Value]) -> Value {
+fn responses_body(model: &str, messages: &[Value], types: &[braian_model::ObjectType]) -> Value {
     let tools = registry()
         .iter()
         .filter(|op| exposed_to_agent(op))
@@ -982,7 +1008,7 @@ fn responses_body(model: &str, messages: &[Value]) -> Value {
             json!({
                 "type": "function",
                 "name": tool_name(op.name),
-                "description": op.title,
+                "description": braian_model::operation_title(op.title, types, "en"),
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -1431,6 +1457,7 @@ async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<R
     // frames into a channel the body forwards.
     let (frames, rx) = tokio::sync::mpsc::channel(64);
     let mut live = state.live.subscribe();
+    let owner = identity.actor.actor.as_uuid().to_string();
     tokio::spawn(async move {
         if frames.send(Bytes::from(": connected\n\n")).await.is_err() {
             return;
@@ -1438,21 +1465,35 @@ async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<R
         let mut tick = tokio::time::interval(Duration::from_secs(15));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let frame = tokio::select! {
+            tokio::select! {
                 biased;
                 value = live.recv() => match value {
-                    Ok(value) => Bytes::from(format!("data: {value}\n\n")),
+                    Ok(value) => {
+                        if value.get("op").and_then(|item| item.as_str()) == Some("import")
+                            && value.get("owner").and_then(|item| item.as_str()) != Some(owner.as_str())
+                        {
+                            continue;
+                        }
+                        let frame = Bytes::from(format!("data: {value}\n\n"));
+                        if frames.send(frame).await.is_err() {
+                            break;
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        Bytes::from(format!(
+                        let frame = Bytes::from(format!(
                             "data: {{\"op\":\"lagged\",\"skipped\":{skipped}}}\n\n"
-                        ))
+                        ));
+                        if frames.send(frame).await.is_err() {
+                            break;
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 },
-                _ = tick.tick() => Bytes::from(": ping\n\n"),
-            };
-            if frames.send(frame).await.is_err() {
-                break;
+                _ = tick.tick() => {
+                    if frames.send(Bytes::from(": ping\n\n")).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -4145,7 +4186,11 @@ mod tests {
         tokio::spawn(async move {
             axum::serve(listener, app).await.expect("serve");
         });
-        let body = responses_body("gpt-6-luna", &[json!({ "role": "user", "content": "hej" })]);
+        let body = responses_body(
+            "gpt-6-luna",
+            &[json!({ "role": "user", "content": "hej" })],
+            &[],
+        );
         let url = format!("http://{address}/v1/responses");
         let payload = post_openai_when_up(&url, "test-key", &body)
             .await
@@ -4281,7 +4326,7 @@ mod tests {
 
     #[test]
     fn every_registered_ui_operation_is_exposed_to_the_agent_or_excluded() {
-        let body = responses_body("gpt-6-luna", &[]);
+        let body = responses_body("gpt-6-luna", &[], &[]);
         let tools = body["tools"]
             .as_array()
             .expect("tools")

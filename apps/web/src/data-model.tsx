@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react'
-import { ApiError, api, type Json } from './api'
+import { ApiError, api, textValue, type Json } from './api'
 import { Checkbox } from './components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
@@ -216,6 +216,13 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
           <span>{title}</span>
           <TableMenu filter={filter} sort={sort} onFilter={setFilter} onSort={setSort} />
         </div>
+        {selection.kind === 'type' ? (
+          <TypeNameFields
+            defs={defs}
+            typeKey={selection.typeKey}
+            onSave={(patch) => run('model.update_type', { key: selection.typeKey, language: uiLanguage, ...patch })}
+          />
+        ) : null}
         <div className="attr-head">
           <span>{copy.attributeName}</span>
           <span>{copy.attributeType}</span>
@@ -503,7 +510,7 @@ function ModelPreview({ defs }: { defs: Json | undefined }) {
   const typeLabel = types.find((item) => item.key === typeKey)?.label ?? typeKey
   return (
     <div data-testid="data-model" className="model-preview">
-      <h2>{copy.anObjectHere}</h2>
+      <h2>{typeLabel ? indefiniteHere(typeLabel) : copy.anObjectHere}</h2>
       {selection?.kind === 'group' ? (
         <label className="field">
           <span>{copy.previewType}</span>
@@ -529,6 +536,55 @@ function ModelPreview({ defs }: { defs: Json | undefined }) {
         ))}
       </div>
       {selection?.kind === 'type' ? <p className="hint">{typeLabel}</p> : null}
+    </div>
+  )
+}
+
+function indefiniteHere(name: string) {
+  const lower = name.toLowerCase()
+  const article = /^[aeiou]/i.test(lower) ? 'An' : 'A'
+  return `${article} ${lower} here gets these fields`
+}
+
+function TypeNameFields({
+  defs,
+  typeKey,
+  onSave,
+}: {
+  defs: Json | undefined
+  typeKey: string
+  onSave: (patch: Json) => void
+}) {
+  const row = objectTypes(defs, uiLanguage).find((item) => item.key === typeKey)
+  const raw = ((defs?.types as Json[]) ?? []).find((item) => String(item.key) === typeKey)
+  const singularValue = textValue(raw?.singular, uiLanguage) || row?.singular || ''
+  const pluralValue = textValue(raw?.plural, uiLanguage) || row?.plural || ''
+  return (
+    <div className="type-names">
+      <label>
+        {copy.singular}
+        <input
+          aria-label={copy.singular}
+          defaultValue={singularValue}
+          key={`${typeKey}:singular:${singularValue}`}
+          onBlur={(event) => {
+            const next = event.target.value.trim()
+            if (next !== singularValue) onSave({ singular: next })
+          }}
+        />
+      </label>
+      <label>
+        {copy.plural}
+        <input
+          aria-label={copy.plural}
+          defaultValue={pluralValue}
+          key={`${typeKey}:plural:${pluralValue}`}
+          onBlur={(event) => {
+            const next = event.target.value.trim()
+            if (next !== pluralValue) onSave({ plural: next })
+          }}
+        />
+      </label>
     </div>
   )
 }

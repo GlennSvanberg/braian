@@ -7,8 +7,8 @@ const shots = '/opt/cursor/artifacts/final'
 async function resetEnrich(page: Page) {
   const listed = await page.request.get('/v1/workspaces')
   const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
-  const enrich = body.workspaces.find((item) => item.name === 'Enrich objects')
-  if (!enrich) throw new Error('missing Enrich objects')
+  const enrich = body.workspaces.find((item) => item.name === 'Enrich')
+  if (!enrich) throw new Error('missing Enrich')
   await page.evaluate(() => sessionStorage.setItem('braian.layout.suppressFlush', '1'))
   const me = await page.request.get('/v1/me')
   const userId = ((await me.json()) as { user_id?: string }).user_id
@@ -126,9 +126,9 @@ test('polish screenshots', async ({ page }) => {
   await expect(page.getByTestId('proposal')).toBeVisible()
   await page.screenshot({ path: `${shots}/review-dark.png` })
 
-  await page.getByRole('button', { name: 'Enrich objects' }).click()
+  await page.getByRole('button', { name: 'Enrich' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
-  const objects = page.locator('section.pane').filter({ has: page.locator('.pane-tab', { hasText: 'Objects' }) })
+  const objects = page.locator('section.pane').filter({ has: page.locator('.pane-tab', { hasText: 'Products' }) })
   const box = await objects.boundingBox()
   if (!box) throw new Error('missing objects pane')
   await hold(page, 'Graph', box.x + box.width * 0.12, box.y + box.height * 0.55)
@@ -145,10 +145,10 @@ test('polish screenshots', async ({ page }) => {
   await page.mouse.up()
 
   const leavesBefore = await page.getByTestId('dock').getAttribute('data-leaves')
-  await page.locator('.pane-tab', { hasText: 'Objects' }).first().dblclick()
+  await page.locator('.pane-tab', { hasText: 'Products' }).first().dblclick()
   await expect(page.locator('section.pane')).toHaveCount(1)
   await page.screenshot({ path: `${shots}/maximized.png` })
-  await page.locator('.pane-tab', { hasText: 'Objects' }).first().dblclick()
+  await page.locator('.pane-tab', { hasText: 'Products' }).first().dblclick()
   await expect(page.getByTestId('dock')).toHaveAttribute('data-zoom', '')
   await expect(page.getByTestId('dock')).toHaveAttribute('data-leaves', leavesBefore ?? '')
   await page.screenshot({ path: `${shots}/restored.png` })

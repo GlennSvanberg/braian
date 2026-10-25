@@ -13,6 +13,8 @@ export type PaletteItem = {
   shortcut?: string
   sourceId?: string
   chips?: PaletteChip[]
+  keywords?: string[]
+  typeKey?: string
 }
 
 export const groupTitle: Record<Exclude<PaletteGroup, 'ask'>, string> = {
@@ -38,7 +40,7 @@ export function visibleRows(
   const needle = query.trim().toLowerCase()
   const matches = (item: PaletteItem) => {
     if (!needle) return true
-    return `${item.title} ${item.subtitle}`.toLowerCase().includes(needle)
+    return `${item.title} ${item.subtitle} ${(item.keywords ?? []).join(' ')}`.toLowerCase().includes(needle)
   }
   const scored = [...catalog].sort((left, right) => score(frecency[right.id], now) - score(frecency[left.id], now))
   const recent = needle ? [] : scored.filter((item) => score(frecency[item.id], now) > 0).slice(0, 4)

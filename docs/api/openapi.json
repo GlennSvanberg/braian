@@ -397,6 +397,94 @@
         "responses": {}
       }
     },
+    "/v1/imports": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Upload a spreadsheet import",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read an import session",
+        "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Discard an import",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/approve": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Build the import preview",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/failed.xlsx": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Download failing rows",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/mapping": {
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save the column mapping",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/remap": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Re-run column mapping for a type",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/rows": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read preview rows",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/save": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save the import",
+        "responses": {}
+      }
+    },
+    "/v1/imports/{id}/sheet": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Switch the imported sheet",
+        "responses": {}
+      }
+    },
     "/v1/job-types": {
       "get": {
         "tags": [
@@ -2402,6 +2490,26 @@
           },
           "labels": {
             "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "plural": {
+            "type": "object",
+            "description": "Plural display name per language. Empty falls back to an English-style plural of the singular.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "singular": {
+            "type": "object",
+            "description": "Singular display name per language. Empty falls back to labels.",
             "additionalProperties": {
               "type": "string"
             },
