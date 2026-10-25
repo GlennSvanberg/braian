@@ -17,6 +17,7 @@ mod objects;
 mod platform;
 mod problem;
 mod state;
+mod structures;
 mod wire;
 
 use axum::Json;
@@ -24,7 +25,7 @@ use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post, put};
 use braian_store::Store;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -69,10 +70,32 @@ pub fn into_router(state: AppState) -> axum::Router {
         )
         .route("/v1/structures", post(definitions::post_structure))
         .route(
+            "/v1/structures:create",
+            post(structures::create_structure_route),
+        )
+        .route(
             "/v1/structures/{id}",
             get(definitions::get_structure)
                 .put(definitions::put_structure)
+                .patch(structures::rename_structure_route)
                 .delete(definitions::delete_structure_route),
+        )
+        .route(
+            "/v1/structures/{id}/usage",
+            get(structures::structure_usage),
+        )
+        .route("/v1/structures/{id}/groups", post(structures::post_group))
+        .route(
+            "/v1/structures/{id}/groups/{group}",
+            patch(structures::rename_group_route).delete(structures::delete_group_route),
+        )
+        .route(
+            "/v1/structures/{id}/groups/{group}/parent",
+            post(structures::move_group_route),
+        )
+        .route(
+            "/v1/structures/{id}/groups/{group}/usage",
+            get(structures::group_usage),
         )
         .route("/v1/unit-families", post(definitions::post_unit_family))
         .route(

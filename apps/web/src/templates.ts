@@ -24,7 +24,7 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
     name: types.length > 0 ? enrichWorkspaceName(types) : copy.enrichObjects,
     summary: 'Tree, table and detail',
     views: [
-      { type: 'structure_tree', title: 'Assortment', state: { expanded: ['friluft', 'bygg'] } },
+      { type: 'structure_tree', title: 'eCom', state: { expanded: ['friluft', 'bygg'] } },
       ...tableViews,
       { type: 'object_detail', title: 'Detail', state: { language: 'sv' } },
       { type: 'graph', title: 'Graph', state: {} },

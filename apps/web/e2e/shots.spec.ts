@@ -50,7 +50,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
 
   await page.getByRole('button', { name: 'Data model' }).click()
   const tree = page.getByTestId('data-model').first()
-  await tree.getByTestId('group-talt').getByRole('button').click()
+  await tree.getByTestId('group-talt').locator('.model-node').click()
   await expect(page.getByTestId('attribute-table')).toContainText('Weight')
   await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/data-model-${theme}.png` })
