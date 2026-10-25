@@ -514,6 +514,7 @@ async fn agent_writes_are_attributed_and_delete_returns_gone() {
     assert_eq!(status, StatusCode::OK, "{changes}");
     assert_eq!(changes[0]["actor"], "bot");
     assert_eq!(changes[0]["on_behalf_of"], "ada");
+    assert_eq!(changes[0]["via"], "agent");
     assert_eq!(changes[0]["op"], "create");
 
     let (status, _, deleted) = call(

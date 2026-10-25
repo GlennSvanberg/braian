@@ -15,11 +15,12 @@ import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
 import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
 import { exportPayload, runExport, saveWorkbook } from './export'
+import { diffLines, historyTitle, isCreate, relativeTime } from './field-diff'
+import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import {
   emptyDetail,
   emptyGraph,
-  historyVerb,
   isGenericObjectTitle,
   newObjectLabel,
   singularOf,
@@ -1295,107 +1296,104 @@ export function GraphView({ session }: { session: PanesSession }) {
 
 export function HistoryView({ session }: { session: PanesSession }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const object = useQuery({
-    queryKey: ['object', session.objectId],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
-    enabled: Boolean(session.objectId),
-  })
-  const historyName = singularOf(defs.data, String(object.data?.type ?? session.listType ?? ''), uiLanguage) || undefined
   const changes = useQuery({
     queryKey: ['history', session.objectId],
     queryFn: () => api<Json[]>(`/v1/objects/${session.objectId}/changes`),
     enabled: Boolean(session.objectId),
   })
+  const [open, setOpen] = useState<number | null>(null)
+  const [travel, setTravel] = useState(false)
   const [seq, setSeq] = useState(0)
-  const rows = changes.data ?? []
-  const current = seq || Number(rows.at(-1)?.seq ?? 0)
+  const rows = [...(changes.data ?? [])].sort((left, right) => Number(right.seq) - Number(left.seq))
+  const current = seq || Number(rows[0]?.seq ?? 0)
   const asOf = useQuery({
     queryKey: ['asof', session.objectId, current],
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}/as-of?seq=${current}`),
-    enabled: Boolean(session.objectId && current),
+    enabled: Boolean(session.objectId && current && travel),
   })
   const rollback = useMutation({
-    mutationFn: () =>
+    mutationFn: (at: number) =>
       api<Json>(`/v1/objects/${session.objectId}/rollback`, {
         method: 'POST',
-        body: JSON.stringify({ seq: current }),
+        body: JSON.stringify({ seq: at }),
       }),
     onSuccess: (proposal) => session.setProposalId(String(proposal.id)),
   })
-  const selected = rows.find((row) => Number(row.seq) === current) ?? rows.at(-1)
-  const diff = (selected?.diff as Json | undefined) ?? {}
-  const seqs = rows.map((row) => Number(row.seq))
+  const seqs = rows.map((row) => Number(row.seq)).sort((left, right) => left - right)
   const minSeq = seqs[0] ?? 0
   const maxSeq = seqs.at(-1) ?? 0
-  const when = formatWhen(selected?.at)
+  if (!session.objectId) return <StateNote tone="empty" title={copy.history} testId="history" />
   return (
     <div data-testid="history">
-      <div className="history-asof">
-        <span className="hint">{copy.asOf}</span>
-        {rows.length > 0 ? (
-          <Slider
-            data-testid="as-of"
-            min={minSeq}
-            max={maxSeq === minSeq ? minSeq + 1 : maxSeq}
-            step={1}
-            disabled={maxSeq === minSeq}
-            value={[Math.min(maxSeq === minSeq ? minSeq : maxSeq, Math.max(minSeq, current || maxSeq))]}
-            onValueChange={([next]) => setSeq(nearestSeq(seqs, next ?? maxSeq))}
-            aria-label={copy.asOf}
-          />
-        ) : null}
-        {when ? <span data-testid="as-of-when"><MetaChip>{when}</MetaChip></span> : null}
-        <button type="button" data-testid="rollback" onClick={() => rollback.mutate()}>{copy.rollback}</button>
+      <div className="history-head">
+        <button type="button" className="btn-ghost" data-testid="time-travel" aria-pressed={travel} onClick={() => setTravel((value) => !value)}>
+          {copy.timeTravel}
+        </button>
       </div>
+      {travel ? (
+        <div className="history-asof">
+          <span className="hint">{copy.asOf}</span>
+          {rows.length > 0 ? (
+            <Slider
+              data-testid="as-of"
+              min={minSeq}
+              max={maxSeq === minSeq ? minSeq + 1 : maxSeq}
+              step={1}
+              disabled={maxSeq === minSeq}
+              value={[Math.min(maxSeq === minSeq ? minSeq : maxSeq, Math.max(minSeq, current || maxSeq))]}
+              onValueChange={([next]) => setSeq(nearestSeq(seqs, next ?? maxSeq))}
+              aria-label={copy.asOf}
+            />
+          ) : null}
+          <span data-testid="as-of-when"><MetaChip>{formatWhen(rows.find((row) => Number(row.seq) === current)?.at)}</MetaChip></span>
+          <dl className="asof">
+            {Object.entries((asOf.data?.values as Json | undefined) ?? {}).map(([key, value]) => (
+              <div key={key}>
+                <dt>{fieldLabel(defs.data, key)}</dt>
+                <dd>{renderValue(value, key, defs.data)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
       <div className="timeline">
-        {rows.map((row) => (
-          <article key={String(row.seq)} className={Number(row.seq) === current ? 'selected' : ''}>
-            <strong>#{String(row.seq)}</strong> {historyVerb(String(row.op), historyName)} · {String(row.actor ?? '')}
-            {row.on_behalf_of ? ` for ${String(row.on_behalf_of)}` : ''}
-          </article>
-        ))}
+        {rows.map((row) => {
+          const at = Number(row.seq)
+          const expanded = open === at
+          const created = isCreate(row)
+          return (
+            <article
+              key={String(row.seq)}
+              className={expanded ? 'selected' : ''}
+              data-active={expanded ? 'true' : undefined}
+              onClick={() => setOpen(expanded ? null : at)}
+            >
+              <header className="history-line">
+                <strong>{historyTitle(row)}</strong>
+                <time dateTime={String(row.at ?? '')}>{relativeTime(row.at)}</time>
+              </header>
+              {created ? null : <FieldDiff lines={diffLines(row.diff, defs.data)} />}
+              {expanded ? (
+                <div className="history-actions" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    data-testid="view-as-of"
+                    onClick={() => {
+                      setSeq(at)
+                      setTravel(true)
+                    }}
+                  >
+                    {copy.viewAsItWas}
+                  </button>
+                  <button type="button" className="btn-ghost" data-testid="rollback" onClick={() => rollback.mutate(at)}>{copy.rollback}</button>
+                </div>
+              ) : null}
+            </article>
+          )
+        })}
+        {rows.length === 0 ? <p>{copy.noRows}</p> : null}
       </div>
-      <table className="diff" data-testid="field-diff">
-        <thead>
-          <tr>
-            <th />
-            <th>{copy.before}</th>
-            <th>{copy.after}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(diff).map(([key, change]) => {
-            const pair = (change as Json) ?? {}
-            if (key === '$groups') {
-              const before = groupText(pair, 'before', defs.data)
-              const after = groupText(pair, 'after', defs.data)
-              return (
-                <tr key={key}>
-                  <th>{copy.group}</th>
-                  <td>{before}</td>
-                  <td>{after}</td>
-                </tr>
-              )
-            }
-            const label = fieldLabel(defs.data, key)
-            return (
-              <tr key={key}>
-                <th>{label}</th>
-                <td>{renderValue(pair.before, key, defs.data)}</td>
-                <td>{renderValue(pair.after, key, defs.data)}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      <dl className="asof">
-        {Object.entries((asOf.data?.values as Json | undefined) ?? {}).map(([key, value]) => (
-          <div key={key}>
-            <dt>{fieldLabel(defs.data, key)}</dt>
-            <dd>{renderValue(value, key, defs.data)}</dd>
-          </div>
-        ))}
-      </dl>
     </div>
   )
 }
@@ -1489,17 +1487,6 @@ function renderValue(value: unknown, field: string, defs: Json | undefined): Rea
   }
   if (kindType === 'boolean') return <MetaChip>{value === true ? copy.yes : copy.no}</MetaChip>
   return textValue(value, uiLanguage)
-}
-
-function groupText(groups: Json, side: 'before' | 'after', defs: Json | undefined) {
-  const names = new Map<string, string>()
-  for (const structure of (defs?.structures as Json[] | undefined) ?? []) {
-    for (const group of (structure.groups as Json[] | undefined) ?? []) names.set(String(group.id), String(group.key))
-  }
-  return Object.values(groups)
-    .map((entry) => names.get(String((entry as Json)[side] ?? '')) ?? textValue((entry as Json)[side]))
-    .filter(Boolean)
-    .join(', ')
 }
 
 export function JobHistory({ view }: { view: PanesView }) {

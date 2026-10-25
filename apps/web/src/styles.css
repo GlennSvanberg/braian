@@ -1167,14 +1167,27 @@ canvas.graph.panning { cursor: grabbing; }
 [data-testid='dashboard'] p { margin: 0; color: var(--text-2); }
 [data-testid='dashboard'] svg rect { fill: var(--accent); }
 [data-testid='dashboard'] svg text { fill: var(--muted); font-size: 11px; }
-.timeline { display: grid; gap: 6px; }
+.timeline { display: grid; gap: 4px; align-content: start; }
 .timeline article {
   border-left: 2px solid var(--accent);
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: var(--raised);
   border-radius: 0 var(--r-md) var(--r-md) 0;
   font-size: 12px;
+  cursor: pointer;
 }
+.history-head { display: flex; justify-content: flex-end; }
+.history-head button[aria-pressed='true'] { background: var(--accent-dim); color: var(--text); }
+.history-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.history-line strong { font-weight: 600; }
+.history-line time { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.history-actions { display: flex; gap: 6px; margin-top: 6px; }
+.field-diff { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 1px; }
+.field-diff li { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-label { color: var(--text-2); }
+.diff-old { color: var(--danger); text-decoration: line-through; }
+.diff-new { color: var(--ok); }
+.diff-arrow { color: var(--muted); }
 kbd {
   border: 1px solid var(--border);
   background: var(--panel);
