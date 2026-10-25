@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Check, CornerDownLeft, Sparkles } from 'lucide-react'
+import { MetaChip, optionLabel, statusTone, typeLabel, type ChipTone } from './chips'
 import { toast } from 'sonner'
-import { ApiError, api, type Json } from './api'
+import { ApiError, api, textValue, type Json } from './api'
 import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
 import { workspaceDisplayName, viewDisplayTitle } from './demo-labels'
+import { uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
@@ -69,15 +71,25 @@ export function CommandPalette({
   }, [remoteFrecency.data])
   const frecency = useMemo(() => readFrecency(), [query, turns.length, frecencyTick])
 
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), staleTime: 60_000 })
   const catalog = useMemo(() => buildCatalog(workspaces, views, session.objectId), [workspaces, views, session.objectId])
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
+    const type = String(row.type_key ?? row.type ?? '')
+    const status = textValue(row.a_status)
+    const version = String(row.version ?? '')
+    const name = textValue(row.a_namn__sv)
     return {
       id: `hit:${String(row.id)}`,
       sourceId: String(row.id),
       group: 'search' as const,
-      title: `${String(row.key ?? '')} · ${String(row.type_key ?? row.type ?? '')}`,
+      title: `${String(row.key ?? '')} · ${name || type}`,
       subtitle: 'Open the object',
+      chips: [
+        ...(type ? [{ text: typeLabel(defs.data, type, uiLanguage), tone: 'neutral' as const }] : []),
+        ...(status ? [{ text: optionLabel(defs.data, 'status', status, uiLanguage), tone: statusTone(status) }] : []),
+        ...(version ? [{ text: version, tone: 'neutral' as const }] : []),
+      ],
     }
   })
   const rootRows = withModelCommand(query, visibleRows(query, catalog, hits, frecency))
@@ -439,6 +451,13 @@ export function CommandPalette({
                           <span className="hit-title">{highlight(row.title, query)}</span>
                           <small>{row.subtitle}</small>
                         </span>
+                        {row.chips && row.chips.length > 0 ? (
+                          <span className="hit-chips">
+                            {row.chips.map((chip) => (
+                              <MetaChip key={chip.text} tone={chip.tone as ChipTone}>{chip.text}</MetaChip>
+                            ))}
+                          </span>
+                        ) : null}
                         {row.kbd ? <Kbd>{row.kbd}</Kbd> : null}
                       </CommandItem>
                     )

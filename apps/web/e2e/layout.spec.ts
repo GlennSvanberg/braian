@@ -155,6 +155,38 @@ test('divider drag, dock zones, tab order, maximize, reload and keyboard', async
   await clearPersonal(page, workspace.id)
 })
 
+test('double-click a tab maximizes that view and restores the layout', async ({ page }) => {
+  test.setTimeout(60_000)
+  await login(page)
+  const workspace = await enrich(page)
+  await clearPersonal(page, workspace.id)
+  const table = workspace.views.find((view) => view.type === 'object_table')
+  if (!table) throw new Error('missing object table')
+  const before = await leaves(page)
+  const pane = page.locator(`[data-pane="${table.id}"]`)
+  await pane.getByTestId('pane-maximize').hover()
+  await expect(page.getByRole('tooltip')).toContainText('Maximize')
+  await expect(page.getByRole('tooltip')).toContainText('Z')
+  const tab = page.locator('.pane-tab', { hasText: 'Objects' }).first()
+  await tab.hover()
+  await expect(page.getByRole('tooltip')).toContainText('Double-click to maximize')
+  await tab.dblclick()
+  await expect(page.getByTestId('dock')).toHaveAttribute('data-zoom', table.id)
+  await expect(page.locator('section.pane')).toHaveCount(1)
+  await expect(page.locator('.pane-tab', { hasText: 'Objects' })).toBeVisible()
+  if (process.env.BRAIAN_DOCK_SHOTS === '1') {
+    await page.screenshot({ path: '/opt/cursor/artifacts/final/maximized.png' })
+  }
+  await page.locator('.pane-tab', { hasText: 'Objects' }).first().dblclick()
+  await expect(page.getByTestId('dock')).toHaveAttribute('data-zoom', '')
+  expect(await leaves(page)).toBe(before)
+  await expect(page.getByTestId('split-divider').first()).toBeVisible()
+  if (process.env.BRAIAN_DOCK_SHOTS === '1') {
+    await page.screenshot({ path: '/opt/cursor/artifacts/final/restored.png' })
+  }
+  await clearPersonal(page, workspace.id)
+})
+
 type Box = { x: number; y: number; width: number; height: number }
 
 function near(actual: number, expected: number, label: string, tolerance = 2) {
@@ -312,8 +344,14 @@ test('dock overlay matches the pane fraction and the window edge', async ({ page
     expectPaneZone(overlay, pane, zone)
     near(chip.x + chip.width / 2, overlay.x + overlay.width / 2, `${zone} chip x`)
     near(chip.y + chip.height / 2, overlay.y + overlay.height / 2, `${zone} chip y`)
-    near(ghost.x, point.x + 12, `${zone} ghost x`)
-    near(ghost.y, point.y + 12, `${zone} ghost y`)
+    near(ghost.x, point.x + 18, `${zone} ghost x`)
+    near(ghost.y, point.y + 22, `${zone} ghost y`)
+    const clearOfChip =
+      ghost.x >= chip.x + chip.width
+      || chip.x >= ghost.x + ghost.width
+      || ghost.y >= chip.y + chip.height
+      || chip.y >= ghost.y + ghost.height
+    expect(clearOfChip, `${zone} ghost overlaps the zone label`).toBe(true)
     if (process.env.BRAIAN_DOCK_SHOTS === '1') {
       await page.screenshot({ path: `/opt/cursor/artifacts/final/dock-${zone}.png` })
     }
