@@ -1,0 +1,364 @@
+//! Data-model edits are proposals. Accepting one applies it to the definition set.
+
+use axum::http::StatusCode;
+use braian_model::{ChangeImpact, ModelChange, apply_all, interpret, power_tools, preview};
+use braian_rules::CompiledModel;
+use braian_store::ProposalRow;
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use crate::auth::Identity;
+use crate::definitions;
+use crate::problem::{Problem, store_status};
+use crate::state::AppState;
+
+pub async fn propose(
+    state: &AppState,
+    identity: &Identity,
+    name: &str,
+    args: &Value,
+) -> Result<Value, Problem> {
+    let cached = state.models.get(&state.store).await?;
+    let changes = changes_from(name, args, &cached.defs)?;
+    if changes.is_empty() {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "empty_model",
+            "the draft has no steps",
+        ));
+    }
+    let (after, impact) = preview(&cached.defs, &changes)
+        .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, "model", message))?;
+    CompiledModel::compile(&after).map_err(Problem::definitions)?;
+    let title = title_for(name, args, &impact.lines);
+    let source = if identity.kind == braian_store::PrincipalKind::Agent {
+        "agent"
+    } else {
+        "user"
+    };
+    let id = Uuid::now_v7();
+    let rows = changes
+        .iter()
+        .enumerate()
+        .map(|(index, change)| ProposalRow {
+            id: Uuid::now_v7(),
+            object_id: None,
+            object_key: None,
+            type_key: Some("model".into()),
+            base_version: i64::try_from(cached.defs.model_revision).ok(),
+            patch: serde_json::to_value(change).unwrap_or(json!({})),
+            status: "pending".into(),
+            conflict: false,
+            position: i32::try_from(index).unwrap_or(0),
+        })
+        .collect::<Vec<_>>();
+    state
+        .store
+        .create_proposal(
+            id,
+            &title,
+            source,
+            identity.actor.actor,
+            identity.actor.on_behalf_of,
+            false,
+            &rows,
+        )
+        .await
+        .map_err(store_status)?;
+    let consequence = consequence(state, &cached.defs, &impact).await?;
+    Ok(json!({
+        "proposal_id": id,
+        "id": id,
+        "needs_approval": true,
+        "title": title,
+        "source": source,
+        "rows": rows.len(),
+        "consequence": consequence,
+    }))
+}
+
+pub async fn attach(state: &AppState, body: &mut Value) -> Result<(), Problem> {
+    let Some(rows) = body.get("rows").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let mut changes = Vec::new();
+    for row in rows {
+        if row.get("type_key").and_then(Value::as_str) != Some("model") {
+            continue;
+        }
+        if row.get("status").and_then(Value::as_str) != Some("pending") {
+            continue;
+        }
+        let Some(patch) = row.get("patch") else {
+            continue;
+        };
+        if let Ok(change) = serde_json::from_value::<ModelChange>(patch.clone()) {
+            changes.push(change);
+        }
+    }
+    if changes.is_empty() {
+        return Ok(());
+    }
+    let cached = state.models.get(&state.store).await?;
+    match preview(&cached.defs, &changes) {
+        Ok((after, impact)) => {
+            let mut consequence = consequence(state, &cached.defs, &impact).await?;
+            if let Err(errors) = CompiledModel::compile(&after) {
+                consequence["definition_errors"] = json!(
+                    errors
+                        .into_iter()
+                        .map(|error| error.message)
+                        .collect::<Vec<_>>()
+                );
+            }
+            if let Some(object) = body.as_object_mut() {
+                object.insert("consequence".into(), consequence);
+            }
+        }
+        Err(message) => {
+            if let Some(object) = body.as_object_mut() {
+                object.insert(
+                    "consequence".into(),
+                    json!({ "lines": [], "definition_errors": [message], "affected_objects": 0, "samples": [], "jobs": [] }),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
+    let change: ModelChange =
+        serde_json::from_value(row.get("patch").cloned().unwrap_or(json!({})))
+            .map_err(|error| Problem::new(StatusCode::BAD_REQUEST, "model", error.to_string()))?;
+    let (_defs, receipt) = definitions::commit(state, &identity.actor, |defs| {
+        apply_all(defs, std::slice::from_ref(&change))
+            .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, "model", message))?;
+        Ok(())
+    })
+    .await?;
+    state.emit(json!({
+        "seq": receipt.last_seq,
+        "op": "model",
+    }));
+    Ok(receipt.last_seq)
+}
+
+pub fn is_model_row(row: &Value) -> bool {
+    row.get("type_key").and_then(Value::as_str) == Some("model")
+}
+
+async fn consequence(
+    state: &AppState,
+    defs: &braian_model::DefinitionSet,
+    impact: &ChangeImpact,
+) -> Result<Value, Problem> {
+    let mut affected = 0i64;
+    let mut samples = Vec::new();
+    if !impact.usage_fields.is_empty() {
+        for key in &impact.usage_fields {
+            let Some(attribute) = defs.attributes.iter().find(|item| &item.key == key) else {
+                continue;
+            };
+            affected += state
+                .store
+                .count_attribute_usage(attribute.id.as_uuid())
+                .await
+                .map_err(store_status)?;
+            if samples.len() >= 8 {
+                continue;
+            }
+            let ids = state
+                .store
+                .objects_with_attribute(attribute.id.as_uuid(), 8)
+                .await
+                .map_err(store_status)?;
+            for id in ids {
+                if samples.len() >= 8 {
+                    break;
+                }
+                let Some(stored) = state.store.get_object(id).await.map_err(store_status)? else {
+                    continue;
+                };
+                samples.push(json!({
+                    "id": stored.object.id.as_uuid(),
+                    "key": stored.key,
+                }));
+            }
+        }
+    } else if !impact.groups.is_empty() {
+        let groups = parse_groups(&impact.groups);
+        affected = state
+            .store
+            .count_in_groups(&groups)
+            .await
+            .map_err(store_status)?;
+        samples = state
+            .store
+            .sample_in_groups(&groups, 8)
+            .await
+            .map_err(store_status)?;
+    }
+    let jobs = if impact.fields.is_empty() {
+        Vec::new()
+    } else {
+        state
+            .store
+            .jobs_touching(&impact.fields)
+            .await
+            .map_err(store_status)?
+    };
+    Ok(json!({
+        "lines": impact.lines,
+        "fields": impact.fields,
+        "affected_objects": affected,
+        "samples": samples,
+        "jobs": jobs,
+    }))
+}
+
+fn parse_groups(groups: &[String]) -> Vec<Uuid> {
+    groups
+        .iter()
+        .filter_map(|group| Uuid::parse_str(group).ok())
+        .collect()
+}
+
+fn changes_from(
+    name: &str,
+    args: &Value,
+    defs: &braian_model::DefinitionSet,
+) -> Result<Vec<ModelChange>, Problem> {
+    let bad = |message: String| Problem::new(StatusCode::BAD_REQUEST, "model", message);
+    match name {
+        "model.command" => {
+            let text = text_arg(args);
+            interpret(text, defs).ok_or_else(|| bad(format!("unknown command: {text}")))
+        }
+        "model.draft" => {
+            if args.get("preset").and_then(Value::as_str) == Some("power_tools")
+                || text_arg(args).to_lowercase().contains("power tool")
+            {
+                return Ok(power_tools(defs));
+            }
+            if let Some(text) = args.get("text").and_then(Value::as_str) {
+                return interpret(text, defs)
+                    .ok_or_else(|| bad(format!("unknown command: {text}")));
+            }
+            let steps = args.get("steps").cloned().unwrap_or(json!([]));
+            serde_json::from_value(steps).map_err(|error| bad(error.to_string()))
+        }
+        "model.move_class" => Ok(vec![ModelChange::MoveClass {
+            structure: required_str(args, "structure")?,
+            class_key: required_str(args, "class")?,
+            group: required_str(args, "group")?,
+        }]),
+        "model.add_attribute" => Ok(vec![ModelChange::AddAttribute {
+            structure: required_str(args, "structure")?,
+            class_key: required_str(args, "class")?,
+            attribute: required_str(args, "attribute")?,
+        }]),
+        "model.remove_attribute" => Ok(vec![ModelChange::RemoveAttribute {
+            structure: required_str(args, "structure")?,
+            class_key: required_str(args, "class")?,
+            attribute: required_str(args, "attribute")?,
+        }]),
+        "model.reorder_attributes" => {
+            let attributes = args
+                .get("attributes")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(vec![ModelChange::ReorderAttributes {
+                structure: required_str(args, "structure")?,
+                class_key: required_str(args, "class")?,
+                attributes,
+            }])
+        }
+        "model.create_attribute" => Ok(vec![ModelChange::CreateAttribute {
+            key: required_str(args, "key")?,
+            label: args
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            kind: args
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("text")
+                .to_owned(),
+            unit: args.get("unit").and_then(Value::as_str).map(str::to_owned),
+            multiple: args
+                .get("multiple")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            languages: args
+                .get("languages")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            required: args
+                .get("required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }]),
+        "model.create_class" => Ok(vec![ModelChange::CreateClass {
+            structure: required_str(args, "structure")?,
+            class_key: required_str(args, "class")?,
+            group: required_str(args, "group")?,
+            parent: args
+                .get("parent")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            attributes: vec![],
+        }]),
+        "model.set_parent" => Ok(vec![ModelChange::SetParent {
+            structure: required_str(args, "structure")?,
+            class_key: required_str(args, "class")?,
+            parent: args
+                .get("parent")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        }]),
+        other => Err(bad(format!("unknown model operation {other}"))),
+    }
+}
+
+fn text_arg(args: &Value) -> &str {
+    args.get("text").and_then(Value::as_str).unwrap_or("")
+}
+
+fn required_str(args: &Value, key: &str) -> Result<String, Problem> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "model", format!("missing {key}")))
+}
+
+fn title_for(name: &str, args: &Value, lines: &[String]) -> String {
+    if let Some(title) = args.get("title").and_then(Value::as_str)
+        && !title.is_empty()
+    {
+        return title.to_owned();
+    }
+    if text_arg(args).to_lowercase().contains("power tool")
+        || name == "model.draft"
+            && args.get("preset").and_then(Value::as_str) == Some("power_tools")
+    {
+        return "Power tools".into();
+    }
+    if let Some(text) = args.get("text").and_then(Value::as_str)
+        && !text.is_empty()
+    {
+        return text.to_owned();
+    }
+    lines
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "Data model".into())
+}

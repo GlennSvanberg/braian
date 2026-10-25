@@ -35,17 +35,22 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
   {
     id: 'model',
     name: 'Data model',
-    summary: 'Structure, class and impact',
+    summary: 'Structure, classes and the class card',
     views: [
       { type: 'data_model', title: 'Structure', state: { mode: 'tree' } },
-      { type: 'data_model', title: 'Class', state: { mode: 'editor' } },
-      { type: 'data_model', title: 'Impact', state: { mode: 'impact' } },
+      { type: 'data_model', title: 'Classes', state: { mode: 'classes' } },
+      { type: 'data_model', title: 'Class', state: { mode: 'card' } },
     ],
     layout: (ids) => ({
       direction: 'row',
-      ratio: 0.34,
+      ratio: 0.28,
       first: { tabs: [ids[0]], active: ids[0] },
-      second: { tabs: ids.slice(1), active: ids[1] },
+      second: {
+        direction: 'row',
+        ratio: 0.46,
+        first: { tabs: [ids[1]], active: ids[1] },
+        second: { tabs: [ids[2]], active: ids[2] },
+      },
     }),
   },
   {

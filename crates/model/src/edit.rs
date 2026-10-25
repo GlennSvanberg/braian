@@ -103,6 +103,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::Text {
                 max_length: None,
                 form: crate::definition::TextForm::Short,

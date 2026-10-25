@@ -7,8 +7,10 @@ import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
 import { workspaceDisplayName, viewDisplayTitle } from './demo-labels'
-import { touch } from './frecency'
+import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
+import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
+import { publishProposal } from './proposal-bus'
 import { stepText } from './steps'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
 import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
@@ -23,7 +25,7 @@ type SessionLike = {
 
 type Turn = { role: 'user' | 'assistant'; text: string }
 type Step = { id: string; text: string; state: 'run' | 'done' }
-type ProposalPreview = { id: string; title: string; rows: Json[]; error?: string }
+type ProposalPreview = { id: string; title: string; rows: Json[]; lines: string[]; source?: string; error?: string }
 
 export function CommandPalette({
   session,
@@ -53,14 +55,19 @@ export function CommandPalette({
     queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(query)}&per_page=8`),
     enabled: mode === 'list' && query.trim().length > 0 && stack.length === 0,
   })
-  const frecency = useMemo(() => {
-    if (typeof localStorage === 'undefined') return {}
-    try {
-      return JSON.parse(localStorage.getItem('braian.frecency') ?? '{}') as Record<string, { uses: number; last: number }>
-    } catch {
-      return {}
-    }
-  }, [query, turns.length])
+  const remoteFrecency = useQuery({
+    queryKey: ['frecency'],
+    queryFn: () => api<{ entries: Record<string, { uses: number; last: number }> }>('/v1/frecency'),
+    staleTime: 30_000,
+  })
+  const [frecencyTick, setFrecencyTick] = useState(0)
+  useEffect(() => {
+    const entries = remoteFrecency.data?.entries
+    if (!entries) return
+    writeFrecency(mergeFrecency(readFrecency(), entries))
+    setFrecencyTick((value) => value + 1)
+  }, [remoteFrecency.data])
+  const frecency = useMemo(() => readFrecency(), [query, turns.length, frecencyTick])
 
   const catalog = useMemo(() => buildCatalog(workspaces, views, session.objectId), [workspaces, views, session.objectId])
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
@@ -73,17 +80,43 @@ export function CommandPalette({
       subtitle: 'Open the object',
     }
   })
-  const rootRows = visibleRows(query, catalog, hits, frecency)
+  const rootRows = withModelCommand(query, visibleRows(query, catalog, hits, frecency))
   const rows = stack.at(-1)?.rows ?? rootRows
   const activeRow = active == null ? undefined : rows[active]
 
+  useEffect(() => {
+    if (stack.length > 0 || mode !== 'list') return
+    const index = rows.findIndex((row) => row.sourceId === 'model:command')
+    if (index >= 0) setActive(index)
+  }, [query, mode, stack.length])
   useEffect(() => {
     document.querySelector<HTMLElement>('#palette-list .hit.on')?.scrollIntoView({ block: 'nearest' })
   }, [active, rows.length])
 
   const run = (item: PaletteItem) => {
     const id = item.sourceId ?? item.id
-    if (id !== 'ask') touch(item.group === 'best' ? id : item.id.startsWith('best:') ? id : item.id)
+    const remembered = item.group === 'best' || item.id.startsWith('best:') ? id : item.id
+    if (id !== 'ask') {
+      touch(remembered)
+      void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
+    }
+    if (id === 'model:command') {
+      void api<Json>('/v1/operations/model.command', {
+        method: 'POST',
+        body: JSON.stringify({ text: query }),
+      })
+        .then((result) => {
+          const proposalId = String(result.proposal_id ?? result.id ?? '')
+          if (!proposalId) return
+          publishProposal(proposalId)
+          session.setProposalId(proposalId)
+          onClose()
+        })
+        .catch((reason: unknown) => {
+          session.push(reason instanceof Error ? reason.message : 'The draft has no steps')
+        })
+      return
+    }
     if (item.shortcut) toast(`Next time: ${item.shortcut}`)
     if (id === 'ask' || item.group === 'ask') {
       void ask(query)
@@ -351,7 +384,15 @@ export function CommandPalette({
             {proposal ? (
               <div data-testid="palette-proposal">
                 <strong>{proposal.title}</strong>
+                {proposal.source ? <span className="chip">{proposal.source}</span> : null}
                 <p>{proposal.rows.length} rows</p>
+                {proposal.lines.length > 0 ? (
+                  <ul className="proposal-tree">
+                    {proposal.lines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                ) : null}
                 {proposal.rows.slice(0, 3).map((row) => (
                   <p key={String(row.id)}>{String(row.object_key ?? row.object_id ?? '')}</p>
                 ))}
@@ -521,11 +562,15 @@ async function loadProposal(
 ) {
   const body = await api<Json>(`/v1/proposals/${id}`).catch(() => null)
   const rows = ((body?.rows as Json[]) ?? [])
+  const lines = ((body?.consequence as Json | undefined)?.lines as unknown[] | undefined)?.map(String) ?? []
   setProposal({
     id,
     title: String(body?.title ?? 'Proposal'),
     rows,
+    lines,
+    source: body?.source ? String(body.source) : undefined,
     error: rows.some((row) => row.conflict) ? 'Conflict' : undefined,
   })
   session.setProposalId(id)
+  if (lines.length > 0) publishProposal(id)
 }

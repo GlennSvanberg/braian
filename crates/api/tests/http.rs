@@ -538,3 +538,150 @@ async fn agent_writes_are_attributed_and_delete_returns_gone() {
     assert_eq!(status, StatusCode::GONE, "{gone}");
     assert_eq!(gone["code"], "deleted");
 }
+
+#[tokio::test]
+async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
+    let (_db, app) = app().await;
+    let (status, _, drafted) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.command",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{ "text": "set up a model for power tools" }"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{drafted}");
+    assert_eq!(drafted["needs_approval"], true);
+    assert_eq!(drafted["source"], "user");
+    let lines = drafted["consequence"]["lines"].as_array().expect("lines");
+    let text = lines
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("Add class Drill on drills, parent Power tool"),
+        "{text}"
+    );
+    assert!(text.contains("Create attribute voltage"), "{text}");
+    let id = drafted["proposal_id"].as_str().unwrap();
+
+    let (status, _, before) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert!(
+        !before["structures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["key"] == "power_tools")
+    );
+
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{id}/accept"),
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let (status, _, accepted) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        accepted["failed"].as_array().unwrap().is_empty(),
+        "{accepted}"
+    );
+
+    let (status, _, after) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    let structure = after["structures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "power_tools")
+        .expect("structure");
+    let drill = structure["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "Drill")
+        .expect("drill");
+    assert!(drill["parent"].as_str().is_some());
+    let voltage = after["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "voltage")
+        .expect("voltage");
+    assert_eq!(voltage["required"], true);
+}
+
+#[tokio::test]
+async fn an_agent_drafts_the_same_model_tree() {
+    let (_db, app) = app().await;
+    let (status, _, drafted) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.draft",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{ "preset": "power_tools" }"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{drafted}");
+    assert_eq!(drafted["source"], "agent");
+    let id = drafted["id"].as_str().unwrap();
+    let (status, _, body) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["source"], "agent");
+    assert!(body["consequence"]["lines"].as_array().unwrap().len() > 3);
+}
+
+#[tokio::test]
+async fn frecency_is_stored_for_the_person() {
+    let (_db, app) = app().await;
+    let (status, _, touched) = call(
+        &app,
+        "POST",
+        "/v1/frecency",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{ "id": "model.command" }"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{touched}");
+    assert_eq!(touched["uses"], 1);
+    let (status, _, again) = call(
+        &app,
+        "POST",
+        "/v1/frecency",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{ "id": "model.command" }"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["uses"], 2);
+    let (status, _, listed) = call(&app, "GET", "/v1/frecency", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["entries"]["model.command"]["uses"], 2);
+}

@@ -700,6 +700,7 @@ mod tests {
                 labels: Default::default(),
                 language_dependent: false,
                 multiple: false,
+                required: false,
                 kind: braian_model::AttributeKind::Text {
                     max_length: None,
                     form: braian_model::TextForm::Short,

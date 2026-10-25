@@ -7,6 +7,8 @@ import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
 import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
 import { copy, uiLanguage } from './i18n'
+import { publishProposal } from './proposal-bus'
+import { StateNote } from './states'
 import { dispatchUi, onUi } from './ui-bus'
 
 export type PanesSession = {
@@ -544,9 +546,14 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const [draft, setDraft] = useState<Json>({})
   const [error, setError] = useState('')
+  const [pendingId, setPendingId] = useState<string | null>(null)
   const [flashId, setFlashId] = useState('')
   useEffect(() => onFlash(setFlashId), [])
-  useEffect(() => setDraft({}), [session.objectId])
+  useEffect(() => {
+    setDraft({})
+    setPendingId(null)
+    setError('')
+  }, [session.objectId])
   if (!session.objectId) {
     return (
       <div className="detail-empty" data-testid="detail-empty">
@@ -559,21 +566,51 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       </div>
     )
   }
-  if (!object.data) return <p>{copy.loading}</p>
+  if (object.isError) return <StateNote tone="error" title={copy.graphError} detail={copy.validation} testId="detail-error" />
+  if (!object.data) return <StateNote tone="loading" title={copy.loading} />
   const values = { ...((object.data.values as Json) ?? {}), ...draft }
   const attributes = (defs.data?.attributes as Json[] | undefined) ?? []
   const lists = (defs.data?.value_lists as Json[] | undefined) ?? []
   const families = (defs.data?.unit_families as Json[] | undefined) ?? []
+  const label = textValue((object.data.values as Json)?.nummer) || String(object.data.id ?? '')
   const save = () => {
-    void api(`/v1/objects/${session.objectId}`, {
-      method: 'PATCH',
-      headers: { 'if-match': String(object.data?.version ?? '') },
-      body: JSON.stringify({ values: draft }),
+    if (Object.keys(draft).length === 0) return
+    void api<Json>('/v1/proposals', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: `${copy.save} ${label}`,
+        source: 'user',
+        rows: [
+          {
+            object_id: session.objectId,
+            object_key: label,
+            type_key: String(object.data?.type ?? ''),
+            base_version: Number(object.data?.version ?? 0),
+            patch: { values: draft },
+          },
+        ],
+      }),
     })
-      .then(() => {
-        setDraft({})
+      .then((proposal) => {
+        setPendingId(String(proposal.id))
         setError('')
-        session.push(`${copy.saved} ${textValue((object.data?.values as Json)?.nummer) || object.data?.id}`)
+      })
+      .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
+  }
+  const confirm = () => {
+    if (!pendingId) return
+    void api<Json>(`/v1/proposals/${pendingId}/accept`, { method: 'POST', body: '{}' })
+      .then((result) => {
+        const failed = (result.failed as Json[] | undefined) ?? []
+        if (failed.length > 0) {
+          setError(String(failed[0]?.detail ?? copy.validation))
+          return
+        }
+        setDraft({})
+        setPendingId(null)
+        setError('')
+        session.setProposalId(pendingId)
+        session.push(`${copy.saved} ${label}`)
         void queryClient.invalidateQueries({ queryKey: ['object', session.objectId] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
       })
@@ -604,7 +641,11 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         fields[Math.max(0, Math.min(fields.length - 1, next))]?.focus()
       }}
     >
-      <strong className="span">{String(object.data.type)} · {textValue((object.data.values as Json)?.nummer)}</strong>
+      <div className="toolbar field-chips">
+        <span className="chip">{String(object.data.type)}</span>
+        {textValue(values.status) ? <span className="chip">{textValue(values.status)}</span> : null}
+        <strong>{textValue((object.data.values as Json)?.nummer)}</strong>
+      </div>
       {Object.keys(values).map((key) => {
         const attribute = attributes.find((item) => item.key === key)
         const kind = (attribute?.kind as Json) ?? {}
@@ -628,10 +669,18 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         )
       })}
       {error ? <p className="error" data-testid="detail-error">{error}</p> : null}
-      <div className="toolbar">
-        <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
-        <button type="button" onClick={() => setDraft({})}>{copy.discard}</button>
-      </div>
+      {pendingId ? (
+        <div className="toolbar">
+          <span className="hint">{copy.reviewChange}</span>
+          <button type="button" onClick={() => { setPendingId(null); setDraft({}) }}>{copy.cancel}</button>
+          <button type="button" className="primary" data-testid="confirm-proposal" onClick={confirm}>{copy.confirm}</button>
+        </div>
+      ) : (
+        <div className="toolbar">
+          <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
+          <button type="button" onClick={() => setDraft({})}>{copy.discard}</button>
+        </div>
+      )}
     </form>
   )
 }
@@ -826,7 +875,9 @@ export function GraphView({ session }: { session: PanesSession }) {
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}/graph`),
     enabled: Boolean(session.objectId),
   })
-  if (!graph.data) return <p data-testid="graph">{copy.graph}</p>
+  if (!session.objectId) return <StateNote tone="empty" title={copy.graphEmpty} testId="graph" />
+  if (graph.isError) return <StateNote tone="error" title={copy.graphError} testId="graph" />
+  if (!graph.data) return <StateNote tone="loading" title={copy.graphLoading} testId="graph" />
   return <GraphMap data={graph.data} onOpen={(id) => { if (id) session.setObjectId(id) }} />
 }
 
@@ -930,147 +981,7 @@ export function HistoryView({ session }: { session: PanesSession }) {
   )
 }
 
-let classSelection = ''
-const classListeners = new Set<(key: string) => void>()
-
-function chooseClass(key: string) {
-  classSelection = key
-  classListeners.forEach((listen) => listen(key))
-}
-
-let draggingClass = ''
-
-function useClassSelection() {
-  const [key, setKey] = useState(classSelection)
-  useEffect(() => {
-    classListeners.add(setKey)
-    return () => {
-      classListeners.delete(setKey)
-    }
-  }, [])
-  return key
-}
-
-export function DataModel({ view }: { view: PanesView }) {
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const queryClient = useQueryClient()
-  const [attribute, setAttribute] = useState('status')
-  const [message, setMessage] = useState('')
-  const selectedClass = useClassSelection()
-  const impact = useMutation({
-    mutationFn: (body: Json) => api<Json>('/v1/impact', { method: 'POST', body: JSON.stringify(body) }),
-  })
-  const mode = String(view.state.mode ?? '')
-  if (Array.isArray(view.state.checklist)) {
-    const languages = ((defs.data?.languages as string[]) ?? []).join(', ')
-    const units = ((defs.data?.unit_families as Json[]) ?? []).map((item) => String(item.key)).join(', ')
-    const types = ((defs.data?.types as Json[]) ?? []).map((item) => String(item.key)).join(', ')
-    return (
-      <div data-testid="data-model">
-        <strong>{copy.dataModel}</strong>
-        <ul>
-          {(view.state.checklist as string[]).map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-        <p>sv/en/de · {languages}</p>
-        <p>{units}</p>
-        <p>{types}</p>
-      </div>
-    )
-  }
-  const move = (structure: Json, classKey: string, groupId: string) => {
-    const classes = ((structure.classes as Json[]) ?? []).map((item) =>
-      item.key === classKey ? { ...item, group: groupId } : item,
-    )
-    void api(`/v1/structures/${String(structure.key)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ id: structure.id, key: structure.key, groups: structure.groups, classes }),
-    })
-      .then(() => {
-        setMessage(copy.classMoved)
-        void queryClient.invalidateQueries({ queryKey: ['definitions'] })
-      })
-      .catch((reason: unknown) => setMessage(reason instanceof ApiError ? reason.message : copy.validation))
-  }
-  return (
-    <div data-testid="data-model">
-      <p>{copy.dataModel}{mode ? ` · ${mode}` : ''}</p>
-      {mode === 'tree' || mode === '' ? (
-        ((defs.data?.structures as Json[]) ?? []).map((structure) => (
-          <div key={String(structure.key)} className="tree">
-            <strong>{String(structure.key)}</strong>
-            {((structure.groups as Json[]) ?? []).map((group) => (
-              <div
-                key={String(group.id)}
-                data-testid={`group-${String(group.key)}`}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  const classKey = event.dataTransfer.getData('text/class') || draggingClass
-                  draggingClass = ''
-                  if (!classKey) return
-                  event.preventDefault()
-                  move(structure, classKey, String(group.id))
-                }}
-              >
-                <span style={{ paddingLeft: group.parent ? 12 : 0 }}>{String(group.key)}</span>
-                {((structure.classes as Json[]) ?? [])
-                  .filter((item) => String(item.group) === String(group.id))
-                  .map((item) => (
-                    <button
-                      key={String(item.key)}
-                      draggable
-                      className={selectedClass === String(item.key) ? 'on' : ''}
-                      onClick={() => chooseClass(String(item.key))}
-                      onDragStart={(event) => {
-                        draggingClass = String(item.key)
-                        event.dataTransfer.setData('text/class', String(item.key))
-                        event.dataTransfer.effectAllowed = 'move'
-                      }}
-                      onDragEnd={() => {
-                        draggingClass = ''
-                      }}
-                    >
-                      {String(item.key)}
-                    </button>
-                  ))}
-              </div>
-            ))}
-          </div>
-        ))
-      ) : null}
-      {mode === 'editor' ? <ClassEditor defs={defs.data} selectedClass={selectedClass} /> : null}
-      {mode === 'impact' ? (
-        <form
-          className="toolbar"
-          onSubmit={(event) => {
-            event.preventDefault()
-            impact.mutate({ remove_attribute: attribute })
-          }}
-        >
-          <input data-testid="impact-attribute" value={attribute} onChange={(event) => setAttribute(event.target.value)} />
-          <button type="submit" data-testid="impact-run">{copy.calculate}</button>
-          {selectedClass ? (
-            <button type="button" data-testid="impact-class" onClick={() => impact.mutate({ remove_class: selectedClass })}>
-              {selectedClass}
-            </button>
-          ) : null}
-        </form>
-      ) : null}
-      {message ? <p>{message}</p> : null}
-      {impact.data ? (
-        <div data-testid="impact-result">
-          <strong>Consequence</strong>
-          <p>{copy.affected}: {String(impact.data.affected_objects)} · {copy.invalid} {String(impact.data.invalid_objects)}</p>
-          <p>{copy.samples}: {((impact.data.samples as Json[]) ?? []).map((item) => String(item.key)).join(', ')}</p>
-          {((impact.data.jobs as Json[]) ?? []).map((job) => (
-            <p key={String(job.key)}>{String(job.title)} · {((job.reads_fields as string[]) ?? []).join(', ')}</p>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
+export { DataModel } from './data-model'
 
 function groupText(groups: Json, side: 'before' | 'after', defs: Json | undefined) {
   const names = new Map<string, string>()
@@ -1081,27 +992,6 @@ function groupText(groups: Json, side: 'before' | 'after', defs: Json | undefine
     .map((entry) => names.get(String((entry as Json)[side] ?? '')) ?? textValue((entry as Json)[side]))
     .filter(Boolean)
     .join(', ')
-}
-
-function ClassEditor({ defs, selectedClass }: { defs: Json | undefined; selectedClass: string }) {
-  const structures = (defs?.structures as Json[]) ?? []
-  const attributes = (defs?.attributes as Json[]) ?? []
-  const found = structures.flatMap((structure) => (structure.classes as Json[]) ?? []).find((item) => item.key === selectedClass)
-  if (!found) return <p data-testid="class-editor">{copy.pickClass}</p>
-  const ids = (found.attributes as string[]) ?? []
-  return (
-    <div data-testid="class-editor">
-      <strong>{selectedClass}</strong>
-      <p>{copy.attributes}</p>
-      <ul>
-        {ids.map((id) => {
-          const attribute = attributes.find((item) => item.id === id)
-          const label = textValue((attribute?.labels as Json) ?? undefined, uiLanguage) || String(attribute?.key ?? id)
-          return <li key={id}>{label}</li>
-        })}
-      </ul>
-    </div>
-  )
 }
 
 export function JobHistory({ view }: { view: PanesView }) {
@@ -1176,13 +1066,32 @@ export function ProposalView({ session }: { session: PanesSession }) {
     )
   }
   const rows = (proposal.data?.rows as Json[]) ?? []
+  const lines = ((proposal.data?.consequence as Json | undefined)?.lines as unknown[] | undefined)?.map(String) ?? []
   return (
     <div data-testid="proposal">
       <div className="toolbar">
+        {(list.data?.proposals ?? []).map((row) => (
+          <button key={String(row.id)} type="button" className={String(row.id) === session.proposalId ? 'primary' : ''} onClick={() => session.setProposalId(String(row.id))}>
+            {String(row.title)}
+          </button>
+        ))}
+      </div>
+      <div className="toolbar">
         <strong className={proposal.data?.source === 'agent' ? 'draft-agent' : 'draft-user'}>{String(proposal.data?.title ?? '')}</strong>
+        {proposal.data?.source ? <span className="chip">{String(proposal.data.source)}</span> : null}
         <button data-testid="accept-all" onClick={() => accept.mutate(undefined)}>{copy.acceptAll}</button>
         <button onClick={() => accept.mutate(picked)}>{copy.acceptSelected}</button>
+        {lines.length > 0 && session.proposalId ? (
+          <button type="button" onClick={() => publishProposal(session.proposalId ?? '')}>{copy.reviewChange}</button>
+        ) : null}
       </div>
+      {lines.length > 0 ? (
+        <ul className="proposal-tree" data-testid="proposal-tree">
+          {lines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
       {rows.map((row) => (
         <label key={String(row.id)} className={row.conflict ? 'error' : row.status === 'pending' ? 'draft-agent' : ''}>
           <input
@@ -1194,7 +1103,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
               )
             }
           />
-          {String(row.object_key ?? row.object_id)} · {String(row.status)}
+          {String(row.type_key) === 'model' ? String((row.patch as Json | undefined)?.op ?? 'model') : String(row.object_key ?? row.object_id)} · {String(row.status)}
           {row.conflict ? ` · ${copy.conflict}` : ''}
         </label>
       ))}

@@ -346,6 +346,7 @@ async fn adding_attributes_does_not_move_existing_values() {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::Text {
                 max_length: None,
                 form: braian_model::TextForm::Short,
