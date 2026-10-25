@@ -230,8 +230,119 @@ pub struct ObjectType {
     pub key: String,
     #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
     pub labels: BTreeMap<LanguageTag, String>,
+    /// Singular display name per language. Empty falls back to labels.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
+    pub singular: BTreeMap<LanguageTag, String>,
+    /// Plural display name per language. Empty falls back to an English-style plural of the singular.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
+    pub plural: BTreeMap<LanguageTag, String>,
     pub key_attribute: AttributeId,
     pub attributes: Vec<AttributeId>,
+}
+
+impl ObjectType {
+    /// Singular name for `language`, then English, then any stored name, then the key.
+    pub fn singular_label(&self, language: &str) -> String {
+        stored_label(&self.singular, language)
+            .or_else(|| stored_label(&self.labels, language))
+            .unwrap_or_else(|| self.key.clone())
+    }
+
+    /// Plural name for `language`. A missing plural is derived from the singular.
+    ///
+    /// Another language's plural is not reused. English is the only cross-language fallback.
+    pub fn plural_label(&self, language: &str) -> String {
+        plural_stored(&self.plural, language)
+            .unwrap_or_else(|| default_plural(&self.singular_label(language)))
+    }
+}
+
+/// English-style plural used when a type has no plural label.
+///
+/// `Product` becomes `Products`, `Category` becomes `Categories`.
+pub fn default_plural(singular: &str) -> String {
+    let word = singular.trim();
+    if word.is_empty() {
+        return "Objects".to_owned();
+    }
+    let lower = word.to_lowercase();
+    if lower.ends_with("ch")
+        || lower.ends_with("sh")
+        || lower.ends_with('s')
+        || lower.ends_with('x')
+        || lower.ends_with('z')
+    {
+        return format!("{word}es");
+    }
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() > 1 && matches!(chars.last().copied(), Some('y' | 'Y')) {
+        let previous = chars[chars.len() - 2].to_ascii_lowercase();
+        if !matches!(previous, 'a' | 'e' | 'i' | 'o' | 'u') {
+            let stem: String = chars[..chars.len() - 1].iter().collect();
+            return format!("{stem}ies");
+        }
+    }
+    format!("{word}s")
+}
+
+fn plural_stored(map: &BTreeMap<LanguageTag, String>, language: &str) -> Option<String> {
+    let exact = map.iter().find_map(|(tag, value)| {
+        (tag.as_str() == language && !value.is_empty()).then(|| value.clone())
+    });
+    if exact.is_some() {
+        return exact;
+    }
+    if language != "en" {
+        return map.iter().find_map(|(tag, value)| {
+            (tag.as_str() == "en" && !value.is_empty()).then(|| value.clone())
+        });
+    }
+    None
+}
+
+fn stored_label(map: &BTreeMap<LanguageTag, String>, language: &str) -> Option<String> {
+    let exact = map.iter().find_map(|(tag, value)| {
+        (tag.as_str() == language && !value.is_empty()).then(|| value.clone())
+    });
+    if exact.is_some() {
+        return exact;
+    }
+    if language != "en" {
+        let english = map.iter().find_map(|(tag, value)| {
+            (tag.as_str() == "en" && !value.is_empty()).then(|| value.clone())
+        });
+        if english.is_some() {
+            return english;
+        }
+    }
+    map.values().find(|value| !value.is_empty()).cloned()
+}
+
+/// Operation titles shown to a person.
+///
+/// One configured type replaces the words `object` and `objects`. Several types
+/// keep those words, because the operation is not about one type.
+pub fn operation_title(title: &str, types: &[ObjectType], language: &str) -> String {
+    let Some(object_type) = types.first().filter(|_| types.len() == 1) else {
+        return title.to_owned();
+    };
+    let singular = object_type.singular_label(language);
+    let plural = object_type.plural_label(language);
+    title
+        .split_inclusive(char::is_whitespace)
+        .map(|word| {
+            let trimmed = word.trim_end();
+            let space = &word[trimmed.len()..];
+            let replaced = match trimmed {
+                "objects" | "Objects" => plural.as_str(),
+                "object" | "Object" => singular.as_str(),
+                _ => trimmed,
+            };
+            format!("{replaced}{space}")
+        })
+        .collect()
 }
 
 /// A hierarchy of groups. Nodes are not tied to an object type.
@@ -277,4 +388,53 @@ pub struct Class {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<ClassId>,
     pub attributes: Vec<AttributeId>,
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::{ObjectType, default_plural, operation_title};
+    use crate::id::{AttributeId, TypeId};
+    use crate::language::LanguageTag;
+
+    fn object_type(key: &str, singular: &str, plural: Option<&str>) -> ObjectType {
+        let mut singular_map = std::collections::BTreeMap::new();
+        singular_map.insert(LanguageTag::parse("en").unwrap(), singular.to_owned());
+        let mut plural_map = std::collections::BTreeMap::new();
+        if let Some(plural) = plural {
+            plural_map.insert(LanguageTag::parse("en").unwrap(), plural.to_owned());
+        }
+        ObjectType {
+            id: TypeId::from_uuid(uuid::Uuid::from_u128(1)),
+            key: key.to_owned(),
+            labels: std::collections::BTreeMap::new(),
+            singular: singular_map,
+            plural: plural_map,
+            key_attribute: AttributeId::from_uuid(uuid::Uuid::from_u128(2)),
+            attributes: vec![],
+        }
+    }
+
+    #[test]
+    fn plural_defaults_and_operation_titles() {
+        assert_eq!(default_plural("Product"), "Products");
+        assert_eq!(default_plural("Article"), "Articles");
+        assert_eq!(default_plural("Category"), "Categories");
+        assert_eq!(default_plural("Bus"), "Buses");
+        let product = object_type("produkt", "Product", None);
+        assert_eq!(product.singular_label("en"), "Product");
+        assert_eq!(product.plural_label("en"), "Products");
+        assert_eq!(
+            operation_title("Open object", std::slice::from_ref(&product), "en"),
+            "Open Product"
+        );
+        assert_eq!(
+            operation_title("Search objects", std::slice::from_ref(&product), "en"),
+            "Search Products"
+        );
+        let article = object_type("artikel", "Article", Some("Articles"));
+        assert_eq!(
+            operation_title("Open object", &[product, article], "en"),
+            "Open object"
+        );
+    }
 }

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { textValue, type Json } from './api'
+import { singularOf } from './type-labels'
 
 export type ChipTone = 'neutral' | 'ok' | 'warn' | 'danger' | 'info'
 
@@ -35,8 +36,7 @@ export function optionLabel(defs: Json | undefined, listKey: string, code: strin
 }
 
 export function typeLabel(defs: Json | undefined, key: string, language = 'en') {
-  const type = ((defs?.types as Json[] | undefined) ?? []).find((item) => String(item.key) === key)
-  return textValue(type?.labels, language) || key
+  return singularOf(defs, key, language) || key
 }
 
 export function ViewGlyph({ type }: { type: string }) {

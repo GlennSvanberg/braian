@@ -87,6 +87,16 @@ pub enum ModelChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group: Option<String>,
     },
+    /// Singular and plural display names for one object type, in one language.
+    UpdateType {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        singular: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plural: Option<String>,
+    },
     UpdateAttribute {
         key: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -424,6 +434,22 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             fields.insert(key.clone());
             usage_fields.insert(key.clone());
         }
+        if let Some(previous) = old {
+            if previous.singular != object_type.singular || previous.labels != object_type.labels {
+                lines.push(format!(
+                    "Type {} singular is {}",
+                    object_type.key,
+                    object_type.singular_label("en")
+                ));
+            }
+            if previous.plural != object_type.plural {
+                lines.push(format!(
+                    "Type {} plural is {}",
+                    object_type.key,
+                    object_type.plural_label("en")
+                ));
+            }
+        }
     }
     ChangeImpact {
         lines,
@@ -641,6 +667,18 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             structure,
             group,
         } => link_attribute(defs, attribute, type_key, structure, group, false),
+        ModelChange::UpdateType {
+            key,
+            language,
+            singular,
+            plural,
+        } => update_type(
+            defs,
+            key,
+            language.as_deref(),
+            singular.as_deref(),
+            plural.as_deref(),
+        ),
         ModelChange::UpdateAttribute {
             key,
             label,
@@ -921,6 +959,36 @@ fn link_attribute(
     Ok(())
 }
 
+fn update_type(
+    defs: &mut DefinitionSet,
+    key: &str,
+    language: Option<&str>,
+    singular: Option<&str>,
+    plural: Option<&str>,
+) -> Result<(), String> {
+    let object_type = type_mut(defs, key)?;
+    let tag = LanguageTag::parse(language.unwrap_or("en")).map_err(|error| error.to_string())?;
+    if let Some(singular) = singular {
+        let text = singular.trim();
+        if text.is_empty() {
+            object_type.singular.remove(&tag);
+            object_type.labels.remove(&tag);
+        } else {
+            object_type.singular.insert(tag.clone(), text.to_owned());
+            object_type.labels.insert(tag.clone(), text.to_owned());
+        }
+    }
+    if let Some(plural) = plural {
+        let text = plural.trim();
+        if text.is_empty() {
+            object_type.plural.remove(&tag);
+        } else {
+            object_type.plural.insert(tag, text.to_owned());
+        }
+    }
+    Ok(())
+}
+
 struct AttributeUpdate<'a> {
     key: &'a str,
     label: &'a Option<String>,
@@ -1160,6 +1228,8 @@ mod tests {
                 id: TypeId::from_uuid(Uuid::from_u128(8)),
                 key: "item".into(),
                 labels: BTreeMap::new(),
+                singular: Default::default(),
+                plural: Default::default(),
                 key_attribute: weight,
                 attributes: vec![weight],
             }],

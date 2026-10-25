@@ -2489,6 +2489,26 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "plural": {
+            "type": "object",
+            "description": "Plural display name per language. Empty falls back to an English-style plural of the singular.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "singular": {
+            "type": "object",
+            "description": "Singular display name per language. Empty falls back to labels.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
