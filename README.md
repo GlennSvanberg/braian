@@ -1,13 +1,90 @@
-# Braian
+<p align="center">
+  <img src="apps/web/public/brand/braian-mark.svg" alt="Braian" width="72" height="72" />
+</p>
 
-Öppen källkod (MIT), self-hosted datahantering för det PIM brukar användas till.
-Färdiga gränssnitt som ett traditionellt PIM, och samma åtgärder via API och MCP.
+<h1 align="center">Braian</h1>
 
-Landningssidan för braian.io ligger i `apps/landing`. `just landing` bygger den statiska filen till `apps/landing/dist`.
+<p align="center">Open-source, self-hosted product data, built for agents.</p>
 
-## Kör lokalt
+<p align="center">
+  <a href="https://github.com/GlennSvanberg/openpim/actions/workflows/ci.yml"><img src="https://github.com/GlennSvanberg/openpim/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
+</p>
 
-Kräver Docker Desktop (Windows eller macOS) eller Docker i devcontainern, Rust, Node 22, pnpm 10 och [just](https://just.systems/).
+<p align="center">
+  <a href="https://braian.io">braian.io</a>
+  ·
+  <a href="https://demo.braian.io">demo.braian.io</a>
+</p>
+
+Braian is an open-source product data system for the work a PIM usually covers. You host it yourself. It has a keyboard-first interface, and the same operations are available over the API and MCP, so an agent acts as a person in the session.
+
+Postgres is the source of truth. A relay publishes each change to Redpanda, and search, live updates, and outbound events follow from that log.
+
+## Features
+
+- An agent in the session: it acts with your permissions, and every change is a proposal you can accept, review, or undo.
+- A data model you define: entities, typed attributes, languages, and references. Nothing is locked to a product type.
+- A headless API and MCP. The same change stream reaches open UIs over SSE and other systems over webhooks.
+- Live updates in the interface.
+- Search through Typesense.
+- Multilingual attribute values.
+- A keyboard-first UI. Ctrl+K runs the same operations as the screen.
+
+## Architecture
+
+Writers share one operation layer. Commits land in Postgres. Logical replication feeds the relay, which publishes interactive and bulk lanes on separate Redpanda topics so a fast edit does not wait on a bulk batch. The indexer updates Typesense. Search returns to the UI. The same topics drive SSE back to open UIs and webhooks out to other systems. The landing page calls that outbound stream `/subscribe`; the routes are `GET /v1/stream` and `/v1/webhooks`.
+
+```mermaid
+flowchart LR
+  UI[UI]
+  Agent[Agent]
+  API[API]
+  MCP[MCP clients]
+  OP[Operation layer]
+  PG[(Postgres)]
+  Relay[Relay]
+  RP[Redpanda]
+  IDX[Indexer]
+  TS[(Typesense)]
+  EXT[External consumers]
+
+  UI --> OP
+  Agent --> OP
+  API --> OP
+  MCP --> OP
+  OP --> PG
+  PG -->|"logical replication"| Relay
+  Relay --> RP
+  RP -->|"braian.changes.interactive"| IDX
+  RP -->|"braian.changes.bulk"| IDX
+  IDX --> TS
+  TS -->|search| UI
+  RP -->|"SSE /v1/stream"| UI
+  RP -->|webhooks| EXT
+```
+
+One binary, `braian`, runs the server roles. In development, `braian all` migrates, seeds, and runs the API, relay, and indexer together. In production, run each role as its own process.
+
+| Piece | Path |
+| --- | --- |
+| Web app (TanStack Start) | `apps/web` |
+| Landing page for braian.io | `apps/landing` |
+| `braian` binary: `api`, `relay`, `indexer`, `all`, `seed`, `reindex`, `openapi` | `crates/server` |
+| HTTP API, operations, MCP, agent, SSE, webhooks | `crates/api` |
+| Logical replication relay | `crates/relay` |
+| Search indexer | `crates/indexer` |
+| Change topics `braian.changes.interactive` and `braian.changes.bulk` | `crates/events` |
+| Typesense client | `crates/search` |
+| Postgres store | `crates/store` |
+| Model and validation. No I/O. Rules compile to wasm32 | `crates/model`, `crates/rules`, `crates/rules-wasm` |
+| Rules package used from JavaScript | `packages/rules-wasm` |
+| Synthetic catalogs and benches | `crates/synth`, `crates/bench` |
+| Postgres, Redpanda, Redpanda Console, Typesense | `compose.yaml` |
+
+## Quick start
+
+You need Docker, Rust 1.93, Node 22, pnpm 10, and [just](https://just.systems/). The `rdkafka` crate builds with the `cmake-build` feature, so CMake and a C++ compiler must be on the path. CI installs those packages on Ubuntu.
 
 ```bash
 cp .env.example .env
@@ -16,43 +93,72 @@ pnpm install
 just dev
 ```
 
-- Webb: http://127.0.0.1:3000
+`just up` starts Postgres, Redpanda, Redpanda Console, and Typesense. `pnpm install` is once, before Vite can start. `just dev` runs migrations, synthetic demo data, the API, the relay, the indexer, and the web app. The first run compiles Rust. Stop it with Ctrl+C.
+
+- Web: http://127.0.0.1:3000
 - API: http://127.0.0.1:8090
-- Demokontot skapas från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env` (se `.env.example`). Lösenordet ligger inte i källkoden.
-- In-app-agenten använder `OPENAI_API_KEY` och modellen `BRAIAN_AGENT_MODEL` (standard `gpt-6-luna`). Utan nyckel svarar samma panel på engelska att ingen modell är kopplad. Förslag, massändring och återställning fungerar ändå. All gränssnittstext är engelska; katalogvärden i demot ligger kvar på sv/en/de.
+- Host ports, from `compose.yaml`: Postgres `5433`, Redpanda `19092`, Typesense `8108`, Redpanda Console `8080`
 
-`pnpm install` behövs en gång, innan Vite kan starta. `just dev` kör migrationer, demodata, API, relay, indexer och Vite, och bygger Rust-koden första gången. Avsluta med Ctrl+C. Demokatalogen är syntetisk: hjälteobjekt plus ett par tusen bygg- och friluftsartiklar (`BRAIAN_SEED_COUNT`, standard 3000) på svenska, engelska och tyska. Tester skriver inte i den databasen.
+The demo account is created from `BRAIAN_DEMO_EMAIL` and `BRAIAN_DEMO_PASSWORD` in `.env`. See `.env.example`. Those values are not in the source tree. Without `OPENAI_API_KEY`, the Ctrl+K panel says that no model is connected. Proposals, bulk edits, and undo still work. The catalog is synthetic. Its size is `BRAIAN_SEED_COUNT`. Tests do not write that database.
 
-## Windows och Docker Desktop
+On Windows, install just with `winget install --id Casey.Just` or `scoop install just`. Without it, `.\scripts\up.ps1` and `.\scripts\dev.ps1` do the same work. Visual Studio Build Tools, workload “Desktop development with C++”, supplies CMake and the compiler. A WSL2 checkout on the Linux filesystem is faster than a bind mount from `C:\`. More detail is in [docs/dev.md](docs/dev.md).
 
-Kör Docker Desktop. Snabbast går det i WSL2 med repot i Linux-filsystemet (`~/src`), inte under `/mnt/c`. Rust, Node 22 och pnpm 10 ska ligga i samma skal som startkommandot.
-
-`just` finns inte i en vanlig Windows-installation. Installera det med `winget install --id Casey.Just` eller `scoop install just`. Justfilen anropar PowerShell (`windows-shell`). Utan `just` är motsvarigheterna:
-
-```powershell
-copy .env.example .env
-.\scripts\up.ps1
-pnpm install
-.\scripts\dev.ps1
-```
-
-`scripts/dev.ps1` läser `.env` (värden med citattecken, till exempel `BRAIAN_DEV_TOKENS`, behåller semikolon) och startar sedan samma processer som `just dev`.
-
-Rust-bygget kompilerar `rdkafka` med feature `cmake-build`, så CMake och en C++-kompilator behövs. Visual Studio Build Tools med workloaden "Desktop development with C++" ger båda. CMake kan också installeras med `winget install --id Kitware.CMake`, men kompilatorn från Build Tools behövs ändå. Samma feature används i CI, som bygger `librdkafka` med CMake. `dynamic-linking` skulle i stället kräva en systeminstallerad `librdkafka`.
-
-- Portar på värden: Postgres 5433, Redpanda 19092, Typesense 8108, Redpanda Console 8080, API 8090, webb 3000. API:t ligger på 8090 för att konsolen redan tar 8080.
-- Lämna `BRAIAN_COOKIE_SECURE=0` lokalt. Sätt den till 1 bara bakom HTTPS.
-- Playwright-röken (`node scripts/e2e.mjs`) är körd på Linux. Den skapar databasen `braian_e2e` och ett eget sökalias, utan Kafka, så `just dev` kan stå kvar. På Windows startar skriptet `pnpm.cmd` med `shell: true`, så Node hittar pnpm.
-
-Mer om portar och kommandon: [docs/dev.md](docs/dev.md). Vad som fungerar ikväll: [docs/status.md](docs/status.md).
-
-## Tester
+### Checks
 
 ```bash
 just check
 just test
-just demo-4    # relay, kräver Redpanda
-just demo-5    # indexer, kräver Typesense
 ```
 
-Webb: `pnpm --dir apps/web exec tsc --noEmit` och `pnpm --dir apps/web test`. `node scripts/e2e.mjs` startar API och Vite mot databasen `braian_e2e` (inte `braian`) och kör Playwright. `just dev` behöver inte vara igång, men `just up` ska ha startat Postgres och Typesense.
+`just demo-4` needs Redpanda. `just demo-5` needs Typesense. Both are part of `just up`. For the web app, `pnpm --dir apps/web typecheck` and `pnpm --dir apps/web test`. `node scripts/e2e.mjs` runs the browser smoke against the database `braian_e2e` and needs Postgres and Typesense from `just up`. `just --list` prints every recipe.
+
+## Repository
+
+```
+apps/web          product UI
+apps/landing      static site for braian.io
+crates/           Rust workspace, one crate per component above
+packages/         JavaScript package for the wasm rules
+docs/             development, status, plan, measurements, OpenAPI
+compose.yaml      local infrastructure
+scripts/          dev.mjs, and the Windows up/dev scripts
+```
+
+## Configuration
+
+Copy `.env.example` to `.env` and replace the placeholders. `.env` is gitignored. Names only:
+
+| Group | Variables |
+| --- | --- |
+| Infrastructure | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_READONLY_PASSWORD`, `POSTGRES_HOST_PORT`, `DATABASE_URL`, `DATABASE_URI`, `KAFKA_BROKERS`, `TYPESENSE_URL`, `TYPESENSE_API_KEY` |
+| Processes | `BRAIAN_API_ADDR`, `BRAIAN_RELAY_ADDR`, `BRAIAN_RELAY_SLOT`, `BRAIAN_RELAY_LAG_LIMIT_BYTES`, `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH`, `BRAIAN_INDEXER_IMPORT_CONCURRENCY`, `BRAIAN_SEARCH_ALIAS`, `BRAIAN_COOKIE_SECURE`, `RUST_LOG` |
+| Demo and tokens | `BRAIAN_DEV_TOKENS`, `BRAIAN_DEMO_EMAIL`, `BRAIAN_DEMO_PASSWORD`, `BRAIAN_DEMO_TOKEN`, `BRAIAN_SEED_COUNT` |
+| Agent | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `BRAIAN_AGENT_MODEL`, `BRAIAN_AGENT_MOCK` |
+| Tests | `BRAIAN_TEST_DATABASE_URL` |
+
+`BRAIAN_COOKIE_SECURE` belongs on only behind HTTPS. Comments and local placeholders are in `.env.example`. Relay slot behavior for a shared Postgres is in [docs/dev.md](docs/dev.md).
+
+## Performance
+
+Measured figures, with hardware, data size, and the command that produced them, are in [docs/measurements/](docs/measurements/). This page does not repeat them. What is still unmeasured is called out in those notes and in [docs/status.md](docs/status.md).
+
+## Documentation
+
+- [docs/dev.md](docs/dev.md) — local setup, ports, commands, replication slot
+- [docs/status.md](docs/status.md) — what works in the current cut
+- [docs/plan.md](docs/plan.md) — phase plan for the core
+- [DESIGN.md](DESIGN.md) — visual language for the app
+- [docs/api/openapi.json](docs/api/openapi.json) — generated with `just openapi`
+- [docs/measurements/](docs/measurements/) — measurement notes
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome. UI text is English. Do not commit secrets or customer data.
+
+## Security
+
+Report a vulnerability in private. See [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Braian contributors.
