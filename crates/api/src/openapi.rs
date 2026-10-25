@@ -126,7 +126,12 @@ impl utoipa::Modify for PlatformPaths {
             (
                 HttpMethod::Post,
                 "/v1/export",
-                "Export the current search as xlsx",
+                "Export the current view as an xlsx file. Large exports run as a job.",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/exports/{id}",
+                "Download a finished xlsx export",
             ),
             (HttpMethod::Get, "/v1/stats", "Object counts by type"),
             (HttpMethod::Get, "/v1/workspaces", "List workspaces"),

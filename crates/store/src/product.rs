@@ -1348,7 +1348,7 @@ fn push_pred(sql: &mut String, params_len: usize, clause: &str) {
 }
 
 /// A contains-pattern for `ILIKE ... ESCAPE '\'`. `%`, `_` and `\` are literal.
-fn like_contains(text: &str) -> String {
+pub(crate) fn like_contains(text: &str) -> String {
     let mut pattern = String::with_capacity(text.len().saturating_add(2));
     pattern.push('%');
     for ch in text.chars() {

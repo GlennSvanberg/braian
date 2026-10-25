@@ -9,6 +9,7 @@ mod error;
 mod ids;
 mod ops;
 mod product;
+mod scan;
 mod session;
 mod split;
 pub mod testing;
@@ -17,6 +18,7 @@ mod types;
 pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind};
 pub use product::{HistoryEntry, ProposalRow, RelaySlotStatus, UserRecord};
+pub use scan::{EXPORT_CHUNK, ExportObject, ExportOrder, ExportScan};
 pub use session::{DbLane, HeldConnection, PoolConfig, Store};
 pub use split::StorageForm;
 
