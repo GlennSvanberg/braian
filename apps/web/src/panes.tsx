@@ -120,7 +120,7 @@ export function ObjectTable({
   const virtualizer = useVirtualizer({
     count: groupBy ? 0 : found,
     getScrollElement: () => parent.current,
-    estimateSize: () => 24,
+    estimateSize: () => 28,
     overscan: 16,
   })
   const visible = virtualizer.getVirtualItems()
@@ -305,7 +305,7 @@ export function ObjectTable({
             {visible.map((item) => {
               const row = byIndex.get(item.index)
               if (!row) {
-                return <div key={item.index} className="row" style={{ position: 'absolute', transform: `translateY(${item.start}px)`, height: 24, width: '100%' }} />
+                return <div key={item.index} className="row" style={{ position: 'absolute', transform: `translateY(${item.start}px)`, height: 28, width: '100%' }} />
               }
               return (
                 <Row

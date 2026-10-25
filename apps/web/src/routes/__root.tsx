@@ -8,7 +8,10 @@ export const Route = createRootRoute({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Braian' },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    links: [
+        { rel: 'stylesheet', href: appCss },
+        { rel: 'icon', href: '/brand/braian-icon-32.png', type: 'image/png' },
+      ],
   }),
   component: () => (
     <html lang="en">
