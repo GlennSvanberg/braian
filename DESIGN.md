@@ -16,6 +16,10 @@ Braian ska kännas som ett snabbt, tätt proffsverktyg med värme, inte som en a
 
 **All UI copy is English.** This rule overrides any Swedish example in this document and in the product brief. It covers Ctrl+K groups, the last palette row (`Ask AI: …`), AI mode buttons (Cancel / Confirm), agent step texts and answers (the model is instructed to reply in English), the `Next time: <shortcut>` toast, error messages, activity log sentences, workspace templates, labels, and empty states. Catalog values and attribute labels per language (sv/en/de) stay in the data. Demo seed values are not translated to match the English chrome.
 
+## Structure and assortment
+
+A **structure** is a taxonomy. A **structure group** is a node in that tree. An **assortment** is a saved query a job may subscribe to. The navigation tree is the structure. Saved-query assortments are not nodes in the graph.
+
 ## Grund
 
 - **shadcn/ui** (Radix + Tailwind) som komponentgrund. Komponenterna kopieras in och stylas med tokens nedan; standardutseendet från shadcn ska inte synas.

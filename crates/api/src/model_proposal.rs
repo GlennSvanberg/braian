@@ -407,6 +407,11 @@ fn changes_from(
             group: required_str(args, "group")?,
             move_to: optional_str(args, "move_to"),
         }]),
+        "model.duplicate_group" => Ok(vec![ModelChange::DuplicateGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            name: required_str(args, "name")?,
+        }]),
         other => Err(bad(format!("unknown model operation {other}"))),
     }
 }

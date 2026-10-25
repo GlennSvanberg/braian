@@ -81,7 +81,13 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
     case 'model.detach_attribute':
     case 'model.update_attribute':
     case 'model.create_class':
+    case 'model.create_group':
+    case 'model.rename_group':
+    case 'model.move_group':
+    case 'model.duplicate_group':
+    case 'model.delete_group':
     case 'model.set_parent':
+    case 'assortment.save':
       return 'Preparing a data model proposal…'
     default:
       return `Running ${op}…`
