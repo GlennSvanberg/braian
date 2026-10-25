@@ -359,6 +359,26 @@ impl Store {
         Ok(updated == 1)
     }
 
+    /// Moves a previewed session to `saving`. Returns false when another save
+    /// already claimed it, or the preview is not ready.
+    pub async fn claim_import_save(
+        &self,
+        id: Uuid,
+        job_id: Uuid,
+        counters: &Value,
+    ) -> Result<bool, Error> {
+        let client = self.pool().get().await?;
+        let updated = client
+            .execute(
+                "UPDATE import_sessions
+                 SET status = 'saving', job_id = $2, counters = $3, error = NULL, updated_at = now()
+                 WHERE id = $1 AND status IN ('previewed', 'saved')",
+                &[&id, &job_id, counters],
+            )
+            .await?;
+        Ok(updated == 1)
+    }
+
     pub async fn update_import_job(
         &self,
         id: Uuid,

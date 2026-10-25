@@ -227,6 +227,20 @@ async fn decisions_mock_matches_the_documented_contract() {
         }
         ContentPart::Json { .. } => panic!("the cache breakpoint is a text part"),
     }
+    match first.input[1].content.last() {
+        Some(ContentPart::Text {
+            text,
+            prompt_cache_breakpoint,
+        }) => {
+            assert_eq!(text, "END OF FILE.");
+            assert!(prompt_cache_breakpoint.is_some());
+        }
+        _ => panic!("the file sits inside the cached prefix"),
+    }
+    assert!(matches!(
+        first.input[1].content.first(),
+        Some(ContentPart::Text { text, .. }) if text == "DATA MODEL"
+    ));
     let client = HttpDecider::new(&base, "test-key", policy());
     let left = client.decide(&first).await.unwrap();
     let right = client.decide(&second).await.unwrap();
@@ -320,30 +334,74 @@ fn http() -> reqwest::Client {
 #[ignore = "set BRAIAN_LIVE_DECISIONS=1 and OPENAI_API_KEY"]
 async fn import_decisions_live() {
     if std::env::var("BRAIAN_LIVE_DECISIONS").ok().as_deref() != Some("1") {
+        eprintln!(
+            "skipped import_decisions_live: set BRAIAN_LIVE_DECISIONS=1 and OPENAI_API_KEY to run it"
+        );
         return;
     }
-    let Some(key) = std::env::var("OPENAI_API_KEY")
+    let key = std::env::var("OPENAI_API_KEY")
         .ok()
         .filter(|value| !value.is_empty())
-    else {
-        return;
+        .unwrap_or_else(|| panic!("BRAIAN_LIVE_DECISIONS=1 but OPENAI_API_KEY is missing"));
+    let request = DecisionRequest {
+        model: DECISIONS_MODEL,
+        prompt_cache_key: "braian-import-0123456789abcdef".into(),
+        safety_identifier: "a".repeat(32),
+        prompt_cache_options: explicit_cache(),
+        input: shared_input(
+            json!({
+                "model_revision": 1,
+                "types": [{
+                    "key": "item",
+                    "label": "Item",
+                    "attributes": [
+                        {"id": "type:sku", "kind": "text", "label": "SKU"},
+                        {"id": "type:name", "kind": "text", "label": "Name"}
+                    ]
+                }]
+            }),
+            json!({
+                "file_name": "items.csv",
+                "sheet": "CSV",
+                "columns": [
+                    {"id": "col:0", "header": "sku", "samples": ["A-1"]},
+                    {"id": "col:1", "header": "name", "samples": ["Chair"]}
+                ]
+            }),
+        ),
+        questions: vec![choice_question(
+            "col:0",
+            "Which data model field should column \"sku\" be imported into?",
+            vec![
+                ChoiceOption {
+                    value: "type:sku".into(),
+                    description: Some("SKU, the key attribute".into()),
+                },
+                ChoiceOption {
+                    value: "type:name".into(),
+                    description: Some("Name".into()),
+                },
+                ChoiceOption {
+                    value: "unmapped".into(),
+                    description: Some("Do not import this column".into()),
+                },
+            ],
+        )],
     };
-    let request = sample_request(
-        json!({"types": [{"key": "item", "attributes": ["sku", "name"]}]}),
-        json!({
-            "columns": [
-                {"id": "col:0", "header": "sku", "samples": ["A-1"]},
-                {"id": "col:1", "header": "name", "samples": ["Chair"]}
-            ]
-        }),
-        "col:0",
-    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap();
     let response = post_decision(
-        &http(),
+        &client,
         "https://api.openai.com",
         &key,
         &request,
-        &DecisionPolicy::default(),
+        &DecisionPolicy {
+            timeout: Duration::from_secs(20),
+            retries: 1,
+            max_retry_after: Duration::from_secs(2),
+        },
     )
     .await
     .expect("live decisions call");
@@ -354,16 +412,16 @@ async fn import_decisions_live() {
             .as_ref()
             .is_some_and(|usage| usage.input_tokens > 0)
     );
-    for answer in &response.answers {
-        if let Answer::Choice { name, choice, .. } = answer {
-            println!(
-                "answer {} {}",
-                name.as_deref().unwrap_or(""),
-                choice.as_text().unwrap_or("")
-            );
-        }
-    }
-    if let Some(usage) = &response.usage {
-        println!("usage {}", usage.input_tokens);
-    }
+    let choice = response
+        .answers
+        .iter()
+        .find_map(|answer| match answer {
+            Answer::Choice { choice, .. } => choice.as_text().map(str::to_owned),
+            _ => None,
+        })
+        .expect("a choice for column sku");
+    assert_eq!(
+        choice, "type:sku",
+        "column sku with sample A-1 must map to the sku attribute, not {choice}"
+    );
 }

@@ -364,6 +364,55 @@ impl FileKind {
     }
 }
 
+/// Rejects an upload that has no header-plus-data before the session is accepted.
+pub fn ensure_has_rows(path: &Path, kind: FileKind) -> Result<(), ParseError> {
+    match kind {
+        FileKind::Csv => {
+            let (encoding, _, _) = sniff_encoding(path)?;
+            let text = decode_file(path, encoding)?;
+            let nonempty = text.lines().filter(|line| !line.trim().is_empty()).count();
+            if nonempty < 2 {
+                return Err(fail("This file has no rows."));
+            }
+            Ok(())
+        }
+        FileKind::Xlsx => {
+            let mut book: Xlsx<BufReader<File>> = open_workbook(path)
+                .map_err(|_| fail("We could not read this file. Is it a real Excel file?"))?;
+            let names = sheet_names(book.sheets_metadata());
+            choose_xlsx_sheet(&mut book, &names)?;
+            Ok(())
+        }
+        FileKind::Xls => {
+            let len = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+            if len == 0 {
+                return Err(fail("This file has no rows."));
+            }
+            if len > 200 * 1024 * 1024 {
+                return Err(fail("This .xls file is larger than 200 MB."));
+            }
+            let mut book = calamine::open_workbook_auto(path)
+                .map_err(|_| fail("We could not read this file. Is it a real Excel file?"))?;
+            let names = sheet_names(book.sheets_metadata());
+            choose_sheet_by_range(&mut book, &names, None)?;
+            Ok(())
+        }
+    }
+}
+
+fn sheet_names(meta: &[Sheet]) -> Vec<(usize, String, bool)> {
+    meta.iter()
+        .enumerate()
+        .map(|(index, sheet)| {
+            (
+                index,
+                sheet.name.clone(),
+                sheet.visible != SheetVisible::Visible || sheet.typ != SheetType::WorkSheet,
+            )
+        })
+        .collect()
+}
+
 pub fn parse_upload(
     path: &Path,
     kind: FileKind,
@@ -956,6 +1005,29 @@ fn format_excel_date(value: chrono::NaiveDateTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_csv_is_rejected_before_it_is_accepted() {
+        let dir = std::env::temp_dir().join(format!("braian-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let empty = dir.join("empty.csv");
+        let header = dir.join("header.csv");
+        let rows = dir.join("rows.csv");
+        std::fs::write(&empty, "").unwrap();
+        std::fs::write(&header, "sku,name\n").unwrap();
+        std::fs::write(&rows, "sku,name\nA-1,Chair\n").unwrap();
+        assert_eq!(
+            ensure_has_rows(&empty, FileKind::Csv).unwrap_err().message,
+            "This file has no rows."
+        );
+        assert_eq!(
+            ensure_has_rows(&header, FileKind::Csv).unwrap_err().message,
+            "This file has no rows."
+        );
+        assert!(ensure_has_rows(&rows, FileKind::Csv).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn normalizes_swedish_headers_and_duplicates() {
