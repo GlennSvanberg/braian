@@ -73,11 +73,12 @@ pub struct Unit {
     pub factor: Decimal,
 }
 
-/// One attribute in the global pool.
+/// One attribute in the global pool, identified by `key`.
 ///
-/// Rules live only here. A class decides that the attribute applies to an
-/// object; it does not add or override rules. A value is stored once per
-/// object even when several structures make the attribute apply.
+/// Rules live only here. A type or a structure node decides that the attribute
+/// applies; it does not add a second definition. When the same key arrives from
+/// several places the object still has the attribute once. A different type or
+/// unit for that key is rejected when the attribute is added.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
@@ -174,6 +175,24 @@ impl TextForm {
     }
 }
 
+impl AttributeKind {
+    pub fn unit_family_id(&self) -> Option<UnitFamilyId> {
+        match self {
+            Self::Number { unit_family, .. } | Self::Range { unit_family } => *unit_family,
+            _ => None,
+        }
+    }
+
+    /// Same value type and the same unit family.
+    ///
+    /// Length, required, and index flags stay on the single definition and are
+    /// not a second attribute.
+    pub fn same_type_and_unit(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && self.unit_family_id() == other.unit_family_id()
+    }
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -215,7 +234,10 @@ pub struct ObjectType {
     pub attributes: Vec<AttributeId>,
 }
 
-/// A hierarchy of groups plus the classes attached to those groups.
+/// A hierarchy of groups. Nodes are not tied to an object type.
+///
+/// `classes` remains so older revisions still load. New applicability is
+/// `Group::attributes`; the compiler also honours class lists already stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
@@ -234,12 +256,16 @@ pub struct Group {
     pub key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<GroupId>,
+    /// Attributes defined on this node. Ancestor nodes apply as well.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<AttributeId>,
 }
 
-/// A class adds its attributes to one group, and to every group below it.
+/// Legacy applicability stored on older models.
 ///
-/// That is applicability, not value inheritance: an object placed in a child
-/// group uses the ancestor class's attributes, but never its values.
+/// A class lists attributes for one group. Those attributes apply to that group
+/// and, through the group tree, to every group below it. The editor writes
+/// [`Group::attributes`] instead. Values are never copied from a parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]

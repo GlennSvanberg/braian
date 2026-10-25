@@ -28,11 +28,11 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
     name: 'Data model',
     summary: 'Structure, classes and the class card',
     views: [
-      { type: 'data_model', title: 'Structure', state: { mode: 'tree' } },
-      { type: 'data_model', title: 'Classes', state: { mode: 'classes' } },
-      { type: 'data_model', title: 'Class', state: { mode: 'card' } },
+      { type: 'data_model', title: 'Model', state: { mode: 'tree' } },
+      { type: 'data_model', title: 'Attributes', state: { mode: 'classes' } },
+      { type: 'data_model', title: 'Preview', state: { mode: 'card' } },
     ],
-    layout: (ids) => splitPair('horizontal', 0.28, tabGroup([ids[0]]), splitPair('horizontal', 0.46, tabGroup([ids[1]]), tabGroup([ids[2]]))),
+    layout: (ids) => splitPair('horizontal', 0.22, tabGroup([ids[0]]), splitPair('horizontal', 0.58, tabGroup([ids[1]]), tabGroup([ids[2]]))),
   },
   {
     id: 'review',

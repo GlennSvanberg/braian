@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::definition::{
-    Attribute, AttributeKind, Class, DefinitionSet, Group, Structure, TextForm,
+    Attribute, AttributeKind, Class, DefinitionSet, Group, ObjectType, Structure, TextForm,
 };
 use crate::id::{AttributeId, ClassId, GroupId, StructureId, UnitFamilyId};
 use crate::language::LanguageTag;
@@ -60,6 +60,53 @@ pub enum ModelChange {
         languages: bool,
         #[serde(default)]
         required: bool,
+        #[serde(default)]
+        searchable: bool,
+        /// Proposals written before index flags were sent still mark the attribute filterable.
+        #[serde(default = "default_filterable")]
+        filterable: bool,
+        #[serde(default)]
+        sortable: bool,
+    },
+    /// Link an existing attribute onto a type or a group. The definition stays one row.
+    AttachAttribute {
+        attribute: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        type_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structure: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<String>,
+    },
+    DetachAttribute {
+        attribute: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        type_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structure: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<String>,
+    },
+    UpdateAttribute {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit: Option<String>,
+        #[serde(default)]
+        clear_unit: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        languages: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        required: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        searchable: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filterable: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sortable: Option<bool>,
     },
     CreateClass {
         structure: String,
@@ -92,6 +139,10 @@ pub struct ChangeImpact {
     pub usage_fields: Vec<String>,
     /// Group ids whose objects change class applicability.
     pub groups: Vec<String>,
+}
+
+fn default_filterable() -> bool {
+    true
 }
 
 /// Applies every step. Later steps see earlier ones. Idempotent creates stay put.
@@ -181,6 +232,9 @@ pub fn power_tools(defs: &DefinitionSet) -> Vec<ModelChange> {
             multiple: false,
             languages: false,
             required: false,
+            searchable: false,
+            filterable: true,
+            sortable: false,
         },
         ModelChange::AddAttribute {
             structure: "power_tools".into(),
@@ -195,6 +249,9 @@ pub fn power_tools(defs: &DefinitionSet) -> Vec<ModelChange> {
             multiple: false,
             languages: false,
             required: true,
+            searchable: false,
+            filterable: true,
+            sortable: false,
         },
         ModelChange::AddAttribute {
             structure: "power_tools".into(),
@@ -240,6 +297,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                 if previous.required != attribute.required
                     || previous.multiple != attribute.multiple
                     || previous.language_dependent != attribute.language_dependent
+                    || previous.index != attribute.index
                     || kind_label(&previous.kind) != kind_label(&attribute.kind)
                 {
                     lines.push(format!("Update attribute {}", attribute.key));
@@ -266,6 +324,21 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     Some(parent) => lines.push(format!("Add group {} under {parent}", group.key)),
                     None => lines.push(format!("Add group {}", group.key)),
                 }
+            }
+            let old_ids = old_groups
+                .and_then(|groups| groups.iter().find(|item| item.key == group.key))
+                .map(|item| item.attributes.as_slice())
+                .unwrap_or(&[]);
+            let old_keys = attribute_keys(before, old_ids);
+            let new_keys = attribute_keys(after, &group.attributes);
+            for key in new_keys.difference(&old_keys) {
+                lines.push(format!("Add attribute {key} to group {}", group.key));
+                fields.insert(key.clone());
+            }
+            for key in old_keys.difference(&new_keys) {
+                lines.push(format!("Remove attribute {key} from group {}", group.key));
+                fields.insert(key.clone());
+                usage_fields.insert(key.clone());
             }
         }
         let old_classes = previous.map(|item| &item.classes);
@@ -332,6 +405,26 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             }
         }
     }
+    for object_type in &after.types {
+        let old = before.types.iter().find(|item| item.key == object_type.key);
+        let old_keys = attribute_keys(
+            before,
+            old.map(|item| item.attributes.as_slice()).unwrap_or(&[]),
+        );
+        let new_keys = attribute_keys(after, &object_type.attributes);
+        for key in new_keys.difference(&old_keys) {
+            lines.push(format!("Add attribute {key} to type {}", object_type.key));
+            fields.insert(key.clone());
+        }
+        for key in old_keys.difference(&new_keys) {
+            lines.push(format!(
+                "Remove attribute {key} from type {}",
+                object_type.key
+            ));
+            fields.insert(key.clone());
+            usage_fields.insert(key.clone());
+        }
+    }
     ChangeImpact {
         lines,
         fields: fields.into_iter().collect(),
@@ -357,6 +450,7 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
                     id: GroupId::from_uuid(stable_uuid(&format!("group:{key}:root"))),
                     key: "root".into(),
                     parent: None,
+                    attributes: vec![],
                 }],
                 classes: vec![],
             });
@@ -379,6 +473,7 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
                 id: GroupId::from_uuid(stable_uuid(&format!("group:{}:{group}", structure.key))),
                 key: group.clone(),
                 parent: parent_id,
+                attributes: vec![],
             });
             Ok(())
         }
@@ -427,15 +522,23 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             multiple,
             languages,
             required,
+            searchable,
+            filterable,
+            sortable,
         } => {
-            if defs.attributes.iter().any(|item| item.key == *key) {
-                return Ok(());
-            }
             let unit_family = match unit {
                 Some(unit) => Some(family_for_unit(defs, unit)?),
                 None => None,
             };
-            let kind = attribute_kind(kind, unit_family)?;
+            let wanted = attribute_kind(kind, unit_family)?;
+            if let Some(existing) = defs.attributes.iter().find(|item| item.key == *key) {
+                if !wanted.same_type_and_unit(&existing.kind) {
+                    return Err(format!(
+                        "attribute {key} already exists with a different type or unit"
+                    ));
+                }
+                return Ok(());
+            }
             defs.attributes.push(Attribute {
                 id: AttributeId::from_uuid(stable_uuid(&format!("attribute:{key}"))),
                 key: key.clone(),
@@ -443,11 +546,11 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
                 language_dependent: *languages,
                 multiple: *multiple,
                 required: *required,
-                kind,
+                kind: wanted,
                 index: crate::definition::IndexFlags {
-                    searchable: false,
-                    filterable: true,
-                    sortable: false,
+                    searchable: *searchable,
+                    filterable: *filterable,
+                    sortable: *sortable,
                 },
             });
             Ok(())
@@ -526,6 +629,44 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             class.attributes = ids;
             Ok(())
         }
+        ModelChange::AttachAttribute {
+            attribute,
+            type_key,
+            structure,
+            group,
+        } => link_attribute(defs, attribute, type_key, structure, group, true),
+        ModelChange::DetachAttribute {
+            attribute,
+            type_key,
+            structure,
+            group,
+        } => link_attribute(defs, attribute, type_key, structure, group, false),
+        ModelChange::UpdateAttribute {
+            key,
+            label,
+            kind,
+            unit,
+            clear_unit,
+            languages,
+            required,
+            searchable,
+            filterable,
+            sortable,
+        } => update_attribute(
+            defs,
+            AttributeUpdate {
+                key,
+                label,
+                kind,
+                unit,
+                clear_unit: *clear_unit,
+                languages: *languages,
+                required: *required,
+                searchable: *searchable,
+                filterable: *filterable,
+                sortable: *sortable,
+            },
+        ),
     }
 }
 
@@ -545,6 +686,9 @@ fn add_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelCh
             multiple: false,
             languages: false,
             required: false,
+            searchable: false,
+            filterable: true,
+            sortable: false,
         });
     }
     let (structure, class_key) = if let Some(found) = find_class(defs, class_name) {
@@ -649,11 +793,27 @@ fn eq_key(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 
+fn type_mut<'a>(defs: &'a mut DefinitionSet, key: &str) -> Result<&'a mut ObjectType, String> {
+    defs.types
+        .iter_mut()
+        .find(|item| eq_key(&item.key, key))
+        .ok_or_else(|| format!("unknown type {key}"))
+}
+
 fn structure_mut<'a>(defs: &'a mut DefinitionSet, key: &str) -> Result<&'a mut Structure, String> {
     defs.structures
         .iter_mut()
         .find(|item| eq_key(&item.key, key))
         .ok_or_else(|| format!("unknown structure {key}"))
+}
+
+fn group_mut<'a>(structure: &'a mut Structure, key: &str) -> Result<&'a mut Group, String> {
+    let structure_key = structure.key.clone();
+    structure
+        .groups
+        .iter_mut()
+        .find(|group| eq_key(&group.key, key))
+        .ok_or_else(|| format!("unknown group {key} in {structure_key}"))
 }
 
 fn group_id(structure: &Structure, key: &str) -> Result<GroupId, String> {
@@ -706,6 +866,146 @@ fn family_for_unit(defs: &DefinitionSet, unit: &str) -> Result<UnitFamilyId, Str
         .ok_or_else(|| format!("unknown unit {unit}"))
 }
 
+fn kind_token(kind: &AttributeKind) -> &'static str {
+    match kind {
+        AttributeKind::Text { .. } => "text",
+        AttributeKind::Number { .. } => "number",
+        AttributeKind::Range { .. } => "range",
+        AttributeKind::ValueList { .. } => "value_list",
+        AttributeKind::Boolean => "boolean",
+        AttributeKind::Date => "date",
+        AttributeKind::ObjectRef { .. } => "object",
+        AttributeKind::FileRef { .. } => "file",
+    }
+}
+
+fn link_attribute(
+    defs: &mut DefinitionSet,
+    attribute: &str,
+    type_key: &Option<String>,
+    structure_key: &Option<String>,
+    group_key: &Option<String>,
+    attach: bool,
+) -> Result<(), String> {
+    let attribute_id = attribute_id(defs, attribute)?;
+    if type_key.is_none() && (structure_key.is_none() || group_key.is_none()) {
+        return Err("name a type, or a structure and a group".into());
+    }
+    if let Some(type_key) = type_key {
+        let object_type = type_mut(defs, type_key)?;
+        if !attach && object_type.key_attribute == attribute_id {
+            return Err(format!(
+                "attribute {attribute} is the key of type {}",
+                object_type.key
+            ));
+        }
+        if attach {
+            if !object_type.attributes.contains(&attribute_id) {
+                object_type.attributes.push(attribute_id);
+            }
+        } else {
+            object_type.attributes.retain(|id| *id != attribute_id);
+        }
+    }
+    if let (Some(structure_key), Some(group_key)) = (structure_key, group_key) {
+        let structure = structure_mut(defs, structure_key)?;
+        let group = group_mut(structure, group_key)?;
+        if attach {
+            if !group.attributes.contains(&attribute_id) {
+                group.attributes.push(attribute_id);
+            }
+        } else {
+            group.attributes.retain(|id| *id != attribute_id);
+        }
+    }
+    Ok(())
+}
+
+struct AttributeUpdate<'a> {
+    key: &'a str,
+    label: &'a Option<String>,
+    kind: &'a Option<String>,
+    unit: &'a Option<String>,
+    clear_unit: bool,
+    languages: Option<bool>,
+    required: Option<bool>,
+    searchable: Option<bool>,
+    filterable: Option<bool>,
+    sortable: Option<bool>,
+}
+
+fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Result<(), String> {
+    let AttributeUpdate {
+        key,
+        label,
+        kind,
+        unit,
+        clear_unit,
+        languages,
+        required,
+        searchable,
+        filterable,
+        sortable,
+    } = patch;
+    let (kind_now, family_now) = {
+        let current = defs
+            .attributes
+            .iter()
+            .find(|item| eq_key(&item.key, key))
+            .ok_or_else(|| format!("unknown attribute {key}"))?;
+        (
+            kind_token(&current.kind).to_owned(),
+            current.kind.unit_family_id(),
+        )
+    };
+    let next_kind = if kind.is_some() || unit.is_some() || clear_unit {
+        let kind_name = kind.clone().unwrap_or(kind_now);
+        let unit_family = if clear_unit {
+            None
+        } else if let Some(unit) = unit {
+            Some(family_for_unit(defs, unit)?)
+        } else {
+            family_now
+        };
+        Some(attribute_kind(&kind_name, unit_family)?)
+    } else {
+        None
+    };
+    let label_tag = defs
+        .languages
+        .iter()
+        .find(|tag| tag.as_str() == "en")
+        .cloned()
+        .or_else(|| defs.languages.first().cloned());
+    let attribute = defs
+        .attributes
+        .iter_mut()
+        .find(|item| eq_key(&item.key, key))
+        .ok_or_else(|| format!("unknown attribute {key}"))?;
+    if let (Some(label), Some(tag)) = (label, label_tag) {
+        attribute.labels.insert(tag, label.clone());
+    }
+    if let Some(kind) = next_kind {
+        attribute.kind = kind;
+    }
+    if let Some(value) = languages {
+        attribute.language_dependent = value;
+    }
+    if let Some(value) = required {
+        attribute.required = value;
+    }
+    if let Some(value) = searchable {
+        attribute.index.searchable = value;
+    }
+    if let Some(value) = filterable {
+        attribute.index.filterable = value;
+    }
+    if let Some(value) = sortable {
+        attribute.index.sortable = value;
+    }
+    Ok(())
+}
+
 fn attribute_kind(kind: &str, unit_family: Option<UnitFamilyId>) -> Result<AttributeKind, String> {
     match kind.to_lowercase().as_str() {
         "text" => Ok(AttributeKind::Text {
@@ -724,6 +1024,9 @@ fn attribute_kind(kind: &str, unit_family: Option<UnitFamilyId>) -> Result<Attri
             options: vec![],
             list: None,
         }),
+        "range" => Ok(AttributeKind::Range { unit_family }),
+        "file" | "file_ref" => Ok(AttributeKind::FileRef { media: false }),
+        "object" | "object_ref" => Ok(AttributeKind::ObjectRef { type_key: None }),
         other => Err(format!("unknown attribute type {other}")),
     }
 }
@@ -868,11 +1171,13 @@ mod tests {
                         id: tents,
                         key: "talt".into(),
                         parent: None,
+                        attributes: vec![],
                     },
                     Group {
                         id: timber,
                         key: "bygg".into(),
                         parent: None,
+                        attributes: vec![],
                     },
                 ],
                 classes: vec![Class {
@@ -949,5 +1254,73 @@ mod tests {
             vec!["Remove attribute weight from sovsack".to_owned()]
         );
         assert_eq!(impact.usage_fields, vec!["weight".to_owned()]);
+    }
+
+    fn create(key: &str, kind: &str, unit: Option<&str>) -> ModelChange {
+        ModelChange::CreateAttribute {
+            key: key.into(),
+            label: key.into(),
+            kind: kind.into(),
+            unit: unit.map(str::to_owned),
+            multiple: false,
+            languages: false,
+            required: false,
+            searchable: false,
+            filterable: false,
+            sortable: false,
+        }
+    }
+
+    #[test]
+    fn a_second_definition_with_a_different_type_or_unit_is_blocked() {
+        let defs = base();
+        let text = apply_all(&mut defs.clone(), &[create("weight", "text", None)]);
+        assert!(text.unwrap_err().contains("different type or unit"));
+        let bare = apply_all(&mut defs.clone(), &[create("weight", "number", None)]);
+        assert!(
+            bare.unwrap_err().contains("different type or unit"),
+            "weight is already a number of family mass"
+        );
+        let mut same = defs.clone();
+        apply_all(&mut same, &[create("weight", "number", Some("kg"))]).expect("same definition");
+        assert_eq!(
+            same.attributes
+                .iter()
+                .filter(|item| item.key == "weight")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn linking_an_existing_key_does_not_create_a_second_attribute() {
+        let mut defs = base();
+        apply_all(
+            &mut defs,
+            &[
+                ModelChange::AttachAttribute {
+                    attribute: "status".into(),
+                    type_key: Some("item".into()),
+                    structure: None,
+                    group: None,
+                },
+                ModelChange::AttachAttribute {
+                    attribute: "status".into(),
+                    type_key: None,
+                    structure: Some("sortiment".into()),
+                    group: Some("talt".into()),
+                },
+            ],
+        )
+        .expect("link");
+        assert_eq!(
+            defs.attributes
+                .iter()
+                .filter(|item| item.key == "status")
+                .count(),
+            1
+        );
+        assert_eq!(defs.types[0].attributes.len(), 2);
+        assert_eq!(defs.structures[0].groups[0].attributes.len(), 1);
     }
 }

@@ -114,8 +114,8 @@ test('polish screenshots', async ({ page }) => {
   await page.getByRole('button', { name: 'Light' }).click()
   await page.screenshot({ path: `${shots}/data-model-light.png` })
   await page.getByRole('button', { name: 'Dark' }).click()
-  await page.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true }).click()
-  await expect(page.getByTestId('class-editor')).toBeVisible()
+  await page.getByTestId('group-sovsack').getByRole('button').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/class-card-dark.png` })
 
   await page.getByRole('button', { name: 'Set up the system' }).click()
