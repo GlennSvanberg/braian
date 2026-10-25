@@ -24,35 +24,13 @@ test('final data-model and polish shots', async ({ page }) => {
   await expect(tree.getByTestId('group-sovsack')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
-  await tree.getByRole('button', { name: 'sovsack', exact: true }).click()
-  await expect(page.getByTestId('class-editor')).toContainText('Inherited')
+  await tree.getByTestId('group-sovsack').getByRole('button').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('Weight')
+  await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/class-card.png` })
-
-  const klass = tree.getByRole('button', { name: 'sovsack', exact: true })
-  const box = await klass.boundingBox()
-  if (!box) throw new Error('missing class button')
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(box.x + 140, box.y + 30, { steps: 12 })
-  await page.screenshot({ path: `${shots}/drag-in-progress.png` })
-  await page.mouse.up()
-  const dropped = page.getByTestId('consequence')
-  await page.waitForTimeout(500)
-  if (await dropped.isVisible()) {
-    await dropped.getByRole('button', { name: 'Cancel' }).click()
-    await expect(dropped).toHaveCount(0)
-  }
-
-  await tree.getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-bygg'))
-  await expect(page.getByTestId('consequence')).toBeVisible()
-  await expect(page.getByTestId('model-diff')).toContainText('Move class sovsack')
-  await page.screenshot({ path: `${shots}/consequence-model-diff.png` })
-  await page.getByTestId('confirm-model').click()
-  await expect(tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
-  await page.screenshot({ path: `${shots}/class-moved.png` })
-  await tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-sovsack'))
-  await page.getByTestId('confirm-model').click()
-  await expect(tree.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
+  await tree.getByTestId('group-talt').getByRole('button').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('Length')
+  await expect(page.getByTestId('model-preview')).toContainText('from')
 
   const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
     headers: { authorization: 'Bearer dev-agent' },

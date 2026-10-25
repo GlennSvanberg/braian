@@ -380,6 +380,24 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.attach_attribute",
+            title: "Add attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.detach_attribute",
+            title: "Remove attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.update_attribute",
+            title: "Update attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
             name: "model.create_class",
             title: "Create class",
             permission: Role::Editor,

@@ -99,30 +99,14 @@ test('dragging a pane tab docks it and can be restored', async ({ page }) => {
   }
 })
 
-test('drag a class onto another group and show impact', async ({ page }) => {
+test('a group shows attributes inherited from its ancestors', async ({ page }) => {
   test.setTimeout(60_000)
   await login(page)
-  const defs = await page.request.get('/v1/definitions')
-  const original = ((await defs.json()) as { structures: Array<{ key: string }> }).structures.find((item) => item.key === 'sortiment')
-  try {
-    await page.getByRole('button', { name: 'Data model' }).click()
-    const tree = page.getByTestId('data-model').first()
-    await expect(tree.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
-    await tree.getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-bygg'))
-    const consequence = page.getByTestId('consequence')
-    await expect(consequence).toBeVisible()
-    await expect(page.getByTestId('model-diff')).toContainText('sovsack')
-    await expect(page.getByTestId('impact-result')).toContainText('Affected objects')
-    await page.getByTestId('confirm-model').click()
-    await expect(consequence).toHaveCount(0)
-    await expect(tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
-    await tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-sovsack'))
-    await expect(page.getByTestId('consequence')).toBeVisible()
-    await page.getByTestId('confirm-model').click()
-    await expect(tree.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
-  } finally {
-    if (original) {
-      await page.request.put('/v1/structures/sortiment', { data: original })
-    }
-  }
+  await page.getByRole('button', { name: 'Data model' }).click()
+  const tree = page.getByTestId('data-model').first()
+  await tree.getByTestId('group-sovsack').getByRole('button').click()
+  const table = page.getByTestId('attribute-table')
+  await expect(table).toContainText('Weight')
+  await expect(table).toContainText('from Outdoor')
+  await expect(table.getByTestId('attr-add')).toBeVisible()
 })

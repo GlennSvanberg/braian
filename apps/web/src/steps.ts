@@ -71,6 +71,9 @@ export function stepText(op: string, args: Json = {}): string {
     case 'model.remove_attribute':
     case 'model.reorder_attributes':
     case 'model.create_attribute':
+    case 'model.attach_attribute':
+    case 'model.detach_attribute':
+    case 'model.update_attribute':
     case 'model.create_class':
     case 'model.set_parent':
       return 'Preparing a data model proposal…'

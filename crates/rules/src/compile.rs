@@ -17,6 +17,20 @@ pub struct DefinitionError {
     pub message: String,
 }
 
+/// One attribute that applies to an object, and every place it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveAttribute {
+    pub id: AttributeId,
+    pub sources: Vec<AttributeSource>,
+}
+
+/// A type or a structure node that contributes an attribute.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttributeSource {
+    Type { key: String },
+    Group { structure: String, group: String },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TypeInfo {
     pub(crate) key_attribute: AttributeId,
@@ -127,6 +141,100 @@ impl CompiledModel {
         Some(ids)
     }
 
+    /// Attributes an object of `type_id` gets from its type and from every
+    /// group it belongs to, including ancestor groups.
+    ///
+    /// The same attribute id is returned once. `sources` names each place that
+    /// contributed it: the type, and each group that defines it.
+    pub fn effective_attributes(
+        &self,
+        type_id: TypeId,
+        membership: &std::collections::BTreeMap<StructureId, GroupId>,
+    ) -> Option<Vec<EffectiveAttribute>> {
+        let object_type = self.defs.types.iter().find(|item| item.id == type_id)?;
+        let mut order = Vec::new();
+        let mut sources: HashMap<AttributeId, Vec<AttributeSource>> = HashMap::new();
+        let mut push = |id: AttributeId, source: AttributeSource| {
+            let entry = sources.entry(id).or_insert_with(|| {
+                order.push(id);
+                Vec::new()
+            });
+            if !entry.contains(&source) {
+                entry.push(source);
+            }
+        };
+        for id in &object_type.attributes {
+            push(
+                *id,
+                AttributeSource::Type {
+                    key: object_type.key.clone(),
+                },
+            );
+        }
+        for (structure_id, group_id) in membership {
+            let structure = self
+                .defs
+                .structures
+                .iter()
+                .find(|item| item.id == *structure_id)?;
+            let mut parent_of = HashMap::new();
+            let mut key_of = HashMap::new();
+            for group in &structure.groups {
+                parent_of.insert(group.id, group.parent);
+                key_of.insert(group.id, group.key.clone());
+            }
+            if !key_of.contains_key(group_id) {
+                return None;
+            }
+            let mut defined: HashMap<GroupId, Vec<AttributeId>> = HashMap::new();
+            for group in &structure.groups {
+                defined
+                    .entry(group.id)
+                    .or_default()
+                    .extend(group.attributes.iter().copied());
+            }
+            for class in &structure.classes {
+                defined
+                    .entry(class.group)
+                    .or_default()
+                    .extend(class.attributes.iter().copied());
+            }
+            let mut chain = Vec::new();
+            let mut current = Some(*group_id);
+            let mut seen = HashSet::new();
+            while let Some(id) = current {
+                if !seen.insert(id) {
+                    break;
+                }
+                chain.push(id);
+                current = parent_of.get(&id).copied().flatten();
+            }
+            chain.reverse();
+            for id in chain {
+                let Some(group_key) = key_of.get(&id) else {
+                    continue;
+                };
+                let source = AttributeSource::Group {
+                    structure: structure.key.clone(),
+                    group: group_key.clone(),
+                };
+                for attribute_id in defined.get(&id).into_iter().flatten() {
+                    push(*attribute_id, source.clone());
+                }
+            }
+        }
+        Some(
+            order
+                .into_iter()
+                .filter_map(|id| {
+                    sources
+                        .remove(&id)
+                        .map(|sources| EffectiveAttribute { id, sources })
+                })
+                .collect(),
+        )
+    }
+
     pub(crate) fn is_known_language(&self, tag: &braian_model::LanguageTag) -> bool {
         self.languages.contains(tag)
     }
@@ -182,7 +290,10 @@ fn index(defs: &DefinitionSet) -> CompiledModel {
             parent.insert(group.id, group.parent);
             group_structure.insert(group.id, structure.id);
             group_keys.insert((structure.key.clone(), group.key.clone()), group.id);
-            direct.entry(group.id).or_default();
+            direct
+                .entry(group.id)
+                .or_default()
+                .extend(group.attributes.iter().copied());
         }
         let mut class_attrs = HashMap::new();
         let mut class_parent = HashMap::new();
@@ -505,6 +616,17 @@ fn check(defs: &DefinitionSet, errors: &mut Vec<DefinitionError>) {
                 structure.key
             )));
         }
+        for group in &structure.groups {
+            unique_refs(&group.attributes, &group.key, "group", errors);
+            for attribute_id in &group.attributes {
+                if !attribute_ids.contains(attribute_id) {
+                    errors.push(error(format!(
+                        "group {} references unknown attribute {attribute_id}",
+                        group.key
+                    )));
+                }
+            }
+        }
         let mut class_keys = HashSet::new();
         for class in &structure.classes {
             remember(class.id.as_uuid(), "class", errors);
@@ -661,7 +783,7 @@ mod tests {
     use rust_decimal::Decimal;
     use serde_json::json;
 
-    use super::CompiledModel;
+    use super::{AttributeSource, CompiledModel};
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -818,11 +940,13 @@ mod tests {
                     id: root,
                     key: "root".to_owned(),
                     parent: Some(child),
+                    attributes: vec![],
                 },
                 Group {
                     id: child,
                     key: "child".to_owned(),
                     parent: Some(root),
+                    attributes: vec![],
                 },
             ],
             classes: vec![],
@@ -981,11 +1105,13 @@ mod tests {
                     id: root,
                     key: "root".to_owned(),
                     parent: None,
+                    attributes: vec![],
                 },
                 Group {
                     id: child,
                     key: "child".to_owned(),
                     parent: Some(root),
+                    attributes: vec![],
                 },
             ],
             classes: vec![
@@ -1142,16 +1268,19 @@ mod tests {
                     id: root,
                     key: "root".into(),
                     parent: None,
+                    attributes: vec![],
                 },
                 Group {
                     id: child,
                     key: "child".into(),
                     parent: Some(root),
+                    attributes: vec![],
                 },
                 Group {
                     id: other,
                     key: "other".into(),
                     parent: None,
+                    attributes: vec![],
                 },
             ],
             classes: vec![
@@ -1194,6 +1323,184 @@ mod tests {
         assert_eq!(
             model.validate(&color_on_root)[0].code,
             ErrorCode::AttributeNotApplicable
+        );
+    }
+
+    #[test]
+    fn effective_attributes_follow_the_type_every_structure_and_its_ancestors() {
+        let name = text_attribute(1, "name");
+        let weight = text_attribute(2, "weight");
+        let length = text_attribute(3, "length");
+        let campaign_only = text_attribute(4, "badge");
+        let product = TypeId::from_uuid(id(10));
+        let assortment = StructureId::from_uuid(id(20));
+        let outdoor = GroupId::from_uuid(id(21));
+        let tents = GroupId::from_uuid(id(22));
+        let campaigns = StructureId::from_uuid(id(30));
+        let summer = GroupId::from_uuid(id(31));
+        let defs = DefinitionSet {
+            model_revision: 1,
+            languages: vec![tag("en")],
+            unit_families: vec![],
+            value_lists: vec![],
+            attributes: vec![
+                name.clone(),
+                weight.clone(),
+                length.clone(),
+                campaign_only.clone(),
+            ],
+            types: vec![ObjectType {
+                id: product,
+                key: "product".into(),
+                labels: BTreeMap::new(),
+                key_attribute: name.id,
+                attributes: vec![name.id, weight.id],
+            }],
+            structures: vec![
+                Structure {
+                    id: assortment,
+                    key: "assortment".into(),
+                    groups: vec![
+                        Group {
+                            id: outdoor,
+                            key: "outdoor".into(),
+                            parent: None,
+                            attributes: vec![weight.id],
+                        },
+                        Group {
+                            id: tents,
+                            key: "tents".into(),
+                            parent: Some(outdoor),
+                            attributes: vec![length.id],
+                        },
+                    ],
+                    classes: vec![],
+                },
+                Structure {
+                    id: campaigns,
+                    key: "campaigns".into(),
+                    groups: vec![Group {
+                        id: summer,
+                        key: "summer".into(),
+                        parent: None,
+                        attributes: vec![weight.id, campaign_only.id],
+                    }],
+                    classes: vec![],
+                },
+            ],
+        };
+        let model = CompiledModel::compile(&defs).unwrap();
+        let effective = model
+            .effective_attributes(
+                product,
+                &BTreeMap::from([(assortment, tents), (campaigns, summer)]),
+            )
+            .expect("known type and groups");
+        let by_id = |needle: AttributeId| {
+            effective
+                .iter()
+                .find(|item| item.id == needle)
+                .unwrap_or_else(|| panic!("missing {needle}"))
+        };
+        assert_eq!(effective.len(), 4, "type + both structures, deduped");
+        assert_eq!(
+            by_id(weight.id).sources,
+            vec![
+                AttributeSource::Type {
+                    key: "product".into()
+                },
+                AttributeSource::Group {
+                    structure: "assortment".into(),
+                    group: "outdoor".into(),
+                },
+                AttributeSource::Group {
+                    structure: "campaigns".into(),
+                    group: "summer".into(),
+                },
+            ]
+        );
+        assert_eq!(
+            by_id(length.id).sources,
+            vec![AttributeSource::Group {
+                structure: "assortment".into(),
+                group: "tents".into(),
+            }]
+        );
+        assert!(!by_id(length.id).sources.iter().any(
+            |source| matches!(source, AttributeSource::Group { group, .. } if group == "outdoor")
+        ));
+        let ids = model
+            .applicable_ids(
+                product,
+                &BTreeMap::from([(assortment, tents), (campaigns, summer)]),
+            )
+            .expect("applicable");
+        let mut from_effective: Vec<_> = effective.iter().map(|item| item.id).collect();
+        from_effective.sort();
+        assert_eq!(ids, from_effective);
+    }
+
+    #[test]
+    fn a_class_attribute_still_applies_to_groups_below_its_node() {
+        let name = text_attribute(1, "name");
+        let weight = text_attribute(2, "weight");
+        let product = TypeId::from_uuid(id(10));
+        let assortment = StructureId::from_uuid(id(20));
+        let outdoor = GroupId::from_uuid(id(21));
+        let tents = GroupId::from_uuid(id(22));
+        let defs = DefinitionSet {
+            model_revision: 1,
+            languages: vec![tag("en")],
+            unit_families: vec![],
+            value_lists: vec![],
+            attributes: vec![name.clone(), weight.clone()],
+            types: vec![ObjectType {
+                id: product,
+                key: "product".into(),
+                labels: BTreeMap::new(),
+                key_attribute: name.id,
+                attributes: vec![name.id],
+            }],
+            structures: vec![Structure {
+                id: assortment,
+                key: "assortment".into(),
+                groups: vec![
+                    Group {
+                        id: outdoor,
+                        key: "outdoor".into(),
+                        parent: None,
+                        attributes: vec![],
+                    },
+                    Group {
+                        id: tents,
+                        key: "tents".into(),
+                        parent: Some(outdoor),
+                        attributes: vec![],
+                    },
+                ],
+                classes: vec![Class {
+                    id: ClassId::from_uuid(id(40)),
+                    key: "outdoor".into(),
+                    group: outdoor,
+                    parent: None,
+                    attributes: vec![weight.id],
+                }],
+            }],
+        };
+        let model = CompiledModel::compile(&defs).unwrap();
+        let effective = model
+            .effective_attributes(product, &BTreeMap::from([(assortment, tents)]))
+            .expect("effective");
+        let weight_row = effective
+            .iter()
+            .find(|item| item.id == weight.id)
+            .expect("weight");
+        assert_eq!(
+            weight_row.sources,
+            vec![AttributeSource::Group {
+                structure: "assortment".into(),
+                group: "outdoor".into(),
+            }]
         );
     }
 

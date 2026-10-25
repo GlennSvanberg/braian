@@ -46,8 +46,9 @@ async function tour(page: Page, theme: 'dark' | 'light') {
 
   await page.getByRole('button', { name: 'Data model' }).click()
   const tree = page.getByTestId('data-model').first()
-  await tree.getByRole('button', { name: 'talt', exact: true }).click()
-  await expect(page.getByTestId('class-editor')).toContainText('Weight')
+  await tree.getByTestId('group-talt').getByRole('button').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('Weight')
+  await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/data-model-${theme}.png` })
 
   await page.getByRole('button', { name: 'Set up the system' }).click()
