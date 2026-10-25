@@ -7,9 +7,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+mimalloc.workspace = true
 braian-api.workspace = true
 braian-model.workspace = true
 braian-rules.workspace = true
+braian-search.workspace = true
 braian-store.workspace = true
 braian-synth = { path = "../synth" }
 

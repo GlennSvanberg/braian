@@ -166,6 +166,12 @@ impl Store {
         let defs = self.defs().await?;
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
+        // A chunk belongs to an open batch that the caller can resume, so it
+        // does not need to wait for its own WAL flush. Order and atomicity are
+        // unchanged; a crash can only lose chunks that were never acknowledged
+        // as durable, never half a chunk.
+        tx.batch_execute("SET LOCAL synchronous_commit = off")
+            .await?;
         copy_creates(&tx, self.form(), &defs, batch, actor, objects).await?;
         tx.commit().await?;
         Ok(())
@@ -912,8 +918,8 @@ async fn copy_creates(
     ));
     for object in objects {
         let id = object.id.as_uuid();
-        for (part, document) in defs.split.split(form, &object.values) {
-            let value = Value::Object(document);
+        for (part, document) in defs.split.split_ref(form, &object.values) {
+            let value = tokio_postgres::types::Json(&document);
             writer
                 .as_mut()
                 .write(&[&id as &(dyn ToSql + Sync), &part, &value])
@@ -970,8 +976,10 @@ async fn copy_creates(
     ));
     for object in objects {
         let object_id = object.id.as_uuid();
-        let mut diff = diff_created(&object.values);
-        attach_created_groups(&mut diff, &object.groups);
+        let diff = tokio_postgres::types::Json(split::CreatedDiff {
+            values: &object.values,
+            groups: &object.groups,
+        });
         writer
             .as_mut()
             .write(&[

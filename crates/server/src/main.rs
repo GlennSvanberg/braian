@@ -1,3 +1,6 @@
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::net::SocketAddr;
 
 use braian_api::AppState;
@@ -189,6 +192,11 @@ async fn run_relay(store: Store) -> anyhow::Result<()> {
             slot: std::env::var("BRAIAN_RELAY_SLOT").unwrap_or_else(|_| "braian_relay".into()),
             listen,
             lag_limit_bytes,
+            heartbeat_interval: std::env::var("BRAIAN_RELAY_HEARTBEAT_MS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .map(std::time::Duration::from_millis)
+                .unwrap_or(braian_relay::HEARTBEAT_INTERVAL),
         },
         store,
     )
