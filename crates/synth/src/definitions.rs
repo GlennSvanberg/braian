@@ -31,7 +31,25 @@ impl ExportFormat {
     }
 }
 
+/// Caps on how many attributes carry each index flag.
+///
+/// `None` keeps the tier's built-in pattern (every other text or list attribute
+/// searchable, every third filterable, odd ordered ones sortable). A cap keeps the
+/// first `n` attributes, in key order, that the pattern would flag. Object bytes do
+/// not depend on the budget.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IndexBudget {
+    pub searchable: Option<usize>,
+    pub filterable: Option<usize>,
+    pub sortable: Option<usize>,
+}
+
 pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
+    definitions_with(tier, seed, IndexBudget::default())
+}
+
+/// [`definitions`] with the index flags capped by `budget`.
+pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> DefinitionSet {
     let mut ids = Ids::new(seed);
     let languages: Vec<LanguageTag> = LANGUAGE_TAGS
         .iter()
@@ -66,6 +84,11 @@ pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
     let mut attributes = Vec::with_capacity(count + 1);
     let mut buckets: [Vec<AttributeId>; 5] =
         [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut used = IndexBudget {
+        searchable: Some(0),
+        filterable: Some(0),
+        sortable: Some(0),
+    };
     for index in 0..count {
         let id = AttributeId::from_uuid(ids.next());
         let language_dependent = (1..=localized_until).contains(&index);
@@ -83,7 +106,7 @@ pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
             language_dependent,
             multiple,
             required: false,
-            index: flags(index, &kind, multiple),
+            index: capped(flags(index, &kind, multiple), budget, &mut used),
             kind,
         });
         buckets[index % 5].push(id);
@@ -241,6 +264,22 @@ fn flags(index: usize, kind: &AttributeKind, multiple: bool) -> IndexFlags {
         searchable: text_or_list && index.is_multiple_of(2),
         filterable: index.is_multiple_of(3),
         sortable: ordered && !multiple && index % 2 == 1,
+    }
+}
+
+fn capped(wanted: IndexFlags, budget: IndexBudget, used: &mut IndexBudget) -> IndexFlags {
+    fn take(want: bool, cap: Option<usize>, used: &mut Option<usize>) -> bool {
+        let count = used.get_or_insert(0);
+        if !want || cap.is_some_and(|cap| *count >= cap) {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+    IndexFlags {
+        searchable: take(wanted.searchable, budget.searchable, &mut used.searchable),
+        filterable: take(wanted.filterable, budget.filterable, &mut used.filterable),
+        sortable: take(wanted.sortable, budget.sortable, &mut used.sortable),
     }
 }
 

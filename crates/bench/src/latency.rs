@@ -43,7 +43,7 @@ pub async fn run(database_url: &str, samples: usize, seed: u64) -> anyhow::Resul
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    let mut http = HttpClient::connect(port).await?;
+    let mut http = HttpClient::connect(port, TOKEN).await?;
 
     let warmup = objects_iter(&defs, Tier::Heavy, seed, 0..3);
     for object in warmup {
@@ -192,7 +192,7 @@ fn create_body(object: &Object) -> Vec<u8> {
     serde_json::to_vec(&body).expect("create body")
 }
 
-fn patch_body(patch: &ValuePatch) -> Vec<u8> {
+pub(crate) fn patch_body(patch: &ValuePatch) -> Vec<u8> {
     let mut values = Map::new();
     for (id, attribute) in &patch.attributes {
         let wire = match attribute {
@@ -225,24 +225,28 @@ fn print_row(name: &str, samples: &[Duration]) {
     );
 }
 
-fn percentile(sorted: &[f64], p: f64) -> f64 {
+pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
     let index = (p * (sorted.len() - 1) as f64).ceil() as usize;
     sorted[index.min(sorted.len() - 1)]
 }
 
-struct HttpClient {
+/// Minimal keep-alive HTTP/1.1 client, so the measurement has no client crate in it.
+pub(crate) struct HttpClient {
     stream: BufReader<TcpStream>,
+    token: String,
 }
 
 impl HttpClient {
-    async fn connect(port: u16) -> anyhow::Result<Self> {
+    pub(crate) async fn connect(port: u16, token: &str) -> anyhow::Result<Self> {
         let stream = TcpStream::connect(("127.0.0.1", port)).await?;
+        stream.set_nodelay(true)?;
         Ok(Self {
             stream: BufReader::new(stream),
+            token: token.to_owned(),
         })
     }
 
-    async fn call(
+    pub(crate) async fn call(
         &mut self,
         method: &str,
         path: &str,
@@ -251,7 +255,7 @@ impl HttpClient {
         self.call_with(method, path, &[], body).await
     }
 
-    async fn call_with(
+    pub(crate) async fn call_with(
         &mut self,
         method: &str,
         path: &str,
@@ -259,7 +263,8 @@ impl HttpClient {
         body: Option<&[u8]>,
     ) -> anyhow::Result<(u16, Vec<u8>)> {
         let mut head = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nConnection: keep-alive\r\n"
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nConnection: keep-alive\r\n",
+            self.token
         );
         for (name, value) in extra {
             head.push_str(name);

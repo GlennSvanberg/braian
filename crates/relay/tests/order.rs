@@ -81,6 +81,7 @@ async fn a_thousand_changes_stay_ordered_when_the_relay_restarts() {
                     slot,
                     listen,
                     lag_limit_bytes: 1024,
+                    heartbeat_interval: braian_relay::HEARTBEAT_INTERVAL,
                 },
                 store,
             )
@@ -157,6 +158,7 @@ async fn a_thousand_changes_stay_ordered_when_the_relay_restarts() {
                     slot,
                     listen,
                     lag_limit_bytes: 1024,
+                    heartbeat_interval: braian_relay::HEARTBEAT_INTERVAL,
                 },
                 store,
             )

@@ -147,11 +147,16 @@ impl Typesense {
             if !indexed(attribute) {
                 continue;
             }
+            // A searchable-only attribute is matched through `search_{lang}`. Its own
+            // field is kept for display but not indexed, so Typesense does not build
+            // a token index per attribute and language.
+            let own_index = attribute.index.filterable || attribute.index.sortable;
             for name in field_names(attribute, defs) {
                 fields.push(json!({
                     "name": name,
                     "type": field_type(attribute),
                     "optional": true,
+                    "index": own_index,
                     "facet": attribute.index.filterable,
                     "sort": attribute.index.sortable && !attribute.multiple,
                 }));

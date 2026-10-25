@@ -37,7 +37,17 @@ pub struct Config {
     pub slot: String,
     pub listen: SocketAddr,
     pub lag_limit_bytes: i64,
+    /// How often an idle relay writes a logical heartbeat message. The slot can
+    /// only confirm an LSN it has received, so without one an idle database
+    /// never advances `confirmed_flush_lsn` while other WAL keeps growing.
+    pub heartbeat_interval: Duration,
 }
+
+/// Default for [`Config::heartbeat_interval`].
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Prefix of the logical message the relay emits to advance an idle slot.
+pub const HEARTBEAT_PREFIX: &str = "braian_relay_heartbeat";
 
 struct Metrics {
     lag_bytes: AtomicI64,
@@ -72,6 +82,7 @@ pub async fn run(config: Config, store: Store) -> anyhow::Result<()> {
         Arc::clone(&lost),
     );
     spawn_metrics(config.listen, Arc::clone(&metrics));
+    spawn_heartbeat(store.clone(), config.heartbeat_interval);
 
     loop {
         match stream_once(&config, &bus, &lost).await {
@@ -156,6 +167,24 @@ fn spawn_lag_poll(store: Store, slot: String, metrics: Arc<Metrics>, lost: Arc<A
     });
 }
 
+/// Emits a non-transactional logical message on a timer. pgoutput streams it
+/// (the relay asks for messages), the relay acks it like any other event, and
+/// the slot's confirmed LSN follows the WAL head even when no `changes` row is
+/// written. Acks stay in order, so an older unacked event still holds the slot.
+fn spawn_heartbeat(store: Store, interval: Duration) {
+    if interval.is_zero() {
+        return;
+    }
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            if let Err(error) = store.emit_logical_message(HEARTBEAT_PREFIX).await {
+                tracing::warn!(%error, "relay heartbeat failed");
+            }
+        }
+    });
+}
+
 fn spawn_metrics(listen: SocketAddr, metrics: Arc<Metrics>) {
     tokio::spawn(async move {
         let app = Router::new()
@@ -210,6 +239,7 @@ async fn stream_once(config: &Config, bus: &Bus, lost: &AtomicBool) -> anyhow::R
     let url = replication_url(&config.database_url);
     let stream_config = ReplicationStreamConfig::builder(&config.slot, "braian_changes")
         .with_protocol_version(1)
+        .with_messages(true)
         .with_feedback_interval(Duration::from_millis(200));
     let mut stream = LogicalReplicationStream::new(&url, stream_config)
         .await
