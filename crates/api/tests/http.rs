@@ -562,7 +562,7 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        text.contains("Add class Drill on drills, parent Power tool"),
+        text.contains("Add class Drill on Drills, parent Power tool"),
         "{text}"
     );
     assert!(text.contains("Create attribute voltage"), "{text}");
