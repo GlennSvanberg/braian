@@ -65,9 +65,10 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         Err(error) => return Err(error.into()),
     }
     let mut defs = store.definition_set().await?;
-    let mut definitions_changed = ensure_demo_inheritance(&mut defs);
-    definitions_changed |= ensure_type_names(&mut defs);
-    if definitions_changed {
+    let mut changed = ensure_demo_inheritance(&mut defs);
+    changed |= ensure_type_names(&mut defs);
+    changed |= sync_demo_catalog(&mut defs);
+    if changed {
         defs.model_revision = defs.model_revision.saturating_add(1);
         CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
         store.put_definitions(&actor, &defs).await?;
@@ -355,7 +356,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000301",
             "018f2000-0000-7000-8000-000000000003",
             "structure_tree",
-            "Structure",
+            "eCom",
             "left",
             0,
             json!({"expanded": ["friluft", "bygg"]}),
@@ -838,6 +839,65 @@ fn write_label(
     true
 }
 
+/// Copies display names and the Environment structure from the embedded catalog.
+///
+/// Existing databases keep the wire key `sortiment`. Labels are filled only
+/// when a demo node has none, so a renamed label is left alone. Missing
+/// environment attributes, the unit family, and the value list are appended.
+fn sync_demo_catalog(defs: &mut DefinitionSet) -> bool {
+    let Ok(embedded) = serde_json::from_str::<DefinitionSet>(DEFINITIONS) else {
+        return false;
+    };
+    let mut changed = false;
+    for family in &embedded.unit_families {
+        if !defs.unit_families.iter().any(|item| item.key == family.key) {
+            defs.unit_families.push(family.clone());
+            changed = true;
+        }
+    }
+    for list in &embedded.value_lists {
+        if !defs.value_lists.iter().any(|item| item.key == list.key) {
+            defs.value_lists.push(list.clone());
+            changed = true;
+        }
+    }
+    for attribute in &embedded.attributes {
+        if !defs.attributes.iter().any(|item| item.key == attribute.key) {
+            defs.attributes.push(attribute.clone());
+            changed = true;
+        }
+    }
+    for embedded_structure in &embedded.structures {
+        let Some(live) = defs
+            .structures
+            .iter_mut()
+            .find(|item| item.key == embedded_structure.key)
+        else {
+            defs.structures.push(embedded_structure.clone());
+            changed = true;
+            continue;
+        };
+        if live.labels.is_empty() && !embedded_structure.labels.is_empty() {
+            live.labels.clone_from(&embedded_structure.labels);
+            changed = true;
+        }
+        for embedded_group in &embedded_structure.groups {
+            let Some(group) = live
+                .groups
+                .iter_mut()
+                .find(|item| item.key == embedded_group.key)
+            else {
+                continue;
+            };
+            if group.labels.is_empty() && !embedded_group.labels.is_empty() {
+                group.labels.clone_from(&embedded_group.labels);
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// Gives the synthetic catalog a parent class so the data-model screen can show
 /// inherited attributes. Runs only when the known demo groups are present and
 /// the parent class has not been added yet.
@@ -916,4 +976,36 @@ fn ensure_demo_inheritance(defs: &mut DefinitionSet) -> bool {
 
 fn demo_id(text: &str) -> Uuid {
     Uuid::parse_str(text).expect("demo id")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_catalog_keeps_the_wire_key_and_compiles_environment() {
+        let defs: DefinitionSet = serde_json::from_str(DEFINITIONS).expect("definitions");
+        CompiledModel::compile(&defs).expect("demo definitions compile");
+        let sortiment = defs
+            .structures
+            .iter()
+            .find(|item| item.key == "sortiment")
+            .expect("sortiment");
+        assert!(sortiment.labels.values().all(|label| label == "eCom"));
+        assert!(sortiment.groups.iter().any(|group| group.key == "talt"));
+        let environment = defs
+            .structures
+            .iter()
+            .find(|item| item.key == "environment")
+            .expect("environment");
+        assert_eq!(environment.groups.len(), 3);
+        assert!(
+            environment
+                .groups
+                .iter()
+                .all(|group| !group.attributes.is_empty())
+        );
+        assert!(defs.unit_families.iter().any(|family| family.key == "co2e"));
+        assert!(defs.value_lists.iter().any(|list| list.key == "eco_label"));
+    }
 }

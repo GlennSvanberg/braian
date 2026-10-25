@@ -20,7 +20,7 @@ import { workspaceDisplayName } from './demo-labels'
 import { WorkspaceDock } from './dock'
 import { flashObject } from './flash'
 import { structureCaption } from './graph-scene'
-import { dropReparents, groupKeyFromLabel } from './structure-tree'
+import { dropReparents, groupKeyFromLabel } from './group-tree'
 import { publishProposal } from './proposal-bus'
 import { copy } from './i18n'
 import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
@@ -894,9 +894,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     if (!typed) return
     if (mode === 'rename') {
       if (typed === structureCaption(row.key) || typed === row.key) return
-      const name = groupKeyFromLabel(typed)
-      if (!name || name === row.key) return
-      void propose('model.rename_group', { structure: row.structureKey, group: row.key, name })
+      void propose('model.rename_group', { structure: row.structureKey, group: row.key, label: typed })
       return
     }
     const name = groupKeyFromLabel(typed)
@@ -905,6 +903,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     void propose('model.create_group', {
       structure: row.structureKey,
       group: name,
+      label: typed,
       ...(parent ? { parent } : {}),
     })
   }

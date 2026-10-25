@@ -99,6 +99,7 @@ const initial: ImportSnapshot = {
 let state: ImportSnapshot = initial
 const listeners = new Set<() => void>()
 let poll: ReturnType<typeof setInterval> | undefined
+let generation = 0
 
 function emit() {
   for (const listener of listeners) listener()
@@ -129,6 +130,7 @@ export function openImport() {
 export function requestCloseImport() {
   if (!state.open) return
   if (state.phase === 'saving') {
+    forgetImport()
     patch({ open: false, drag: false, confirm: null })
     return
   }
@@ -136,7 +138,7 @@ export function requestCloseImport() {
     patch({ confirm: 'close' })
     return
   }
-  patch({ open: false, drag: false, confirm: null })
+  abandonImport()
 }
 
 export function dismissConfirm() {
@@ -150,8 +152,25 @@ export function confirmImport() {
     void beginUpload(file)
     return
   }
+  abandonImport()
+}
+
+function abandonImport() {
+  const session = state.session
+  generation += 1
   stopPoll()
+  forgetImport()
   patch({ ...initial })
+  if (session && session.id !== 'fixture') {
+    void api(`/v1/imports/${session.id}`, { method: 'DELETE' }).catch(() => undefined)
+  }
+}
+
+function forgetImport() {
+  const url = new URL(window.location.href)
+  if (!url.searchParams.has('import')) return
+  url.searchParams.delete('import')
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
 export function selectColumn(col: number | null) {
@@ -314,7 +333,9 @@ function adopt(session: ImportSession) {
 }
 
 async function refresh(id: string) {
+  const ticket = generation
   const session = await api<ImportSession>(`/v1/imports/${id}`)
+  if (ticket !== generation) return
   adopt(session)
 }
 
@@ -338,6 +359,7 @@ function remember(id: string) {
 }
 
 function beginUpload(file: File) {
+  const ticket = ++generation
   stopPoll()
   patch({
     open: true,
@@ -356,6 +378,10 @@ function beginUpload(file: File) {
   })
   uploadFile(file, (upload) => patch({ upload }))
     .then(async (created) => {
+      if (ticket !== generation) {
+        void api(`/v1/imports/${created.id}`, { method: 'DELETE' }).catch(() => undefined)
+        return
+      }
       patch({ phase: 'mapping' })
       await refresh(created.id)
     })
@@ -397,37 +423,70 @@ function uploadFile(file: File, onProgress: (ratio: number) => void): Promise<{ 
 export function showImportFixture(kind: 'map' | 'diff') {
   const columns: ColumnLine[] = [
     { col: 0, target: 'type:sku', confidence: 0.97, source: 'deterministic' },
-    { col: 1, target: 'type:name', confidence: 0.42, source: 'decisions', low: true },
+    {
+      col: 1,
+      target: 'type:name',
+      confidence: 0.42,
+      source: 'decisions',
+      low: true,
+      alternatives: [{ value: 'type:title', p: 0.38 }],
+    },
     { col: 2, target: 'unmapped', confidence: 0, source: 'deterministic', reason: 'empty' },
+    {
+      col: 3,
+      target: 'type:description',
+      confidence: 0.72,
+      source: 'decisions',
+      alternatives: [{ value: 'type:description@en', p: 0.61 }],
+    },
+    { col: 4, target: 'type:status', confidence: 0.96, source: 'deterministic' },
+    { col: 5, target: 'type:color', confidence: 0.93, source: 'deterministic' },
+    { col: 6, target: 'type:active', confidence: 0.88, source: 'decisions' },
+    { col: 7, target: 'type:launched', confidence: 0.91, source: 'deterministic' },
   ]
   const session: ImportSession = {
     id: 'fixture',
     status: kind === 'diff' ? 'previewed' : 'ready',
-    file_name: 'prices.csv',
+    file_name: 'artiklar.csv',
     file_kind: 'csv',
-    sheets: [{ index: 0, name: 'prices', rows_estimate: 4 }],
+    sheets: [{ index: 0, name: 'artiklar', rows_estimate: 24 }],
     sheet_index: 0,
     headers: [
       { index: 0, raw: 'Artnr', name: 'artnr', empty_ratio: 0, duplicate_of: null },
-      { index: 1, raw: 'Name', name: 'name', empty_ratio: 0, duplicate_of: null },
+      { index: 1, raw: 'Namn', name: 'namn', empty_ratio: 0, duplicate_of: null },
       { index: 2, raw: 'Notes', name: 'notes', empty_ratio: 1, duplicate_of: null },
+      { index: 3, raw: 'Beskrivning', name: 'beskrivning', empty_ratio: 0, duplicate_of: null },
+      { index: 4, raw: 'Status', name: 'status', empty_ratio: 0, duplicate_of: null },
+      { index: 5, raw: 'Färg', name: 'farg', empty_ratio: 0, duplicate_of: null },
+      { index: 6, raw: 'Aktiv', name: 'aktiv', empty_ratio: 0, duplicate_of: null },
+      { index: 7, raw: 'Lanseringsdatum', name: 'lanseringsdatum', empty_ratio: 0, duplicate_of: null },
     ],
     sample: [
-      ['A-100', 'Cable 3m', ''],
-      ['A-100', 'Cable 5m', ''],
+      ['A-100', 'Kabel 3 m', '', 'Skapad via import', 'Utgången', 'Grå', 'ja', '2026-11-06'],
+      ['A-101', 'Kabel 5 m', '', 'Ny beskrivning', 'OK', 'Grön', 'nej', '2026-10-10'],
     ],
-    rows_parsed: 4,
+    rows_parsed: 24,
     parse_done: true,
-    types: [{ key: 'product', label: 'Product' }],
+    types: [
+      { key: 'article', label: 'Article' },
+      { key: 'variant', label: 'Variant' },
+    ],
     targets: [
-      { id: 'type:sku', label: 'SKU', kind: 'text', key: true, source: 'Product' },
-      { id: 'type:name', label: 'Name', kind: 'text', source: 'Product' },
-      { id: 'type:weight', label: 'Weight', kind: 'number', source: 'Product' },
+      { id: 'type:sku', label: 'Artikelnummer', kind: 'text', key: true, source: 'Article' },
+      { id: 'type:name', label: 'Namn', kind: 'text', source: 'Article' },
+      { id: 'type:title', label: 'Titel', kind: 'text', source: 'Article' },
+      { id: 'type:description', label: 'Beskrivning (sv)', kind: 'text', source: 'Article' },
+      { id: 'type:description@en', label: 'Description (en)', kind: 'text', source: 'Article' },
+      { id: 'type:status', label: 'Status', kind: 'text', source: 'Article' },
+      { id: 'type:color', label: 'Färg', kind: 'text', source: 'Article' },
+      { id: 'type:active', label: 'Aktiv', kind: 'boolean', source: 'Article' },
+      { id: 'type:launched', label: 'Lanseringsdatum', kind: 'date', source: 'Article' },
+      { id: 'type:weight', label: 'Weight', kind: 'number', source: 'Article' },
       { id: 'action', label: 'Action (create/update/delete)', kind: 'action' },
     ],
     proposal: {
       ai: 'skipped',
-      type: { value: 'product', confidence: 0.97 },
+      type: { value: 'article', confidence: 0.84 },
       id_column: { value: 'col:0', confidence: 0.97 },
       columns,
     },
@@ -442,7 +501,7 @@ export function showImportFixture(kind: 'map' | 'diff') {
     fileName: session.file_name,
     session,
     columns,
-    typeKey: 'product',
+    typeKey: 'article',
     idColumn: 'col:0',
     dirty: false,
     error: '',

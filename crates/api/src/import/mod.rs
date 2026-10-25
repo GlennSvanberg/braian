@@ -155,6 +155,26 @@ pub async fn upload(
         })?;
     }
     file.flush().await.ok();
+    let check_path = path.clone();
+    let readable = tokio::task::spawn_blocking(move || parse::ensure_has_rows(&check_path, kind))
+        .await
+        .map_err(|error| {
+            Problem::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "import",
+                error.to_string(),
+            )
+        })?;
+    if let Err(error) = readable {
+        let _ = state.store.delete_import_session(id).await;
+        let _ = std::fs::remove_dir_all(session_dir(id));
+        let code = if error.message == "This file has no rows." {
+            "empty_file"
+        } else {
+            "unreadable_file"
+        };
+        return Err(Problem::new(StatusCode::BAD_REQUEST, code, error.message));
+    }
     state
         .store
         .update_import_upload(id, bytes as i64, "mapping", None)
@@ -393,12 +413,8 @@ async fn save_import(
     }
     let session = load(&state, &identity, id).await?;
     ensure_revision(&state, &session).await?;
-    if session.status != "previewed" && session.status != "saved" {
-        return Err(Problem::new(
-            StatusCode::CONFLICT,
-            "not_ready",
-            "The preview is not ready yet.",
-        ));
+    if let Some((code, detail)) = save_conflict(&session.status) {
+        return Err(Problem::new(StatusCode::CONFLICT, code, detail));
     }
     let failed = session
         .counters
@@ -455,11 +471,27 @@ async fn save_import(
         )
         .await
         .map_err(store_status)?;
-    state
+    let claimed = state
         .store
-        .update_import_job(id, "saving", Some(job_id), &session.counters, None)
+        .claim_import_save(id, job_id, &session.counters)
         .await
         .map_err(store_status)?;
+    if !claimed {
+        let _ = state
+            .store
+            .finish_job_run(job_id, "cancelled", 0, "already_saving", &json!([]))
+            .await;
+        let current = state
+            .store
+            .import_session(id)
+            .await
+            .map_err(store_status)?
+            .map(|item| item.status)
+            .unwrap_or_default();
+        let (code, detail) =
+            save_conflict(&current).unwrap_or(("already_saving", "A save is already running."));
+        return Err(Problem::new(StatusCode::CONFLICT, code, detail));
+    }
     let actor = identity.actor.clone();
     let job_state = state.clone();
     tokio::spawn(async move {
@@ -557,7 +589,7 @@ fn session_body(
         .map(|object_type| {
             json!({
                 "key": object_type.key,
-                "label": object_type.labels.iter().next().map(|(_, label)| label.clone()).unwrap_or_else(|| object_type.key.clone()),
+                "label": object_type.singular_label("en"),
             })
         })
         .collect::<Vec<_>>();
@@ -824,4 +856,30 @@ struct DeleteQuery {
 
 pub fn spawn_janitor(state: AppState) {
     session::spawn_janitor(state);
+}
+
+fn save_conflict(status: &str) -> Option<(&'static str, &'static str)> {
+    match status {
+        "saving" => Some(("already_saving", "A save is already running.")),
+        "previewed" | "saved" => None,
+        _ => Some(("not_ready", "The preview is not ready yet.")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_conflict;
+
+    #[test]
+    fn a_running_save_is_not_described_as_a_missing_preview() {
+        assert_eq!(
+            save_conflict("saving"),
+            Some(("already_saving", "A save is already running."))
+        );
+        assert_eq!(
+            save_conflict("diffing").map(|item| item.0),
+            Some("not_ready")
+        );
+        assert_eq!(save_conflict("previewed"), None);
+    }
 }

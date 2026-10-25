@@ -1,7 +1,10 @@
 //! Data-model edits are proposals. Accepting one applies it to the definition set.
 
 use axum::http::StatusCode;
-use braian_model::{ChangeImpact, ModelChange, apply_all, interpret, power_tools, preview};
+use braian_model::{
+    ApplyError, ChangeImpact, ModelChange, StructureErrorCode, apply_all, interpret, power_tools,
+    preview,
+};
 use braian_rules::CompiledModel;
 use braian_store::ProposalRow;
 use serde_json::{Value, json};
@@ -20,6 +23,9 @@ pub async fn propose(
 ) -> Result<Value, Problem> {
     let cached = state.models.get(&state.store).await?;
     let changes = changes_from(name, args, &cached.defs)?;
+    for change in &changes {
+        crate::structures::guard_model_change(state, &identity.actor, change, false).await?;
+    }
     if changes.is_empty() {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
@@ -27,8 +33,7 @@ pub async fn propose(
             "the draft has no steps",
         ));
     }
-    let (after, impact) = preview(&cached.defs, &changes)
-        .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, "model", message))?;
+    let (after, impact) = preview(&cached.defs, &changes).map_err(model_status)?;
     CompiledModel::compile(&after).map_err(Problem::definitions)?;
     let title = title_for(name, args, &impact.lines);
     let source = if identity.kind == braian_store::PrincipalKind::Agent {
@@ -119,7 +124,7 @@ pub async fn attach(state: &AppState, body: &mut Value) -> Result<(), Problem> {
             if let Some(object) = body.as_object_mut() {
                 object.insert(
                     "consequence".into(),
-                    json!({ "lines": [], "definition_errors": [message], "affected_objects": 0, "samples": [], "jobs": [] }),
+                    json!({ "lines": [], "definition_errors": [message.to_string()], "affected_objects": 0, "samples": [], "jobs": [] }),
                 );
             }
         }
@@ -131,9 +136,9 @@ pub async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Re
     let change: ModelChange =
         serde_json::from_value(row.get("patch").cloned().unwrap_or(json!({})))
             .map_err(|error| Problem::new(StatusCode::BAD_REQUEST, "model", error.to_string()))?;
+    crate::structures::guard_model_change(state, &identity.actor, &change, true).await?;
     let (_defs, receipt) = definitions::commit(state, &identity.actor, |defs| {
-        apply_all(defs, std::slice::from_ref(&change))
-            .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, "model", message))?;
+        apply_all(defs, std::slice::from_ref(&change)).map_err(model_status)?;
         Ok(())
     })
     .await?;
@@ -352,30 +357,6 @@ fn changes_from(
             filterable: args.get("filterable").and_then(Value::as_bool),
             sortable: args.get("sortable").and_then(Value::as_bool),
         }]),
-        "model.create_group" => Ok(vec![ModelChange::CreateGroup {
-            structure: required_str(args, "structure")?,
-            group: required_str(args, "group")?,
-            parent: optional_str(args, "parent"),
-        }]),
-        "model.rename_group" => Ok(vec![ModelChange::RenameGroup {
-            structure: required_str(args, "structure")?,
-            group: required_str(args, "group")?,
-            name: required_str(args, "name")?,
-        }]),
-        "model.move_group" => Ok(vec![ModelChange::MoveGroup {
-            structure: required_str(args, "structure")?,
-            group: required_str(args, "group")?,
-            parent: optional_str(args, "parent"),
-        }]),
-        "model.duplicate_group" => Ok(vec![ModelChange::DuplicateGroup {
-            structure: required_str(args, "structure")?,
-            group: required_str(args, "group")?,
-            name: required_str(args, "name")?,
-        }]),
-        "model.delete_group" => Ok(vec![ModelChange::DeleteGroup {
-            structure: required_str(args, "structure")?,
-            group: required_str(args, "group")?,
-        }]),
         "model.create_class" => Ok(vec![ModelChange::CreateClass {
             structure: required_str(args, "structure")?,
             class_key: required_str(args, "class")?,
@@ -394,7 +375,59 @@ fn changes_from(
                 .and_then(Value::as_str)
                 .map(str::to_owned),
         }]),
+        "model.create_structure" => Ok(vec![ModelChange::CreateStructure {
+            key: required_str(args, "key")?,
+            label: optional_str(args, "label").unwrap_or_default(),
+        }]),
+        "model.rename_structure" => Ok(vec![ModelChange::RenameStructure {
+            structure: required_str(args, "structure")?,
+            label: required_str(args, "label")?,
+        }]),
+        "model.delete_structure" => Ok(vec![ModelChange::DeleteStructure {
+            structure: required_str(args, "structure")?,
+        }]),
+        "model.create_group" => Ok(vec![ModelChange::CreateGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            parent: optional_str(args, "parent"),
+            label: optional_str(args, "label").unwrap_or_default(),
+        }]),
+        "model.rename_group" => Ok(vec![ModelChange::RenameGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            label: required_str(args, "label")?,
+        }]),
+        "model.move_group" => Ok(vec![ModelChange::MoveGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            parent: optional_str(args, "parent"),
+        }]),
+        "model.delete_group" => Ok(vec![ModelChange::DeleteGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            move_to: optional_str(args, "move_to"),
+        }]),
+        "model.duplicate_group" => Ok(vec![ModelChange::DuplicateGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            name: required_str(args, "name")?,
+        }]),
         other => Err(bad(format!("unknown model operation {other}"))),
+    }
+}
+
+fn model_status(error: ApplyError) -> Problem {
+    match error {
+        ApplyError::Structure(error) => {
+            let status = match error.code {
+                StructureErrorCode::UnknownStructure | StructureErrorCode::UnknownGroup => {
+                    StatusCode::NOT_FOUND
+                }
+                _ => StatusCode::UNPROCESSABLE_ENTITY,
+            };
+            Problem::new(status, error.code.as_str(), error.message)
+        }
+        ApplyError::Other(message) => Problem::new(StatusCode::BAD_REQUEST, "model", message),
     }
 }
 

@@ -32,7 +32,8 @@ pub fn delete_type(defs: &mut DefinitionSet, id: TypeId) -> bool {
 
 /// Inserts `structure` or replaces the structure with the same id.
 ///
-/// Groups and classes travel with the structure. There is no separate edit for them.
+/// Groups and classes travel with the structure. Granular edits live in
+/// [`crate::structure`].
 pub fn upsert_structure(defs: &mut DefinitionSet, structure: Structure) {
     upsert(&mut defs.structures, structure, |item| item.id);
 }

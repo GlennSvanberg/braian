@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dropReparents, groupKeyFromLabel } from './structure-tree'
+import { dropReparents, groupKeyFromLabel } from './group-tree'
 
 const groups = [
   { id: 'outdoor' },

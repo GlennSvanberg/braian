@@ -354,7 +354,12 @@ pub fn operation_title(title: &str, types: &[ObjectType], language: &str) -> Str
 #[serde(deny_unknown_fields)]
 pub struct Structure {
     pub id: StructureId,
+    /// Stable wire key. Object placement uses `key:group`, for example `sortiment:talt`.
     pub key: String,
+    /// Display name per language. Empty on revisions written before labels existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
+    pub labels: BTreeMap<LanguageTag, String>,
     pub groups: Vec<Group>,
     pub classes: Vec<Class>,
 }
@@ -365,6 +370,10 @@ pub struct Structure {
 pub struct Group {
     pub id: GroupId,
     pub key: String,
+    /// Display name per language. Empty on revisions written before labels existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
+    pub labels: BTreeMap<LanguageTag, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<GroupId>,
     /// Attributes defined on this node. Ancestor nodes apply as well.

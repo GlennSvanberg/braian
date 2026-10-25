@@ -550,3 +550,65 @@ fn two_sheets() -> Vec<u8> {
     let _ = std::fs::remove_dir_all(&dir);
     bytes
 }
+
+#[tokio::test]
+async fn an_empty_upload_is_rejected_up_front() {
+    let (_db, _state, app, _live) = harness().await;
+    for (name, body) in [
+        ("empty.csv", Vec::new()),
+        ("header.csv", b"sku,name\n".to_vec()),
+    ] {
+        let (status, uploaded) = call(
+            &app,
+            "POST",
+            "/v1/imports",
+            HUMAN,
+            &[
+                ("content-type", "application/octet-stream"),
+                ("x-file-name", name),
+            ],
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name} {uploaded}");
+        assert_eq!(uploaded["code"], "empty_file");
+        assert_eq!(uploaded["detail"], "This file has no rows.");
+    }
+}
+
+#[tokio::test]
+async fn saving_again_while_a_save_is_running_is_already_saving() {
+    let (_db, state, app, _live) = harness().await;
+    let (status, uploaded) = call(
+        &app,
+        "POST",
+        "/v1/imports",
+        HUMAN,
+        &[
+            ("content-type", "application/octet-stream"),
+            ("x-file-name", "items.csv"),
+        ],
+        Some(csv()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{uploaded}");
+    let id = uploaded["id"].as_str().unwrap();
+    let uuid = uuid::Uuid::parse_str(id).unwrap();
+    state
+        .store
+        .update_import_job(uuid, "saving", None, &json!({}), None)
+        .await
+        .unwrap();
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/v1/imports/{id}/save"),
+        HUMAN,
+        &[("content-type", "application/json")],
+        Some(b"{}".to_vec()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "already_saving");
+    assert_eq!(body["detail"], "A save is already running.");
+}

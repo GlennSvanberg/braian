@@ -154,22 +154,26 @@ pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> Definitio
             Structure {
                 id: catalog,
                 key: "catalog".to_owned(),
+                labels: BTreeMap::new(),
                 groups: vec![
                     Group {
                         id: root,
                         key: "root".to_owned(),
+                        labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![],
                     },
                     Group {
                         id: mid,
                         key: "mid".to_owned(),
+                        labels: BTreeMap::new(),
                         parent: Some(root),
                         attributes: vec![],
                     },
                     Group {
                         id: leaf,
                         key: "leaf".to_owned(),
+                        labels: BTreeMap::new(),
                         parent: Some(mid),
                         attributes: vec![],
                     },
@@ -183,9 +187,11 @@ pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> Definitio
             Structure {
                 id: channel,
                 key: "channel".to_owned(),
+                labels: BTreeMap::new(),
                 groups: vec![Group {
                     id: flat,
                     key: "flat".to_owned(),
+                    labels: BTreeMap::new(),
                     parent: None,
                     attributes: vec![],
                 }],

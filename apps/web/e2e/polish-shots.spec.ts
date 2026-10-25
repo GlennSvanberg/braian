@@ -114,7 +114,7 @@ test('polish screenshots', async ({ page }) => {
   await page.getByRole('button', { name: 'Light' }).click()
   await page.screenshot({ path: `${shots}/data-model-light.png` })
   await page.getByRole('button', { name: 'Dark' }).click()
-  await page.getByTestId('group-sovsack').getByRole('button').click()
+  await page.getByTestId('group-sovsack').locator('.model-node').click()
   await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/class-card-dark.png` })
 

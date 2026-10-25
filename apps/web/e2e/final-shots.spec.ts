@@ -24,11 +24,11 @@ test('final data-model and polish shots', async ({ page }) => {
   await expect(tree.getByTestId('group-sovsack')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
-  await tree.getByTestId('group-sovsack').getByRole('button').click()
+  await tree.getByTestId('group-sovsack').locator('.model-node').click()
   await expect(page.getByTestId('attribute-table')).toContainText('Weight')
   await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/class-card.png` })
-  await tree.getByTestId('group-talt').getByRole('button').click()
+  await tree.getByTestId('group-talt').locator('.model-node').click()
   await expect(page.getByTestId('attribute-table')).toContainText('Length')
   await expect(page.getByTestId('model-preview')).toContainText('from')
 

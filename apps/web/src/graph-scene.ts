@@ -110,8 +110,36 @@ const STRUCTURE_NAMES: Record<string, string> = {
   virke: copy.assortmentTimber,
 }
 
-export function structureCaption(key: string) {
+/** Display name for a structure or group. Labels on the model win; known demo group keys stay as a fallback. */
+export function structureCaption(key: string, defs?: Json, structureKey?: string) {
+  const fromModel = captionFromDefs(defs, key, structureKey)
+  if (fromModel) return fromModel
   return STRUCTURE_NAMES[key] ?? key
+}
+
+function captionFromDefs(defs: Json | undefined, key: string, structureKey?: string) {
+  const structures = (defs?.structures as Json[]) ?? []
+  const preferred = structureKey ? structures.filter((item) => String(item.key) === structureKey) : []
+  const rest = structureKey ? structures.filter((item) => String(item.key) !== structureKey) : structures
+  for (const structure of [...preferred, ...rest]) {
+    if (String(structure.key) === key) {
+      const label = labelText(structure.labels)
+      if (label) return label
+    }
+    for (const group of (structure.groups as Json[]) ?? []) {
+      if (String(group.key) !== key) continue
+      const label = labelText(group.labels)
+      if (label) return label
+    }
+  }
+  return ''
+}
+
+function labelText(value: unknown) {
+  if (!value || typeof value !== 'object') return ''
+  const labels = value as Json
+  const text = labels[uiLanguage] ?? labels.en ?? labels.sv
+  return typeof text === 'string' ? text : ''
 }
 
 export type LegendEntry = { id: string; kind: NodeKind; label: string }
@@ -173,10 +201,6 @@ export function parseTypedId(id: string) {
   const second = rest.indexOf(':')
   if (second < 0) return { kind, structure: rest, key: '' }
   return { kind, structure: rest.slice(0, second), key: rest.slice(second + 1) }
-}
-
-function named(key: string) {
-  return Object.prototype.hasOwnProperty.call(STRUCTURE_NAMES, key)
 }
 
 function link(source: string, label: string, target: string): SceneEdge {
@@ -259,43 +283,44 @@ function putEdge(edges: Map<string, SceneEdge>, edge: SceneEdge) {
   if (!edges.has(edge.id)) edges.set(edge.id, edge)
 }
 
-function classNode(structure: string, classKey: string): SceneNode {
-  const caption = structureCaption(classKey)
+function classNode(structure: string, classKey: string, defs?: Json): SceneNode {
+  const caption = structureCaption(classKey, defs, structure)
   return {
     id: `class:${structure}:${classKey}`,
     kind: 'class',
     caption,
     subtitle: copy.nodeClass,
-    rawCaption: !named(classKey),
+    rawCaption: caption === classKey,
     properties: [
       { label: copy.nodeClass, value: caption },
-      { label: copy.structure, value: structureCaption(structure) },
+      { label: copy.structure, value: structureCaption(structure, defs, structure) },
     ],
   }
 }
 
-function groupNode(structure: string, groupKey: string): SceneNode {
-  const caption = structureCaption(groupKey)
+function groupNode(structure: string, groupKey: string, defs?: Json): SceneNode {
+  const caption = structureCaption(groupKey, defs, structure)
   return {
     id: `group:${structure}:${groupKey}`,
     kind: 'group',
     caption,
     subtitle: copy.nodeGroup,
-    rawCaption: !named(groupKey),
+    rawCaption: caption === groupKey,
     properties: [
       { label: copy.nodeGroup, value: caption },
-      { label: copy.structure, value: structureCaption(structure) },
+      { label: copy.structure, value: structureCaption(structure, defs, structure) },
     ],
   }
 }
 
-function sourceOrigin(source: Json) {
+function sourceOrigin(source: Json, defs?: Json) {
+  const structure = typeof source.structure === 'string' ? source.structure : undefined
   const inherited = Boolean(source.inherited)
   if (source.class) {
-    return `${inherited ? copy.inherited : copy.fromClass}: ${structureCaption(String(source.class))}`
+    return `${inherited ? copy.inherited : copy.fromClass}: ${structureCaption(String(source.class), defs, structure)}`
   }
   if (typeof source.group === 'string' && source.group) {
-    return `${inherited ? copy.inherited : copy.fromGroup}: ${structureCaption(source.group)}`
+    return `${inherited ? copy.inherited : copy.fromGroup}: ${structureCaption(source.group, defs, structure)}`
   }
   return copy.fromType
 }
@@ -306,19 +331,20 @@ function linkSource(
   valueId: string,
   selfId: string,
   source: Json,
+  defs?: Json,
 ) {
   const inherited = Boolean(source.inherited)
   const structure = String(source.structure ?? 'sortiment')
   if (source.class) {
     const classKey = String(source.class)
     const classId = `class:${structure}:${classKey}`
-    putNode(nodes, classNode(structure, classKey))
+    putNode(nodes, classNode(structure, classKey, defs))
     putEdge(edges, link(valueId, inherited ? copy.inherited : copy.fromClass, classId))
     const groupKey = typeof source.group === 'string' ? source.group : ''
     if (groupKey) {
       const groupId = `group:${structure}:${groupKey}`
-      putNode(nodes, groupNode(structure, groupKey))
-      putNode(nodes, structureNode(structure))
+      putNode(nodes, groupNode(structure, groupKey, defs))
+      putNode(nodes, structureNode(structure, defs))
       putEdge(edges, link(classId, copy.appliesIn, groupId))
       putEdge(edges, link(groupId, copy.inStructure, `structure:${structure}`))
     }
@@ -326,8 +352,8 @@ function linkSource(
   }
   if (typeof source.group === 'string' && source.group) {
     const groupId = `group:${structure}:${source.group}`
-    putNode(nodes, groupNode(structure, source.group))
-    putNode(nodes, structureNode(structure))
+    putNode(nodes, groupNode(structure, source.group, defs))
+    putNode(nodes, structureNode(structure, defs))
     putEdge(edges, link(valueId, inherited ? copy.inherited : copy.fromGroup, groupId))
     putEdge(edges, link(groupId, copy.inStructure, `structure:${structure}`))
     return
@@ -335,14 +361,14 @@ function linkSource(
   putEdge(edges, link(valueId, copy.fromType, selfId))
 }
 
-function structureNode(structure: string): SceneNode {
-  const caption = structureCaption(structure)
+function structureNode(structure: string, defs?: Json): SceneNode {
+  const caption = structureCaption(structure, defs, structure)
   return {
     id: `structure:${structure}`,
     kind: 'structure',
     caption,
     subtitle: copy.nodeStructure,
-    rawCaption: !named(structure),
+    rawCaption: caption === structure,
     properties: [{ label: copy.structure, value: caption }],
   }
 }
@@ -387,8 +413,8 @@ export function buildScene(input: {
     if (typeof groupKey !== 'string' || !groupKey) continue
     const groupId = `group:${structure}:${groupKey}`
     const structureId = `structure:${structure}`
-    putNode(nodes, groupNode(structure, groupKey))
-    putNode(nodes, structureNode(structure))
+    putNode(nodes, groupNode(structure, groupKey, input.defs))
+    putNode(nodes, structureNode(structure, input.defs))
     putEdge(edges, link(selfId, copy.placedIn, groupId))
     putEdge(edges, link(groupId, copy.inStructure, structureId))
   }
@@ -401,7 +427,7 @@ export function buildScene(input: {
     const caption = attributeCaption(input.defs, attribute)
     const shown = formatValue(input.defs, attribute, values[attrKey])
     const sources = (attribute.sources as Json[]) ?? []
-    const origins = sources.map((source) => sourceOrigin(source))
+    const origins = sources.map((source) => sourceOrigin(source, input.defs))
     const changedBy = attribute.changed_by ? String(attribute.changed_by) : ''
     const changedAt = formatWhen(attribute.changed_at)
     putNode(nodes, {
@@ -419,7 +445,7 @@ export function buildScene(input: {
       ],
     })
     putEdge(edges, link(selfId, copy.hasValue, valueId))
-    for (const source of sources) linkSource(nodes, edges, valueId, selfId, source)
+    for (const source of sources) linkSource(nodes, edges, valueId, selfId, source, input.defs)
   }
 
   const relations = (input.graph.relations as Json[]) ?? []
@@ -521,7 +547,7 @@ export function expandClass(defs: Json | undefined, structure: string, classKey:
   const found = structuresOf(defs).find((item) => String(item.key) === structure)
   const classes = (found?.classes as Json[]) ?? []
   const klass = classes.find((item) => String(item.key) === classKey)
-  const nodes: SceneNode[] = [classNode(structure, classKey)]
+  const nodes: SceneNode[] = [classNode(structure, classKey, defs)]
   const edges: SceneEdge[] = []
   const classId = `class:${structure}:${classKey}`
   if (klass?.parent) {
@@ -529,7 +555,7 @@ export function expandClass(defs: Json | undefined, structure: string, classKey:
     if (parent) {
       const parentKey = String(parent.key ?? '')
       if (parentKey) {
-        nodes.push(classNode(structure, parentKey))
+        nodes.push(classNode(structure, parentKey, defs))
         edges.push(link(classId, copy.parent, `class:${structure}:${parentKey}`))
       }
     }
@@ -546,7 +572,7 @@ export function expandClass(defs: Json | undefined, structure: string, classKey:
       rawCaption: caption === key,
       properties: [
         { label: copy.attributes, value: caption },
-        { label: copy.nodeClass, value: structureCaption(classKey) },
+        { label: copy.nodeClass, value: structureCaption(classKey, defs, structure) },
       ],
     })
     edges.push(link(id, copy.fromClass, classId))
@@ -588,13 +614,13 @@ export function expandStructure(defs: Json | undefined, structure: string): Scen
   const found = structuresOf(defs).find((item) => String(item.key) === structure)
   const groups = (found?.groups as Json[]) ?? []
   const byId = new Map(groups.map((group) => [String(group.id), String(group.key ?? '')]))
-  const nodes: SceneNode[] = [structureNode(structure)]
+  const nodes: SceneNode[] = [structureNode(structure, defs)]
   const edges: SceneEdge[] = []
   for (const group of groups) {
     const key = String(group.key ?? '')
     if (!key) continue
     const id = `group:${structure}:${key}`
-    nodes.push(groupNode(structure, key))
+    nodes.push(groupNode(structure, key, defs))
     edges.push(link(id, copy.inStructure, `structure:${structure}`))
     const parentKey = byId.get(String(group.parent ?? ''))
     if (parentKey) edges.push(link(id, copy.parent, `group:${structure}:${parentKey}`))

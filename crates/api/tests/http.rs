@@ -1178,3 +1178,273 @@ async fn pages(app: &axum::Router, path: &str) -> Vec<Value> {
     }
     panic!("cursor did not end");
 }
+
+#[tokio::test]
+async fn structures_rename_move_and_delete_keep_parents_and_objects() {
+    let (_db, app) = app().await;
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        "/v1/structures:create",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"yard","label":"Yard"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["key"], "yard");
+    assert_eq!(body["labels"]["sv"], "Yard");
+
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        "/v1/structures:create",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"yard","label":"Again"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "duplicate_key");
+
+    let (status, _, body) = call(
+        &app,
+        "PATCH",
+        "/v1/structures/yard",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"label":"Garden"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["key"], "yard");
+    assert_eq!(body["labels"]["sv"], "Garden");
+
+    for (key, parent) in [("root", None), ("leaf", Some("root")), ("kept", None)] {
+        let payload = match parent {
+            Some(parent) => json!({"key": key, "label": key, "parent": parent}),
+            None => json!({"key": key, "label": key}),
+        };
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/structures/yard/groups",
+            Some(HUMAN),
+            &[("content-type", "application/json")],
+            Some(&payload.to_string()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        "/v1/structures/yard/groups/root/parent",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"parent":"leaf"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "cycle");
+
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        "/v1/structures/yard/groups",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"bad key","label":"Bad"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "invalid_key");
+
+    let (status, _, mut structure) =
+        call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{structure}");
+    let group_id = |key: &str| {
+        structure["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|group| group["key"] == key)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let root_id = group_id("root");
+    let leaf_id = group_id("leaf");
+    let kept_id = group_id("kept");
+    structure["classes"] = json!([
+        {"id": "018f0000-0000-7000-8000-000000000611", "key": "root", "group": root_id, "attributes": []},
+        {"id": "018f0000-0000-7000-8000-000000000612", "key": "leaf", "group": leaf_id, "parent": "018f0000-0000-7000-8000-000000000611", "attributes": []},
+        {"id": "018f0000-0000-7000-8000-000000000613", "key": "kept", "group": kept_id, "parent": "018f0000-0000-7000-8000-000000000612", "attributes": []}
+    ]);
+    let (status, _, body) = call(
+        &app,
+        "PUT",
+        "/v1/structures/yard",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&structure.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, _, object) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{
+                "type": "item",
+                "groups": { "catalog": "root", "channel": "flat", "yard": "leaf" },
+                "values": { "sku": "YARD-1", "name": { "sv": "Kruka" }, "active": true }
+            }"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{object}");
+    let object_id = object["id"].as_str().unwrap();
+
+    let (status, _, body) = call(
+        &app,
+        "DELETE",
+        "/v1/structures/yard/groups/leaf",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "group_occupied");
+    assert_eq!(body["count"], 1);
+    assert!(body["detail"].as_str().unwrap().contains('1'));
+
+    let (status, _, body) = call(
+        &app,
+        "DELETE",
+        "/v1/structures/yard/groups/leaf?move_to=leaf",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "target_in_subtree");
+
+    let (status, _, usage) = call(
+        &app,
+        "GET",
+        "/v1/structures/yard/groups/leaf/usage",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{usage}");
+    assert_eq!(usage["count"], 1);
+
+    let (status, _, body) = call(
+        &app,
+        "DELETE",
+        "/v1/structures/yard/groups/leaf?move_to=kept",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, _, object) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{object_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{object}");
+    assert_eq!(object["groups"]["yard"], "kept");
+
+    let (status, _, structure) =
+        call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{structure}");
+    let groups = structure["groups"].as_array().unwrap();
+    let group_ids: Vec<&str> = groups
+        .iter()
+        .filter_map(|group| group["id"].as_str())
+        .collect();
+    assert!(groups.iter().all(|group| group["key"] != "leaf"));
+    for group in groups {
+        if let Some(parent) = group["parent"].as_str() {
+            assert!(
+                group_ids.contains(&parent),
+                "dangling group parent {parent}"
+            );
+        }
+    }
+    let classes = structure["classes"].as_array().unwrap();
+    let class_ids: Vec<&str> = classes
+        .iter()
+        .filter_map(|class| class["id"].as_str())
+        .collect();
+    assert!(classes.iter().all(|class| class["key"] != "leaf"));
+    for class in classes {
+        let group = class["group"].as_str().unwrap();
+        assert!(
+            group_ids.contains(&group),
+            "class points at a missing group"
+        );
+        if let Some(parent) = class["parent"].as_str() {
+            assert!(
+                class_ids.contains(&parent),
+                "dangling class parent {parent}"
+            );
+        }
+    }
+    let kept = classes.iter().find(|class| class["key"] == "kept").unwrap();
+    assert_eq!(kept["parent"], "018f0000-0000-7000-8000-000000000611");
+
+    let (status, _, body) = call(
+        &app,
+        "DELETE",
+        "/v1/structures/yard",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "structure_occupied");
+    assert_eq!(body["count"], 1);
+
+    let (status, _, body) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/objects/{object_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, body) = call(
+        &app,
+        "DELETE",
+        "/v1/structures/yard",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, _) = call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

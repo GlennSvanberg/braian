@@ -133,7 +133,7 @@ pub fn targets_for(defs: &DefinitionSet, type_key: &str) -> Vec<Target> {
                 *id,
                 Provenance::Type {
                     type_key: object_type.key.clone(),
-                    type_label: label_of(&object_type.labels, &object_type.key),
+                    type_label: object_type.singular_label("en"),
                 },
             ));
         }
@@ -262,12 +262,18 @@ fn attribute_targets(
         key_attribute,
         source: source_label.clone(),
         attribute_key: Some(attribute.key.clone()),
-        language: Some(default_lang),
+        language: Some(default_lang.clone()),
         structure_key: structure_key(source),
         group_key: group_key(source),
         unit: unit.clone(),
     });
     for language in &defs.languages {
+        // The unsuffixed target already writes the default language, and it
+        // carries the same label. A second `@sv` row is the duplicate the
+        // picker showed as "Beskrivning (sv)" twice.
+        if language.as_str() == default_lang {
+            continue;
+        }
         targets.push(Target {
             id: format!("{id_prefix}@{}", language.as_str()),
             label: format!(
@@ -401,13 +407,17 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
         };
     };
     let key_norm = normalize_header(key);
+    let label_norm = normalize_header(&target.label);
+    // "Namn (sv)" is the same field as a header "Namn".
+    let bare_norm = normalize_header(label_without_language(&target.label));
     let exact_labels = match &target.language {
         Some(language) if target.id.contains('@') => {
             name == format!("{key_norm}_{}", normalize_header(language))
-                || name == normalize_header(&target.label)
+                || name == label_norm
+                || name == bare_norm
         }
-        Some(_) => name == key_norm || name == normalize_header(&target.label),
-        None => name == key_norm || name == normalize_header(&target.label),
+        Some(_) => name == key_norm || name == label_norm || name == bare_norm,
+        None => name == key_norm || name == label_norm || name == bare_norm,
     };
     if exact_labels && !(target.id.contains('@') && name == key_norm) {
         return 1.0;
@@ -448,10 +458,30 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
     }
     if target.id.contains('@') {
         let lang = target.language.as_deref().unwrap_or("");
+        // "Beskrivning" is the attribute, not evidence for every language.
+        // Jaro otherwise scores `beskrivning` against `beskrivning_en` at
+        // about 0.86 and the column looks certain while listing rivals.
+        if name == key_norm {
+            return 0.0;
+        }
         return jw_score(&name, &format!("{key_norm}_{}", normalize_header(lang)))
-            .max(jw_score(&name, &normalize_header(&target.label)));
+            .max(jw_score(&name, &label_norm))
+            .max(jw_score(&name, &bare_norm));
     }
-    jw_score(&name, &key_norm).max(jw_score(&name, &normalize_header(&target.label)))
+    jw_score(&name, &key_norm)
+        .max(jw_score(&name, &label_norm))
+        .max(jw_score(&name, &bare_norm))
+}
+
+fn label_without_language(label: &str) -> &str {
+    let Some(open) = label.rfind(" (") else {
+        return label;
+    };
+    if label.ends_with(')') {
+        &label[..open]
+    } else {
+        label
+    }
 }
 
 fn is_synonym(name: &str, words: &[&str]) -> bool {
@@ -956,7 +986,7 @@ fn call1_questions(
 }
 
 fn type_description(defs: &DefinitionSet, object_type: &braian_model::ObjectType) -> String {
-    let label = label_of(&object_type.labels, &object_type.key);
+    let label = object_type.singular_label("en");
     let mut keys = Vec::new();
     for id in object_type.attributes.iter().take(30) {
         if let Some(attribute) = defs.attributes.iter().find(|item| item.id == *id) {
@@ -1359,16 +1389,36 @@ fn dedupe_drafts(mut drafts: Vec<ColumnDraft>) -> Vec<ColumnProposal> {
     pinned.sort_by_key(|draft| draft.col);
     pinned
         .into_iter()
-        .map(|draft| ColumnProposal {
-            low: draft.confidence < LOW,
-            col: draft.col,
-            target: draft.target,
-            confidence: draft.confidence,
-            source: draft.source,
-            reason: draft.reason,
-            alternatives: draft.alternatives,
+        .map(|draft| {
+            let runner = draft
+                .alternatives
+                .iter()
+                .map(|alt| alt.p)
+                .fold(0.0_f64, f64::max);
+            let confidence = if draft.source == "manual" {
+                draft.confidence
+            } else {
+                cap_confidence(draft.confidence, runner)
+            };
+            ColumnProposal {
+                low: confidence < LOW,
+                col: draft.col,
+                target: draft.target,
+                confidence,
+                source: draft.source,
+                reason: draft.reason,
+                alternatives: draft.alternatives,
+            }
         })
         .collect()
+}
+
+/// A close rival means the winner is not certain. 1.0 beside 0.86 becomes 0.57.
+fn cap_confidence(best: f64, second: f64) -> f64 {
+    if second >= 0.8 && best - second < 0.25 {
+        return (best - second * 0.5).clamp(0.0, 0.99);
+    }
+    best
 }
 
 pub fn cache_key(revision: u64) -> String {
@@ -1396,7 +1446,7 @@ pub fn model_summary(defs: &DefinitionSet) -> Value {
             .collect();
         types.push(serde_json::json!({
             "key": object_type.key,
-            "label": label_of(&object_type.labels, &object_type.key),
+            "label": object_type.singular_label("en"),
             "key_attribute": defs.attributes.iter().find(|item| item.id == object_type.key_attribute).map(|item| item.key.clone()).unwrap_or_default(),
             "attributes": attributes,
         }));
@@ -1585,6 +1635,40 @@ mod tests {
     }
 
     #[test]
+    fn type_names_come_from_the_singular_label() {
+        let mut defs = defs();
+        let object_type = defs
+            .types
+            .iter_mut()
+            .find(|item| item.key == "item")
+            .unwrap();
+        object_type
+            .labels
+            .insert(LanguageTag::parse("de").unwrap(), "Variante".into());
+        object_type
+            .singular
+            .insert(LanguageTag::parse("de").unwrap(), "Variante".into());
+        object_type
+            .singular
+            .insert(LanguageTag::parse("en").unwrap(), "Variant".into());
+        assert_eq!(object_type.singular_label("en"), "Variant");
+        let summary = model_summary(&defs);
+        let label = summary["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["key"] == "item")
+            .unwrap()["label"]
+            .as_str();
+        assert_eq!(label, Some("Variant"));
+        assert!(
+            targets_for(&defs, "item")
+                .iter()
+                .any(|target| target.id.starts_with("type:") && target.source == "Variant")
+        );
+    }
+
+    #[test]
     fn builds_type_language_group_and_membership_targets() {
         let defs = defs();
         let targets = targets_for(&defs, "item");
@@ -1593,9 +1677,20 @@ mod tests {
                 .iter()
                 .any(|target| target.id == "type:sku" && target.key_attribute)
         );
-        assert!(targets.iter().any(|target| target.id == "type:name"));
-        assert!(targets.iter().any(|target| target.id == "type:name@sv"));
+        assert!(targets.iter().any(|target| {
+            target.id == "type:name" && target.language.as_deref() == Some("sv")
+        }));
+        assert!(!targets.iter().any(|target| target.id == "type:name@sv"));
         assert!(targets.iter().any(|target| target.id == "type:name@en-GB"));
+        let name_labels: Vec<&str> = targets
+            .iter()
+            .filter(|target| target.attribute_key.as_deref() == Some("name"))
+            .map(|target| target.label.as_str())
+            .collect();
+        let mut unique = name_labels.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), name_labels.len(), "{name_labels:?}");
         assert!(
             targets
                 .iter()
@@ -1631,13 +1726,62 @@ mod tests {
         assert!((sku[0].score - 0.95).abs() < 1e-9);
         assert!(decided(&sku).is_some());
         let name = rank_targets("name_sv", &targets, &units);
-        assert_eq!(name[0].target, "type:name@sv");
+        assert_eq!(name[0].target, "type:name");
+        let namn = rank_targets("Namn", &targets, &units);
+        assert_eq!(namn[0].target, "type:name");
+        let rival = namn.get(1).map(|item| item.score).unwrap_or(0.0);
+        assert!(
+            rival < 0.5,
+            "a bare header must not grow a language rival, got {rival}"
+        );
         let weight = rank_targets("weight_kg", &targets, &units);
         assert_eq!(weight[0].target, "type:weight");
         assert!((weight[0].score - 0.97).abs() < 1e-9);
         let action = rank_targets("Åtgärd", &targets, &units);
         assert_eq!(action[0].target, "action");
         assert!((action[0].score - 0.95).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bare_header_is_not_a_near_match_for_every_language() {
+        let bare = sample_target(
+            "type:beskrivning",
+            "Beskrivning (sv)",
+            Some("sv"),
+            "beskrivning",
+        );
+        let swedish = sample_target(
+            "type:beskrivning@sv",
+            "Beskrivning (sv)",
+            Some("sv"),
+            "beskrivning",
+        );
+        let english = sample_target(
+            "type:beskrivning@en",
+            "Description (en)",
+            Some("en"),
+            "beskrivning",
+        );
+        assert!((score_column("Beskrivning", &bare, &[]) - 1.0).abs() < 1e-9);
+        assert_eq!(score_column("Beskrivning", &swedish, &[]), 0.0);
+        assert_eq!(score_column("Beskrivning", &english, &[]), 0.0);
+        assert!((super::cap_confidence(1.0, 0.86) - 0.57).abs() < 1e-9);
+        assert!((super::cap_confidence(1.0, 0.2) - 1.0).abs() < 1e-9);
+    }
+
+    fn sample_target(id: &str, label: &str, language: Option<&str>, key: &str) -> Target {
+        Target {
+            id: id.into(),
+            label: label.into(),
+            kind: "text".into(),
+            key_attribute: false,
+            source: "Item".into(),
+            attribute_key: Some(key.into()),
+            language: language.map(str::to_owned),
+            structure_key: None,
+            group_key: None,
+            unit: None,
+        }
     }
 
     #[test]
