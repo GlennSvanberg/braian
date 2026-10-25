@@ -106,6 +106,7 @@ impl Indexer {
             store: self.store,
             search: self.search,
             config: self.config,
+            cache: tokio::sync::Mutex::new(None),
         });
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let mut interactive = tokio::spawn(run_lane(
@@ -157,22 +158,44 @@ impl Shared {
         Ok(())
     }
 
-    async fn flush(&self, pending: &HashMap<String, ChangeEvent>) -> anyhow::Result<()> {
-        let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
+    async fn compiled(&self) -> anyhow::Result<Option<Arc<RevisionCache>>> {
+        let Some(revision) = self.store.model_revision().await? else {
+            return Ok(None);
+        };
+        let mut guard = self.cache.lock().await;
+        if let Some(cached) = guard.as_ref()
+            && reuse_revision(Some(cached.revision), revision)
+            && cached.alias_ready
+        {
+            return Ok(Some(Arc::clone(cached)));
+        }
         let defs = match self.store.definition_set().await {
             Ok(defs) => defs,
-            Err(braian_store::Error::NoDefinitions) => {
-                self.store.set_indexer_seq(max_seq).await?;
-                return Ok(());
-            }
+            Err(braian_store::Error::NoDefinitions) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         let model = CompiledModel::compile(&defs)
             .map_err(|errors| anyhow::anyhow!("definitions: {}", errors[0].message))?;
         ensure_alias(&self.store, &self.search, &defs).await?;
+        let cached = Arc::new(RevisionCache {
+            revision: defs.model_revision,
+            defs: Arc::new(defs),
+            model: Arc::new(model),
+            alias_ready: true,
+        });
+        *guard = Some(Arc::clone(&cached));
+        Ok(Some(cached))
+    }
+
+    async fn flush(&self, pending: &HashMap<String, ChangeEvent>) -> anyhow::Result<()> {
+        let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
+        let Some(cached) = self.compiled().await? else {
+            self.store.set_indexer_seq(max_seq).await?;
+            return Ok(());
+        };
         let ids = object_ids(pending.values().cloned());
         let stored = self.store.get_objects(&ids).await?;
-        let docs = documents(&model, &defs, &stored, pending);
+        let docs = documents(&cached.model, &cached.defs, &stored, pending);
         import_batched(
             &self.search,
             self.search.alias(),
@@ -202,6 +225,19 @@ struct Shared {
     store: Store,
     search: Typesense,
     config: IndexerConfig,
+    cache: tokio::sync::Mutex<Option<Arc<RevisionCache>>>,
+}
+
+struct RevisionCache {
+    revision: u64,
+    defs: Arc<braian_model::DefinitionSet>,
+    model: Arc<CompiledModel>,
+    alias_ready: bool,
+}
+
+/// Same revision keeps the compiled model and the search alias.
+pub(crate) fn reuse_revision(cached: Option<u64>, current: u64) -> bool {
+    cached == Some(current)
 }
 
 #[derive(Clone, Copy)]
@@ -624,6 +660,13 @@ mod tests {
         let ids = object_ids([event(1, id, "bulk"), event(2, id, "interactive")]);
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0].as_uuid(), id);
+    }
+
+    #[test]
+    fn a_compiled_model_is_reused_until_the_revision_changes() {
+        assert!(reuse_revision(Some(4), 4));
+        assert!(!reuse_revision(Some(4), 5));
+        assert!(!reuse_revision(None, 1));
     }
 
     #[test]
