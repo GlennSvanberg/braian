@@ -384,7 +384,13 @@ pub fn breakpoint() -> Breakpoint {
     Breakpoint { mode: "explicit" }
 }
 
-/// Shared prefix: developer text, model JSON, then the breakpoint, then the file.
+/// Stable prefix first, then the file.
+///
+/// The data model is identical for every file at one revision, so it leads
+/// and ends on an explicit breakpoint. The file is identical across the two
+/// calls of one import. A second breakpoint after the file lets that shared
+/// prefix hit when the model alone is shorter than the cache minimum.
+/// Questions stay outside `input`, so they never sit in front of the prefix.
 pub fn shared_input(model_json: Value, file_json: Value) -> Vec<InputMessage> {
     vec![
         InputMessage {
@@ -412,6 +418,10 @@ pub fn shared_input(model_json: Value, file_json: Value) -> Vec<InputMessage> {
                     prompt_cache_breakpoint: None,
                 },
                 ContentPart::Json { data: file_json },
+                ContentPart::Text {
+                    text: "END OF FILE.".to_owned(),
+                    prompt_cache_breakpoint: Some(breakpoint()),
+                },
             ],
         },
     ]
@@ -516,9 +526,17 @@ pub fn contract_problems(request: &DecisionRequest) -> Vec<String> {
     let file_at = user
         .iter()
         .rposition(|part| part.get("type").and_then(Value::as_str) == Some("input_json"));
-    match (json_before_break, breakpoint_at, file_at) {
-        (Some(model_at), Some(break_at), Some(file_at))
-            if model_at < break_at && break_at < file_at => {}
+    let file_break = user.iter().rposition(|part| {
+        part.get("text").and_then(Value::as_str) == Some("END OF FILE.")
+            && part
+                .get("prompt_cache_breakpoint")
+                .and_then(|item| item.get("mode"))
+                .and_then(Value::as_str)
+                == Some("explicit")
+    });
+    match (json_before_break, breakpoint_at, file_at, file_break) {
+        (Some(model_at), Some(break_at), Some(file_at), Some(file_break))
+            if model_at < break_at && break_at < file_at && file_at < file_break => {}
         _ => problems.push("cache order".into()),
     }
     if let Some(file) = file_at.and_then(|index| user.get(index)) {

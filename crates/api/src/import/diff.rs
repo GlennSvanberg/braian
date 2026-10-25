@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use braian_model::{
-    Attribute, AttributeId, AttributeKind, AttributePatch, DefinitionSet, LanguageTag, Object,
-    ObjectId, ObjectPatch, TypeId, ValuePatch,
+    Attribute, AttributeId, AttributeKind, AttributePatch, DefinitionSet, ErrorCode, LanguageTag,
+    Object, ObjectId, ObjectPatch, TypeId, ValuePatch,
 };
 use braian_rules::CompiledModel;
 use braian_store::StoredObject;
@@ -147,6 +147,16 @@ pub fn classify_row(
             json!({ "code": "invalid_action", "message": format!("Unknown action {action}.") }),
         );
     }
+    if let Some(existing) = existing {
+        paint_changes(
+            &mut cell_view,
+            model,
+            columns,
+            targets,
+            &existing.object.values,
+            &values,
+        );
+    }
     let key = id_column.and_then(|index| {
         cells
             .get(index)
@@ -198,14 +208,6 @@ pub fn classify_row(
             &groups,
             &existing.object.groups,
         );
-        paint_changes(
-            &mut cell_view,
-            model,
-            columns,
-            targets,
-            &existing.object.values,
-            &values,
-        );
         if patch.is_empty() {
             return Classified {
                 key,
@@ -222,7 +224,7 @@ pub fn classify_row(
         }
         let report = model.validate_patch(&existing.object, &patch);
         if !report.errors.is_empty() {
-            attach_validation(&mut cell_view, columns, targets, &report.errors);
+            attach_validation(&mut cell_view, model, columns, targets, &report.errors);
             return Classified {
                 key: key.or(Some(existing.key.clone())),
                 outcome: RowOutcome {
@@ -258,7 +260,7 @@ pub fn classify_row(
     };
     let validation = model.validate(&object);
     if !validation.is_empty() {
-        attach_validation(&mut cell_view, columns, targets, &validation);
+        attach_validation(&mut cell_view, model, columns, targets, &validation);
         return Classified {
             key,
             outcome: RowOutcome {
@@ -580,33 +582,76 @@ fn parse_bool(text: &str) -> Result<bool, Value> {
 
 fn parse_date(text: &str) -> Result<String, Value> {
     let text = text.trim();
-    if let Some(iso) = text.get(0..10)
+    let candidate = if let Some(iso) = text.get(0..10)
         && text.len() >= 10
         && iso.as_bytes().get(4) == Some(&b'-')
         && iso.as_bytes().get(7) == Some(&b'-')
+        && (text.len() == 10 || matches!(text.as_bytes().get(10), Some(b'T' | b' ')))
     {
-        return Ok(iso.to_owned());
-    }
-    let parts: Vec<&str> = text.split(['/', '-', '.']).collect();
-    if parts.len() == 3
-        && parts
-            .iter()
-            .all(|part| part.chars().all(|character| character.is_ascii_digit()))
-    {
-        if parts[0].len() == 4 {
-            return Ok(format!(
-                "{:0>4}-{:0>2}-{:0>2}",
-                parts[0], parts[1], parts[2]
-            ));
+        iso.to_owned()
+    } else {
+        let parts: Vec<&str> = text.split(['/', '-', '.']).collect();
+        if parts.len() == 3
+            && parts
+                .iter()
+                .all(|part| part.chars().all(|character| character.is_ascii_digit()))
+        {
+            if parts[0].len() == 4 {
+                format!("{:0>4}-{:0>2}-{:0>2}", parts[0], parts[1], parts[2])
+            } else if parts[2].len() == 4 {
+                format!("{:0>4}-{:0>2}-{:0>2}", parts[2], parts[1], parts[0])
+            } else {
+                return Err(err("invalid_date", "Not a date"));
+            }
+        } else {
+            return Err(err("invalid_date", "Not a date"));
         }
-        if parts[2].len() == 4 {
-            return Ok(format!(
-                "{:0>4}-{:0>2}-{:0>2}",
-                parts[2], parts[1], parts[0]
-            ));
-        }
+    };
+    if !calendar_date(&candidate) {
+        return Err(err("invalid_date", "Not a date"));
     }
-    Err(err("invalid_date", "Not a date"))
+    Ok(candidate)
+}
+
+fn calendar_date(iso: &str) -> bool {
+    let bytes = iso.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    let Some(year) = parse_u32(&bytes[0..4]) else {
+        return false;
+    };
+    let Some(month) = parse_u32(&bytes[5..7]) else {
+        return false;
+    };
+    let Some(day) = parse_u32(&bytes[8..10]) else {
+        return false;
+    };
+    if !(1..=12).contains(&month) {
+        return false;
+    }
+    let max = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
+            29
+        }
+        2 => 28,
+        _ => 0,
+    };
+    (1..=max).contains(&day)
+}
+
+fn parse_u32(bytes: &[u8]) -> Option<u32> {
+    let mut value = 0u32;
+    for byte in bytes {
+        let digit = byte.checked_sub(b'0')?;
+        if digit > 9 {
+            return None;
+        }
+        value = value * 10 + u32::from(digit);
+    }
+    Some(value)
 }
 
 fn parse_range(text: &str) -> Result<Value, Value> {
@@ -729,10 +774,18 @@ fn paint_changes(
         let Some(entry) = cells.get_mut(&column.index.to_string()) else {
             continue;
         };
+        let before = current.get(&attribute.id);
         if entry.get("state").and_then(Value::as_str) == Some("error") {
+            if let Some(before) = before
+                && let Some(object) = entry.as_object_mut()
+            {
+                object.insert(
+                    "before".into(),
+                    display_value(before, target.language.as_deref()),
+                );
+            }
             continue;
         }
-        let before = current.get(&attribute.id);
         let after = next.get(&attribute.id);
         if before == after {
             if let Some(object) = entry.as_object_mut() {
@@ -763,23 +816,33 @@ fn display_value(value: &Value, language: Option<&str>) -> Value {
 
 fn attach_validation(
     cells: &mut Map<String, Value>,
+    model: &CompiledModel,
     columns: &[MappedColumn],
     targets: &[Target],
     errors: &[braian_model::ValidationError],
 ) {
     for error in errors {
-        let Some(attribute) = error.attribute else {
+        let Some(attribute_id) = error.attribute else {
+            continue;
+        };
+        let Some(attribute) = model.attribute(attribute_id) else {
             continue;
         };
         let column = columns.iter().find(|column| {
-            find_target(targets, &column.target).is_some_and(|target| {
-                target.attribute_key.as_deref().is_some_and(|_key| {
-                    targets.iter().any(|item| item.id == target.id)
-                        && error.language.as_ref().map(|tag| tag.as_str())
-                            == target.language.as_deref()
-                        && key_matches(targets, &column.target, attribute)
-                })
-            })
+            let Some(target) = find_target(targets, &column.target) else {
+                return false;
+            };
+            if target.attribute_key.as_deref() != Some(attribute.key.as_str()) {
+                return false;
+            }
+            match (
+                error.language.as_ref().map(|tag| tag.as_str()),
+                target.language.as_deref(),
+            ) {
+                (Some(left), Some(right)) => left == right,
+                (None, _) => !target.id.contains('@'),
+                (Some(_), None) => false,
+            }
         });
         let Some(column) = column else { continue };
         if let Some(entry) = cells
@@ -792,13 +855,18 @@ fn attach_validation(
     }
 }
 
-fn key_matches(targets: &[Target], target_id: &str, attribute: AttributeId) -> bool {
-    let _ = (targets, target_id, attribute);
-    true
+fn error_json(error: &braian_model::ValidationError) -> Value {
+    json!({ "code": error.code, "message": friendly_validation(error) })
 }
 
-fn error_json(error: &braian_model::ValidationError) -> Value {
-    json!({ "code": error.code, "message": error.message })
+fn friendly_validation(error: &braian_model::ValidationError) -> String {
+    match error.code {
+        ErrorCode::InvalidDate => "Not a date".to_owned(),
+        ErrorCode::InvalidDecimal | ErrorCode::NotInteger => "Not a number".to_owned(),
+        ErrorCode::ValueNotInList => "That value is not in the list.".to_owned(),
+        ErrorCode::TextTooLong => "That text is too long.".to_owned(),
+        _ => error.message.clone(),
+    }
 }
 
 fn object_key_value(model: &CompiledModel, type_id: TypeId, object: &Object) -> Option<String> {
@@ -990,5 +1058,111 @@ mod tests {
             &mut resolve,
         );
         assert_eq!(missing.outcome.errors[0]["code"], "delete_not_found");
+        assert_ne!(deleted.outcome.cells["0"]["state"], "new");
+        assert_eq!(deleted.outcome.cells["0"]["state"], "same");
+    }
+
+    #[test]
+    fn invalid_date_is_on_the_date_cell_and_existing_rows_keep_before() {
+        let (model, defs) = model();
+        let targets = super::super::mapping::targets_for(&defs, "item");
+        let columns = vec![
+            MappedColumn {
+                index: 0,
+                target: "type:sku".into(),
+            },
+            MappedColumn {
+                index: 1,
+                target: "type:name".into(),
+            },
+            MappedColumn {
+                index: 2,
+                target: "type:made".into(),
+            },
+            MappedColumn {
+                index: 3,
+                target: "type:active".into(),
+            },
+        ];
+        let mut resolve = |_type: &str, _key: &str| None;
+        let created = classify_row(
+            &model,
+            &defs,
+            &targets,
+            "item",
+            &columns,
+            Some(0),
+            2,
+            &[
+                Some("A-1".into()),
+                Some("Old".into()),
+                Some("2024-01-02".into()),
+                Some("ja".into()),
+            ],
+            None,
+            None,
+            &mut resolve,
+        );
+        assert_eq!(created.outcome.status, "new");
+        let existing = StoredObject {
+            object: serde_json::from_value(created.outcome.patch.clone().unwrap()).unwrap(),
+            key: "A-1".into(),
+            version: 2,
+            deleted_at: None,
+        };
+        let dated = classify_row(
+            &model,
+            &defs,
+            &targets,
+            "item",
+            &columns,
+            Some(0),
+            3,
+            &[
+                Some("A-1".into()),
+                Some("New".into()),
+                Some("2025-13-45".into()),
+                Some("ja".into()),
+            ],
+            Some(&existing),
+            None,
+            &mut resolve,
+        );
+        assert_eq!(dated.outcome.status, "failed");
+        assert_eq!(dated.outcome.cells["2"]["state"], "error");
+        assert_eq!(dated.outcome.cells["2"]["error"]["code"], "invalid_date");
+        assert_eq!(dated.outcome.cells["2"]["error"]["message"], "Not a date");
+        assert_ne!(dated.outcome.cells["0"]["state"], "error");
+        assert_eq!(dated.outcome.cells["0"]["state"], "same");
+        assert_ne!(dated.outcome.cells["0"]["state"], "new");
+        assert_eq!(dated.outcome.cells["1"]["state"], "changed");
+        assert!(dated.outcome.cells["1"].get("before").is_some());
+        let flagged = classify_row(
+            &model,
+            &defs,
+            &targets,
+            "item",
+            &columns,
+            Some(0),
+            4,
+            &[
+                Some("A-1".into()),
+                Some("New".into()),
+                Some("2024-01-02".into()),
+                Some("kanske".into()),
+            ],
+            Some(&existing),
+            None,
+            &mut resolve,
+        );
+        assert_eq!(flagged.outcome.status, "failed");
+        assert_eq!(
+            flagged.outcome.cells["3"]["error"]["code"],
+            "invalid_boolean"
+        );
+        assert_eq!(flagged.outcome.cells["0"]["state"], "same");
+        assert_ne!(flagged.outcome.cells["0"]["state"], "new");
+        assert_eq!(flagged.outcome.cells["1"]["state"], "changed");
+        assert!(flagged.outcome.cells["1"].get("before").is_some());
     }
 }

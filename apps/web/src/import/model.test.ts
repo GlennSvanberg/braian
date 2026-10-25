@@ -9,7 +9,13 @@ import {
   isFileDrag,
   lineTone,
   mappedLines,
+  alternativeChoices,
+  confidenceTone,
+  dedupedTargets,
+  mappingRank,
   matchBanner,
+  matchSummary,
+  showTypeConfidence,
   redoColumns,
   rowClass,
   saveLabel,
@@ -57,6 +63,42 @@ describe('import mapping helpers', () => {
     expect(confidenceLabel('deterministic', 0.97)).toBe('97 %')
     expect(confidenceLabel('manual', 1)).toBe('✓')
     expect(matchBanner(lines)).toEqual({ matched: 2, total: 3, marked: 1 })
+    expect(matchSummary(lines)).toBe('2 of 3 columns are mapped. 1 needs a look.')
+    expect(matchSummary([lines[0]!])).toBe('The column is mapped.')
+    expect(matchSummary([])).toBe('No columns in this file.')
+    expect(mappingRank(lines[2])).toBeLessThan(mappingRank(lines[1]))
+    expect(mappingRank(lines[1])).toBeLessThan(mappingRank(lines[0]))
+    expect(confidenceTone(lines[1])).toBe('low')
+    expect(confidenceTone(lines[2])).toBe('unmapped')
+    expect(showTypeConfidence('artikel', 'artikel', 1)).toBeNull()
+    expect(showTypeConfidence('artikel', 'artikel', 0.72)).toBe(0.72)
+    expect(showTypeConfidence('variant', 'artikel', 0.72)).toBeNull()
+    expect(
+      dedupedTargets([
+        { id: 'type:beskrivning', label: 'Beskrivning (sv)' },
+        { id: 'type:beskrivning@sv', label: 'Beskrivning (sv)' },
+        { id: 'type:beskrivning@en', label: 'Description (en)' },
+      ]).map((target) => target.id),
+    ).toEqual(['type:beskrivning', 'type:beskrivning@en'])
+    expect(
+      alternativeChoices(
+        {
+          col: 2,
+          target: 'type:beskrivning',
+          confidence: 1,
+          source: 'deterministic',
+          alternatives: [
+            { value: 'type:beskrivning@sv', p: 0.86 },
+            { value: 'type:beskrivning@en', p: 0.86 },
+          ],
+        },
+        [
+          { id: 'type:beskrivning', label: 'Beskrivning (sv)' },
+          { id: 'type:beskrivning@sv', label: 'Beskrivning (sv)' },
+          { id: 'type:beskrivning@en', label: 'Description (en)' },
+        ],
+      ).map((alt) => alt.label),
+    ).toEqual(['Description (en)'])
     expect(ariaMap('Artnr', 'SKU', 0.97)).toBe('Column Artnr maps to SKU, 97 percent')
   })
 
