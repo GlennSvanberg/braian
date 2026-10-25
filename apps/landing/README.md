@@ -22,7 +22,7 @@ pnpm --dir apps/landing build
 
 `just landing` runs the same build.
 
-Output is `apps/landing/dist/`: `index.html`, hashed CSS and a small theme script, `brand/` (favicon and logo), `og.png`, and `robots.txt`. The page is prerendered, so the HTML already contains the copy. The JavaScript that ships (`src/client.ts`) is the light/dark toggle, the hero demo player, and the flow diagram animation.
+Output is `apps/landing/dist/`: `index.html`, hashed CSS and a small theme script, `brand/` (favicon and logo), `og.png`, and `robots.txt`. The page is prerendered, so the HTML already contains the copy. The JavaScript that ships (`src/client.ts`) is the light/dark toggle, the hero demo player, the flow diagram animation, and the card disclosures.
 
 Performance figures on the page come from `src/data/measurements.ts`. Update that file when a run is remeasured. All figures share one footnote with the hardware, so add a new footnote before publishing a figure from other hardware.
 
