@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use braian_model::{DefinitionSet, Object, ObjectId, TypeId};
@@ -214,6 +214,72 @@ impl Store {
         Ok(Some(stored))
     }
 
+    /// Loads many objects in three queries (`objects`, `object_structures`, `object_values`).
+    ///
+    /// Ids that are missing are omitted. The result follows `ids`, without duplicates.
+    pub async fn get_objects(&self, ids: &[ObjectId]) -> Result<Vec<StoredObject>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let uuids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT id, type_id, key, version, model_revision, deleted_at
+                 FROM objects WHERE id = ANY($1)",
+                &[&uuids],
+            )
+            .await?;
+        let group_rows = client
+            .query(
+                "SELECT object_id, structure_id, group_id
+                 FROM object_structures WHERE object_id = ANY($1)",
+                &[&uuids],
+            )
+            .await?;
+        let part_rows = client
+            .query(
+                "SELECT object_id, part, \"values\"
+                 FROM object_values WHERE object_id = ANY($1)",
+                &[&uuids],
+            )
+            .await?;
+        let mut groups: HashMap<Uuid, Vec<(Uuid, Uuid)>> = HashMap::new();
+        for row in &group_rows {
+            groups
+                .entry(row.get("object_id"))
+                .or_default()
+                .push((row.get("structure_id"), row.get("group_id")));
+        }
+        let mut parts: HashMap<Uuid, BTreeMap<String, Value>> = HashMap::new();
+        for row in &part_rows {
+            parts
+                .entry(row.get("object_id"))
+                .or_default()
+                .insert(row.get("part"), row.get("values"));
+        }
+        let mut by_id = HashMap::with_capacity(rows.len());
+        for row in &rows {
+            let id: Uuid = row.get("id");
+            let stored = self.assemble_loaded(
+                row,
+                groups.get(&id).map(Vec::as_slice).unwrap_or(&[]),
+                parts.get(&id),
+            )?;
+            by_id.insert(id, stored);
+        }
+        let mut seen = HashSet::new();
+        let mut stored = Vec::with_capacity(ids.len());
+        for id in ids {
+            if seen.insert(*id)
+                && let Some(object) = by_id.remove(&id.as_uuid())
+            {
+                stored.push(object);
+            }
+        }
+        Ok(stored)
+    }
+
     pub async fn get_by_key(
         &self,
         type_id: TypeId,
@@ -320,14 +386,14 @@ impl Store {
                 Ok(())
             }
             Err(error) if error.is_duplicate() && chunk.len() > 1 => {
-                for object in chunk {
+                for object in &chunk {
                     match self
-                        .import_chunk(batch, actor, std::slice::from_ref(&object))
+                        .import_chunk(batch, actor, std::slice::from_ref(object))
                         .await
                     {
                         Ok(()) => *written += 1,
                         Err(error) if error.is_duplicate() => {
-                            errors.push(row_error(&object, &error));
+                            errors.push(row_error(object, &error));
                         }
                         Err(error) => return Err(error),
                     }
@@ -339,7 +405,12 @@ impl Store {
                 Ok(())
             }
             Err(error) => Err(error),
-        }
+        }?;
+        drop(chunk);
+        // Heavy chunks allocate a large JSON tree per object. glibc keeps that
+        // high-water mark, so RSS grew by about a chunk on every batch.
+        release_heap();
+        Ok(())
     }
 
     async fn max_seq(&self, batch: BatchId) -> Result<i64, Error> {
@@ -389,6 +460,40 @@ impl Store {
                         (
                             braian_model::StructureId::from_uuid(group.get("structure_id")),
                             braian_model::GroupId::from_uuid(group.get("group_id")),
+                        )
+                    })
+                    .collect(),
+                values,
+            },
+            key: row.get("key"),
+            version: u64_from_i64(version)?,
+            deleted_at: row.get("deleted_at"),
+        })
+    }
+
+    fn assemble_loaded(
+        &self,
+        row: &tokio_postgres::Row,
+        groups: &[(Uuid, Uuid)],
+        parts: Option<&BTreeMap<String, Value>>,
+    ) -> Result<StoredObject, Error> {
+        let id = ObjectId::from_uuid(row.get("id"));
+        let empty = BTreeMap::new();
+        let encoded = parts.unwrap_or(&empty);
+        let values = split::join_parts(self.form(), encoded)
+            .map_err(|message| Error::Corrupt(id, message))?;
+        let version: i64 = row.get("version");
+        Ok(StoredObject {
+            object: Object {
+                id,
+                type_id: TypeId::from_uuid(row.get("type_id")),
+                model_revision: u64_from_i64(row.get("model_revision"))?,
+                groups: groups
+                    .iter()
+                    .map(|(structure, group)| {
+                        (
+                            braian_model::StructureId::from_uuid(*structure),
+                            braian_model::GroupId::from_uuid(*group),
                         )
                     })
                     .collect(),
@@ -764,30 +869,8 @@ async fn copy_creates(
     actor: &Actor,
     objects: &[Object],
 ) -> Result<(), Error> {
-    let mut object_rows = Vec::with_capacity(objects.len());
-    let mut value_rows = Vec::new();
-    let mut structure_rows = Vec::new();
-    let mut change_rows = Vec::with_capacity(objects.len());
-    for object in objects {
-        let key = defs.key_of(object)?;
-        object_rows.push((
-            object.id.as_uuid(),
-            object.type_id.as_uuid(),
-            key,
-            1i64,
-            as_i64(object.model_revision)?,
-        ));
-        for (part, document) in defs.split.split(form, &object.values) {
-            value_rows.push((object.id.as_uuid(), part, Value::Object(document)));
-        }
-        for (structure, group) in &object.groups {
-            structure_rows.push((object.id.as_uuid(), structure.as_uuid(), group.as_uuid()));
-        }
-        let mut diff = diff_created(&object.values);
-        attach_created_groups(&mut diff, &object.groups);
-        change_rows.push((object.id.as_uuid(), diff));
-    }
-
+    // Stream each COPY. Holding every part and every diff for the whole chunk
+    // kept a second and third copy of each heavy object alive at once.
     let sink = tx
         .copy_in(
             "COPY objects (id, type_id, key, version, model_revision) FROM STDIN WITH (FORMAT binary)",
@@ -797,12 +880,23 @@ async fn copy_creates(
         sink,
         &[Type::UUID, Type::UUID, Type::TEXT, Type::INT8, Type::INT8],
     ));
-    for (id, type_id, key, version, revision) in &object_rows {
+    for object in objects {
+        let key = defs.key_of(object)?;
+        let id = object.id.as_uuid();
+        let type_id = object.type_id.as_uuid();
+        let version = 1i64;
+        let revision = as_i64(object.model_revision)?;
         writer
             .as_mut()
-            .write(&[id as &(dyn ToSql + Sync), type_id, key, version, revision])
+            .write(&[
+                &id as &(dyn ToSql + Sync),
+                &type_id,
+                &key,
+                &version,
+                &revision,
+            ])
             .await
-            .map_err(|error| map_unique(error, TypeId::from_uuid(*type_id), key))?;
+            .map_err(|error| map_unique(error, object.type_id, &key))?;
     }
     writer
         .finish()
@@ -816,11 +910,15 @@ async fn copy_creates(
         sink,
         &[Type::UUID, Type::TEXT, Type::JSONB],
     ));
-    for (id, part, value) in &value_rows {
-        writer
-            .as_mut()
-            .write(&[id as &(dyn ToSql + Sync), part, value])
-            .await?;
+    for object in objects {
+        let id = object.id.as_uuid();
+        for (part, document) in defs.split.split(form, &object.values) {
+            let value = Value::Object(document);
+            writer
+                .as_mut()
+                .write(&[&id as &(dyn ToSql + Sync), &part, &value])
+                .await?;
+        }
     }
     writer.finish().await?;
 
@@ -833,11 +931,16 @@ async fn copy_creates(
         sink,
         &[Type::UUID, Type::UUID, Type::UUID],
     ));
-    for (id, structure, group) in &structure_rows {
-        writer
-            .as_mut()
-            .write(&[id as &(dyn ToSql + Sync), structure, group])
-            .await?;
+    for object in objects {
+        let id = object.id.as_uuid();
+        for (structure, group) in &object.groups {
+            let structure = structure.as_uuid();
+            let group = group.as_uuid();
+            writer
+                .as_mut()
+                .write(&[&id as &(dyn ToSql + Sync), &structure, &group])
+                .await?;
+        }
     }
     writer.finish().await?;
 
@@ -846,6 +949,7 @@ async fn copy_creates(
     let actor_id = actor.actor.as_uuid();
     let behalf = actor.on_behalf_of.map(PrincipalId::as_uuid);
     let batch_id = batch.as_uuid();
+    let kind = actor.kind.as_str();
     let sink = tx
         .copy_in(
             "COPY changes (batch_id, object_id, version, op, actor, on_behalf_of, diff, kind) FROM STDIN WITH (FORMAT binary)",
@@ -864,18 +968,20 @@ async fn copy_creates(
             Type::TEXT,
         ],
     ));
-    let kind = actor.kind.as_str();
-    for (object_id, diff) in &change_rows {
+    for object in objects {
+        let object_id = object.id.as_uuid();
+        let mut diff = diff_created(&object.values);
+        attach_created_groups(&mut diff, &object.groups);
         writer
             .as_mut()
             .write(&[
                 &batch_id as &(dyn ToSql + Sync),
-                object_id,
+                &object_id,
                 &version,
                 &op,
                 &actor_id,
                 &behalf,
-                diff,
+                &diff,
                 &kind,
             ])
             .await?;
@@ -1316,6 +1422,18 @@ fn map_unique(error: tokio_postgres::Error, type_id: TypeId, key: &str) -> Error
         }
     }
     Error::Db(error)
+}
+
+fn release_heap() {
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        unsafe {
+            malloc_trim(0);
+        }
+    }
 }
 
 fn as_i64(value: u64) -> Result<i64, Error> {

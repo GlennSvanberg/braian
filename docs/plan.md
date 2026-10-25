@@ -23,9 +23,14 @@ built in order. Everything here is a direction and can change as measurements co
 - Spike 2 picked one Typesense collection with a field per language. Numbers are in
   `docs/measurements/2026-10-24-spike-2-index.md`. The index stores the base-unit value as a
   float; the exact decimal stays in Postgres.
-- The relay confirms the replication slot from inside the read loop (200 ms). A crash can
+- The relay confirms the replication slot from inside the read loop (200 ms), and only
+  up to the oldest event Kafka has accepted. Interactive and bulk are produced on
+  separate tasks so an interactive event is not waiting on a bulk ack. A crash can
   replay a short tail. Consumers are idempotent. The order test allows that replay and
   requires the new sequence numbers with no gaps.
+- If Postgres invalidates the slot (`max_slot_wal_keep_size` is instance-wide), the
+  relay drops that slot, asks the indexer to reindex from Postgres, and creates a new
+  one. Settings for a shared versus a dedicated Postgres are in `docs/dev.md`.
 - The same relay test talks to whatever `KAFKA_BROKERS` points at. `compose.yaml` has an
   Apache Kafka profile (`docker compose --profile kafka up -d kafka`, port 19093).
 - Phase 6 is the bulk job endpoint with per-row progress and errors. The scale proof
