@@ -13,7 +13,9 @@ pnpm install
 just dev
 ```
 
-Öppna http://127.0.0.1:3000. API:t lyssnar på http://127.0.0.1:8090. Demokontot skapas från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env` (se `.env.example`). Inget lösenord ligger i källkoden. Agenten vill ha `OPENAI_API_KEY`. Utan nyckel säger chatten till på svenska och resten av programmet fungerar.
+Öppna http://127.0.0.1:3000. API:t lyssnar på http://127.0.0.1:8090. Demokontot skapas från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env` (se `.env.example`). Inget lösenord ligger i källkoden. Playwright läser samma variabler, från miljön eller från `.env`, och har inget lösenord i specen. Agenten vill ha `OPENAI_API_KEY`. Utan nyckel säger chatten till på svenska och resten av programmet fungerar.
+
+På Windows, om `just` inte är installerat: `.\scripts\up.ps1`, `pnpm install`, `.\scripts\dev.ps1`. `just` installeras med `winget install --id Casey.Just` eller `scoop install just`. Rust-bygget behöver CMake och en C++-kompilator eftersom `rdkafka` använder `cmake-build` (Visual Studio Build Tools, workload "Desktop development with C++").
 
 En ren klon på Linux följde README: `cp .env.example .env`, `just up`, `pnpm install`, `just dev`. API:t lyssnade på 8090 och webben på 3000. Sökningen svarade 3 013 objekt ur den befintliga volymen, hjälteobjekten först (`ART-REGEL-45` och vidare). `just` behöver vara installerat. Första `just dev` byggde Rust-koden i klonen. En befintlig replikeringsslot återanvänds, med en varning, och strömmen fortsätter. Windows-anteckningarna står i README.
 
@@ -24,8 +26,8 @@ En ren klon på Linux följde README: `cp .env.example .env`, `just up`, `pnpm i
 - Relay läser `changes` via logisk replikering och publicerar till Redpanda (`interactive` och `bulk`) med en eftersläpningsmätare. Samma test kan peka om `KAFKA_BROKERS` mot Apache Kafka-profilen i `compose.yaml`.
 - Indexer, sök med `wait_seq`, och `braian reindex` som byter alias. Ett fält per språk i en Typesense-samling.
 - Massändring som jobb (`bulk.write`) med status och fel per rad.
-- Inloggning med lösenord (argon2id), cookie-session, roller admin/editor/viewer, och API-token knuten till en person.
-- Operationer som UI, Ctrl+K, agenten och `/mcp` delar. En agent skriver inte direkt: anropet blir ett förslag.
+- Inloggning med lösenord (argon2id), cookie-session, roller admin/editor/viewer, och API-token knuten till en person. Ett ooptimerat debugbygge lät Argon2id och blake2 köra utan optimering, och inloggningen tog omkring tio sekunder på en Windows-laptop. Dev-profilen bygger `argon2` och `blake2` med `opt-level = 3`. Hash plus verify av ett lösenord tog 41 ms i den profilen, se `docs/measurements/2026-10-25-login-debug.md`.
+- Operationer som UI, Ctrl+K, agenten och `/mcp` delar. En agent skriver inte direkt: anropet blir ett förslag. In-app-agenten anropar OpenAI Responses (`/v1/responses`) med `reasoning.effort` satt till `none`, så `gpt-6-luna` tar emot verktyg. Punkt i ett operationsnamn blir understreck i verktygsnamnet, och det namnet mappar tillbaka till operationen. Ett fel från OpenAI loggas och visas i gränssnittet som en svensk mening.
 - Arbetsytor och vyer som data, låsbara och delbara. Fyra arbetsytor seedas: Sätt upp systemet (checklista och översikt), Datamodell (träd, klass, konsekvens), Berika objekt (träd, tabell, detalj, graf, historik) och Granska (förslag, batchlogg, jobb).
 - Tabell med serverfilter, serversortering och servergruppering. Kolumnordning, bredder, filter, gruppering och sortering sparas i vyn och kommer tillbaka vid omladdning. Delningens förhållande sparas när man släpper avdelaren. En flik kan dras till en droppzon (vänster, höger, över, under, mitten) när arbetsytan inte är låst.
 - Detaljformulär i två kolumner. Språkfält har etiketten sv, en eller de. En objektreferens visar nummer och namn och väljs i en lista, inte som ett rått id.

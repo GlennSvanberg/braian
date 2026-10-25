@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { demoCredentials } from './demo'
 
 type Workspace = {
   id: string
@@ -10,9 +11,10 @@ type Workspace = {
 }
 
 async function login(page: Page) {
+  const demo = demoCredentials()
   await page.goto('/')
-  await page.getByTestId('email').fill(process.env.BRAIAN_DEMO_EMAIL ?? 'admin@braian.local')
-  await page.getByTestId('password').fill(process.env.BRAIAN_DEMO_PASSWORD ?? 'braian-demo')
+  await page.getByTestId('email').fill(demo.email)
+  await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Logga in' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
 }

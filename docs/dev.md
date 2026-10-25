@@ -10,6 +10,12 @@
 På Windows går bind mounts från `C:\` långsamt. Klona hellre repot i WSL-filsystemet,
 eller använd "Clone Repository in Container Volume". `target/` ligger alltid i en egen volym.
 
+`just` installeras med `winget install --id Casey.Just` eller `scoop install just`.
+Saknas `just` kör `.\scripts\up.ps1` och `.\scripts\dev.ps1` samma sak.
+`rdkafka` byggs med CMake (`cmake-build`). Visual Studio Build Tools, workload
+"Desktop development with C++", ger CMake och kompilatorn. `winget install --id Kitware.CMake`
+räcker inte ensamt.
+
 ## Tjänster
 
 | Tjänst | Från värddatorn | Från devcontainern |

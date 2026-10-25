@@ -34,6 +34,7 @@ export const sv = {
   ownDraft: 'eget utkast',
   agentUnavailable:
     'Ingen modell är kopplad. Sätt OPENAI_API_KEY för att prata med agenten. Förslag, massändring och återställning fungerar ändå via operationerna.',
+  agentEmpty: 'Modellen svarade utan text.',
   themeDark: 'Mörkt',
   themeLight: 'Ljust',
   locked: 'Låst',

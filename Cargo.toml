@@ -2,6 +2,14 @@
 resolver = "3"
 members = ["crates/*"]
 
+# Argon2id is CPU-heavy. An unoptimized debug build made login take about ten
+# seconds. These crates stay optimized so `cargo run` can still verify a password.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
