@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { Maximize2, Minimize2, MoreHorizontal, Plus, X } from 'lucide-react'
 import { Kbd } from './components/ui/kbd'
 import { viewDisplayTitle } from './demo-labels'
@@ -30,6 +31,10 @@ type Hover =
 type Drag = { view: string; title: string; x: number; y: number; hover: Hover | null }
 
 const EDGE = 10
+const PREVIEW_INSET = 4
+const GHOST_OFFSET = 12
+const EDGE_SHARE = 0.3
+const SPLIT_GAP = 6
 
 export function WorkspaceDock({
   doc,
@@ -116,17 +121,27 @@ export function WorkspaceDock({
         <SplitNode frame={shared} node={doc.layout} path={[]} />
       )}
       {(['left', 'right', 'top', 'bottom'] as const).map((zone) => (
-        <div
-          key={zone}
-          className={drag?.hover?.kind === 'edge' && drag.hover.zone === zone ? `edge-band ${zone} on` : `edge-band ${zone}`}
-          data-testid={`edge-${zone}`}
-        />
+        <div key={zone} className={`edge-band ${zone}`} data-testid={`edge-${zone}`} />
       ))}
-      {drag ? (
-        <div className="drag-ghost" data-testid="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
-          {drag.title}
+      {drag?.hover?.kind === 'edge' ? (
+        <div
+          className="dock-preview"
+          data-testid="drop-overlay"
+          data-zone={drag.hover.zone}
+          data-edge="true"
+          style={edgePreviewStyle(drag.hover.zone)}
+        >
+          <span data-testid={`drop-${drag.hover.zone}`}>{zoneLabel(drag.hover.zone)}</span>
         </div>
       ) : null}
+      {drag && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="drag-ghost" data-testid="drag-ghost" style={{ left: drag.x + GHOST_OFFSET, top: drag.y + GHOST_OFFSET }}>
+              {drag.title}
+            </div>,
+            document.body,
+          )
+        : null}
       {menu ? (
         <ViewMenu
           menu={menu}
@@ -368,12 +383,12 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
       </div>
       <div className="pane-body">
         {activeId ? frame.renderView(frame.viewList.find((view) => view.id === activeId) ?? { id: activeId, title: activeId, type: '' }) : <p>{copy.empty}</p>}
-        {preview ? (
-          <div className="dock-preview" data-testid="drop-overlay" data-zone={preview} style={previewStyle(preview)}>
-            <span data-testid={`drop-${preview}`}>{zoneLabel(preview)}</span>
-          </div>
-        ) : null}
       </div>
+      {preview ? (
+        <div className="dock-preview" data-testid="drop-overlay" data-zone={preview} style={previewStyle(preview)}>
+          <span data-testid={`drop-${preview}`}>{zoneLabel(preview)}</span>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -508,12 +523,24 @@ function zoneLabel(zone: Zone) {
 }
 
 function previewStyle(zone: Zone): React.CSSProperties {
-  const inset = 4
+  const inset = PREVIEW_INSET
   if (zone === 'left') return { left: inset, top: inset, width: `calc(50% - ${inset * 2}px)`, height: `calc(100% - ${inset * 2}px)` }
   if (zone === 'right') return { left: `calc(50% + ${inset}px)`, top: inset, width: `calc(50% - ${inset * 2}px)`, height: `calc(100% - ${inset * 2}px)` }
   if (zone === 'top') return { left: inset, top: inset, width: `calc(100% - ${inset * 2}px)`, height: `calc(50% - ${inset * 2}px)` }
   if (zone === 'bottom') return { left: inset, top: `calc(50% + ${inset}px)`, width: `calc(100% - ${inset * 2}px)`, height: `calc(50% - ${inset * 2}px)` }
   return { left: inset, top: inset, width: `calc(100% - ${inset * 2}px)`, height: `calc(100% - ${inset * 2}px)` }
+}
+
+/** Preview of the pane `dockEdge` will create: `EDGE_SHARE` of the dock, after the 6px split gap, then the same 4px inset. */
+function edgePreviewStyle(zone: Exclude<Zone, 'center'>): React.CSSProperties {
+  const inset = PREVIEW_INSET
+  const span = `calc((100% - ${SPLIT_GAP}px) * ${EDGE_SHARE} - ${inset * 2}px)`
+  const cross = `calc(100% - ${inset * 2}px)`
+  const start = `calc((100% - ${SPLIT_GAP}px) * ${1 - EDGE_SHARE} + ${SPLIT_GAP}px + ${inset}px)`
+  if (zone === 'left') return { left: inset, top: inset, width: span, height: cross }
+  if (zone === 'right') return { left: start, top: inset, width: span, height: cross }
+  if (zone === 'top') return { left: inset, top: inset, width: cross, height: span }
+  return { left: inset, top: start, width: cross, height: span }
 }
 
 function asRefs(list: DockView[]): ViewRef[] {
