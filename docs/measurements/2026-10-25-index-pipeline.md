@@ -1,6 +1,6 @@
 # Indexkedja: relay, indexer och tunga importer
 
-Mätt 2026-10-25 på den här maskinen. Före är `c83690b`. Efter är samma arbetsyta som den här filen, byggd med `cargo build --release -p braian-bench -p braian-server` innan filen skrevs. Siffrorna är en körning per binär, inte en serie.
+Mätt 2026-10-25 på den här maskinen. Före är `c83690b`. Efter är `f8a5836` (`cargo build --release -p braian-bench -p braian-server`). Siffrorna är en körning per binär, inte en serie.
 
 Det här är inte 1M-körningen. Den körningen (8 vCPU, 15 GB, mediumobjekt) ligger utanför den här maskinen: skrivning omkring 1 000 objekt/s, relay omkring 170 händelser/s, indexer 45–50 dokument/s, och en interaktiv ändring som väntade över en minut. Typesense för en miljon mediumdokument ryms inte här. Den här mätningen visar om samma kodvägar blir snabbare på en last maskinen klarar.
 
