@@ -225,21 +225,30 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   display: grid;
   grid-template-rows: 32px minmax(0, 1fr);
   background: var(--panel);
+  border: 0;
   border-radius: var(--r-lg);
   box-shadow: var(--inset);
   position: relative;
   overflow: hidden;
 }
-.pane.focused { box-shadow: var(--inset), inset 0 0 0 2px var(--accent); }
+.pane.focused {
+  box-shadow: var(--inset), inset 0 0 0 2px var(--accent);
+  outline: none;
+}
 .pane-tabs {
   display: flex;
   align-items: center;
   gap: 2px;
   height: 32px;
+  min-height: 32px;
+  max-height: 32px;
   padding: 0 6px;
   background: var(--surface);
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.pane-tabs::-webkit-scrollbar { display: none; }
 .pane-tab { display: inline-flex; align-items: center; gap: 4px; max-width: 180px; }
 .pane-tab > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane.focused .pane-tab.active { box-shadow: inset 0 2px 0 var(--accent); }
@@ -256,34 +265,47 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 .pane-chrome { margin-left: auto; display: flex; gap: 2px; opacity: 0; }
 .pane:hover .pane-chrome, .pane.focused .pane-chrome, .pane-chrome:focus-within { opacity: 1; }
 .pane-chrome .icon-btn { width: 22px; padding: 0; justify-content: center; }
-.pane-body { position: relative; min-height: 0; overflow: auto; padding: 8px; }
+.pane-body {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.pane-body > * { min-height: 0; min-width: 0; }
 .dock-preview {
   position: absolute;
   z-index: 4;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
-  border-radius: var(--r-lg);
+  border-radius: calc(var(--r-lg) - 4px);
   background: var(--accent-dim);
   border: 2px solid var(--accent);
   pointer-events: none;
   transition: left var(--dur) var(--ease), top var(--dur) var(--ease), width var(--dur) var(--ease), height var(--dur) var(--ease);
 }
 .dock-preview span {
+  justify-self: center;
+  align-self: center;
   background: var(--panel);
   color: var(--accent);
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 12px;
+  line-height: 16px;
 }
 .edge-band { position: absolute; z-index: 6; pointer-events: none; border-radius: var(--r-md); }
 .edge-band.left { left: 0; top: 0; bottom: 0; width: 10px; }
 .edge-band.right { right: 0; top: 0; bottom: 0; width: 10px; }
 .edge-band.top { left: 0; right: 0; top: 0; height: 10px; }
 .edge-band.bottom { left: 0; right: 0; bottom: 0; height: 10px; }
-.edge-band.on { background: var(--accent-dim); box-shadow: inset 0 0 0 2px var(--accent); }
 .drag-ghost {
   position: fixed;
   z-index: 40;
+  margin: 0;
   pointer-events: none;
   background: var(--raised);
   color: var(--text);
@@ -292,6 +314,7 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   box-shadow: var(--shadow-md);
   padding: 4px 8px;
   font-size: 12px;
+  line-height: 16px;
 }
 @media (prefers-reduced-motion: reduce) {
   .dock-preview, .split-divider > span { transition: none; }
@@ -322,18 +345,48 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   vertical-align: 1px;
 }
 
-.table-wrap { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
-.toolbar { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
-.grid {
+.table-wrap {
+  flex: 1 1 auto;
   height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.toolbar { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; flex: none; }
+.grid {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   border-radius: var(--r-md);
-  background: transparent;
+  background: var(--surface);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
 }
-.row, .head { display: flex; align-items: center; min-width: max-content; }
-.head { position: sticky; top: 0; background: var(--surface); z-index: 1; color: var(--muted); font-weight: 500; }
+.row, .head { display: flex; align-items: center; min-width: max-content; flex: none; }
+.head {
+  position: sticky;
+  top: 0;
+  height: 28px;
+  background: var(--surface);
+  z-index: 1;
+  color: var(--muted);
+  font-weight: 500;
+}
+.table-status {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  padding: 16px;
+}
+.table-status p { margin: 0; }
 .cell {
   padding: 0 8px;
   overflow: hidden;
