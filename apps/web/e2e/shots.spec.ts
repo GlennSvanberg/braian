@@ -36,7 +36,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
   await page.screenshot({ path: `${shots}/detail-${theme}.png` })
 
   await page.getByRole('button', { name: 'Graph' }).click()
-  await expect(page.locator('svg[data-testid=graph]')).toBeVisible()
+  await expect(page.locator('canvas[data-testid=graph]')).toBeVisible()
   await page.screenshot({ path: `${shots}/graph-${theme}.png` })
 
   await page.getByRole('button', { name: 'History' }).click()

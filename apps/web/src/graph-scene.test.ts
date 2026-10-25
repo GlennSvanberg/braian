@@ -1,0 +1,143 @@
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
+import { describe, expect, it } from 'vitest'
+import type { Json } from './api'
+import { buildScene, capScene, mergeScene, relationLabel, structureCaption } from './graph-scene'
+
+const defs: Json = {
+  types: [{ key: 'artikel', labels: { en: 'Article', sv: 'Artikel' } }, { key: 'produkt', labels: { en: 'Product' } }],
+  value_lists: [
+    {
+      key: 'status',
+      options: [{ code: 'ok', labels: { en: 'OK', sv: 'OK' } }],
+    },
+    {
+      key: 'farg',
+      options: [{ code: 'gron', labels: { en: 'Green', sv: 'Grön', de: 'Grün' } }],
+    },
+  ],
+  attributes: [
+    { key: 'nummer', labels: { en: 'Number', sv: 'Nummer' }, kind: { type: 'text' } },
+    { key: 'namn', labels: { en: 'Name', sv: 'Namn' }, kind: { type: 'text' } },
+    { key: 'beskrivning', labels: { en: 'Description', de: 'Beschreibung' }, kind: { type: 'text' } },
+    { key: 'farg', labels: { en: 'Colour', de: 'Farbe', sv: 'Färg' }, kind: { type: 'value_list', list: 'farg' } },
+    { key: 'vikt', labels: { en: 'Weight' }, kind: { type: 'number' } },
+  ],
+}
+
+const graph: Json = {
+  id: 'tent',
+  key: 'ART-TALT-2',
+  type: 'artikel',
+  groups: { sortiment: 'talt' },
+  relations: [{ kind: 'article_of', object_id: 'prod', key: 'PROD-TALT', type_id: 'ignored' }],
+  attributes: [
+    { key: 'namn', label: 'Name', sources: [{ from: 'type' }] },
+    { key: 'nummer', label: 'Number', sources: [{ from: 'type' }] },
+    { key: 'beskrivning', label: 'Description', sources: [{ from: 'type' }] },
+    { key: 'farg', label: 'Colour', sources: [{ from: 'type' }] },
+    {
+      key: 'vikt',
+      label: 'Weight',
+      sources: [{ structure: 'sortiment', class: 'friluft', group: 'talt', inherited: true }],
+    },
+  ],
+}
+
+const values: Json = {
+  namn: { sv: 'Tält 2 personer', en: '2-person tent', de: 'Zelt 2 Personen' },
+  nummer: 'ART-TALT-2',
+  beskrivning: { en: 'Light 2-layer hiking tent.', sv: 'Lätt tält.' },
+  farg: ['gron'],
+  vikt: { value: '2.4', unit: 'kg' },
+}
+
+describe('graph scene', () => {
+  it('names nodes and provenance edges in English', () => {
+    const scene = buildScene({ graph, values, defs })
+    const captions = scene.nodes.map((node) => node.caption)
+    expect(captions).toContain('2-person tent')
+    expect(captions).toContain('Colour')
+    expect(captions).toContain('Number')
+    expect(captions).toContain('Description')
+    expect(captions).toContain('Outdoor')
+    expect(captions).toContain('Tents')
+    expect(captions).toContain('Assortment')
+    expect(captions.some((caption) => ['farg', 'namn', 'friluft', 'nummer', 'Nummer', 'Farbe', 'Beschreibung'].includes(caption))).toBe(false)
+
+    const colour = scene.nodes.find((node) => node.caption === 'Colour')
+    expect(colour?.subtitle).toBe('Green')
+    expect(scene.edges.some((edge) => edge.source === colour?.id && edge.label === 'From type' && edge.target === 'object:tent')).toBe(true)
+
+    const weight = scene.nodes.find((node) => node.caption === 'Weight')
+    expect(weight?.subtitle).toContain('2.4')
+    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'class:sortiment:friluft')).toBe(true)
+    expect(scene.edges.some((edge) => edge.label === 'Article of' && edge.target === 'object:prod')).toBe(true)
+    expect(scene.nodes.find((node) => node.id === 'object:prod')?.caption).toBe('PROD-TALT')
+    expect(relationLabel('variant_of')).toBe('Variant of')
+    expect(structureCaption('sovsack')).toBe('Sleeping bags')
+  })
+
+  it('upgrades a key to a human name without duplicating the node', () => {
+    const first = buildScene({ graph, values, defs })
+    const second = buildScene({
+      graph: { id: 'prod', key: 'PROD-TALT', type: 'produkt', groups: {}, relations: [], attributes: [] },
+      values: { namn: { en: 'Fjäll tents', sv: 'Fjäll tält' }, nummer: 'PROD-TALT' },
+      defs,
+    })
+    const merged = mergeScene(first, second)
+    const matches = merged.nodes.filter((node) => node.id === 'object:prod')
+    expect(matches).toHaveLength(1)
+    expect(matches[0]?.caption).toBe('Fjäll tents')
+    expect(matches[0]?.subtitle).toBe('Product')
+    const again = mergeScene(merged, second)
+    expect(again.nodes.filter((node) => node.id === 'object:prod')).toHaveLength(1)
+    expect(again.edges.filter((edge) => edge.label === 'Article of')).toHaveLength(1)
+  })
+
+  it('drops nodes past the cap and the edges that pointed at them', () => {
+    const nodes = Array.from({ length: 5 }, (_, index) => ({
+      id: `n${index}`,
+      kind: 'object' as const,
+      caption: `Node ${index}`,
+      subtitle: 'Object',
+      rawCaption: false,
+      properties: [],
+    }))
+    const capped = capScene(
+      {
+        nodes,
+        edges: [
+          { id: 'keep', source: 'n0', target: 'n1', label: 'Has' },
+          { id: 'drop', source: 'n0', target: 'n4', label: 'Has' },
+        ],
+      },
+      4,
+    )
+    expect(capped.capped).toBe(true)
+    expect(capped.scene.nodes.map((node) => node.id)).toEqual(['n0', 'n1', 'n2', 'n3'])
+    expect(capped.scene.edges.map((edge) => edge.id)).toEqual(['keep'])
+  })
+
+  it('ticks a few hundred nodes inside a second', () => {
+    const count = 240
+    const nodes = Array.from({ length: count }, (_, index) => ({
+      id: String(index),
+      x: Math.cos(index) * 120,
+      y: Math.sin(index) * 120,
+    }))
+    const links = Array.from({ length: count }, (_, index) => ({
+      source: String(index),
+      target: String((index + 7) % count),
+    }))
+    const started = performance.now()
+    const sim = forceSimulation(nodes)
+      .force('link', forceLink(links).id((node) => String((node as { id?: string }).id ?? '')).distance(80))
+      .force('charge', forceManyBody().strength(-30).distanceMax(240))
+      .force('center', forceCenter())
+      .force('collide', forceCollide(12))
+      .stop()
+    for (let step = 0; step < 40; step += 1) sim.tick()
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(Number.isFinite(nodes[0]?.x)).toBe(true)
+  })
+})
