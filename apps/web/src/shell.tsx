@@ -4,7 +4,11 @@ import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
+import { Moon, Sun } from 'lucide-react'
 import { ApiError, api, type Json } from './api'
+import { Button } from './components/ui/button'
+import { Input } from './components/ui/input'
+import { Toaster } from './components/ui/sonner'
 import { viewDisplayTitle, workspaceDisplayName } from './demo-labels'
 import { copy } from './i18n'
 import { dockTab, isSplit, type LayoutNode, type Zone } from './layout'
@@ -196,7 +200,10 @@ export function Shell() {
   return (
     <div className="app" style={{ zoom }}>
       <header className="top">
-        <div className="brand">{copy.product}</div>
+        <div className="brand">
+          <img src="/brand/braian-mark.svg" alt="" width={16} height={16} />
+          <span>{copy.product}</span>
+        </div>
         <nav className="tabs">
           {workspaces.data?.workspaces.map((item, index) => (
             <button
@@ -212,6 +219,7 @@ export function Shell() {
         <span className="spacer" />
         <button className="icon-btn" onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}>{copy.zoom}</button>
         <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+          {theme === 'dark' ? <Sun aria-hidden="true" size={14} /> : <Moon aria-hidden="true" size={14} />}
           {theme === 'dark' ? copy.themeLight : copy.themeDark}
         </button>
         <button className="icon-btn" onClick={() => setAgentOpen(true)}>{copy.agent}</button>
@@ -242,6 +250,7 @@ export function Shell() {
       {palette ? <Palette session={session} onClose={() => setPalette(false)} onAsk={() => { setPalette(false); setAgentOpen(true) }} /> : null}
       {help ? <Help onClose={() => setHelp(false)} /> : null}
       {agentOpen ? <AgentPanel onClose={() => setAgentOpen(false)} session={session} /> : null}
+      <Toaster theme={theme} />
     </div>
   )
 }
@@ -260,12 +269,21 @@ function Login({ onDone }: { onDone: () => void }) {
             .catch(() => setError(copy.loginFailed))
         }}
       >
-        <strong>{copy.product}</strong>
+        <div className="brand">
+          <img src="/brand/braian-mark.svg" alt="" width={16} height={16} />
+          <span>{copy.product}</span>
+        </div>
         <h1>{copy.loginTitle}</h1>
-        <label>{copy.email}<input data-testid="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <label>{copy.password}<input data-testid="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <label>
+          {copy.email}
+          <Input data-testid="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+        </label>
+        <label>
+          {copy.password}
+          <Input data-testid="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
         {error ? <p className="error">{error}</p> : <p>{copy.loginHint}</p>}
-        <button className="primary" type="submit">{copy.signIn}</button>
+        <Button type="submit">{copy.signIn}</Button>
       </form>
     </div>
   )

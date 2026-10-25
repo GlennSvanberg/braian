@@ -1,10 +1,15 @@
-import { defineConfig } from 'vite'
+import tailwindcss from '@tailwindcss/vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
+import { fileURLToPath, URL } from 'node:url'
+import { defineConfig } from 'vite'
 
 const api = process.env.BRAIAN_API_PROXY ?? 'http://127.0.0.1:8090'
 
 export default defineConfig({
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   server: {
     port: 3000,
     strictPort: true,
@@ -28,5 +33,5 @@ export default defineConfig({
       '/healthz': { target: api, changeOrigin: true },
     },
   },
-  plugins: [tanstackStart(), viteReact()],
+  plugins: [tailwindcss(), tanstackStart(), viteReact()],
 })
