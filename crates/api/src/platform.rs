@@ -42,6 +42,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/stream", get(stream))
         .route("/v1/search", get(search))
         .route("/v1/objects", get(list_objects))
+        .route("/v1/objects/names", post(object_names))
         .route("/v1/export", post(export_xlsx))
         .route("/v1/stats", get(stats))
         .route("/v1/workspaces", get(list_workspaces).post(save_workspace))
@@ -2440,6 +2441,93 @@ fn fields_after(entries: &[HistoryEntry], seq: i64) -> BTreeSet<String> {
     fields
 }
 
+#[derive(Deserialize)]
+struct NamesBody {
+    #[serde(default)]
+    ids: Vec<String>,
+}
+
+const NAME_BATCH_LIMIT: usize = 400;
+
+async fn object_names(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Json(body): Json<NamesBody>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    if body.ids.len() > NAME_BATCH_LIMIT {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "too_many_ids",
+            "at most 400 ids",
+        ));
+    }
+    let mut ids = Vec::with_capacity(body.ids.len());
+    let mut seen = BTreeSet::new();
+    for raw in &body.ids {
+        let uuid = Uuid::parse_str(raw).map_err(|error| {
+            Problem::new(StatusCode::BAD_REQUEST, "invalid_id", error.to_string())
+        })?;
+        if seen.insert(uuid) {
+            ids.push(ObjectId::from_uuid(uuid));
+        }
+    }
+    let cached = state.models.get(&state.store).await?;
+    let name_id = cached
+        .model
+        .attribute_by_key("namn")
+        .map(|attribute| attribute.id);
+    let stored = state.store.get_objects(&ids).await.map_err(store_status)?;
+    let mut objects = Vec::with_capacity(stored.len());
+    for item in stored {
+        if item.deleted_at.is_some() {
+            continue;
+        }
+        let name = name_id
+            .and_then(|id| item.object.values.get(&id))
+            .map(display_name_text)
+            .unwrap_or_default();
+        objects.push(json!({
+            "id": item.object.id.as_uuid(),
+            "key": item.key,
+            "type": wire::type_key(&cached.defs, item.object.type_id),
+            "name": name,
+        }));
+    }
+    Ok(Json(json!({ "objects": objects })))
+}
+
+/// English name when the value has one, otherwise another stored language.
+/// A measurement or an empty value yields an empty string, never the object key.
+fn display_name_text(value: &Value) -> String {
+    if let Some(text) = value.as_str() {
+        return text.trim().to_string();
+    }
+    let Some(map) = value.as_object() else {
+        return String::new();
+    };
+    for tag in ["en", "sv", "de"] {
+        if let Some(text) = map.get(tag).and_then(Value::as_str) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    for (key, inner) in map {
+        if matches!(key.as_str(), "value" | "unit" | "min" | "max") {
+            continue;
+        }
+        if let Some(text) = inner.as_str() {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
 async fn graph(
     State(state): State<AppState>,
     Auth(identity): Auth,
@@ -3530,6 +3618,23 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn display_name_prefers_english_and_skips_measurements() {
+        assert_eq!(
+            display_name_text(&json!({"sv": "Tält 2 grön", "en": "Tent 2 green"})),
+            "Tent 2 green"
+        );
+        assert_eq!(
+            display_name_text(&json!({"sv": "Tält 2 grön", "en": "  "})),
+            "Tält 2 grön"
+        );
+        assert_eq!(display_name_text(&json!("Plain")), "Plain");
+        assert_eq!(
+            display_name_text(&json!({"value": "2.4", "unit": "kg"})),
+            ""
+        );
+    }
 
     #[test]
     fn dotted_names_become_underscores_and_map_back() {

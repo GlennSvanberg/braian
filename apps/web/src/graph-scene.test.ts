@@ -1,7 +1,7 @@
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
 import { describe, expect, it } from 'vitest'
 import type { Json } from './api'
-import { buildScene, capScene, mergeScene, relationLabel, structureCaption } from './graph-scene'
+import { buildScene, capScene, mergeScene, nodeMark, nodeRadius, relationLabel, structureCaption, visibleLabelIds } from './graph-scene'
 
 const defs: Json = {
   types: [{ key: 'artikel', labels: { en: 'Article', sv: 'Artikel' } }, { key: 'produkt', labels: { en: 'Product' } }],
@@ -51,6 +51,38 @@ const values: Json = {
   vikt: { value: '2.4', unit: 'kg' },
 }
 
+describe('graph marks', () => {
+  it('puts a short mark inside and keeps the full name for the caption', () => {
+    expect(nodeMark('2-person tent')).toBe('2T')
+    expect(nodeMark('Fjäll tents')).toBe('FT')
+    expect(nodeMark('Colour')).toBe('C')
+    expect(nodeMark('OK')).toBe('OK')
+    expect(nodeMark('Description').includes('…')).toBe(false)
+    expect(nodeRadius('object', 8)).toBeGreaterThan(nodeRadius('value', 1))
+    expect(nodeRadius('object', 1)).toBeLessThan(nodeRadius('object', 6))
+  })
+
+  it('hides the lower-priority label when two captions occupy the same box', () => {
+    const shown = visibleLabelIds(
+      [
+        { id: 'value', priority: 0, left: 0, top: 0, right: 40, bottom: 16 },
+        { id: 'object', priority: 3, left: 10, top: 0, right: 50, bottom: 16 },
+        { id: 'free', priority: 0, left: 80, top: 0, right: 120, bottom: 16 },
+      ],
+      1,
+    )
+    expect([...shown].sort()).toEqual(['free', 'object'])
+    const zoomedOut = visibleLabelIds(
+      [
+        { id: 'value', priority: 0, left: 0, top: 0, right: 20, bottom: 12 },
+        { id: 'object', priority: 3, left: 40, top: 0, right: 60, bottom: 12 },
+      ],
+      0.4,
+    )
+    expect([...zoomedOut]).toEqual(['object'])
+  })
+})
+
 describe('graph scene', () => {
   it('names nodes and provenance edges in English', () => {
     const scene = buildScene({ graph, values, defs })
@@ -72,7 +104,21 @@ describe('graph scene', () => {
     expect(weight?.subtitle).toContain('2.4')
     expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'class:sortiment:friluft')).toBe(true)
     expect(scene.edges.some((edge) => edge.label === 'Article of' && edge.target === 'object:prod')).toBe(true)
-    expect(scene.nodes.find((node) => node.id === 'object:prod')?.caption).toBe('PROD-TALT')
+    const unresolved = scene.nodes.find((node) => node.id === 'object:prod')
+    expect(unresolved?.caption).toBe('Object')
+    expect(unresolved?.rawCaption).toBe(true)
+    expect(unresolved?.properties.some((property) => property.value === 'PROD-TALT')).toBe(true)
+    expect(unresolved?.caption.includes('PROD-TALT')).toBe(false)
+    const named = buildScene({
+      graph,
+      values,
+      defs,
+      known: { prod: { name: 'Fjäll tents', typeKey: 'produkt' } },
+    })
+    const resolved = named.nodes.find((node) => node.id === 'object:prod')
+    expect(resolved?.caption).toBe('Fjäll tents')
+    expect(resolved?.rawCaption).toBe(false)
+    expect(resolved?.properties.some((property) => property.value === 'PROD-TALT')).toBe(true)
     expect(relationLabel('variant_of')).toBe('Variant of')
     expect(structureCaption('sovsack')).toBe('Sleeping bags')
   })

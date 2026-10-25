@@ -84,8 +84,17 @@ test('force-directed graph', async ({ page }) => {
   await expect(product).toHaveCount(1)
   await product.dispatchEvent('dblclick')
   await expect.poll(async () => nodes.locator('button').count()).toBeGreaterThan(before)
+  await expect(nodes.getByRole('button', { name: 'Tent 2 green' })).toHaveCount(1)
+  await expect(nodes.getByRole('button', { name: 'VAR-TALT-2-GRON' })).toHaveCount(0)
+  await expect(nodes.getByRole('button', { name: 'ART-TALT-3' })).toHaveCount(0)
   await expect(page.locator('canvas[data-testid=graph]')).toHaveAttribute('data-settled', 'true', { timeout: 15_000 })
   if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/expanded.png` })
+
+  const variant = nodes.getByRole('button', { name: 'Tent 2 green' })
+  await variant.dispatchEvent('click')
+  await expect(page.getByTestId('graph-inspector')).toContainText('Tent 2 green')
+  await expect(page.getByTestId('graph-inspector')).toContainText('VAR-TALT-2-GRON')
+  if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/selected.png` })
 
   await page.getByTestId('graph-fit').click()
   await page.getByTestId('graph-relayout').click()
