@@ -55,7 +55,7 @@ body {
   height: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
+  grid-template-columns: 1.25fr 0.75fr;
   gap: 36px;
   align-items: center;
   padding: 56px 60px;
@@ -67,7 +67,7 @@ body {
 .brand svg { width: 36px; height: 36px; }
 h1 {
   margin: 18px 0 0;
-  font-size: 64px;
+  font-size: 50px;
   font-weight: 500;
   letter-spacing: -0.035em;
   line-height: 1.02;
@@ -101,13 +101,14 @@ p { margin: 20px 0 0; font-size: 24px; color: var(--text-2); }
   <div class="sheet">
     <div>
       <div class="brand">${mark}<span>Braian</span></div>
-      <h1>Product data,<br /><span>built for agents.</span></h1>
+      <h1>Every click is instant.<br /><span>And it understands you.</span></h1>
       <p>Open source · MIT · Self-hosted</p>
     </div>
     <div class="command">
-      <div class="input">Search, or ask the agent</div>
-      <div class="row"><span>Items<small>Open the workspace</small></span></div>
-      <div class="row ask"><span>Ask AI<small>Works in place</small></span></div>
+      <div class="input">Search, go to, do, or ask AI</div>
+      <div class="row"><span>Kupoltält 13<small>Open object</small></span></div>
+      <div class="row"><span>Enrich objects<small>Open workspace</small></span></div>
+      <div class="row ask"><span>Ask AI<small>Works in your session, as you</small></span></div>
     </div>
   </div>
 </body>
