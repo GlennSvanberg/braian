@@ -46,7 +46,7 @@ Tre Playwright-körningar på den här virtuella maskinen (4 vCPU). Första obje
 - Grafens layout är tre kolumner, inte dagre eller elk. Full storlek är ett lager över arbetsytan, inte en sparad vy.
 - En klassflytt som inte rör ett fält som något jobb läser visar "No job reads these fields." `POST /v1/impact` finns kvar för den som frågar efter ett fält utan att ändra modellen. Jobbet Status check syns när diffen nämner fältet `status`.
 - Entra/OIDC, Excel-import och Tauri är inte byggda. En vytyp kan bädda in en URL, och vytyper kan registreras via API:t. Det finns inget pluginramverk utöver det.
-- 10 000 mediumobjekt på 8 vCPU är mätta: masskrivning 3031 obj/s (målet 5 000 är inte nått), ändring till sökbar p95 2,1 s vid 10k och 4,1 s vid 50k, omindexering på 17 s. Se `docs/measurements/2026-10-25-perf-v3-10k.md`. 1 miljon och 10 miljoner objekt är inte mätta.
+- 10 000 och 50 000 mediumobjekt på 8 vCPU är mätta: masskrivning 4237 obj/s (målet 5 000 är inte nått hela vägen; förgenererad lagring skrev 5086 obj/s), ändring till sökbar 64 ms p50 i vila och 405 ms p95 under en 50k-massa, PATCH till SSE 20 ms p50, sök ungefär 15 ms. Se `docs/measurements/2026-10-25-perf-v4.md`. 1 miljon och 10 miljoner objekt är inte mätta.
 
 ## Kända fel
 

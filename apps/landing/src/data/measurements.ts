@@ -5,7 +5,7 @@
  */
 
 export const measurementsDoc = {
-  href: 'https://github.com/GlennSvanberg/openpim/blob/main/docs/measurements/2026-10-25-perf-v3-10k.md',
+  href: 'https://github.com/GlennSvanberg/openpim/blob/main/docs/measurements/2026-10-25-perf-v4.md',
   label: 'Measurement notes',
 } as const
 
@@ -29,71 +29,67 @@ export type MeasuredSet = {
 
 export const measuredSets: readonly MeasuredSet[] = [
   {
-    id: 'v3-10k',
-    name: 'Perf v3',
+    id: 'v4-10k',
+    name: 'Perf v4',
     hardware: '8 vCPU AMD EPYC-Rome, 15.6 GB RAM',
-    dataSize: '10,000 objects, 301 attributes × 10 languages',
+    dataSize: '10,000 medium objects, 301 attributes × 10 languages, 10 searchable fields',
     recordedOn: '2026-10-25',
     conditions: 'Postgres, Redpanda, Typesense and Braian on the same machine',
     figures: [
       {
-        value: '3,022 / 3,104 / 3,031',
-        label: 'Bulk write, objects/s',
-        note: 'Three runs of 10,000 objects. A run with values already built wrote 3,116 objects/s.',
+        value: '64 ms',
+        label: 'Searchable after an edit, p50',
+        note: 'Idle, API path, n=443, p95 84 ms, p99 144 ms. The probe polls every 25 ms. During the 10,000-object write, n=13: 126 / 195 / 250 ms.',
       },
       {
-        value: '17.2 ms',
+        value: '20 ms',
+        label: 'PATCH to SSE event, p50',
+        note: 'Idle at 10,000 objects, p95 28 ms. Idle at 50,000: p50 20 ms, p95 26 ms. All 1,066 probes got an event.',
+      },
+      {
+        value: '17.5 ms',
         label: 'PATCH, p50',
-        note: 'p95 21.4 ms. PATCH then GET p50/p95 24.9 / 29.8 ms.',
+        note: 'Idle bench, median of 3 runs, p95 21.5 ms. API client idle: 21 / 27 ms.',
       },
       {
-        value: '7.1 ms',
+        value: '9.1 ms',
         label: 'GET by id, p50',
-        note: 'p95 8.8 ms. 32 concurrent clients: p50/p95 18.3 / 25.6 ms, 1,698 req/s.',
+        note: 'Idle bench, p95 11.4 ms. API client idle: 14 / 17 ms.',
       },
       {
-        value: '92.8 ms',
-        label: 'Read 100 ids, p50',
-        note: 'p95 119.5 ms.',
+        value: '4,237',
+        label: 'Bulk write, objects/s',
+        note: 'Postgres only, 10,000 objects: 3,848 / 4,237 / 4,300. Short of 5,000 end to end. Full pipeline: 4,208 (3,534 / 4,294 / 4,208). Store work on pregenerated values: 5,086 objects/s.',
       },
       {
-        value: '1.20 s',
-        label: 'Searchable after a change, p50',
-        note: 'During the 10,000-object load, n=13, p95 2.07 s. All 60 samples in that run: p50 0.62 s, p95 1.65 s.',
-      },
-      {
-        value: '16.2 ms',
-        label: 'Search, p50',
-        note: 'p95 18.9 ms. 32 concurrent clients: p50/p95 41.8 / 79.6 ms, 714 req/s.',
-      },
-      {
-        value: '516 docs/s',
-        label: 'Indexing',
-        note: '2 s peak 603 docs/s. Reindex of 10,000 documents: 17.0 s (587 docs/s).',
-      },
-      {
-        value: '204',
-        label: 'Relay health',
-        note: 'Idle, after the load, and 30 s after a 50,000-object load.',
+        value: 'about 15 ms',
+        label: 'Search',
+        note: '/v1/search itself, inside the API-path probe.',
       },
     ],
   },
   {
-    id: 'v3-50k',
-    name: 'Perf v3, sustained',
+    id: 'v4-50k',
+    name: 'Perf v4, sustained',
     hardware: '8 vCPU AMD EPYC-Rome, 15.6 GB RAM',
-    dataSize: '50,000 objects, 301 attributes × 10 languages',
+    dataSize: '50,000 medium objects, 301 attributes × 10 languages, 10 searchable fields',
     recordedOn: '2026-10-25',
     conditions: 'Same machine as the 10,000-object run',
     figures: [
       {
-        value: '2.07 s',
-        label: 'Searchable after a change, p50',
-        note: 'During the load, n=87, p95 4.09 s, p99 4.86 s.',
+        value: '405 ms',
+        label: 'Searchable after an edit, p95',
+        note: 'During the 50,000-object bulk write, API path, n=57, p50 192 ms, p99 478 ms. Idle, n=60: 78 / 103 / 116 ms. Index backlog, n=170: 76 / 232 / 621 ms.',
       },
       {
-        value: '475 docs/s',
+        value: '4,033',
+        label: 'Bulk write, objects/s',
+        note: 'Postgres only. Full pipeline 3,781 (3,681 with the API client). Short of 5,000 end to end.',
+      },
+      {
+        value: '439 docs/s',
         label: 'Indexing',
+        note: '50,000 objects. 10,000 objects, three clean runs: 490 (477 / 531 / 490).',
       },
     ],
   },
