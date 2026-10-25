@@ -432,7 +432,7 @@ export function Shell() {
 
   return (
     <div className="app">
-      <header className="top">
+      <header className="app-bar">
         <div className="brand">
           <img src="/brand/braian-mark.svg" alt="" width={16} height={16} />
           <span>{copy.product}</span>
