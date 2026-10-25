@@ -38,7 +38,7 @@ const graph: Json = {
     {
       key: 'vikt',
       label: 'Weight',
-      sources: [{ structure: 'sortiment', class: 'friluft', group: 'talt', inherited: true }],
+      sources: [{ from: 'group', structure: 'sortiment', class: 'friluft', group: 'friluft', inherited: true }],
     },
   ],
 }
@@ -103,6 +103,8 @@ describe('graph scene', () => {
     const weight = scene.nodes.find((node) => node.caption === 'Weight')
     expect(weight?.subtitle).toContain('2.4')
     expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'class:sortiment:friluft')).toBe(true)
+    expect(scene.edges.some((edge) => edge.label === 'Applies in' && edge.source === 'class:sortiment:friluft' && edge.target === 'group:sortiment:friluft')).toBe(true)
+    expect(weight?.properties.some((property) => property.label === 'Origin' && property.value === 'Inherited: Outdoor')).toBe(true)
     expect(scene.edges.some((edge) => edge.label === 'Article of' && edge.target === 'object:prod')).toBe(true)
     const unresolved = scene.nodes.find((node) => node.id === 'object:prod')
     expect(unresolved?.caption).toBe('Object')
@@ -121,6 +123,31 @@ describe('graph scene', () => {
     expect(resolved?.properties.some((property) => property.value === 'PROD-TALT')).toBe(true)
     expect(relationLabel('variant_of')).toBe('Variant of')
     expect(structureCaption('sovsack')).toBe('Sleeping bags')
+  })
+
+  it('draws an ancestor group attribute as inherited when it has no class', () => {
+    const scene = buildScene({
+      graph: {
+        id: 'tent',
+        key: 'ART-TALT-2',
+        type: 'artikel',
+        groups: { sortiment: 'talt' },
+        relations: [],
+        attributes: [
+          {
+            key: 'vikt',
+            label: 'Weight',
+            sources: [{ from: 'group', structure: 'sortiment', group: 'friluft', inherited: true }],
+          },
+        ],
+      },
+      values: { vikt: { value: '2.4', unit: 'kg' } },
+      defs,
+    })
+    const weight = scene.nodes.find((node) => node.caption === 'Weight')
+    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'group:sortiment:friluft')).toBe(true)
+    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'From type')).toBe(false)
+    expect(weight?.properties.some((property) => property.value === 'Inherited: Outdoor')).toBe(true)
   })
 
   it('upgrades a key to a human name without duplicating the node', () => {

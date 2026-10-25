@@ -902,3 +902,278 @@ async fn batch_get_defaults_to_heads_and_can_project_fields() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{limited}");
     assert_eq!(limited["code"], "batch_too_large");
 }
+#[tokio::test]
+async fn list_filters_before_limit_and_pages_with_a_cursor() {
+    let (_db, app) = app().await;
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{
+                "key": "produkt",
+                "labels": {},
+                "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                "attributes": ["018f0000-0000-7000-8000-000000000100"]
+            }"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+
+    for (type_key, sku) in [
+        ("item", "aaa-1"),
+        ("item", "aaa-2"),
+        ("item", "aaa-3"),
+        ("item", "100%_x"),
+        ("item", "100abcx"),
+        ("produkt", "zzz-1"),
+        ("produkt", "zzz-2"),
+        ("produkt", "zzz-3"),
+    ] {
+        let body = format!(
+            r#"{{"type":"{type_key}","groups":{{"catalog":"root","channel":"flat"}},"values":{{"sku":"{sku}"}}}}"#
+        );
+        let (status, _, response) = call(
+            &app,
+            "POST",
+            "/v1/objects",
+            Some(HUMAN),
+            &[("content-type", "application/json")],
+            Some(&body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{sku} {response}");
+    }
+
+    let (status, _, first) = call(
+        &app,
+        "GET",
+        "/v1/objects?type=produkt&limit=2",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let page = first["objects"].as_array().expect("objects");
+    assert_eq!(page.len(), 2, "{first}");
+    assert!(page.iter().all(|row| row["type"] == "produkt"), "{first}");
+    assert!(first["next_cursor"].is_string(), "{first}");
+
+    let produkts = pages(&app, "/v1/objects?type=produkt&limit=2").await;
+    assert_eq!(produkts.len(), 3, "{produkts:?}");
+    let mut keys: Vec<_> = produkts
+        .iter()
+        .map(|row| row["key"].as_str().unwrap())
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["zzz-1", "zzz-2", "zzz-3"]);
+
+    let found = pages(&app, "/v1/objects?q=zzz&limit=1").await;
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .all(|row| row["key"].as_str().unwrap().contains("zzz"))
+    );
+
+    let upper = pages(&app, "/v1/objects?q=ZZZ&limit=10").await;
+    assert_eq!(upper.len(), 3, "{upper:?}");
+
+    let literal = pages(&app, "/v1/objects?q=100%25_&limit=10").await;
+    assert_eq!(literal.len(), 1, "{literal:?}");
+    assert_eq!(literal[0]["key"], "100%_x");
+
+    let (status, _, missing) = call(
+        &app,
+        "GET",
+        "/v1/objects?type=missing&limit=2",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{missing}");
+    assert!(missing["objects"].as_array().unwrap().is_empty());
+    assert!(missing["next_cursor"].is_null());
+
+    let (status, _, bad) = call(
+        &app,
+        "GET",
+        "/v1/objects?cursor=not-a-cursor",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    assert_eq!(bad["code"], "invalid_cursor");
+
+    let (status, _, op) = call(
+        &app,
+        "POST",
+        "/v1/operations/list_objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"produkt","limit":2,"q":"zzz"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{op}");
+    assert_eq!(op["objects"].as_array().unwrap().len(), 2, "{op}");
+    let cursor = op["next_cursor"].as_str().expect("cursor");
+    let (status, _, next) = call(
+        &app,
+        "POST",
+        "/v1/operations/list_objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"type":"produkt","limit":2,"q":"zzz","cursor":"{cursor}"}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{next}");
+    assert_eq!(next["objects"].as_array().unwrap().len(), 1, "{next}");
+    assert!(next["next_cursor"].is_null(), "{next}");
+
+    let all = pages(&app, "/v1/objects?limit=2").await;
+    assert_eq!(all.len(), 8, "{all:?}");
+    let ids: Vec<&str> = all.iter().map(|row| row["id"].as_str().unwrap()).collect();
+    let mut ordered = ids.clone();
+    ordered.sort();
+    assert_eq!(ids, ordered, "pages follow id order");
+    assert_eq!(
+        ids.len(),
+        ids.iter().collect::<std::collections::BTreeSet<_>>().len()
+    );
+}
+
+#[tokio::test]
+async fn graph_marks_an_attribute_inherited_from_an_ancestor_group() {
+    let (_db, app) = app().await;
+    let (status, _, child) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{
+                "type": "item",
+                "groups": { "catalog": "child", "channel": "flat" },
+                "values": { "sku": "SKU-CHILD", "color": "red", "finish": "matte" }
+            }"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{child}");
+    let id = child["id"].as_str().unwrap();
+    let (status, _, graph) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}/graph"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{graph}");
+    let color = attr(&graph, "color");
+    assert_eq!(color["sources"].as_array().unwrap().len(), 1, "{color}");
+    assert_eq!(color["sources"][0]["from"], "group");
+    assert_eq!(color["sources"][0]["structure"], "catalog");
+    assert_eq!(color["sources"][0]["group"], "root");
+    assert_eq!(color["sources"][0]["class"], "root");
+    assert_eq!(color["sources"][0]["inherited"], true);
+
+    let finish = attr(&graph, "finish");
+    assert_eq!(finish["sources"][0]["group"], "child");
+    assert_eq!(finish["sources"][0]["class"], "child");
+    assert_eq!(finish["sources"][0]["inherited"], false);
+
+    let weight = attr(&graph, "weight");
+    assert_eq!(weight["sources"][0]["from"], "type");
+    assert_eq!(weight["sources"][0]["type"], "item");
+    assert_eq!(weight["sources"][0]["inherited"], false);
+
+    let (status, _, root) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{
+                "type": "item",
+                "groups": { "catalog": "root", "channel": "flat" },
+                "values": { "sku": "SKU-ROOT", "color": "blue" }
+            }"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{root}");
+    let id = root["id"].as_str().unwrap();
+    let (status, _, graph) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}/graph"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{graph}");
+    let color = attr(&graph, "color");
+    assert_eq!(color["sources"][0]["group"], "root");
+    assert_eq!(color["sources"][0]["inherited"], false);
+    assert!(
+        graph["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "finish"),
+        "{graph}"
+    );
+}
+
+fn attr<'a>(body: &'a Value, key: &str) -> &'a Value {
+    body["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == key)
+        .unwrap_or_else(|| panic!("missing {key} in {body}"))
+}
+
+async fn pages(app: &axum::Router, path: &str) -> Vec<Value> {
+    let mut path = path.to_owned();
+    let mut rows = Vec::new();
+    for _ in 0..20 {
+        let (status, _, body) = call(app, "GET", &path, Some(HUMAN), &[], None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let page = body["objects"].as_array().expect("objects");
+        rows.extend(page.iter().cloned());
+        match body["next_cursor"].as_str() {
+            Some(cursor) => {
+                assert!(!page.is_empty(), "{body}");
+                let base = path
+                    .split("&cursor=")
+                    .next()
+                    .unwrap()
+                    .split("?cursor=")
+                    .next()
+                    .unwrap();
+                let join = if base.contains('?') { '&' } else { '?' };
+                path = format!("{base}{join}cursor={cursor}");
+            }
+            None => {
+                assert!(body["next_cursor"].is_null(), "{body}");
+                return rows;
+            }
+        }
+    }
+    panic!("cursor did not end");
+}

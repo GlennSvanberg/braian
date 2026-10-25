@@ -182,6 +182,7 @@ export const copy = {
   nodeAssortment: 'Assortment',
   hasValue: 'Has',
   fromClass: 'From class',
+  fromGroup: 'From group',
   fromType: 'From type',
   placedIn: 'Placed in',
   appliesIn: 'Applies in',

@@ -1172,42 +1172,89 @@ async fn list_objects(
     Query(query): Query<ListParams>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
+    let store = state.store.on_interactive();
     let limit = query.limit.unwrap_or(200).clamp(1, 2000);
-    let heads = state
-        .store
-        .list_object_heads(limit)
+    let after_id = match query.cursor.as_deref().filter(|cursor| !cursor.is_empty()) {
+        Some(cursor) => Some(decode_cursor(cursor).ok_or_else(|| {
+            Problem::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_cursor",
+                "cursor is not a list cursor",
+            )
+        })?),
+        None => None,
+    };
+    let cached = state.models.get(&store).await.ok();
+    let type_id = match query.r#type.as_deref().filter(|value| !value.is_empty()) {
+        Some(want) => {
+            let Some(cached) = cached.as_ref() else {
+                return Ok(empty_object_list());
+            };
+            match cached.model.type_id(want) {
+                Some(id) => Some(id.as_uuid()),
+                None => return Ok(empty_object_list()),
+            }
+        }
+        None => None,
+    };
+    let key_contains = query.q.as_deref().filter(|value| !value.is_empty());
+    let page_limit = usize::try_from(limit).unwrap_or(2000);
+    let mut heads = store
+        .list_objects_page(type_id, key_contains, after_id, limit.saturating_add(1))
         .await
         .map_err(store_status)?;
-    let cached = state.models.get(&state.store).await.ok();
-    let mut rows = Vec::new();
-    for (id, key, type_id, version) in heads {
-        let type_key = cached.as_ref().map(|cached| {
+    let next_cursor = if heads.len() > page_limit {
+        heads.truncate(page_limit);
+        heads.last().map(|(id, _, _, _)| encode_cursor(*id))
+    } else {
+        None
+    };
+    let type_keys: BTreeMap<Uuid, String> = cached
+        .as_ref()
+        .map(|cached| {
             cached
                 .defs
                 .types
                 .iter()
-                .find(|object_type| object_type.id.as_uuid() == type_id)
-                .map(|object_type| object_type.key.clone())
-                .unwrap_or_default()
-        });
-        if let Some(want) = &query.r#type
-            && type_key.as_deref() != Some(want.as_str())
-        {
-            continue;
-        }
-        if let Some(q) = &query.q
-            && !key.to_lowercase().contains(&q.to_lowercase())
-        {
-            continue;
-        }
-        rows.push(json!({
-            "id": id,
-            "key": key,
-            "type": type_key,
-            "version": version,
-        }));
-    }
-    Ok(Json(json!({ "objects": rows })))
+                .map(|object_type| (object_type.id.as_uuid(), object_type.key.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let objects = heads
+        .into_iter()
+        .map(|(id, key, type_id, version)| {
+            let type_key = if cached.is_some() {
+                Value::String(type_keys.get(&type_id).cloned().unwrap_or_default())
+            } else {
+                Value::Null
+            };
+            json!({
+                "id": id,
+                "key": key,
+                "type": type_key,
+                "version": version,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "objects": objects,
+        "next_cursor": next_cursor,
+    })))
+}
+
+fn empty_object_list() -> Json<Value> {
+    Json(json!({ "objects": [], "next_cursor": null }))
+}
+
+fn encode_cursor(id: Uuid) -> String {
+    format!("v1.{}", hex::encode(id.as_bytes()))
+}
+
+fn decode_cursor(cursor: &str) -> Option<Uuid> {
+    let hex_id = cursor.strip_prefix("v1.")?;
+    let bytes = hex::decode(hex_id).ok()?;
+    let bytes: [u8; 16] = bytes.try_into().ok()?;
+    Some(Uuid::from_bytes(bytes))
 }
 
 async fn export_xlsx(
@@ -1246,6 +1293,7 @@ async fn export_xlsx(
                 q: body.q,
                 r#type: body.r#type,
                 limit: Some(2000),
+                cursor: None,
             }),
         )
         .await?;
@@ -2612,61 +2660,22 @@ async fn graph(
         .history(Some(id), None, 2000)
         .await
         .map_err(store_status)?;
-    let mut attributes = Vec::new();
-    for attribute_id in applicable(&cached, &stored.object) {
-        let Some(attribute) = cached.model.attribute(attribute_id) else {
+    let effective = cached
+        .model
+        .effective_attributes(stored.object.type_id, &stored.object.groups)
+        .unwrap_or_default();
+    let mut attributes = Vec::with_capacity(effective.len());
+    for item in effective {
+        let Some(attribute) = cached.model.attribute(item.id) else {
             continue;
         };
-        let mut sources = Vec::new();
-        let mut seen_classes = BTreeSet::new();
-        for structure in &cached.defs.structures {
-            for class in &structure.classes {
-                let Some(group_id) = stored.object.groups.get(&structure.id) else {
-                    continue;
-                };
-                if !covers(structure, class.group, *group_id) {
-                    continue;
-                }
-                let Some((owner_key, inherited)) = attribute_owner(structure, class, attribute_id)
-                else {
-                    continue;
-                };
-                if !seen_classes.insert(owner_key.clone()) {
-                    continue;
-                }
-                let group_key = structure
-                    .groups
-                    .iter()
-                    .find(|group| group.id == *group_id)
-                    .map(|group| group.key.clone())
-                    .unwrap_or_default();
-                sources.push(json!({
-                    "structure": structure.key,
-                    "class": owner_key,
-                    "group": group_key,
-                    "inherited": inherited,
-                }));
-            }
-        }
-        if cached.defs.types.iter().any(|object_type| {
-            object_type.id == stored.object.type_id
-                && object_type.attributes.contains(&attribute_id)
-        }) {
-            sources.insert(
-                0,
-                json!({ "from": "type", "structure": null, "class": null, "group": null }),
-            );
-        }
-        if sources.is_empty() {
-            sources
-                .push(json!({ "structure": null, "class": null, "group": null, "from": "type" }));
-        }
+        let sources = attribute_sources(&cached.defs, &stored.object, item.id, &item.sources);
         let last = entries.iter().find(|entry| {
             entry
                 .diff
                 .as_ref()
                 .and_then(Value::as_object)
-                .is_some_and(|diff| diff.contains_key(&attribute_id.as_uuid().to_string()))
+                .is_some_and(|diff| diff.contains_key(&item.id.as_uuid().to_string()))
         });
         attributes.push(json!({
             "key": attribute.key,
@@ -2696,31 +2705,90 @@ fn english_label(labels: &BTreeMap<braian_model::LanguageTag, String>, key: &str
         .unwrap_or_else(|| key.to_string())
 }
 
-fn attribute_owner(
-    structure: &braian_model::Structure,
-    class: &braian_model::Class,
+/// Sources in the same shape the graph has always returned, with `inherited`
+/// taken from [`braian_rules::CompiledModel::effective_attributes`].
+///
+/// A type source is the object's own type. A group source names the node that
+/// defines the attribute. `inherited` is true when that node is an ancestor of
+/// the group the object is placed in.
+fn attribute_sources(
+    defs: &DefinitionSet,
+    object: &Object,
     attribute_id: AttributeId,
-) -> Option<(String, bool)> {
-    let mut current = Some(class);
-    let mut inherited = false;
-    let mut guard = 0;
-    while let Some(item) = current {
-        if item.attributes.contains(&attribute_id) {
-            return Some((item.key.clone(), inherited));
-        }
-        inherited = true;
-        current = item.parent.and_then(|id| {
-            structure
-                .classes
-                .iter()
-                .find(|candidate| candidate.id == id)
-        });
-        guard += 1;
-        if guard > 32 {
-            break;
+    sources: &[braian_rules::AttributeSource],
+) -> Vec<Value> {
+    let mut rows = Vec::with_capacity(sources.len());
+    for source in sources {
+        match source {
+            braian_rules::AttributeSource::Type { key } => {
+                rows.push(json!({
+                    "from": "type",
+                    "type": key,
+                    "structure": Value::Null,
+                    "class": Value::Null,
+                    "group": Value::Null,
+                    "inherited": false,
+                }));
+            }
+            braian_rules::AttributeSource::Group { structure, group } => {
+                push_group_source(&mut rows, defs, object, attribute_id, structure, group);
+            }
         }
     }
-    None
+    rows
+}
+
+fn push_group_source(
+    rows: &mut Vec<Value>,
+    defs: &DefinitionSet,
+    object: &Object,
+    attribute_id: AttributeId,
+    structure_key: &str,
+    group_key: &str,
+) {
+    let structure = defs
+        .structures
+        .iter()
+        .find(|item| item.key == structure_key);
+    let defined_on = structure.and_then(|item| {
+        item.groups
+            .iter()
+            .find(|group| group.key == group_key)
+            .map(|group| group.id)
+    });
+    let placed = structure.and_then(|item| object.groups.get(&item.id).copied());
+    let inherited = match (structure, defined_on, placed) {
+        (Some(structure), Some(defined_on), Some(placed)) => {
+            defined_on != placed && covers(structure, defined_on, placed)
+        }
+        _ => false,
+    };
+    let classes: Vec<&str> = structure
+        .into_iter()
+        .flat_map(|item| item.classes.iter())
+        .filter(|class| defined_on.is_some_and(|id| class.group == id))
+        .filter(|class| class.attributes.contains(&attribute_id))
+        .map(|class| class.key.as_str())
+        .collect();
+    if classes.is_empty() {
+        rows.push(json!({
+            "from": "group",
+            "structure": structure_key,
+            "class": Value::Null,
+            "group": group_key,
+            "inherited": inherited,
+        }));
+        return;
+    }
+    for class_key in classes {
+        rows.push(json!({
+            "from": "group",
+            "structure": structure_key,
+            "class": class_key,
+            "group": group_key,
+            "inherited": inherited,
+        }));
+    }
 }
 
 fn covers(
@@ -3084,6 +3152,10 @@ async fn run_operation(
                 q: args.get("q").and_then(Value::as_str).map(str::to_owned),
                 r#type: args.get("type").and_then(Value::as_str).map(str::to_owned),
                 limit: args.get("limit").and_then(Value::as_i64),
+                cursor: args
+                    .get("cursor")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             }),
         )
         .await?
@@ -3525,6 +3597,8 @@ struct ListParams {
     #[serde(rename = "type")]
     r#type: Option<String>,
     limit: Option<i64>,
+    /// Opaque `next_cursor` from the previous page.
+    cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3686,6 +3760,84 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cursor_round_trips_an_object_id() {
+        let id = Uuid::now_v7();
+        assert_eq!(decode_cursor(&encode_cursor(id)), Some(id));
+        assert!(decode_cursor("018f1000-0000-7000-8000-000000000011").is_none());
+        assert!(decode_cursor("v1.zz").is_none());
+    }
+
+    #[test]
+    fn graph_marks_an_ancestor_group_attribute_as_inherited() {
+        let defs: DefinitionSet = serde_json::from_str(ANCESTOR_DEFS).expect("defs");
+        let model = braian_rules::CompiledModel::compile(&defs).expect("compile");
+        let sortiment = braian_model::StructureId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-000000000300").expect("structure"),
+        );
+        let friluft = braian_model::GroupId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-000000000310").expect("friluft"),
+        );
+        let talt = braian_model::GroupId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-000000000311").expect("talt"),
+        );
+        let type_id = braian_model::TypeId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-000000000201").expect("type"),
+        );
+        let in_talt = Object {
+            id: ObjectId::from_uuid(
+                Uuid::parse_str("018f1000-0000-7000-8000-000000000011").expect("object"),
+            ),
+            type_id,
+            model_revision: 1,
+            groups: BTreeMap::from([(sortiment, talt)]),
+            values: BTreeMap::new(),
+        };
+        let in_friluft = Object {
+            groups: BTreeMap::from([(sortiment, friluft)]),
+            ..in_talt.clone()
+        };
+        let rows = |object: &Object, key: &str| {
+            let attribute = model.attribute_by_key(key).expect(key);
+            let item = model
+                .effective_attributes(object.type_id, &object.groups)
+                .expect("effective")
+                .into_iter()
+                .find(|item| item.id == attribute.id);
+            match item {
+                Some(item) => attribute_sources(&defs, object, attribute.id, &item.sources),
+                None => Vec::new(),
+            }
+        };
+
+        let vikt = rows(&in_talt, "vikt");
+        assert_eq!(vikt.len(), 1, "{vikt:?}");
+        assert_eq!(vikt[0]["from"], "group");
+        assert_eq!(vikt[0]["structure"], "sortiment");
+        assert_eq!(vikt[0]["group"], "friluft");
+        assert_eq!(vikt[0]["class"], "friluft");
+        assert_eq!(vikt[0]["inherited"], true);
+
+        let badge = rows(&in_talt, "badge");
+        assert_eq!(badge.len(), 1, "{badge:?}");
+        assert_eq!(badge[0]["group"], "friluft");
+        assert!(badge[0]["class"].is_null());
+        assert_eq!(badge[0]["inherited"], true);
+
+        let langd = rows(&in_talt, "langd");
+        assert_eq!(langd[0]["group"], "talt");
+        assert_eq!(langd[0]["class"], "talt");
+        assert_eq!(langd[0]["inherited"], false);
+
+        let nummer = rows(&in_talt, "nummer");
+        assert_eq!(nummer[0]["from"], "type");
+        assert_eq!(nummer[0]["inherited"], false);
+
+        assert_eq!(rows(&in_friluft, "vikt")[0]["inherited"], false);
+        assert_eq!(rows(&in_friluft, "vikt")[0]["group"], "friluft");
+        assert!(rows(&in_friluft, "langd").is_empty());
+    }
+
+    #[test]
     fn display_name_prefers_english_and_skips_measurements() {
         assert_eq!(
             display_name_text(&json!({"sv": "Tält 2 grön", "en": "Tent 2 green"})),
@@ -3829,6 +3981,91 @@ mod tests {
         assert!(error.detail.contains("The model did not reply"));
         assert!(error.detail.contains("reasoning_effort must be none"));
     }
+
+    const ANCESTOR_DEFS: &str = r#"{
+        "model_revision": 1,
+        "languages": ["en"],
+        "unit_families": [],
+        "attributes": [
+            {
+                "id": "018f0000-0000-7000-8000-000000000100",
+                "key": "nummer",
+                "labels": {},
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text" },
+                "index": { "searchable": true, "filterable": false, "sortable": true }
+            },
+            {
+                "id": "018f0000-0000-7000-8000-000000000105",
+                "key": "vikt",
+                "labels": { "en": "Weight" },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text" },
+                "index": { "searchable": false, "filterable": false, "sortable": false }
+            },
+            {
+                "id": "018f0000-0000-7000-8000-000000000106",
+                "key": "langd",
+                "labels": { "en": "Length" },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text" },
+                "index": { "searchable": false, "filterable": false, "sortable": false }
+            },
+            {
+                "id": "018f0000-0000-7000-8000-000000000107",
+                "key": "badge",
+                "labels": {},
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text" },
+                "index": { "searchable": false, "filterable": false, "sortable": false }
+            }
+        ],
+        "types": [
+            {
+                "id": "018f0000-0000-7000-8000-000000000201",
+                "key": "artikel",
+                "labels": {},
+                "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                "attributes": ["018f0000-0000-7000-8000-000000000100"]
+            }
+        ],
+        "structures": [
+            {
+                "id": "018f0000-0000-7000-8000-000000000300",
+                "key": "sortiment",
+                "groups": [
+                    {
+                        "id": "018f0000-0000-7000-8000-000000000310",
+                        "key": "friluft",
+                        "attributes": ["018f0000-0000-7000-8000-000000000107"]
+                    },
+                    {
+                        "id": "018f0000-0000-7000-8000-000000000311",
+                        "key": "talt",
+                        "parent": "018f0000-0000-7000-8000-000000000310"
+                    }
+                ],
+                "classes": [
+                    {
+                        "id": "018f0000-0000-7000-8000-000000000320",
+                        "key": "friluft",
+                        "group": "018f0000-0000-7000-8000-000000000310",
+                        "attributes": ["018f0000-0000-7000-8000-000000000105"]
+                    },
+                    {
+                        "id": "018f0000-0000-7000-8000-000000000321",
+                        "key": "talt",
+                        "group": "018f0000-0000-7000-8000-000000000311",
+                        "attributes": ["018f0000-0000-7000-8000-000000000106"]
+                    }
+                ]
+            }
+        ]
+    }"#;
 
     async fn post_openai_when_up(url: &str, key: &str, body: &Value) -> Result<Value, Problem> {
         let client = reqwest::Client::new();
