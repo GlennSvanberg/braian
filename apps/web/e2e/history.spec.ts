@@ -11,13 +11,16 @@ async function login(page: Page) {
   await page.getByTestId('email').fill(demo.email)
   await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByTestId('object-table').first()).toBeVisible()
+  const filter = page.getByTestId('quick-filter').first()
+  if ((await filter.inputValue()) !== '') await filter.fill('')
   await expect(page.getByTestId('object-row').first()).toBeVisible()
 }
 
 test('history is a compact timeline of the fields that changed', async ({ page }) => {
   await login(page)
   await page.getByTestId('object-row').first().click()
-  await page.locator('.pane-tab', { hasText: 'Detail' }).first().click()
+  await page.locator('[data-view-type="object_detail"]').first().click()
   const nummer = page.locator('[data-testid=object-detail] .field', { hasText: 'Number' }).locator('input')
   const original = await nummer.inputValue()
   const next = `${original}-h`

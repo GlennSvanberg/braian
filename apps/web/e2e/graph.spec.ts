@@ -28,8 +28,9 @@ async function openArticles(page: Page) {
 
 async function openTent(page: Page) {
   await openArticles(page)
-  await page.getByTestId('quick-filter').fill('ART-TALT-2')
-  const row = page.getByTestId('object-row').filter({ hasText: 'ART-TALT-2' }).first()
+  const articles = page.locator('section.pane', { has: page.locator('.pane-tab', { hasText: 'Articles' }) })
+  await articles.getByTestId('quick-filter').fill('ART-TALT-2')
+  const row = articles.getByTestId('object-row').filter({ hasText: 'ART-TALT-2' }).first()
   await expect(row).toBeVisible()
   await row.click()
   await page.locator('.pane-tab', { hasText: 'Graph' }).first().click()
