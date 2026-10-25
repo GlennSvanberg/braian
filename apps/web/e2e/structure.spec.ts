@@ -46,7 +46,7 @@ test('structure tree proposes group changes and assortments are saved queries', 
 
   await tree.getByRole('treeitem', { name: 'Sleeping bags' }).dragTo(tree.getByRole('treeitem', { name: 'Building' }))
   await expect(page.getByTestId('consequence')).toBeVisible()
-  await expect(page.getByTestId('model-diff')).toContainText('sovsack')
+  await expect(page.getByTestId('model-diff')).toContainText('Sovsäck')
   await page.getByTestId('consequence').getByRole('button', { name: 'Cancel' }).click()
 
   await page.locator('.pane-tab', { hasText: 'Assortments' }).click()

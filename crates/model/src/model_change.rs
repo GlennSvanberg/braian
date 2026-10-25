@@ -377,6 +377,11 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
     let mut fields = BTreeSet::new();
     let mut usage_fields = BTreeSet::new();
     let mut groups = BTreeSet::new();
+    let languages: &[LanguageTag] = if after.languages.is_empty() {
+        &before.languages
+    } else {
+        &after.languages
+    };
     let before_attrs: BTreeMap<&str, &Attribute> = before
         .attributes
         .iter()
@@ -418,10 +423,11 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             let existed =
                 old_groups.is_some_and(|groups| groups.iter().any(|item| item.key == group.key));
             if !existed {
-                let parent = group_key(structure, group.parent);
+                let name = caption_of(languages, &group.labels, &group.key);
+                let parent = group_caption(languages, structure, group.parent);
                 match parent {
-                    Some(parent) => lines.push(format!("Add group {} under {parent}", group.key)),
-                    None => lines.push(format!("Add group {}", group.key)),
+                    Some(parent) => lines.push(format!("Add group {name} under {parent}")),
+                    None => lines.push(format!("Add group {name}")),
                 }
             }
             let old_ids = old_groups
@@ -430,12 +436,13 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                 .unwrap_or(&[]);
             let old_keys = attribute_keys(before, old_ids);
             let new_keys = attribute_keys(after, &group.attributes);
+            let name = caption_of(languages, &group.labels, &group.key);
             for key in new_keys.difference(&old_keys) {
-                lines.push(format!("Add attribute {key} to group {}", group.key));
+                lines.push(format!("Add attribute {key} to group {name}"));
                 fields.insert(key.clone());
             }
             for key in old_keys.difference(&new_keys) {
-                lines.push(format!("Remove attribute {key} from group {}", group.key));
+                lines.push(format!("Remove attribute {key} from group {name}"));
                 fields.insert(key.clone());
                 usage_fields.insert(key.clone());
             }
@@ -450,22 +457,27 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             }
             for old in &previous.groups {
                 let Some(group) = structure.groups.iter().find(|item| item.key == old.key) else {
-                    lines.push(format!("Delete group {}", old.key));
+                    let name = caption_of(languages, &old.labels, &old.key);
+                    lines.push(format!("Delete group {name}"));
                     groups.insert(old.id.as_uuid().to_string());
                     continue;
                 };
                 if old.parent != group.parent {
-                    let parent =
-                        group_key(structure, group.parent).unwrap_or_else(|| "the root".into());
-                    lines.push(format!("Move group {} under {parent}", group.key));
+                    let name = caption_of(languages, &group.labels, &group.key);
+                    let parent = group_caption(languages, structure, group.parent)
+                        .unwrap_or_else(|| "the root".into());
+                    lines.push(format!("Move group {name} under {parent}"));
                     groups.insert(old.id.as_uuid().to_string());
                 }
                 if old.labels != group.labels {
-                    lines.push(format!(
-                        "Rename group {} to {}",
-                        group.key,
-                        display_label(&group.labels, &group.key)
-                    ));
+                    let from = caption_of(languages, &old.labels, &old.key);
+                    let mut to = caption_of(languages, &group.labels, &group.key);
+                    if from == to {
+                        to = display_label(&group.labels, &group.key);
+                    }
+                    if from != to {
+                        lines.push(format!("Rename group {from} to {to}"));
+                    }
                 }
             }
         }
@@ -473,7 +485,8 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
         for class in &structure.classes {
             let old =
                 old_classes.and_then(|classes| classes.iter().find(|item| item.key == class.key));
-            let group_name = group_key(structure, Some(class.group)).unwrap_or_else(|| "?".into());
+            let group_name = group_caption(languages, structure, Some(class.group))
+                .unwrap_or_else(|| "?".into());
             match old {
                 None => {
                     let parent = class_key(structure, class.parent);
@@ -491,8 +504,8 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                 }
                 Some(old) => {
                     let old_structure = previous.expect("class implies structure");
-                    let old_group =
-                        group_key(old_structure, Some(old.group)).unwrap_or_else(|| "?".into());
+                    let old_group = group_caption(languages, old_structure, Some(old.group))
+                        .unwrap_or_else(|| "?".into());
                     if old.group != class.group {
                         lines.push(format!(
                             "Move class {} from {old_group} to {group_name}",
@@ -1383,13 +1396,44 @@ fn label_map(defs: &DefinitionSet, label: &str) -> BTreeMap<LanguageTag, String>
     }
 }
 
-fn group_key(structure: &Structure, id: Option<GroupId>) -> Option<String> {
+fn group_caption(
+    languages: &[LanguageTag],
+    structure: &Structure,
+    id: Option<GroupId>,
+) -> Option<String> {
     let id = id?;
     structure
         .groups
         .iter()
         .find(|group| group.id == id)
-        .map(|group| group.key.clone())
+        .map(|group| caption_of(languages, &group.labels, &group.key))
+}
+
+/// The model's first language, then English, then any stored label, then the key.
+fn caption_of(
+    languages: &[LanguageTag],
+    labels: &BTreeMap<LanguageTag, String>,
+    fallback: &str,
+) -> String {
+    let stored = |tag: &str| {
+        labels
+            .iter()
+            .find(|(item, text)| item.as_str() == tag && !text.is_empty())
+            .map(|(_, text)| text.clone())
+    };
+    if let Some(tag) = languages.first()
+        && let Some(text) = stored(tag.as_str())
+    {
+        return text;
+    }
+    if let Some(text) = stored("en") {
+        return text;
+    }
+    labels
+        .values()
+        .find(|text| !text.is_empty())
+        .cloned()
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 fn class_key(structure: &Structure, id: Option<ClassId>) -> Option<String> {
@@ -1631,8 +1675,8 @@ mod tests {
         let (after, impact) = preview(&defs, &steps).expect("preview");
         let text = impact.lines.join("\n");
         assert!(text.contains("Add structure power_tools"));
-        assert!(text.contains("Add group drills under tools"));
-        assert!(text.contains("Add class Drill on drills, parent Power tool"));
+        assert!(text.contains("Add group Drills under Tools"));
+        assert!(text.contains("Add class Drill on Drills, parent Power tool"));
         assert!(text.contains("Add attribute weight to Power tool"));
         assert!(text.contains("Create attribute voltage"));
         assert!(text.contains("status"));
@@ -1652,6 +1696,41 @@ mod tests {
             .find(|item| item.key == "voltage")
             .expect("voltage");
         assert!(voltage.required);
+    }
+
+    #[test]
+    fn add_group_diff_uses_the_caption_not_the_key() {
+        let mut defs = base();
+        defs.languages = vec![
+            LanguageTag::parse("sv").unwrap(),
+            LanguageTag::parse("en").unwrap(),
+            LanguageTag::parse("de").unwrap(),
+        ];
+        let tents = defs.structures[0]
+            .groups
+            .iter_mut()
+            .find(|group| group.key == "talt")
+            .expect("talt");
+        tents
+            .labels
+            .insert(LanguageTag::parse("sv").unwrap(), "Tält".into());
+        tents
+            .labels
+            .insert(LanguageTag::parse("en").unwrap(), "Tents".into());
+        tents
+            .labels
+            .insert(LanguageTag::parse("de").unwrap(), "Zelte".into());
+        let (_after, impact) = preview(
+            &defs,
+            &[ModelChange::CreateGroup {
+                structure: "sortiment".into(),
+                group: "canopy".into(),
+                parent: Some("talt".into()),
+                label: "Canopy".into(),
+            }],
+        )
+        .expect("preview");
+        assert_eq!(impact.lines, vec!["Add group Canopy under Tält".to_owned()]);
     }
 
     #[test]
