@@ -11,6 +11,7 @@ name = "braian"
 path = "src/main.rs"
 
 [dependencies]
+mimalloc.workspace = true
 braian-api.workspace = true
 braian-events.workspace = true
 braian-indexer.workspace = true

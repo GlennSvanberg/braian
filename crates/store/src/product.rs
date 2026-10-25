@@ -1194,6 +1194,20 @@ impl Store {
         }))
     }
 
+    /// Writes a non-transactional logical decoding message with `prefix`.
+    ///
+    /// The relay uses it as a heartbeat so an idle slot has an LSN to confirm.
+    pub async fn emit_logical_message(&self, prefix: &str) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "SELECT pg_logical_emit_message(false, $1::text, ''::text)",
+                &[&prefix],
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Drops a logical slot that was invalidated. A missing slot is not an error.
     pub async fn drop_replication_slot(&self, slot: &str) -> Result<(), Error> {
         let slot = crate::ids::plain_name(slot)?;

@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use anyhow::{Context, anyhow};
 use braian_model::{DefinitionSet, Object};
 use braian_rules::CompiledModel;
-use braian_synth::{ExportFormat, Tier, definitions, export, measure, objects, write_demo};
+use braian_synth::{
+    ExportFormat, IndexBudget, Tier, definitions, definitions_with, export, measure, objects,
+    write_demo,
+};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -20,6 +23,15 @@ enum Command {
     Definitions {
         #[arg(long, value_parser = parse_tier)]
         tier: Tier,
+        /// Keep only the first N searchable attributes.
+        #[arg(long)]
+        searchable: Option<usize>,
+        /// Keep only the first N filterable attributes.
+        #[arg(long)]
+        filterable: Option<usize>,
+        /// Keep only the first N sortable attributes.
+        #[arg(long)]
+        sortable: Option<usize>,
         #[arg(long, default_value_t = 1)]
         seed: u64,
         #[arg(long, value_parser = parse_format, default_value = "json")]
@@ -61,8 +73,20 @@ enum Command {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Definitions { tier, seed, format } => {
-            let text = export(&definitions(tier, seed), format)?;
+        Command::Definitions {
+            tier,
+            searchable,
+            filterable,
+            sortable,
+            seed,
+            format,
+        } => {
+            let budget = IndexBudget {
+                searchable,
+                filterable,
+                sortable,
+            };
+            let text = export(&definitions_with(tier, seed, budget), format)?;
             println!("{text}");
         }
         Command::Objects { tier, count, seed } => {
