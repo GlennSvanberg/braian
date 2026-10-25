@@ -1,18 +1,40 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+
+# A new push to the same PR cancels the run that is already in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Heavy steps stay in this job so a required check still completes green
+      # when every file is docs/**, markdown, or the landing page.
+      - name: Detect code changes
+        id: changes
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|apps/landing/*) ;;
+              *) code=true; break ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
       - run: rustup show
+        if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
       - name: librdkafka build dependencies
+        if: steps.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
@@ -22,6 +44,7 @@ jobs:
             sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
           fi
       - name: Start Postgres
+        if: steps.changes.outputs.code == 'true'
         run: |
           cat > .env << 'EOF'
           POSTGRES_USER=braian
@@ -35,75 +58,86 @@ jobs:
           EOF
           docker compose up -d --wait postgres
       - run: cargo fmt --all --check
+        if: steps.changes.outputs.code == 'true'
       - run: cargo clippy --workspace --all-targets -- -D warnings
+        if: steps.changes.outputs.code == 'true'
       - name: Test
+        if: steps.changes.outputs.code == 'true'
         run: cargo test --workspace
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
       - name: rules måste kompilera till WebAssembly
+        if: steps.changes.outputs.code == 'true'
         run: cargo build -p braian-rules -p braian-rules-wasm --target wasm32-unknown-unknown
 
   phase-1:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Detect code changes
+        id: changes
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|apps/landing/*) ;;
+              *) code=true; break ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
       - run: rustup show
+        if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.code == 'true'
         with:
           node-version: 22
       - uses: taiki-e/install-action@v2
+        if: steps.changes.outputs.code == 'true'
         with:
           tool: just,wasm-bindgen-cli@0.2.129
       - run: just demo-1
+        if: steps.changes.outputs.code == 'true'
       - run: just test-wasm
+        if: steps.changes.outputs.code == 'true'
 
-  phase-2:
+  # phase-2, phase-3 and the old stack job. One runner, one apt install,
+  # one target/ directory. demo-2 and demo-3 share the release bench binary;
+  # the relay, indexer and server builds share the dev profile.
+  stack:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - run: rustup show
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: just
-      - name: librdkafka build dependencies
+      - name: Detect code changes
+        id: changes
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
-          if [ ! -e /usr/include/curl ]; then sudo ln -s /usr/include/x86_64-linux-gnu/curl /usr/include/curl; fi
-          if [ ! -e /usr/lib/x86_64-linux-gnu/libstdc++.so ]; then
-            so=$(echo /usr/lib/gcc/x86_64-linux-gnu/*/libstdc++.so)
-            sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
-          fi
-      - name: Start Postgres
-        run: |
-          cat > .env << 'EOF'
-          POSTGRES_USER=braian
-          POSTGRES_PASSWORD=braian
-          POSTGRES_DB=braian
-          POSTGRES_READONLY_PASSWORD=braian-readonly
-          POSTGRES_HOST_PORT=5433
-          TYPESENSE_API_KEY=ci
-          DATABASE_URL=postgres://braian:braian@localhost:5433/braian
-          BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
-          EOF
-          docker compose up -d --wait postgres
-      - run: just demo-2
-
-  phase-3:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|apps/landing/*) ;;
+              *) code=true; break ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
       - run: rustup show
+        if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
       - uses: taiki-e/install-action@v2
+        if: steps.changes.outputs.code == 'true'
         with:
           tool: just
       - name: Install Hurl
+        if: steps.changes.outputs.code == 'true'
         run: |
           curl -fsSL -o /tmp/hurl.tar.gz https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz
           tar -xzf /tmp/hurl.tar.gz -C /tmp
@@ -111,37 +145,7 @@ jobs:
           sudo chmod +x /usr/local/bin/hurl
           hurl --version
       - name: librdkafka build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
-          if [ ! -e /usr/include/curl ]; then sudo ln -s /usr/include/x86_64-linux-gnu/curl /usr/include/curl; fi
-          if [ ! -e /usr/lib/x86_64-linux-gnu/libstdc++.so ]; then
-            so=$(echo /usr/lib/gcc/x86_64-linux-gnu/*/libstdc++.so)
-            sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
-          fi
-      - name: Start Postgres
-        run: |
-          cat > .env << 'EOF'
-          POSTGRES_USER=braian
-          POSTGRES_PASSWORD=braian
-          POSTGRES_DB=braian
-          POSTGRES_READONLY_PASSWORD=braian-readonly
-          POSTGRES_HOST_PORT=5433
-          TYPESENSE_API_KEY=ci
-          DATABASE_URL=postgres://braian:braian@localhost:5433/braian
-          BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
-          EOF
-          docker compose up -d --wait postgres
-      - run: just demo-3
-
-  stack:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - run: rustup show
-      - uses: Swatinem/rust-cache@v2
-      - name: librdkafka build dependencies
+        if: steps.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
@@ -151,6 +155,7 @@ jobs:
             sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
           fi
       - name: Start Postgres, Redpanda and Typesense
+        if: steps.changes.outputs.code == 'true'
         run: |
           cat > .env << 'EOF'
           POSTGRES_USER=braian
@@ -165,13 +170,21 @@ jobs:
           TYPESENSE_URL=http://localhost:8108
           EOF
           docker compose up -d --wait postgres redpanda typesense
+      - name: Phase 2 load
+        if: steps.changes.outputs.code == 'true'
+        run: just demo-2
+      - name: Phase 3 Hurl
+        if: steps.changes.outputs.code == 'true'
+        run: just demo-3
       - name: Relay keeps commit order across a restart
+        if: steps.changes.outputs.code == 'true'
         run: cargo test -p braian-relay --test order -- --test-threads=1
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
           KAFKA_BROKERS: localhost:19092
       - name: Indexer converges and reindex swaps the alias
+        if: steps.changes.outputs.code == 'true'
         run: cargo test -p braian-indexer --test converge -- --test-threads=1
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
@@ -179,12 +192,37 @@ jobs:
           TYPESENSE_URL: http://localhost:8108
           TYPESENSE_API_KEY: ci
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.code == 'true'
         with:
           node-version: 22
       - uses: pnpm/action-setup@v4
+        if: steps.changes.outputs.code == 'true'
         with:
           version: 10.25.0
+      - name: Install npm dependencies
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Playwright version
+        id: playwright-version
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          version=$(pnpm --dir apps/web exec node -p "require('@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        if: steps.changes.outputs.code == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      - name: Install Playwright browsers
+        if: steps.changes.outputs.code == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm --dir apps/web exec playwright install --with-deps chromium
+      - name: Install Playwright system dependencies
+        if: steps.changes.outputs.code == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --dir apps/web exec playwright install-deps chromium
       - name: Playwright smoke against an isolated database
+        if: steps.changes.outputs.code == 'true'
         env:
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
           POSTGRES_USER: braian
@@ -196,8 +234,6 @@ jobs:
           BRAIAN_AGENT_MOCK: "1"
         run: |
           cargo build -p braian-server
-          pnpm install --frozen-lockfile
-          pnpm --dir apps/web exec playwright install --with-deps chromium
           node scripts/e2e.mjs
 
   web:
