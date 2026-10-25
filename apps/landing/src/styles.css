@@ -23,6 +23,7 @@ body,
 #root {
   height: auto;
   min-height: 100%;
+  overflow: visible;
 }
 
 body {
@@ -516,6 +517,18 @@ h3 {
 @media (max-width: 960px) {
   .hero { grid-template-columns: 1fr; }
   .feature-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* The imported product shell sizes html, body, and #root to the viewport.
+   These selectors outrank that rule even if it sets overflow: hidden, so the
+   document can grow and the page scrolls on a phone. */
+html:root,
+html body,
+html body #root {
+  height: auto;
+  min-height: 100%;
+  max-height: none;
+  overflow: visible;
 }
 
 @media (max-width: 720px) {
