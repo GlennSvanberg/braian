@@ -26,9 +26,13 @@ async function openArticles(page: Page) {
   await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible()
 }
 
+function articlesPane(page: Page) {
+  return page.locator('section.pane', { has: page.locator('.pane-tab', { hasText: 'Articles' }) })
+}
+
 async function openTent(page: Page) {
   await openArticles(page)
-  const articles = page.locator('section.pane', { has: page.locator('.pane-tab', { hasText: 'Articles' }) })
+  const articles = articlesPane(page)
   await articles.getByTestId('quick-filter').fill('ART-TALT-2')
   const row = articles.getByTestId('object-row').filter({ hasText: 'ART-TALT-2' }).first()
   await expect(row).toBeVisible()
@@ -121,6 +125,7 @@ test('force-directed graph', async ({ page }) => {
   if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/light.png` })
   await page.getByRole('button', { name: 'Close full size' }).click()
   await page.getByRole('button', { name: 'Dark' }).click()
-  await page.getByTestId('quick-filter').fill('')
+  const filters = page.getByTestId('quick-filter')
+  for (let index = 0; index < (await filters.count()); index += 1) await filters.nth(index).fill('')
   await page.locator('[data-view-type="object_detail"]').first().click()
 })
