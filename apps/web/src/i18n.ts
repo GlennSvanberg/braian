@@ -200,6 +200,7 @@ export const copy = {
   changedBy: 'Changed by',
   changedAt: 'Changed at',
   graphSelect: 'Select a node',
+  graphDismiss: 'Dismiss details',
   graphCapped: 'Showing the first 400 nodes.',
   graphLegend: 'Node types',
   structureOutdoor: 'Outdoor',
