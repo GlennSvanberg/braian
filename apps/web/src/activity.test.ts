@@ -20,5 +20,7 @@ describe('activity', () => {
     expect(humanizeLive(JSON.stringify({ op: 'job', status: 'running', done: 2, total: 8 }))).toBe(
       'live · Job running 2/8',
     )
+    expect(humanizeLive(JSON.stringify({ op: 'import', id: 'session-1', status: 'diffing' }))).toBe('')
+    expect(objectIdFromLive(JSON.stringify({ op: 'import', id: 'session-1' }))).toBeNull()
   })
 })

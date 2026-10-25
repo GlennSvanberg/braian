@@ -8,7 +8,7 @@ import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
 import { workspaceDisplayName, viewDisplayTitle } from './demo-labels'
-import { uiLanguage } from './i18n'
+import { copy, uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
@@ -168,6 +168,11 @@ export function CommandPalette({
         session.openWorkspace(workspaceId)
         session.push(`Workspace ${template.name}`)
       })
+      onClose()
+      return
+    }
+    if (id === 'import:file') {
+      window.dispatchEvent(new Event('braian-import-open'))
       onClose()
       return
     }
@@ -515,6 +520,7 @@ function buildCatalog(
       title: template.name,
       subtitle: `Template · ${template.summary}`,
     })),
+    { id: 'import:file', group: 'views', title: copy.importFile, subtitle: 'Drop an Excel or CSV file' },
     { id: 'theme:light', group: 'views', title: 'Light', subtitle: 'Switch theme', shortcut: undefined },
     { id: 'theme:dark', group: 'views', title: 'Dark', subtitle: 'Switch theme' },
     { id: 'layout:move_view_left', group: 'views', title: 'Move view left', subtitle: 'Move the focused view left', kbd: 'Ctrl+Alt+←', shortcut: 'Ctrl+Alt+Left' },

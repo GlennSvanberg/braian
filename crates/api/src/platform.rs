@@ -1093,6 +1093,7 @@ async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<R
     // frames into a channel the body forwards.
     let (frames, rx) = tokio::sync::mpsc::channel(64);
     let mut live = state.live.subscribe();
+    let owner = identity.actor.actor.as_uuid().to_string();
     tokio::spawn(async move {
         if frames.send(Bytes::from(": connected\n\n")).await.is_err() {
             return;
@@ -1100,21 +1101,35 @@ async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<R
         let mut tick = tokio::time::interval(Duration::from_secs(15));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let frame = tokio::select! {
+            tokio::select! {
                 biased;
                 value = live.recv() => match value {
-                    Ok(value) => Bytes::from(format!("data: {value}\n\n")),
+                    Ok(value) => {
+                        if value.get("op").and_then(|item| item.as_str()) == Some("import")
+                            && value.get("owner").and_then(|item| item.as_str()) != Some(owner.as_str())
+                        {
+                            continue;
+                        }
+                        let frame = Bytes::from(format!("data: {value}\n\n"));
+                        if frames.send(frame).await.is_err() {
+                            break;
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        Bytes::from(format!(
+                        let frame = Bytes::from(format!(
                             "data: {{\"op\":\"lagged\",\"skipped\":{skipped}}}\n\n"
-                        ))
+                        ));
+                        if frames.send(frame).await.is_err() {
+                            break;
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 },
-                _ = tick.tick() => Bytes::from(": ping\n\n"),
-            };
-            if frames.send(frame).await.is_err() {
-                break;
+                _ = tick.tick() => {
+                    if frames.send(Bytes::from(": ping\n\n")).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
