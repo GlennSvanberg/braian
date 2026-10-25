@@ -637,7 +637,7 @@ pub async fn put_languages(
     }))
 }
 
-async fn commit(
+pub(crate) async fn commit(
     state: &AppState,
     actor: &Actor,
     edit: impl Fn(&mut DefinitionSet) -> Result<(), Problem>,

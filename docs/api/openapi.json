@@ -354,6 +354,22 @@
         "responses": {}
       }
     },
+    "/v1/frecency": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Command frecency for the signed-in person",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Record one use of a command for the signed-in person",
+        "responses": {}
+      }
+    },
     "/v1/history": {
       "get": {
         "tags": [
@@ -1543,6 +1559,10 @@
           },
           "multiple": {
             "type": "boolean"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "The value must be present when the attribute applies. Absent means optional."
           }
         },
         "additionalProperties": false
@@ -1804,6 +1824,17 @@
           },
           "key": {
             "type": "string"
+          },
+          "parent": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassId",
+                "description": "Attribute inheritance. Values are never copied from the parent class."
+              }
+            ]
           }
         },
         "additionalProperties": false

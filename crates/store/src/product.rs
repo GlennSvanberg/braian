@@ -486,6 +486,95 @@ impl Store {
             .collect())
     }
 
+    pub async fn count_in_groups(&self, groups: &[Uuid]) -> Result<i64, Error> {
+        if groups.is_empty() {
+            return Ok(0);
+        }
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "SELECT count(DISTINCT o.id)::bigint
+                 FROM objects o
+                 JOIN object_structures s ON s.object_id = o.id
+                 WHERE o.deleted_at IS NULL AND s.group_id = ANY($1)",
+                &[&groups],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    pub async fn sample_in_groups(&self, groups: &[Uuid], limit: i64) -> Result<Vec<Value>, Error> {
+        if groups.is_empty() {
+            return Ok(Vec::new());
+        }
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT DISTINCT o.id, o.key
+                 FROM objects o
+                 JOIN object_structures s ON s.object_id = o.id
+                 WHERE o.deleted_at IS NULL AND s.group_id = ANY($1)
+                 ORDER BY o.key
+                 LIMIT $2",
+                &[&groups, &limit],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "id": row.get::<_, Uuid>(0),
+                    "key": row.get::<_, String>(1),
+                })
+            })
+            .collect())
+    }
+
+    pub async fn frecency(&self, principal: Uuid) -> Result<Value, Error> {
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT command_id, uses, last_at FROM command_frecency WHERE principal_id = $1",
+                &[&principal],
+            )
+            .await?;
+        let mut entries = serde_json::Map::new();
+        for row in rows {
+            let id: String = row.get(0);
+            let uses: i32 = row.get(1);
+            let last: DateTime<Utc> = row.get(2);
+            entries.insert(
+                id,
+                serde_json::json!({
+                    "uses": uses,
+                    "last": last.timestamp_millis(),
+                }),
+            );
+        }
+        Ok(Value::Object(entries))
+    }
+
+    pub async fn touch_frecency(&self, principal: Uuid, command_id: &str) -> Result<Value, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "INSERT INTO command_frecency (principal_id, command_id, uses, last_at)
+                 VALUES ($1, $2, 1, now())
+                 ON CONFLICT (principal_id, command_id)
+                 DO UPDATE SET uses = command_frecency.uses + 1, last_at = now()
+                 RETURNING uses, last_at",
+                &[&principal, &command_id],
+            )
+            .await?;
+        let uses: i32 = row.get(0);
+        let last: DateTime<Utc> = row.get(1);
+        Ok(serde_json::json!({
+            "id": command_id,
+            "uses": uses,
+            "last": last.timestamp_millis(),
+        }))
+    }
+
     pub async fn jobs_touching(&self, fields: &[String]) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client

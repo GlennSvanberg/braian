@@ -26,6 +26,24 @@ export function touch(id: string, now = Date.now(), storage: Storage | null = lo
   return all[id]
 }
 
+export function mergeFrecency(
+  local: Record<string, FrecencyEntry>,
+  remote: Record<string, FrecencyEntry>,
+): Record<string, FrecencyEntry> {
+  const merged = { ...local }
+  for (const [id, entry] of Object.entries(remote)) {
+    const current = merged[id]
+    if (!current || entry.uses > current.uses || (entry.uses === current.uses && entry.last > current.last)) {
+      merged[id] = entry
+    }
+  }
+  return merged
+}
+
+export function writeFrecency(entries: Record<string, FrecencyEntry>, storage: Storage | null = localStorageOrNull()) {
+  storage?.setItem(key, JSON.stringify(entries))
+}
+
 export function rankByFrecency<T extends { id: string }>(rows: T[], now = Date.now(), storage: Storage | null = localStorageOrNull()) {
   const all = readFrecency(storage)
   return [...rows].sort((left, right) => score(all[right.id], now) - score(all[left.id], now))

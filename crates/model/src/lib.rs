@@ -9,6 +9,7 @@ mod edit;
 mod error;
 mod id;
 mod language;
+mod model_change;
 mod object;
 mod patch;
 
@@ -25,6 +26,9 @@ pub use id::{
     AttributeId, ClassId, GroupId, ObjectId, StructureId, TypeId, UnitFamilyId, ValueListId,
 };
 pub use language::{LanguageTag, LanguageTagError};
+pub use model_change::{
+    ChangeImpact, ModelChange, apply_all, diff as model_diff, interpret, power_tools, preview,
+};
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};
 pub use uuid::Uuid;

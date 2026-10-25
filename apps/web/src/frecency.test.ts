@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rankByFrecency, score, touch, type FrecencyEntry } from './frecency'
+import { mergeFrecency, rankByFrecency, score, touch, type FrecencyEntry } from './frecency'
 
 function memory() {
   const data = new Map<string, string>()
@@ -33,5 +33,10 @@ describe('frecency', () => {
     )
     expect(ranked[0]?.id).toBe('ui.filter')
     expect(score({ uses: 2, last: now } satisfies FrecencyEntry, now)).toBeGreaterThan(1)
+  })
+
+  it('keeps the higher use count when the server copy arrives', () => {
+    const merged = mergeFrecency({ 'ui.filter': { uses: 1, last: 10 } }, { 'ui.filter': { uses: 4, last: 20 } })
+    expect(merged['ui.filter']?.uses).toBe(4)
   })
 })

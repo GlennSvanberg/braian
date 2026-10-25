@@ -209,6 +209,16 @@ impl utoipa::Modify for PlatformPaths {
             ),
             (HttpMethod::Get, "/v1/webhooks", "List webhooks"),
             (HttpMethod::Post, "/v1/webhooks", "Create a webhook"),
+            (
+                HttpMethod::Get,
+                "/v1/frecency",
+                "Command frecency for the signed-in person",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/frecency",
+                "Record one use of a command for the signed-in person",
+            ),
         ];
         for (method, path, summary) in routes {
             let operation = OperationBuilder::new()

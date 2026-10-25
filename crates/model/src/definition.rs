@@ -88,6 +88,9 @@ pub struct Attribute {
     pub labels: BTreeMap<LanguageTag, String>,
     pub language_dependent: bool,
     pub multiple: bool,
+    /// The value must be present when the attribute applies. Absent means optional.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub required: bool,
     pub kind: AttributeKind,
     pub index: IndexFlags,
 }
@@ -244,5 +247,8 @@ pub struct Class {
     pub id: ClassId,
     pub key: String,
     pub group: GroupId,
+    /// Attribute inheritance. Values are never copied from the parent class.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ClassId>,
     pub attributes: Vec<AttributeId>,
 }

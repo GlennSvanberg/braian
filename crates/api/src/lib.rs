@@ -9,6 +9,7 @@
 mod auth;
 mod definitions;
 mod headers;
+mod model_proposal;
 mod objects;
 mod platform;
 mod problem;

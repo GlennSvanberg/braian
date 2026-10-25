@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use braian_model::{
-    Attribute, AttributeId, AttributeKind, DefinitionSet, GroupId, StructureId, TypeId,
+    Attribute, AttributeId, AttributeKind, ClassId, DefinitionSet, GroupId, StructureId, TypeId,
     UnitFamilyId,
 };
 
@@ -184,11 +184,17 @@ fn index(defs: &DefinitionSet) -> CompiledModel {
             group_keys.insert((structure.key.clone(), group.key.clone()), group.id);
             direct.entry(group.id).or_default();
         }
+        let mut class_attrs = HashMap::new();
+        let mut class_parent = HashMap::new();
+        for class in &structure.classes {
+            class_attrs.insert(class.id, class.attributes.clone());
+            class_parent.insert(class.id, class.parent);
+        }
         for class in &structure.classes {
             direct
                 .entry(class.group)
                 .or_default()
-                .extend(class.attributes.iter().copied());
+                .extend(effective_attributes(class.id, &class_attrs, &class_parent));
         }
     }
 
@@ -523,8 +529,67 @@ fn check(defs: &DefinitionSet, errors: &mut Vec<DefinitionError>) {
                     )));
                 }
             }
+            if let Some(parent) = class.parent
+                && !structure.classes.iter().any(|item| item.id == parent)
+            {
+                errors.push(error(format!(
+                    "class {} in structure {} has a parent outside the structure",
+                    class.key, structure.key
+                )));
+            }
+        }
+        if class_cycle(&structure.classes) {
+            errors.push(error(format!(
+                "structure {} has a cycle in its classes",
+                structure.key
+            )));
         }
     }
+}
+
+fn effective_attributes(
+    start: ClassId,
+    attrs: &HashMap<ClassId, Vec<AttributeId>>,
+    parent: &HashMap<ClassId, Option<ClassId>>,
+) -> HashSet<AttributeId> {
+    let mut set = HashSet::new();
+    let mut current = Some(start);
+    let mut seen = HashSet::new();
+    while let Some(id) = current {
+        if !seen.insert(id) {
+            break;
+        }
+        if let Some(list) = attrs.get(&id) {
+            set.extend(list.iter().copied());
+        }
+        current = parent.get(&id).copied().flatten();
+    }
+    set
+}
+
+fn class_cycle(classes: &[braian_model::Class]) -> bool {
+    let known: HashSet<ClassId> = classes.iter().map(|class| class.id).collect();
+    let parent: HashMap<ClassId, ClassId> = classes
+        .iter()
+        .filter_map(|class| class.parent.map(|parent| (class.id, parent)))
+        .collect();
+    for class in classes {
+        let mut seen = HashSet::new();
+        let mut current = class.id;
+        loop {
+            if !seen.insert(current) {
+                return true;
+            }
+            let Some(next) = parent.get(&current).copied() else {
+                break;
+            };
+            if !known.contains(&next) {
+                break;
+            }
+            current = next;
+        }
+    }
+    false
 }
 
 fn unique_key(
@@ -613,6 +678,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::Text {
                 max_length: Some(32),
                 form: braian_model::TextForm::Short,
@@ -795,6 +861,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::ValueList {
                 options: vec![
                     ValueOption {
@@ -859,6 +926,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::Number {
                 unit_family: Some(family),
                 min: Some(Decimal::ZERO),
@@ -925,12 +993,14 @@ mod tests {
                     id: ClassId::from_uuid(id(53)),
                     key: "root".to_owned(),
                     group: root,
+                    parent: None,
                     attributes: vec![color.id],
                 },
                 Class {
                     id: ClassId::from_uuid(id(54)),
                     key: "child".to_owned(),
                     group: child,
+                    parent: None,
                     attributes: vec![finish.id],
                 },
             ],
@@ -994,6 +1064,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::Number {
                 unit_family: None,
                 min: None,
@@ -1008,6 +1079,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::Range {
                 unit_family: Some(family),
             },
@@ -1019,6 +1091,7 @@ mod tests {
             labels: BTreeMap::new(),
             language_dependent: false,
             multiple: false,
+            required: false,
             kind: AttributeKind::ObjectRef {
                 type_key: Some("item".to_owned()),
             },
@@ -1047,6 +1120,81 @@ mod tests {
         assert!(codes.contains(&ErrorCode::NotInteger));
         assert!(codes.contains(&ErrorCode::RangeInverted));
         assert!(codes.contains(&ErrorCode::InvalidObjectRef));
+    }
+
+    #[test]
+    fn a_child_class_inherits_attributes_from_its_parent_class() {
+        let mut defs = minimal();
+        let color = text_attribute(40, "color");
+        let finish = text_attribute(41, "finish");
+        defs.attributes.push(color.clone());
+        defs.attributes.push(finish.clone());
+        let root = GroupId::from_uuid(id(50));
+        let child = GroupId::from_uuid(id(51));
+        let other = GroupId::from_uuid(id(55));
+        let structure = StructureId::from_uuid(id(52));
+        let base = ClassId::from_uuid(id(53));
+        defs.structures.push(Structure {
+            id: structure,
+            key: "tools".into(),
+            groups: vec![
+                Group {
+                    id: root,
+                    key: "root".into(),
+                    parent: None,
+                },
+                Group {
+                    id: child,
+                    key: "child".into(),
+                    parent: Some(root),
+                },
+                Group {
+                    id: other,
+                    key: "other".into(),
+                    parent: None,
+                },
+            ],
+            classes: vec![
+                Class {
+                    id: base,
+                    key: "base".into(),
+                    group: other,
+                    parent: None,
+                    attributes: vec![color.id],
+                },
+                Class {
+                    id: ClassId::from_uuid(id(54)),
+                    key: "drill".into(),
+                    group: child,
+                    parent: Some(base),
+                    attributes: vec![finish.id],
+                },
+            ],
+        });
+        let model = CompiledModel::compile(&defs).unwrap();
+        let sku = AttributeId::from_uuid(id(1));
+        let type_id = TypeId::from_uuid(id(2));
+        let on_child = object(
+            type_id,
+            structure,
+            child,
+            vec![
+                (sku, json!("SKU-1")),
+                (color.id, json!("red")),
+                (finish.id, json!("matte")),
+            ],
+        );
+        assert!(model.validate(&on_child).is_empty());
+        let color_on_root = object(
+            type_id,
+            structure,
+            root,
+            vec![(sku, json!("SKU-1")), (color.id, json!("red"))],
+        );
+        assert_eq!(
+            model.validate(&color_on_root)[0].code,
+            ErrorCode::AttributeNotApplicable
+        );
     }
 
     fn object(
