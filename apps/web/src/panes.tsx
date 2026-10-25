@@ -373,7 +373,7 @@ export function ObjectTable({
           })}
         </div>
         {groupBy ? (
-          <div>
+          <div style={{ flex: 'none' }}>
             {groups.map((group) => (
               <div key={group.key}>
                 <strong>{group.key || '—'} ({group.found})</strong>
@@ -384,7 +384,7 @@ export function ObjectTable({
             ))}
           </div>
         ) : (
-          <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          <div style={{ height: virtualizer.getTotalSize(), position: 'relative', flex: 'none' }}>
             {visible.map((item) => {
               const row = byIndex.get(item.index)
               if (!row) {
@@ -410,9 +410,13 @@ export function ObjectTable({
             })}
           </div>
         )}
+        {probe.isError || (!probe.isLoading && found === 0) ? (
+          <div className="table-status">
+            {probe.isError ? <p className="error">{(probe.error as Error).message}</p> : null}
+            {!probe.isLoading && found === 0 ? <p>{copy.noRows}</p> : null}
+          </div>
+        ) : null}
       </div>
-      {probe.isError ? <p className="error">{(probe.error as Error).message}</p> : null}
-      {!probe.isLoading && found === 0 ? <p>{copy.noRows}</p> : null}
       {menu ? (
         <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="context-menu" role="menu">
           <button type="button" onClick={() => { session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
