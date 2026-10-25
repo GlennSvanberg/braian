@@ -365,6 +365,7 @@ dependencies = [
 name = "braian-events"
 version = "0.0.0"
 dependencies = [
+ "futures",
  "rdkafka",
  "serde",
  "serde_json",
@@ -383,6 +384,7 @@ dependencies = [
  "braian-rules",
  "braian-search",
  "braian-store",
+ "futures",
  "serde_json",
  "tokio",
  "tracing",

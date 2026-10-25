@@ -64,6 +64,53 @@ Integrationstesterna i `crates/store` kräver `BRAIAN_TEST_DATABASE_URL`. Den sk
 `just demo-1` behöver `wasm-bindgen` 0.2.129 på `PATH` (`cargo install wasm-bindgen-cli --version 0.2.129`).
 Devcontainern installerar samma version. wasm-bindgen's Node-mål är CommonJS, så `packages/rules-wasm` har ingen `"type": "module"`; skripten är `.mjs`.
 
+## Replikeringsslot och delad Postgres
+
+`max_slot_wal_keep_size` gäller hela Postgres-instansen, inte en databas. Slotten
+bekräftar hur långt relayn har läst. WAL som ligger framför den punkten får inte
+återvinnas. När taket nås invaliderar Postgres slotten (`wal_status = lost`,
+`invalidation_reason = wal_removed`). Samma checkpoint kan ta med sig andra
+logiska slottar på instansen, även för en databas som är inaktiv, eftersom de
+delar `pg_wal`.
+
+Relayn läser `pg_replication_slots` varje sekund. `GET /metrics` på
+`BRAIAN_RELAY_ADDR` (standard `127.0.0.1:8091`) exponerar:
+
+| Mätare | Betydelse |
+| --- | --- |
+| `braian_relay_lag_bytes` | `pg_current_wal_lsn()` minus `confirmed_flush_lsn` |
+| `braian_relay_lag_exceeded` | 1 när laggen är över `BRAIAN_RELAY_LAG_LIMIT_BYTES` (standard 64 MiB) |
+| `braian_relay_slot_wal_status` | 0 saknas, 1 `reserved`, 2 `extended`, 3 `unreserved`, 4 `lost` |
+| `braian_relay_slot_invalidated` | 1 när slotten är `lost` eller har en `invalidation_reason` |
+| `braian_relay_slot_recoveries_total` | Antal gånger relayn har släppt en ogiltig slot och bett om omindexering |
+
+`GET /healthz` på samma port svarar 204 när slotten finns, inte är `lost` eller
+`unreserved`, och laggen är under gränsen. Annars 503.
+
+När slotten är ogiltig loggar relayn det, gör `pg_drop_replication_slot`, sätter
+`indexer_progress.reindex_requested` och skapar en ny slot. Indexern bygger då
+ett nytt Typesense-alias från Postgres. Hålet i WAL går inte att spela upp;
+Postgres är källan. Relayn rör bara sin egen slot.
+
+### Delad instans
+
+Flera Braian, eller Braian bredvid något annat, på samma Postgres:
+
+- Sätt `max_slot_wal_keep_size` så att den långsammaste slotten ryms, eller `-1`
+  om disken övervakas och en full disk är ett känt fel. 10 GB räcker inte för en
+  stor massinläsning om relayn eller indexern ligger efter: skrivningen på en
+  databas kan då slå ut en idle slot på en annan.
+- En slot per databas (`BRAIAN_RELAY_SLOT`). Olika installationer ska inte dela namn.
+- Larma på `braian_relay_lag_bytes`, `braian_relay_slot_invalidated` och 503 från
+  relayns `/healthz`. API:ts `/healthz` säger bara att processen lever.
+
+### Egen instans
+
+En Postgres som bara kör en Braian kan behålla taket från `compose.yaml`
+(`max_slot_wal_keep_size=10GB`, `max_wal_size=8GB`, `wal_compression=lz4`).
+Relayn återskapar sin slot och ber om omindexering om taket ändå nås. Det tar
+inte med sig någon annan installation.
+
 ## Postgres-MCP
 
 `.cursor/mcp.json` startar Postgres MCP Pro i läsläge mot utvecklingsdatabasen,

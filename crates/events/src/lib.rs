@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use futures::future::join_all;
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
@@ -70,9 +71,16 @@ impl Bus {
     pub fn connect(brokers: &str) -> Result<Self, Error> {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
-            .set("message.timeout.ms", "10000")
+            .set("message.timeout.ms", "30000")
             .set("acks", "all")
             .set("enable.idempotence", "true")
+            // Batch on the producer. The relay used to wait for each ack, which
+            // capped it around one round trip per event.
+            .set("linger.ms", "5")
+            .set("batch.num.messages", "1000")
+            .set("queue.buffering.max.messages", "200000")
+            .set("queue.buffering.max.kbytes", "131072")
+            .set("compression.codec", "lz4")
             .create()?;
         Ok(Self {
             producer,
@@ -130,17 +138,44 @@ impl Bus {
     }
 
     pub async fn publish(&self, event: &ChangeEvent) -> Result<(), Error> {
-        let payload = serde_json::to_vec(event)?;
-        let key = event.key();
-        let record = FutureRecord::to(event.topic())
-            .key(&key)
-            .payload(payload.as_slice());
-        self.producer
-            .send(record, Duration::from_secs(10))
-            .await
-            .map_err(|(error, _)| Error::Kafka(error.to_string()))?;
+        self.publish_many(std::slice::from_ref(event)).await
+    }
+
+    /// Enqueues every event before waiting, so the broker batches them.
+    ///
+    /// Produce order follows `events`. Callers that need interactive ahead of
+    /// bulk send those on a separate task; this call stays on one task so the
+    /// first poll of each send runs in order.
+    pub async fn publish_many(&self, events: &[ChangeEvent]) -> Result<(), Error> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let mut owned = Vec::with_capacity(events.len());
+        for event in events {
+            owned.push(Prepared {
+                topic: event.topic(),
+                key: event.key(),
+                payload: serde_json::to_vec(event)?,
+            });
+        }
+        let timeout = Duration::from_secs(30);
+        let sends = owned.iter().map(|item| {
+            let record = FutureRecord::to(item.topic)
+                .key(&item.key)
+                .payload(&item.payload);
+            self.producer.send(record, timeout)
+        });
+        for result in join_all(sends).await {
+            result.map_err(|(error, _)| Error::Kafka(error.to_string()))?;
+        }
         Ok(())
     }
+}
+
+struct Prepared {
+    topic: &'static str,
+    key: String,
+    payload: Vec<u8>,
 }
 
 pub struct Subscription {

@@ -16,7 +16,7 @@ mod types;
 
 pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind};
-pub use product::{HistoryEntry, ProposalRow, UserRecord};
+pub use product::{HistoryEntry, ProposalRow, RelaySlotStatus, UserRecord};
 pub use session::Store;
 pub use split::StorageForm;
 
