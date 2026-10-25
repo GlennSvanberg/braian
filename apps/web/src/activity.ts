@@ -19,6 +19,12 @@ export function humanizeLive(raw: string): string {
       const skipped = typeof event.skipped === 'number' ? event.skipped : 0
       return `live · Skipped ${skipped} events`
     }
+    if (op === 'job') {
+      const status = typeof event.status === 'string' ? event.status : 'running'
+      const done = typeof event.done === 'number' ? event.done : 0
+      const total = typeof event.total === 'number' ? event.total : 0
+      return `live · Job ${status} ${done}/${total}`
+    }
     return `live · ${op}${key ? ` ${key}` : ''}`
   } catch {
     return `live · ${text}`

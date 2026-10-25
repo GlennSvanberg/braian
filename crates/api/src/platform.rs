@@ -1717,7 +1717,19 @@ async fn bulk(
     ))
 }
 
+fn emit_job(state: &AppState, id: Uuid, status: &str, done: i32, total: i32) {
+    state.emit(json!({
+        "op": "job",
+        "id": id,
+        "status": status,
+        "done": done,
+        "total": total,
+    }));
+}
+
 async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateObject>) {
+    let total = i32::try_from(objects.len()).unwrap_or(i32::MAX);
+    emit_job(&state, id, "running", 0, total);
     let mut errors = Vec::new();
     let mut done = 0i32;
     let mut actor = actor;
@@ -1730,6 +1742,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
                 .store
                 .finish_job_run(id, "failed", 0, &error.to_string(), &json!([]))
                 .await;
+            emit_job(&state, id, "failed", 0, total);
             return;
         }
     };
@@ -1776,6 +1789,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
                 &Value::Array(errors.clone()),
             )
             .await;
+        emit_job(&state, id, "running", done, total);
     }
     let status = if errors.is_empty() {
         "succeeded"
@@ -1792,6 +1806,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
             &Value::Array(errors),
         )
         .await;
+    emit_job(&state, id, status, done, total);
 }
 
 fn create_op(cached: &crate::state::CachedModel, body: &CreateObject) -> Result<ObjectOp, Problem> {
@@ -1942,7 +1957,7 @@ async fn accept_proposal(
     Auth(identity): Auth,
     Path(id): Path<Uuid>,
     Json(body): Json<AcceptBody>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<AcceptReply, Problem> {
     require(&identity, Role::Editor)?;
     if identity.kind == braian_store::PrincipalKind::Agent {
         return Err(Problem::new(
@@ -1962,28 +1977,132 @@ async fn accept_proposal(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let selected = selected_rows(&rows, &body.rows);
+    if selected.len() >= LARGE_ACCEPT {
+        return accept_later(state, identity, id, selected).await;
+    }
+    let value = apply_selected(&state, &identity, id, selected, None).await?;
+    Ok(AcceptReply::Sync(value))
+}
+
+const LARGE_ACCEPT: usize = 8;
+
+enum AcceptReply {
+    Sync(Value),
+    Job(Value),
+}
+
+impl IntoResponse for AcceptReply {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Sync(value) => Json(value).into_response(),
+            Self::Job(value) => (StatusCode::ACCEPTED, Json(value)).into_response(),
+        }
+    }
+}
+
+fn selected_rows(rows: &[Value], only: &Option<Vec<Uuid>>) -> Vec<Value> {
+    rows.iter()
+        .filter(|row| {
+            let Some(row_id) = row
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok())
+            else {
+                return false;
+            };
+            if row.get("status").and_then(Value::as_str) != Some("pending") {
+                return false;
+            }
+            match only {
+                Some(ids) if !ids.is_empty() => ids.contains(&row_id),
+                _ => true,
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+async fn accept_later(
+    state: AppState,
+    identity: Identity,
+    proposal_id: Uuid,
+    selected: Vec<Value>,
+) -> Result<AcceptReply, Problem> {
+    state
+        .store
+        .register_job_type("proposal.accept", "Accept proposal", &[], None)
+        .await
+        .map_err(store_status)?;
+    let job_id = Uuid::now_v7();
+    let total = i32::try_from(selected.len()).unwrap_or(i32::MAX);
+    state
+        .store
+        .create_job_run(
+            job_id,
+            "proposal.accept",
+            None,
+            identity.actor.actor,
+            identity.actor.on_behalf_of,
+            total,
+        )
+        .await
+        .map_err(store_status)?;
+    emit_job(&state, job_id, "running", 0, total);
+    let job_state = state.clone();
+    tokio::spawn(async move {
+        match apply_selected(&job_state, &identity, proposal_id, selected, Some(job_id)).await {
+            Ok(_) => {
+                let _ = job_state
+                    .store
+                    .finish_job_run(job_id, "succeeded", total, "accepted", &json!([]))
+                    .await;
+                emit_job(&job_state, job_id, "succeeded", total, total);
+            }
+            Err(problem) => {
+                let _ = job_state
+                    .store
+                    .finish_job_run(
+                        job_id,
+                        "failed",
+                        0,
+                        &problem.detail,
+                        &json!([{ "detail": problem.detail }]),
+                    )
+                    .await;
+                emit_job(&job_state, job_id, "failed", 0, total);
+            }
+        }
+    });
+    Ok(AcceptReply::Job(
+        json!({ "id": job_id, "status": "running", "total": total }),
+    ))
+}
+
+async fn apply_selected(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    rows: Vec<Value>,
+    job_id: Option<Uuid>,
+) -> Result<Value, Problem> {
+    let total = i32::try_from(rows.len()).unwrap_or(i32::MAX);
+    let mut done = 0i32;
     let mut accepted = Vec::new();
     let mut failed = Vec::new();
     for row in rows {
-        let row_id = row
+        let Some(row_id) = row
             .get("id")
             .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok());
-        let Some(row_id) = row_id else { continue };
-        if row.get("status").and_then(Value::as_str) != Some("pending") {
+            .and_then(|id| Uuid::parse_str(id).ok())
+        else {
             continue;
-        }
-        if let Some(only) = &body.rows
-            && !only.is_empty()
-            && !only.contains(&row_id)
-        {
-            continue;
-        }
-        match apply_row(&state, &identity, &row).await {
+        };
+        match apply_row(state, identity, &row).await {
             Ok(seq) => {
                 state
                     .store
-                    .set_proposal_rows(id, &[row_id], "accepted")
+                    .set_proposal_rows(proposal_id, &[row_id], "accepted")
                     .await
                     .map_err(store_status)?;
                 accepted.push(json!({ "id": row_id, "seq": seq }));
@@ -1992,11 +2111,22 @@ async fn accept_proposal(
                 failed.push(json!({ "id": row_id, "code": problem.code, "detail": problem.detail }))
             }
         }
+        done += 1;
+        if let Some(job_id) = job_id {
+            let _ = state
+                .store
+                .update_job_progress(job_id, done, &format!("{done} of {total}"), &json!([]))
+                .await;
+            emit_job(state, job_id, "running", done, total);
+        }
     }
     if failed.is_empty() {
-        let _ = state.store.set_proposal_status(id, "accepted").await;
+        let _ = state
+            .store
+            .set_proposal_status(proposal_id, "accepted")
+            .await;
     }
-    Ok(Json(json!({ "accepted": accepted, "failed": failed })))
+    Ok(json!({ "accepted": accepted, "failed": failed }))
 }
 
 async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
@@ -3005,14 +3135,18 @@ async fn run_operation(
                         .collect()
                 })
                 .unwrap_or_default();
-            Ok(accept_proposal(
-                State(state.clone()),
-                Auth(identity.clone()),
-                Path(id),
-                Json(AcceptBody { rows: Some(rows) }),
+            Ok(
+                match accept_proposal(
+                    State(state.clone()),
+                    Auth(identity.clone()),
+                    Path(id),
+                    Json(AcceptBody { rows: Some(rows) }),
+                )
+                .await?
+                {
+                    AcceptReply::Sync(value) | AcceptReply::Job(value) => value,
+                },
             )
-            .await?
-            .0)
         }
         "discard_proposal" => {
             let id = args

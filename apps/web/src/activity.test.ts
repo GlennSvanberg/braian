@@ -17,5 +17,8 @@ describe('activity', () => {
     expect(humanizeLive(JSON.stringify({ op: 'lagged', skipped: 3 }))).toBe(
       'live · Skipped 3 events',
     )
+    expect(humanizeLive(JSON.stringify({ op: 'job', status: 'running', done: 2, total: 8 }))).toBe(
+      'live · Job running 2/8',
+    )
   })
 })

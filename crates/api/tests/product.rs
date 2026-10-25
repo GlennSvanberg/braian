@@ -3,10 +3,12 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use braian_api::{hash_password, router};
+use braian_store::ProposalRow;
 use braian_store::testing::TestDb;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 fn load_env() {
     if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_some() {
@@ -68,6 +70,77 @@ async fn call(
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     };
     (status, set_cookie, json)
+}
+
+#[tokio::test]
+async fn a_large_accept_returns_a_job() {
+    load_env();
+    let db = TestDb::create().await;
+    let store = db.store().clone();
+    let identities = braian_api::identities(db.store(), "ada:human:token-ada")
+        .await
+        .unwrap();
+    let actor = identities[0].actor.actor;
+    let app = router(store.clone(), identities);
+    let proposal_id = Uuid::now_v7();
+    let rows: Vec<ProposalRow> = (0..8)
+        .map(|position| ProposalRow {
+            id: Uuid::now_v7(),
+            object_id: None,
+            object_key: None,
+            type_key: None,
+            base_version: None,
+            patch: serde_json::json!({}),
+            status: "pending".into(),
+            conflict: false,
+            position,
+        })
+        .collect();
+    store
+        .create_proposal(
+            proposal_id,
+            "bulk accept",
+            "test",
+            actor,
+            None,
+            false,
+            &rows,
+        )
+        .await
+        .unwrap();
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some("token-ada"),
+        None,
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["status"], "running");
+    assert_eq!(body["total"], 8);
+    let job_id = body["id"].as_str().unwrap();
+    let mut finished = Value::Null;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let (status, _, job) = call(
+            &app,
+            "GET",
+            &format!("/v1/jobs/{job_id}"),
+            Some("token-ada"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{job}");
+        if job["status"] != "running" {
+            finished = job;
+            break;
+        }
+    }
+    assert_eq!(finished["status"], "succeeded", "{finished}");
+    assert_eq!(finished["progress_total"], 8);
 }
 
 #[tokio::test]

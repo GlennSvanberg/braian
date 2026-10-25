@@ -39,3 +39,4 @@ serde_json.workspace = true
 serde_norway.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid.workspace = true
