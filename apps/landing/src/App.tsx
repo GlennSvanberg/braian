@@ -1,19 +1,20 @@
-import type { ReactNode } from 'react'
 import { Button, ButtonLink } from '@/components/ui/button'
 import { Mark } from '@/components/mark'
 import {
-  agentExample,
-  apiTiles,
-  audiences,
+  agent,
+  agentSession,
+  architecture,
   demoUrl,
+  docsUrl,
+  hero,
   licenseUrl,
-  liveOn,
-  moreEntities,
   nav,
-  productAttributes,
+  openSource,
   repoUrl,
+  speed,
 } from '@/content'
-import { measuredLabel, measuredSets, measurementsDoc } from '@/data/measurements'
+import { performanceFootnote, primaryFigures, secondaryFigures, type Figure } from '@/data/measurements'
+import { HeroDemo } from '@/demo/hero-demo'
 import { DataFlow } from '@/flow/diagram'
 
 export function App() {
@@ -36,47 +37,38 @@ export function App() {
             ))}
           </nav>
           <div className="spacer" />
-          <ButtonLink variant="ghost" href={repoUrl}>
+          <Button type="button" variant="ghost" className="theme-toggle" data-theme-toggle aria-label="Switch color theme">
+            <span className="when-dark">Light</span>
+            <span className="when-light">Dark</span>
+          </Button>
+          <ButtonLink variant="ghost" className="topbar-github" href={repoUrl}>
             GitHub
           </ButtonLink>
           <ButtonLink variant="primary" href={demoUrl}>
             Try the demo
           </ButtonLink>
-          <Button type="button" variant="ghost" data-theme-toggle>
-            <span className="when-dark">Light</span>
-            <span className="when-light">Dark</span>
-          </Button>
         </header>
         <main id="content">
           <Hero />
+          <Speed />
           <Agent />
-          <Model />
-          <Api />
-          <Flow />
-          <UseCases />
-          <Measured />
+          <Architecture />
+          <Performance />
+          <OpenSource />
         </main>
-        <footer className="sheet footer">
+        <footer className="footer">
           <div className="footer-brand">
             <div className="brand">
               <Mark />
               Braian
             </div>
-            <p>Open-source product data. Self-hosted.</p>
+            <p>Open-source product data. Self-hosted. MIT.</p>
           </div>
           <nav className="footer-links" aria-label="Footer">
-            <a href={demoUrl}>Try the demo</a>
-            <a href={repoUrl}>View on GitHub</a>
+            <a href={demoUrl}>Demo</a>
+            <a href={repoUrl}>GitHub</a>
+            <a href={docsUrl}>Documentation</a>
             <a href={licenseUrl}>MIT License</a>
-            <a href={measurementsDoc.href}>{measurementsDoc.label}</a>
-          </nav>
-          <nav className="footer-links" aria-label="On this page">
-            {nav.map((item) => (
-              <a key={item.href} href={item.href}>
-                {item.label}
-              </a>
-            ))}
-            <a href="#use">Who it is for</a>
           </nav>
         </footer>
       </div>
@@ -87,12 +79,12 @@ export function App() {
 function Hero() {
   return (
     <section className="hero" aria-labelledby="hero-title">
-      <div className="sheet sheet-xl hero-copy">
-        <p className="eyebrow">Open source · MIT · Self-hosted</p>
+      <div className="hero-copy">
+        <p className="eyebrow">{hero.eyebrow}</p>
         <h1 id="hero-title">
-          Product data, <span className="accent">built for agents.</span>
+          {hero.title} <span className="accent">{hero.titleAccent}</span>
         </h1>
-        <p className="lede">A self-hosted product data system, with agents in your session.</p>
+        <p className="lede hero-lede">{hero.lede}</p>
         <div className="hero-actions">
           <ButtonLink variant="primary" size="lg" href={demoUrl}>
             Try the demo
@@ -101,15 +93,53 @@ function Hero() {
             View on GitHub
           </ButtonLink>
         </div>
+        <ul className="hero-proof" aria-label="Median figures">
+          {hero.proof.map((item) => (
+            <li key={item.label}>
+              <strong>{item.value}</strong> {item.label}
+            </li>
+          ))}
+          <li>
+            <a className="text-link" href="#performance">
+              All figures
+            </a>
+          </li>
+        </ul>
       </div>
-      <figure className="sheet sheet-xl video-slot">
-        <div className="video-frame">
-          <figcaption>
-            <p className="eyebrow">Demo video</p>
-            <p>A recording of the product will sit here.</p>
-          </figcaption>
+      {/* Video slot: replace <HeroDemo /> with the navigation recording when it exists. */}
+      <figure className="hero-visual" data-video-slot>
+        <div className="hero-window" aria-hidden="true">
+          <HeroDemo />
         </div>
+        <figcaption className="caption">{hero.caption}</figcaption>
       </figure>
+    </section>
+  )
+}
+
+function SectionHead({ id, eyebrow, title, lede }: { id: string; eyebrow?: string; title: string; lede: string }) {
+  return (
+    <div className="section-head">
+      {eyebrow ? <p className="eyebrow eyebrow-accent">{eyebrow}</p> : null}
+      <h2 id={id}>{title}</h2>
+      <p className="lede">{lede}</p>
+    </div>
+  )
+}
+
+function Speed() {
+  return (
+    <section className="section" id="speed" aria-labelledby="speed-title">
+      <SectionHead id="speed-title" eyebrow={speed.eyebrow} title={speed.title} lede={speed.lede} />
+      <ul className="points points-4">
+        {speed.points.map((point, i) => (
+          <li key={point.title} className="sheet point">
+            <span className="point-index mono">0{i + 1}</span>
+            <h3>{point.title}</h3>
+            <p>{point.body}</p>
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
@@ -117,233 +147,204 @@ function Hero() {
 function Agent() {
   return (
     <section className="section" id="agent" aria-labelledby="agent-title">
-      <div className="section-head">
-        <h2 id="agent-title">An agent that works in your session, not a chatbot</h2>
-        <p className="lede">
-          It acts as you, with your permissions. Every change is a proposal you can undo in one click.
-        </p>
-      </div>
-      <figure className="session-figure">
-        <ol className="session">
-          <li className="sheet session-ask">
-            <span className="kbd mono">Ctrl+K</span>
-            <p>{agentExample.prompt}</p>
-          </li>
-          <Beat />
-          <li className="sheet session-progress">
-            <span className="eyebrow">In place</span>
-            <p>{agentExample.progress}</p>
-            <span className="bar" aria-hidden="true" />
-          </li>
-          <Beat />
-          <li className="sheet session-proposal">
-            <span className="eyebrow">Example</span>
-            <p className="proposal-count">{agentExample.objects}</p>
-            <p className="proposal-detail">{agentExample.changes}</p>
-            <div className="proposal-actions">
-              <span className="btn btn-primary">Accept</span>
-              <span className="btn btn-raised">Review diff</span>
-            </div>
-          </li>
-          <Beat />
-          <li className="sheet session-undo">
-            <strong>Undo</strong>
-            <span>One click</span>
-          </li>
-        </ol>
-        <figcaption className="note session-caption">Illustrative session.</figcaption>
-      </figure>
-    </section>
-  )
-}
-
-function Beat() {
-  return <li className="beat-to" aria-hidden="true" />
-}
-
-function attributeDetail(attr: { type: string; detail: string }) {
-  if (!attr.detail) return ''
-  return attr.type === 'reference' ? `→ ${attr.detail}` : attr.detail
-}
-
-function Model() {
-  return (
-    <section className="section" id="model" aria-labelledby="model-title">
-      <div className="section-head">
-        <h2 id="model-title">Model anything. No migrations, no developers.</h2>
-        <p className="lede">API, search, and the UI pick up a new entity immediately.</p>
-      </div>
-      <div className="schema-board">
-        <article className="sheet schema">
-          <header>
-            <h3>Product</h3>
-            <span className="eyebrow">Entity</span>
-          </header>
-          <ul>
-            {productAttributes.map((attr) => (
-              <li key={attr.name} className="attr">
-                <span className="attr-name">{attr.name}</span>
-                <span className="attr-type">{attr.type}</span>
-                <span className="attr-detail">{attributeDetail(attr)}</span>
-              </li>
-            ))}
-          </ul>
-        </article>
-        <div className="schema-side">
-          <p className="note">New entities, the same way</p>
-          <ul className="entity-picks">
-            {moreEntities.map((name) => (
-              <li key={name} className="sheet entity-pick">
-                {name}
-              </li>
-            ))}
-          </ul>
-          <p className="note">Live on</p>
-          <ul className="pickup">
-            {liveOn.map((name) => (
-              <li key={name} className="sheet">
-                {name}
-              </li>
-            ))}
-          </ul>
-        </div>
+      <SectionHead id="agent-title" eyebrow={agent.eyebrow} title={agent.title} lede={agent.lede} />
+      <div className="agent-board">
+        <figure className="agent-stage">
+          <AgentPanel />
+          <figcaption className="caption">Illustrative session in the demo catalog.</figcaption>
+        </figure>
+        <ul className="agent-points">
+          {agent.points.map((point) => (
+            <li key={point.title}>
+              <h3>{point.title}</h3>
+              <p>{point.body}</p>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   )
 }
 
-function Api() {
+function AgentPanel() {
   return (
-    <section className="section" id="api" aria-labelledby="api-title">
-      <div className="section-head">
-        <h2 id="api-title">An API you can build on</h2>
-        <p className="lede">Headless, so a feature ships on the API and the event stream.</p>
+    <div className="agent-panel" aria-label="Ctrl+K panel in AI mode">
+      <div className="ai-input">
+        <span className="ai-badge">AI</span>
+        <span className="ai-prompt">{agentSession.prompt}</span>
+        <span className="kbd mono">Esc</span>
       </div>
-      <ul className="tiles">
-        {apiTiles.map((tile) => (
-          <li key={tile.title} className="sheet tile">
-            <TileIcon name={tile.icon} />
-            <span>{tile.title}</span>
+      <ol className="ai-steps">
+        {agentSession.steps.map((step) => (
+          <li key={step}>
+            <Check />
+            {step}
           </li>
         ))}
-      </ul>
-    </section>
+      </ol>
+      <p className="ai-answer">{agentSession.answer}</p>
+      <div className="sugg">
+        <div className="sugg-head">
+          <span>Suggested changes</span>
+          <span className="sugg-count">4 objects · 4 fields</span>
+        </div>
+        {agentSession.changes.map((change) => (
+          <div key={change.id} className="sugg-row">
+            <span className="sugg-object">
+              {change.name}
+              <span className="d-id">{change.id}</span>
+            </span>
+            <span className="sugg-field">{agentSession.field}</span>
+            <span className="sugg-values">
+              <span className="sugg-before" aria-label="empty">—</span>
+              <span className="sugg-arrow" aria-hidden="true">→</span>
+              <ins>{change.after}</ins>
+            </span>
+          </div>
+        ))}
+        <p className="sugg-more">{agentSession.more}</p>
+      </div>
+      <div className="ai-foot">
+        <span className="ai-owner">{agentSession.owner}</span>
+        <span className="btn btn-raised">Discard</span>
+        <span className="btn btn-primary">Save</span>
+      </div>
+    </div>
   )
 }
 
-function Flow() {
+function Check() {
   return (
-    <section className="section" id="flow" aria-labelledby="flow-title">
-      <div className="section-head">
-        <h2 id="flow-title">How data moves</h2>
-        <p className="lede">One operation in. Search, live updates, and /subscribe branch back out.</p>
-      </div>
-      <figure className="sheet flow" aria-labelledby="flow-title">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" className="step-check">
+      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function Architecture() {
+  return (
+    <section className="section" id="architecture" aria-labelledby="architecture-title">
+      <SectionHead
+        id="architecture-title"
+        eyebrow={architecture.eyebrow}
+        title={architecture.title}
+        lede={architecture.lede}
+      />
+      <figure className="sheet flow" aria-labelledby="architecture-title">
         <p className="sr-only">
-          UI, Agent with Ctrl+K and proposals, API, and MCP clients write through one shared
-          operation layer into Postgres, which holds the object model and the change log. Logical
-          replication reaches the relay, then Redpanda, which splits into a fast interactive lane
-          and a heavier bulk lane. Both lanes reach the indexer and Typesense. Search loops back to
-          the UI. The change stream also sends SSE live updates back to open UIs, and /subscribe
-          events to external consumers for headless integrations.
+          The UI, the agent in Ctrl+K, the API and MCP clients write through one shared operation
+          registry into Postgres, which holds the object model and the change log. Logical
+          replication reaches the relay, then Redpanda, which splits into a fast interactive lane and
+          a heavier bulk lane. Both lanes reach the indexer and Typesense. Search loops back to the
+          UI. The change stream also sends live updates over server-sent events to open UIs, and
+          stream and webhook events to external consumers.
         </p>
         <DataFlow />
-        <p className="stack">Rust on the server. TanStack Start in the app.</p>
+        <p className="stack">{architecture.stack}</p>
       </figure>
-    </section>
-  )
-}
-
-function UseCases() {
-  return (
-    <section className="section" id="use" aria-labelledby="use-title">
-      <div className="section-head">
-        <h2 id="use-title">Who it is for</h2>
-        <p className="lede">People who run the catalog, and people who extend it.</p>
-      </div>
-      <ul className="who">
-        {audiences.map((name) => (
-          <li key={name} className="sheet who-card">
-            {name}
+      <ul className="principles">
+        {architecture.principles.map((item) => (
+          <li key={item.title} className="sheet principle">
+            <h3>{item.title}</h3>
+            <p>{item.body}</p>
+            <code className="mono">{item.code}</code>
           </li>
         ))}
       </ul>
+      <div className="sheet job">
+        <div className="job-copy">
+          <h3>{architecture.job.title}</h3>
+          <p>{architecture.job.body}</p>
+        </div>
+        <Terminal lines={architecture.job.code} label="Shell" />
+      </div>
     </section>
   )
 }
 
-function Measured() {
+function Terminal({ lines, label }: { lines: readonly string[]; label: string }) {
   return (
-    <section className="section" id="measured" aria-labelledby="measured-title">
-      <div className="section-head">
-        <h2 id="measured-title">{measuredLabel}</h2>
-        <p className="lede">
-          Recorded runs, with the hardware and the data size.{' '}
-          <a className="text-link" href={measurementsDoc.href}>
-            {measurementsDoc.label}
-          </a>
-        </p>
+    <div className="terminal">
+      <div className="terminal-bar" aria-hidden="true">
+        <span>{label}</span>
       </div>
-      <div className="measured-sets">
-        {measuredSets.map((set) => (
-          <article key={set.id} className="measured-set" aria-labelledby={`set-${set.id}`}>
-            <p className="set-note" id={`set-${set.id}`}>
-              <strong>{set.name}</strong>
-              {` · ${set.hardware} · ${set.dataSize}`}
-              {set.conditions ? ` · ${set.conditions}` : ''}
-              {` · ${set.recordedOn}`}
-            </p>
-            <ul className="stat-grid">
-              {set.figures.map((figure) => (
-                <li key={`${set.id}-${figure.value}-${figure.label}`} className="sheet stat">
-                  <p className="stat-value">{figure.value}</p>
-                  <p className="stat-label">{figure.label}</p>
-                  {figure.note ? <p className="stat-note">{figure.note}</p> : null}
-                </li>
-              ))}
-            </ul>
-          </article>
+      <pre className="mono">
+        {lines.map((line, i) => (
+          <span key={i} className={line.startsWith('#') ? 'comment' : undefined}>
+            {line || ' '}
+            {'\n'}
+          </span>
         ))}
-      </div>
+      </pre>
+    </div>
+  )
+}
+
+function FigureValue({ figure }: { figure: Figure }) {
+  return (
+    <p className="stat-value">
+      {figure.value}
+      {figure.unit ? <span className="stat-unit">{figure.unit}</span> : null}
+    </p>
+  )
+}
+
+function Performance() {
+  return (
+    <section className="section" id="performance" aria-labelledby="performance-title">
+      <SectionHead
+        id="performance-title"
+        eyebrow="Braian’s own numbers"
+        title="Performance"
+        lede="From save to search, and from your screen to everyone else’s."
+      />
+      <ul className="stats stats-primary">
+        {primaryFigures.map((figure) => (
+          <li key={figure.label} className="sheet stat">
+            <FigureValue figure={figure} />
+            <p className="stat-label">{figure.label}</p>
+            <p className="stat-note">{figure.note}</p>
+          </li>
+        ))}
+      </ul>
+      <ul className="stats stats-secondary">
+        {secondaryFigures.map((figure) => (
+          <li key={figure.label} className="sheet stat">
+            <FigureValue figure={figure} />
+            <p className="stat-label">{figure.label}</p>
+            <p className="stat-note">{figure.note}</p>
+          </li>
+        ))}
+      </ul>
+      <p className="footnote">{performanceFootnote}</p>
     </section>
   )
 }
 
-function TileIcon({ name }: { name: string }) {
-  const common = {
-    viewBox: '0 0 24 24',
-    width: 22,
-    height: 22,
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.6,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    'aria-hidden': true,
-  }
-  const paths: Record<string, ReactNode> = {
-    server: (
-      <>
-        <rect x="4" y="4" width="16" height="6" rx="1.5" />
-        <rect x="4" y="14" width="16" height="6" rx="1.5" />
-        <path d="M8 7h.01M8 17h.01" />
-      </>
-    ),
-    nodes: (
-      <>
-        <circle cx="6" cy="12" r="2.2" />
-        <circle cx="18" cy="7" r="2.2" />
-        <circle cx="18" cy="17" r="2.2" />
-        <path d="M8 12h6M14.2 10.2 16 8.6M14.2 13.8 16 15.4" />
-      </>
-    ),
-    pulse: <path d="M3 12h4l2-5 4 10 2-5h6" />,
-    spark: (
-      <>
-        <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
-        <circle cx="12" cy="12" r="2.4" />
-      </>
-    ),
-  }
-  return <svg {...common}>{paths[name]}</svg>
+function OpenSource() {
+  return (
+    <section className="section" id="open-source" aria-labelledby="open-source-title">
+      <div className="sheet sheet-xl oss">
+        <div className="oss-copy">
+          <p className="eyebrow eyebrow-accent">Open source</p>
+          <h2 id="open-source-title">{openSource.title}</h2>
+          <p className="lede">{openSource.lede}</p>
+          <ul className="oss-facts">
+            {openSource.facts.map((fact) => (
+              <li key={fact}>{fact}</li>
+            ))}
+          </ul>
+          <div className="hero-actions">
+            <ButtonLink variant="primary" size="lg" href={demoUrl}>
+              Try the demo
+            </ButtonLink>
+            <ButtonLink variant="raised" size="lg" href={repoUrl}>
+              View on GitHub
+            </ButtonLink>
+          </div>
+        </div>
+        <Terminal lines={openSource.code} label="Run it locally" />
+      </div>
+    </section>
+  )
 }
