@@ -47,6 +47,10 @@ export function stepText(op: string, args: Json = {}): string {
     case 'ui.select':
     case 'get_object':
       return 'Opening the object…'
+    case 'ui.get_context':
+      return 'Reading the screen…'
+    case 'ui.get_selection':
+      return 'Reading the selection…'
     case 'ui.select_rows':
       return 'Selecting the rows…'
     case 'ui.show_column':

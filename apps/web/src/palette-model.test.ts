@@ -11,6 +11,7 @@ describe('palette rows', () => {
     const rows = visibleRows('hej', catalog, [], {})
     expect(rows.at(-1)?.id).toBe('ask')
     expect(rows.at(-1)?.title).toContain('Ask AI')
+    expect(rows.at(-1)?.subtitle).toBe('')
     expect(rows.every((row) => row.group !== 'ask' || row.id === 'ask')).toBe(true)
     expect(askIndex(rows)).toBe(rows.length - 1)
   })
