@@ -390,6 +390,31 @@ impl Store {
         }))
     }
 
+    /// Loads many principals in one query. Unknown ids are omitted.
+    pub async fn principals(&self, ids: &[PrincipalId]) -> Result<Vec<PrincipalRecord>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let uuids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT id, kind, name, handle FROM principals WHERE id = ANY($1)",
+                &[&uuids],
+            )
+            .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(PrincipalRecord {
+                    id: PrincipalId::from_uuid(row.get("id")),
+                    kind: PrincipalKind::parse(row.get("kind"))?,
+                    name: row.get("name"),
+                    handle: row.get("handle"),
+                })
+            })
+            .collect()
+    }
+
     /// Change log for one object. A create row is rebuilt from `object_values`
     /// version 1 so the stored diff can stay a marker.
     pub async fn changes_for(&self, id: ObjectId) -> Result<Vec<ChangeRow>, Error> {

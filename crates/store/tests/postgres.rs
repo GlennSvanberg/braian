@@ -32,6 +32,40 @@ async fn setup(tier: Tier, seed: u64) -> (TestDb, braian_model::DefinitionSet, A
 }
 
 #[tokio::test]
+async fn principals_load_in_one_batch() {
+    let db = TestDb::create().await;
+    let ada = db
+        .store()
+        .upsert_principal("ada", PrincipalKind::Human, "Ada")
+        .await
+        .unwrap();
+    let scout = db
+        .store()
+        .upsert_principal("scout", PrincipalKind::Agent, "Scout")
+        .await
+        .unwrap();
+    let missing = braian_store::PrincipalId::new();
+    let found = db
+        .store()
+        .principals(&[ada, missing, scout, ada])
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 2);
+    assert!(
+        found
+            .iter()
+            .any(|row| row.id == ada && row.handle.as_deref() == Some("ada"))
+    );
+    assert!(
+        found
+            .iter()
+            .any(|row| row.id == scout && row.handle.as_deref() == Some("scout"))
+    );
+    assert!(found.iter().all(|row| row.id != missing));
+    assert!(db.store().principals(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn light_and_medium_objects_roundtrip() {
     for (tier, seeds) in [
         (Tier::Light, &[1u64, 2, 9, 42][..]),
