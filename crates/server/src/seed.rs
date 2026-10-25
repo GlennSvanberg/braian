@@ -65,7 +65,9 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         Err(error) => return Err(error.into()),
     }
     let mut defs = store.definition_set().await?;
-    if ensure_demo_inheritance(&mut defs) {
+    let mut definitions_changed = ensure_demo_inheritance(&mut defs);
+    definitions_changed |= ensure_type_names(&mut defs);
+    if definitions_changed {
         defs.model_revision = defs.model_revision.saturating_add(1);
         CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
         store.put_definitions(&actor, &defs).await?;
@@ -164,7 +166,7 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         ),
         (
             "018f2000-0000-7000-8000-000000000003",
-            "Enrich objects",
+            "Enrich",
             false,
             "braian-enrich",
         ),
@@ -359,10 +361,10 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000302",
             "018f2000-0000-7000-8000-000000000003",
             "object_table",
-            "Objects",
+            "Products",
             "center",
             0,
-            json!({"columns": ["nummer", "namn", "type", "status", "farg", "vikt", "langd"], "sort": "nummer"}),
+            json!({"columns": ["nummer", "namn", "type", "status", "farg", "vikt", "langd"], "sort": "nummer", "object_type": "018f0000-0000-7000-8000-000000000200", "type_key": "produkt"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000303",
@@ -426,6 +428,24 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "right",
             3,
             json!({"url": "/embed/preview?object={object}&key={key}"}),
+        ),
+        (
+            "018f2000-0000-7000-8000-000000000306",
+            "018f2000-0000-7000-8000-000000000003",
+            "object_table",
+            "Articles",
+            "center",
+            1,
+            json!({"columns": ["nummer", "namn", "type", "status", "farg", "vikt", "langd"], "sort": "nummer", "object_type": "018f0000-0000-7000-8000-000000000201", "type_key": "artikel"}),
+        ),
+        (
+            "018f2000-0000-7000-8000-000000000307",
+            "018f2000-0000-7000-8000-000000000003",
+            "object_table",
+            "Variants",
+            "center",
+            2,
+            json!({"columns": ["nummer", "namn", "type", "status"], "sort": "nummer", "object_type": "018f0000-0000-7000-8000-000000000202", "type_key": "variant"}),
         ),
     ];
     for (id, workspace, kind, title, pane, position, state) in views {
@@ -729,6 +749,81 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
         )
         .await?;
     Ok(())
+}
+
+/// Writes singular and plural names. The demo types use explicit labels.
+/// Any other type copies its label into the singular and derives a plural.
+fn ensure_type_names(defs: &mut DefinitionSet) -> bool {
+    let mut changed = false;
+    for object_type in &mut defs.types {
+        if let Some(names) = demo_type_names(&object_type.key) {
+            for (language, singular, plural) in names {
+                changed |= write_label(&mut object_type.labels, language, singular);
+                changed |= write_label(&mut object_type.singular, language, singular);
+                changed |= write_label(&mut object_type.plural, language, plural);
+            }
+            continue;
+        }
+        let labels = object_type.labels.clone();
+        for (tag, label) in labels {
+            if label.is_empty() {
+                continue;
+            }
+            let missing_singular = object_type.singular.get(&tag).is_none_or(String::is_empty);
+            if missing_singular {
+                object_type.singular.insert(tag.clone(), label.clone());
+                changed = true;
+            }
+            let singular = object_type
+                .singular
+                .get(&tag)
+                .cloned()
+                .filter(|value| !value.is_empty())
+                .unwrap_or(label);
+            let missing_plural = object_type.plural.get(&tag).is_none_or(String::is_empty);
+            if missing_plural {
+                object_type
+                    .plural
+                    .insert(tag, braian_model::default_plural(&singular));
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn demo_type_names(key: &str) -> Option<[(&'static str, &'static str, &'static str); 3]> {
+    match key {
+        "produkt" => Some([
+            ("sv", "Produkt", "Produkter"),
+            ("en", "Product", "Products"),
+            ("de", "Produkt", "Produkte"),
+        ]),
+        "artikel" => Some([
+            ("sv", "Artikel", "Artiklar"),
+            ("en", "Article", "Articles"),
+            ("de", "Artikel", "Artikel"),
+        ]),
+        "variant" => Some([
+            ("sv", "Variant", "Varianter"),
+            ("en", "Variant", "Variants"),
+            ("de", "Variante", "Varianten"),
+        ]),
+        _ => None,
+    }
+}
+
+fn write_label(
+    map: &mut BTreeMap<braian_model::LanguageTag, String>,
+    language: &str,
+    text: &str,
+) -> bool {
+    let tag = braian_model::LanguageTag::parse(language).expect("demo language");
+    if map.get(&tag).map(String::as_str) == Some(text) {
+        return false;
+    }
+    map.insert(tag, text.to_owned());
+    true
 }
 
 /// Gives the synthetic catalog a parent class so the data-model screen can show

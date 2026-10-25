@@ -15,7 +15,8 @@ mod patch;
 
 pub use definition::{
     Attribute, AttributeKind, Class, DefinitionSet, Group, IndexFlags, NumberValue, ObjectType,
-    SharedValueList, Structure, TextForm, Unit, UnitFamily, ValueOption,
+    SharedValueList, Structure, TextForm, Unit, UnitFamily, ValueOption, default_plural,
+    operation_title,
 };
 pub use edit::{
     delete_attribute, delete_structure, delete_type, delete_unit_family, set_languages,

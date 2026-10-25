@@ -7,7 +7,7 @@ import { ApiError, api, textValue, type Json } from './api'
 import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
-import { workspaceDisplayName, viewDisplayTitle } from './demo-labels'
+import { workspaceDisplayName } from './demo-labels'
 import { copy, uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
@@ -15,14 +15,25 @@ import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem 
 import { publishProposal } from './proposal-bus'
 import { stepText } from './steps'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
+import {
+  commandPlaceholder,
+  displayViewTitle,
+  openObjectLabel,
+  searchGroupTitle,
+  singularOf,
+  typeNames,
+  typeViewPaletteItems,
+} from './type-labels'
 import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
 
 type SessionLike = {
   objectId: string | null
+  listType?: string | null
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
   push: (line: string) => void
   openWorkspace: (id: string) => void
+  openTypeView?: (typeId: string) => void
 }
 
 type Turn = { role: 'user' | 'assistant'; text: string }
@@ -38,7 +49,7 @@ export function CommandPalette({
 }: {
   session: SessionLike
   workspaces: Array<{ id: string; name: string; share_token?: string }>
-  views: Array<{ id: string; title: string; type: string }>
+  views: Array<{ id: string; title: string; type: string; state?: Json }>
   ai?: boolean
   onClose: () => void
 }) {
@@ -72,7 +83,19 @@ export function CommandPalette({
   const frecency = useMemo(() => readFrecency(), [query, turns.length, frecencyTick])
 
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), staleTime: 60_000 })
-  const catalog = useMemo(() => buildCatalog(workspaces, views, session.objectId), [workspaces, views, session.objectId])
+  const selectedObject = useQuery({
+    queryKey: ['object', session.objectId],
+    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    enabled: Boolean(session.objectId),
+    staleTime: 30_000,
+  })
+  const types = useMemo(() => typeNames(defs.data, uiLanguage), [defs.data])
+  const selectedKey = String(selectedObject.data?.type ?? '')
+  const selectedSingular = singularOf(defs.data, selectedKey, uiLanguage) || (types.length === 1 ? types[0]?.singular ?? '' : '')
+  const catalog = useMemo(
+    () => buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey),
+    [workspaces, views, session.objectId, types, selectedSingular, selectedKey],
+  )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
     const type = String(row.type_key ?? row.type ?? '')
@@ -84,7 +107,8 @@ export function CommandPalette({
       sourceId: String(row.id),
       group: 'search' as const,
       title: `${String(row.key ?? '')} · ${name || type}`,
-      subtitle: 'Open the object',
+      subtitle: openObjectLabel(type ? typeLabel(defs.data, type, uiLanguage) : ''),
+      typeKey: type,
       chips: [
         ...(type ? [{ text: typeLabel(defs.data, type, uiLanguage), tone: 'neutral' as const }] : []),
         ...(status ? [{ text: optionLabel(defs.data, 'status', status, uiLanguage), tone: statusTone(status) }] : []),
@@ -155,13 +179,18 @@ export function CommandPalette({
       onClose()
       return
     }
+    if (id.startsWith('type-view:')) {
+      session.openTypeView?.(id.slice('type-view:'.length))
+      onClose()
+      return
+    }
     if (id.startsWith('view:')) {
       dispatchUi('ui.open_view', { id: id.slice(5), zone: 'center' })
       onClose()
       return
     }
     if (id.startsWith('template:')) {
-      const template = workspaceTemplates.find((item) => item.id === id.slice('template:'.length))
+      const template = workspaceTemplates(types).find((item) => item.id === id.slice('template:'.length))
       if (!template) return
       void createWorkspaceFromTemplate(template).then((workspaceId) => {
         dispatchUi('ui.open_template', { template: template.id, id: workspaceId })
@@ -255,7 +284,7 @@ export function CommandPalette({
     session.push(`Agent: ${prompt}`)
     const messages = history.map((turn) => ({ role: turn.role, content: turn.text }))
     try {
-      await streamAgent(messages, (event) => applyEvent(event, setSteps, setAnswer, setProposal, session))
+      await streamAgent(messages, (event) => applyEvent(event, setSteps, setAnswer, setProposal, session, stepHint(event, types)))
       setSteps((current) => current.map((step) => ({ ...step, state: 'done' })))
     } catch (error) {
       const message = error instanceof ApiError || error instanceof Error ? error.message : 'The model did not reply.'
@@ -391,7 +420,7 @@ export function CommandPalette({
             data-testid="palette-input"
             autoFocus
             value={query}
-            placeholder={mode === 'ai' ? 'Ask AI' : copy.commandPlaceholder}
+            placeholder={mode === 'ai' ? 'Ask AI' : commandPlaceholder(types)}
             onValueChange={(value) => {
               setQuery(value)
               setActive(null)
@@ -449,7 +478,7 @@ export function CommandPalette({
             <CommandList id="palette-list">
               {groups.map((group) => (
                 <div key={group.name} className="palette-group">
-                  {group.name !== 'ask' ? <div>{groupTitle[group.name]}</div> : null}
+                  {group.name !== 'ask' ? <div>{group.name === 'search' ? searchGroupTitle(hits.map((hit) => hit.typeKey ?? ''), types) : group.name === 'object' && selectedSingular ? `On this ${selectedSingular}` : groupTitle[group.name]}</div> : null}
                   {group.rows.map((row) => {
                     const index = rows.indexOf(row)
                     return (
@@ -505,10 +534,20 @@ export function CommandPalette({
   )
 }
 
+function stepHint(event: AgentEvent, types: ReturnType<typeof typeNames>) {
+  const key = typeof event.args?.type === 'string' ? event.args.type : typeof event.args?.type_key === 'string' ? event.args.type_key : ''
+  const match = key ? types.find((item) => item.key === key) : undefined
+  const type = match ?? (types.length === 1 ? types[0] : undefined)
+  return type ? { singular: type.singular, plural: type.plural } : undefined
+}
+
 function buildCatalog(
   workspaces: Array<{ id: string; name: string; share_token?: string }>,
-  views: Array<{ id: string; title: string; type: string }>,
+  views: Array<{ id: string; title: string; type: string; state?: Json }>,
   objectId: string | null,
+  types: ReturnType<typeof typeNames>,
+  selectedSingular: string,
+  openTypeKey: string,
 ): PaletteItem[] {
   const items: PaletteItem[] = [
     ...workspaces.map((workspace, index) => ({
@@ -519,13 +558,14 @@ function buildCatalog(
       kbd: index < 9 ? `Ctrl+${index + 1}` : undefined,
       shortcut: index < 9 ? `Ctrl+${index + 1}` : undefined,
     })),
+    ...typeViewPaletteItems(types),
     ...views.map((view) => ({
       id: `view:${view.id}`,
       group: 'views' as const,
-      title: viewDisplayTitle(view.title),
+      title: displayViewTitle(view, types, openTypeKey),
       subtitle: 'Open view',
     })),
-    ...workspaceTemplates.map((template) => ({
+    ...workspaceTemplates(types).map((template) => ({
       id: `template:${template.id}`,
       group: 'views' as const,
       title: template.name,
@@ -548,7 +588,7 @@ function buildCatalog(
   ]
   if (objectId) {
     items.push(
-      { id: 'object:open', group: 'object', title: 'Open detail', subtitle: 'On the selected object', kbd: 'Enter' },
+      { id: 'object:open', group: 'object', title: selectedSingular ? `Open ${selectedSingular}` : 'Open detail', subtitle: selectedSingular ? `On this ${selectedSingular}` : 'On the selected object', kbd: 'Enter' },
       { id: 'object:right', group: 'object', title: 'Open to the right', subtitle: 'Split beside the table' },
       { id: 'object:history', group: 'object', title: 'History', subtitle: 'As it was, and restore' },
       { id: 'object:graph', group: 'object', title: 'Graph', subtitle: 'Relations and where values come from' },
@@ -585,9 +625,10 @@ function applyEvent(
   setAnswer: (value: string) => void,
   setProposal: (value: ProposalPreview | null) => void,
   session: SessionLike,
+  typeHint?: { singular?: string; plural?: string },
 ) {
   if (event.type === 'step') {
-    const text = event.op ? stepText(event.op, event.args) : event.text ?? ''
+    const text = event.op ? stepText(event.op, event.args, typeHint) : event.text ?? ''
     setSteps((current) => {
       const id = event.id ?? text
       const state = event.state ?? 'run'

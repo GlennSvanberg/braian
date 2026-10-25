@@ -1,4 +1,4 @@
-export function humanizeLive(raw: string): string {
+export function humanizeLive(raw: string, typeName?: string): string {
   const text = raw.trim()
   if (!text.startsWith('{') && !text.startsWith('[')) {
     return text.includes('live') ? text : `live · ${text}`
@@ -8,9 +8,10 @@ export function humanizeLive(raw: string): string {
     const op = typeof event.op === 'string' ? event.op : 'change'
     const key = typeof event.key === 'string' ? event.key : ''
     const kind = typeof event.type === 'string' ? event.type : ''
-    if (op === 'create') return `live · Created ${kind || 'object'}${key ? ` ${key}` : ''}`
-    if (op === 'update') return `live · Updated ${key || kind || 'an object'}`
-    if (op === 'delete') return `live · Removed ${key || 'an object'}`
+    const name = typeName?.trim()
+    if (op === 'create') return `live · Created ${name || kind || 'object'}${key ? ` ${key}` : ''}`
+    if (op === 'update') return `live · Updated ${name ? `${name}${key ? ` ${key}` : ''}` : key || kind || 'an object'}`
+    if (op === 'delete') return `live · Removed ${name ? `${name}${key ? ` ${key}` : ''}` : key || 'an object'}`
     if (op === 'bulk_summary') {
       const count = typeof event.count === 'number' ? event.count : 0
       return `live · Bulk update (${count})`

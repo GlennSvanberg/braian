@@ -23,7 +23,7 @@ test('final surfaces', async ({ page }) => {
   await signIn(page)
 
   const workspaces = [
-    ['Enrich objects', 'object-table'],
+    ['Enrich', 'object-table'],
     ['Set up the system', 'dashboard'],
     ['Data model', 'data-model'],
     ['Review', 'proposal'],
@@ -31,11 +31,11 @@ test('final surfaces', async ({ page }) => {
   for (const [name, testId] of workspaces) {
     await page.getByRole('button', { name }).click()
     await expect(page.getByTestId(testId).first()).toBeVisible()
-    if (name === 'Enrich objects') await expect(page.getByTestId('detail-empty')).toBeVisible()
+    if (name === 'Enrich') await expect(page.getByTestId('detail-empty')).toBeVisible()
     await page.screenshot({ path: `${shots}/${name.toLowerCase().replaceAll(' ', '-')}-dark.png` })
   }
 
-  await page.getByRole('button', { name: 'Enrich objects' }).click()
+  await page.getByRole('button', { name: 'Enrich' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
   await page.getByTestId('object-row').first().click({ button: 'right' })
   await expect(page.getByTestId('context-menu')).toBeVisible()
@@ -79,7 +79,7 @@ test('final surfaces', async ({ page }) => {
   await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
   await page.getByRole('button', { name: 'Light' }).click()
-  await page.getByRole('button', { name: 'Enrich objects' }).click()
+  await page.getByRole('button', { name: 'Enrich' }).click()
   await expect(page.getByTestId('object-table')).toBeVisible()
   await page.screenshot({ path: `${shots}/enrich-objects-light.png` })
 })

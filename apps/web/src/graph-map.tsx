@@ -15,14 +15,15 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { api, textValue, type Json } from './api'
 import { MetaChip, typeLabel } from './chips'
 import {
-  NODE_KINDS,
   buildScene,
   capScene,
   expandAssortment,
   expandClass,
   groupMembers,
+  isLegendHidden,
   kindLabel,
   labelPriority,
+  legendEntries,
   mergeScene,
   nodeMark,
   nodeRadius,
@@ -50,6 +51,7 @@ import {
   type GraphDensity,
   type SheetMode,
 } from './graph-chrome'
+import { openObjectLabel } from './type-labels'
 import { copy, uiLanguage } from './i18n'
 
 type SimNode = SimulationNodeDatum & SceneNode & { degree: number }
@@ -82,7 +84,7 @@ export function GraphMap({
   const [extras, setExtras] = useState<Scene[]>([])
   const [known, setKnown] = useState<Record<string, KnownObject>>({})
   const [selected, setSelected] = useState(focusKey)
-  const [hidden, setHidden] = useState<Set<NodeKind>>(() => new Set())
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
   const [full, setFull] = useState(false)
   const [markers, setMarkers] = useState<Record<string, Marker>>({})
   const [pinTick, setPinTick] = useState(0)
@@ -156,9 +158,13 @@ export function GraphMap({
     }
   }, [pendingNames])
 
+  const legend = useMemo(() => legendEntries(placed.nodes), [placed])
   const counts = useMemo(() => {
-    const tally = Object.fromEntries(NODE_KINDS.map((kind) => [kind, 0])) as Record<NodeKind, number>
-    for (const node of placed.nodes) tally[node.kind] += 1
+    const tally: Record<string, number> = {}
+    for (const node of placed.nodes) {
+      const id = node.kind === 'object' && node.typeKey ? `type-${node.typeKey}` : node.kind
+      tally[id] = (tally[id] ?? 0) + 1
+    }
     return tally
   }, [placed])
 
@@ -228,6 +234,7 @@ export function GraphMap({
               key: String(doc.key ?? ''),
               name: english || fallback,
               type: typeLabel(defsRef.current, String(doc.type_key ?? ''), uiLanguage),
+              typeKey: String(doc.type_key ?? ''),
               rawCaption: !(english || fallback),
             }
           })
@@ -343,7 +350,7 @@ export function GraphMap({
       const slop = 6 / transform.k
       for (let index = nodes.length - 1; index >= 0; index -= 1) {
         const node = nodes[index]
-        if (!node || hiddenRef.current.has(node.kind) || node.x == null || node.y == null) continue
+        if (!node || isLegendHidden(hiddenRef.current, node) || node.x == null || node.y == null) continue
         const reach = nodeRadius(node.kind, node.degree ?? 0) + slop
         if ((node.x - wx) ** 2 + (node.y - wy) ** 2 <= reach ** 2) return node
       }
@@ -354,7 +361,7 @@ export function GraphMap({
       const rect = canvas.getBoundingClientRect()
       const next: Record<string, Marker> = {}
       for (const node of sim.nodes()) {
-        if (hiddenRef.current.has(node.kind) || node.x == null || node.y == null) continue
+        if (isLegendHidden(hiddenRef.current, node) || node.x == null || node.y == null) continue
         const point = screenOf(node.x, node.y)
         const marker = { x: Math.round(rect.left + point.x), y: Math.round(rect.top + point.y) }
         next[node.id] = marker
@@ -421,7 +428,7 @@ export function GraphMap({
         const source = endNode(link.source)
         const target = endNode(link.target)
         if (!source || !target || source.x == null || source.y == null || target.x == null || target.y == null) return
-        if (hiddenNow.has(source.kind) || hiddenNow.has(target.kind)) return
+        if (isLegendHidden(hiddenNow, source) || isLegendHidden(hiddenNow, target)) return
         const from = screenOf(source.x, source.y)
         const to = screenOf(target.x, target.y)
         const dx = to.x - from.x
@@ -478,7 +485,7 @@ export function GraphMap({
 
       const placedNodes: { node: SimNode; point: { x: number; y: number }; radius: number }[] = []
       for (const node of nodes) {
-        if (hiddenNow.has(node.kind) || node.x == null || node.y == null) continue
+        if (isLegendHidden(hiddenNow, node) || node.x == null || node.y == null) continue
         const point = screenOf(node.x, node.y)
         const radius = nodeRadius(node.kind, node.degree ?? 0) * transform.k
         const emphasized = !hover || highlight.has(node.id)
@@ -539,7 +546,7 @@ export function GraphMap({
 
     const fit = () => {
       resize()
-      const nodes = sim.nodes().filter((node) => !hiddenRef.current.has(node.kind) && node.x != null && node.y != null)
+      const nodes = sim.nodes().filter((node) => !isLegendHidden(hiddenRef.current, node) && node.x != null && node.y != null)
       const width = canvas.clientWidth
       const height = canvas.clientHeight
       if (!nodes.length || width < 20 || height < 20) return
@@ -861,7 +868,7 @@ export function GraphMap({
   const pinned = Boolean(
     pinTick >= 0 && simRef.current?.nodes().some((node) => node.id === selected && node.fx != null && node.fy != null),
   )
-  const shown = placed.nodes.filter((node) => !hidden.has(node.kind))
+  const shown = placed.nodes.filter((node) => !isLegendHidden(hidden, node))
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -961,29 +968,28 @@ export function GraphMap({
             />
           </div>
           <div className="graph-legend" ref={legendRef} role="group" aria-label={copy.graphLegend}>
-            {NODE_KINDS.map((kind) => {
-              const visible = !hidden.has(kind)
-              const label = kindLabel(kind)
+            {legend.map((entry) => {
+              const visible = !hidden.has(entry.id)
               return (
                 <button
-                  key={kind}
+                  key={entry.id}
                   type="button"
                   className={visible ? 'legend-chip on' : 'legend-chip'}
                   aria-pressed={visible}
-                  data-testid={`legend-${kind}`}
-                  title={label}
+                  data-testid={`legend-${entry.id}`}
+                  title={entry.label}
                   onClick={() =>
                     setHidden((current) => {
                       const next = new Set(current)
-                      if (next.has(kind)) next.delete(kind)
-                      else next.add(kind)
+                      if (next.has(entry.id)) next.delete(entry.id)
+                      else next.add(entry.id)
                       return next
                     })
                   }
                 >
-                  <i className={`dot ${kind}`} data-swatch={kind} />
-                  <span className="legend-label">{label}</span>
-                  <span className="count">{counts[kind]}</span>
+                  <i className={`dot ${entry.kind}`} data-swatch={entry.kind} />
+                  <span className="legend-label">{entry.label}</span>
+                  <span className="count">{counts[entry.id] ?? 0}</span>
                 </button>
               )
             })}
@@ -1078,8 +1084,9 @@ function GraphInspector({
       </aside>
     )
   }
+  const shownKind = node.kind === 'object' && node.typeName ? node.typeName : kindLabel(node.kind)
   const summary = nodeSummary(
-    { caption: node.caption, subtitle: node.subtitle, kindLabel: kindLabel(node.kind), properties: node.properties },
+    { caption: node.caption, subtitle: node.subtitle, kindLabel: shownKind, properties: node.properties },
     { type: copy.type, number: copy.number },
   )
   if (placement === 'chip') {
@@ -1144,7 +1151,7 @@ function GraphInspector({
       ) : (
         <p className="graph-kicker">
           <i className={`dot ${node.kind}`} />
-          {kindLabel(node.kind)}
+          {shownKind}
         </p>
       )}
       <h3>{placement === 'sheet' ? summary.name : node.caption}</h3>
@@ -1155,7 +1162,7 @@ function GraphInspector({
       )}
       {placement === 'sheet' && node.objectId ? (
         <button type="button" className="primary graph-action" onClick={() => onOpen(node.objectId!)}>
-          {copy.openObject}
+          {openObjectLabel(node.typeName)}
         </button>
       ) : null}
       {placement === 'sheet' && node.properties.length > 0 ? (
@@ -1184,7 +1191,7 @@ function GraphInspector({
       ) : null}
       {placement === 'side' && node.objectId ? (
         <button type="button" className="primary graph-action" onClick={() => onOpen(node.objectId!)}>
-          {copy.openObject}
+          {openObjectLabel(node.typeName)}
         </button>
       ) : null}
       {pinned ? (
@@ -1225,11 +1232,11 @@ function seed(kind: NodeKind, index: number, total: number) {
 
 function spatialNeighbor(
   nodes: SimNode[],
-  hidden: Set<NodeKind>,
+  hidden: Set<string>,
   current: string,
   direction: 'up' | 'down' | 'left' | 'right',
 ) {
-  const visible = nodes.filter((node) => !hidden.has(node.kind) && node.x != null && node.y != null)
+  const visible = nodes.filter((node) => !isLegendHidden(hidden, node) && node.x != null && node.y != null)
   const self = visible.find((node) => node.id === current) ?? visible[0]
   if (!self) return current
   let best = self.id

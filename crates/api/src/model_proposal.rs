@@ -331,6 +331,12 @@ fn changes_from(
             structure: optional_str(args, "structure"),
             group: optional_str(args, "group"),
         }]),
+        "model.update_type" => Ok(vec![ModelChange::UpdateType {
+            key: required_str(args, "key")?,
+            language: optional_str(args, "language"),
+            singular: optional_str(args, "singular"),
+            plural: optional_str(args, "plural"),
+        }]),
         "model.update_attribute" => Ok(vec![ModelChange::UpdateAttribute {
             key: required_str(args, "key")?,
             label: optional_str(args, "label"),

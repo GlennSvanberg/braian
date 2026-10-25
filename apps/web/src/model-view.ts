@@ -1,4 +1,5 @@
 import type { Json } from './api'
+import { typeNames } from './type-labels'
 
 export type ModelSelection =
   | { kind: 'type'; typeKey: string }
@@ -72,9 +73,12 @@ export function attributeKey(name: string) {
 }
 
 export function objectTypes(defs: Json | undefined, language = 'en') {
-  return ((defs?.types as Json[]) ?? []).map((item) => ({
-    key: String(item.key ?? ''),
-    label: labelOf(item.labels, language, String(item.key ?? '')),
+  return typeNames(defs, language).map((item) => ({
+    key: item.key,
+    id: item.id,
+    label: item.singular,
+    singular: item.singular,
+    plural: item.plural,
   }))
 }
 
