@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+braian-indexer.workspace = true
 braian-model = { workspace = true, features = ["openapi"] }
 braian-rules.workspace = true
 braian-search.workspace = true
@@ -38,3 +39,4 @@ serde_json.workspace = true
 serde_norway.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid.workspace = true

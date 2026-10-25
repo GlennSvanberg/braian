@@ -597,11 +597,27 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         Some("{}"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{accepted}");
-    assert!(
-        accepted["failed"].as_array().unwrap().is_empty(),
-        "{accepted}"
-    );
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let job_id = accepted["id"].as_str().unwrap();
+    let mut finished = Value::Null;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (status, _, job) = call(
+            &app,
+            "GET",
+            &format!("/v1/jobs/{job_id}"),
+            Some(HUMAN),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{job}");
+        if job["status"] != "running" {
+            finished = job;
+            break;
+        }
+    }
+    assert_eq!(finished["status"], "succeeded", "{finished}");
 
     let (status, _, after) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{after}");

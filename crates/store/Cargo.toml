@@ -25,3 +25,4 @@ braian-rules = { path = "../rules" }
 braian-synth = { path = "../synth" }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-postgres.workspace = true

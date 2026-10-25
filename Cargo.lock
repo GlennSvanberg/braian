@@ -320,6 +320,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "axum",
+ "braian-indexer",
  "braian-model",
  "braian-rules",
  "braian-search",

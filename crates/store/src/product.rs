@@ -995,6 +995,7 @@ impl Store {
                 diff: row.get("diff"),
             });
         }
+        self.expand_history_diffs(&**client, &mut entries).await?;
         Ok(entries)
     }
 
@@ -1013,7 +1014,15 @@ impl Store {
         let client = self.pool().get().await?;
         let row = client
             .query_one(
-                "SELECT count(DISTINCT object_id)::bigint FROM object_values WHERE \"values\" ? $1",
+                "SELECT count(DISTINCT v.object_id)::bigint
+                 FROM object_values v
+                 WHERE v.\"values\" ? $1
+                   AND NOT EXISTS (
+                     SELECT 1 FROM object_values newer
+                     WHERE newer.object_id = v.object_id
+                       AND newer.part = v.part
+                       AND newer.version > v.version
+                   )",
                 &[&attribute_id.to_string()],
             )
             .await?;
@@ -1028,7 +1037,16 @@ impl Store {
         let client = self.pool().get().await?;
         let rows = client
             .query(
-                "SELECT DISTINCT object_id FROM object_values WHERE \"values\" ? $1 LIMIT $2",
+                "SELECT DISTINCT v.object_id
+                 FROM object_values v
+                 WHERE v.\"values\" ? $1
+                   AND NOT EXISTS (
+                     SELECT 1 FROM object_values newer
+                     WHERE newer.object_id = v.object_id
+                       AND newer.part = v.part
+                       AND newer.version > v.version
+                   )
+                 LIMIT $2",
                 &[&attribute_id.to_string(), &limit],
             )
             .await?;

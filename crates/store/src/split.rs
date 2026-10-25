@@ -533,63 +533,50 @@ pub fn diff_from_patch(
     Value::Object(diff)
 }
 
-/// The create diff as a borrowed, serialize-only view: `{attr: {"after": v}}`
-/// plus `$groups` when the object is placed. Same JSON as
-/// [`diff_created`] followed by attaching groups, without cloning the values.
-#[derive(Debug)]
-pub struct CreatedDiff<'a> {
-    pub values: &'a BTreeMap<AttributeId, Value>,
-    pub groups: &'a BTreeMap<braian_model::StructureId, braian_model::GroupId>,
-}
-
-struct After<T>(T);
-
-impl<T: serde::Serialize> serde::Serialize for After<T> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(1))?;
-        map.serialize_entry("after", &self.0)?;
-        map.end()
-    }
-}
-
-struct Groups<'a>(&'a BTreeMap<braian_model::StructureId, braian_model::GroupId>);
-
-impl serde::Serialize for Groups<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(self.0.len()))?;
-        for (structure, group) in self.0 {
-            map.serialize_entry(
-                &structure.as_uuid().to_string(),
-                &After(group.as_uuid().to_string()),
-            )?;
-        }
-        map.end()
-    }
-}
-
-impl serde::Serialize for CreatedDiff<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let extra = usize::from(!self.groups.is_empty());
-        let mut map = serializer.serialize_map(Some(self.values.len() + extra))?;
-        for (id, value) in self.values {
-            map.serialize_entry(&attr_key(*id), &After(value))?;
-        }
-        if !self.groups.is_empty() {
-            map.serialize_entry("$groups", &Groups(self.groups))?;
-        }
-        map.end()
-    }
-}
-
 pub fn diff_created(values: &BTreeMap<AttributeId, Value>) -> Value {
     let mut diff = Map::new();
     for (id, value) in values {
         diff.insert(attr_key(*id), change_entry(None, value.clone()));
     }
     Value::Object(diff)
+}
+
+pub const CREATED_MARKER: &str = "$created";
+
+/// Create rows store this instead of a second copy of the values.
+///
+/// `$groups` stays because a placement is small. The history API rebuilds
+/// attribute values from `object_values` version 1.
+pub fn create_marker(groups: &BTreeMap<braian_model::StructureId, braian_model::GroupId>) -> Value {
+    let mut diff = Map::new();
+    diff.insert(
+        CREATED_MARKER.to_owned(),
+        serde_json::json!({ "version": 1 }),
+    );
+    if !groups.is_empty() {
+        let mut placed = Map::new();
+        for (structure, group) in groups {
+            placed.insert(
+                structure.as_uuid().to_string(),
+                serde_json::json!({ "after": group.as_uuid().to_string() }),
+            );
+        }
+        diff.insert("$groups".to_owned(), Value::Object(placed));
+    }
+    Value::Object(diff)
+}
+
+pub fn is_create_marker(diff: &Value) -> bool {
+    diff.get(CREATED_MARKER).is_some()
+}
+
+/// History shape for a create: `{attr: {"after": value}}` plus any `$groups`.
+pub fn expand_create_marker(marker: &Value, values: &BTreeMap<AttributeId, Value>) -> Value {
+    let mut diff = diff_created(values);
+    if let (Some(object), Some(groups)) = (diff.as_object_mut(), marker.get("$groups")) {
+        object.insert("$groups".to_owned(), groups.clone());
+    }
+    diff
 }
 
 /// A localized replace records only the languages that changed. A language that
@@ -745,11 +732,21 @@ mod tests {
                     .unwrap()
                     .insert("$groups".to_owned(), Value::Object(placed));
             }
-            let view = CreatedDiff {
-                values: &object.values,
-                groups: &object.groups,
-            };
-            assert_eq!(serde_json::to_value(&view).unwrap(), expected);
+            let marker = create_marker(&object.groups);
+            assert!(
+                marker
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|key| key.starts_with('$')),
+                "{marker}"
+            );
+            assert_eq!(expand_create_marker(&marker, &object.values), expected);
+            assert!(
+                expand_create_marker(&marker, &object.values)
+                    .get(CREATED_MARKER)
+                    .is_none()
+            );
         }
     }
 
