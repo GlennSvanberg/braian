@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { ApiError, api, type Json } from './api'
+import { Checkbox } from './components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
 import { attributeCards, classRows } from './class-view'
 import { copy, uiLanguage } from './i18n'
 import { publishProposal } from './proposal-bus'
@@ -83,6 +86,8 @@ function StructureTree({ defs }: { defs: Json | undefined }) {
   const [over, setOver] = useState('')
   const [focus, setFocus] = useState(0)
   const [menu, setMenu] = useState<{ x: number; y: number; classKey: string; structure: string } | null>(null)
+  const [collapsed, setCollapsed] = useState<string[]>([])
+  const toggle = (id: string) => setCollapsed((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   const structures = (defs?.structures as Json[]) ?? []
   const nodes = flatten(structures)
   const focused = nodes[focus]
@@ -132,6 +137,8 @@ function StructureTree({ defs }: { defs: Json | undefined }) {
           selectedClass={selectedClass}
           focus={focused}
           over={over}
+          collapsed={collapsed}
+          onToggle={toggle}
           onOver={setOver}
           onFocus={(node) => setFocus(Math.max(0, nodes.findIndex((item) => sameNode(item, node))))}
           onMove={move}
@@ -166,6 +173,8 @@ function StructureBranch({
   selectedClass,
   focus,
   over,
+  collapsed,
+  onToggle,
   onOver,
   onFocus,
   onMove,
@@ -175,6 +184,8 @@ function StructureBranch({
   selectedClass: string
   focus: FlatNode | undefined
   over: string
+  collapsed: string[]
+  onToggle: (id: string) => void
   onOver: (id: string) => void
   onFocus: (node: FlatNode) => void
   onMove: (structure: string, classKey: string, groupKey: string) => void
@@ -188,62 +199,89 @@ function StructureBranch({
     const groupKey = String(group.key)
     const node: FlatNode = { kind: 'group', structure: structureKey, groupId, groupKey }
     const here = classes.filter((item) => String(item.group) === groupId)
+    const childGroups = groups.filter((item) => String(item.parent ?? '') === groupId)
+    const open = !collapsed.includes(groupId)
+    const count = here.length + childGroups.length
     return (
-      <div key={groupId}>
+      <div
+        key={groupId}
+        className="tree-branch"
+        data-testid={`group-${groupKey}`}
+        onDragOver={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onOver(groupId)
+        }}
+        onDragLeave={() => onOver('')}
+        onDrop={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          const classKey = event.dataTransfer.getData('text/class')
+          onOver('')
+          if (!classKey) return
+          const current = classes.find((item) => String(item.key) === classKey)
+          if (current && String(current.group) === groupId) return
+          onMove(structureKey, classKey, groupKey)
+        }}
+      >
         <div
-          data-testid={`group-${groupKey}`}
-          className={over === groupId ? 'drop-on' : undefined}
-          style={{ paddingLeft: depth * 12 }}
-          onDragOver={(event) => {
-            event.preventDefault()
-            onOver(groupId)
-          }}
-          onDragLeave={() => onOver('')}
-          onDrop={(event) => {
-            const classKey = event.dataTransfer.getData('text/class')
-            onOver('')
-            if (!classKey) return
-            event.preventDefault()
-            const current = classes.find((item) => String(item.key) === classKey)
-            if (current && String(current.group) === groupId) return
-            onMove(structureKey, classKey, groupKey)
-          }}
+          className={over === groupId ? 'tree-row drop-on' : focus && sameNode(focus, node) ? 'tree-row on' : 'tree-row'}
+          style={{ paddingLeft: 8 + depth * 16 }}
+          onClick={() => onFocus(node)}
         >
-          <span
-            className={focus && sameNode(focus, node) ? 'on' : undefined}
-            onClick={() => onFocus(node)}
-          >
-            {groupKey}
-          </span>
-          {here.map((item) => {
-            const classKey = String(item.key)
-            const classNode: FlatNode = { kind: 'class', structure: structureKey, groupId, groupKey, classKey }
-            return (
-              <button
-                key={classKey}
-                type="button"
-                draggable
-                className={selectedClass === classKey || (focus && sameNode(focus, classNode)) ? 'on' : ''}
-                onClick={() => {
-                  chooseClass(classKey)
-                  onFocus(classNode)
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  chooseClass(classKey)
-                  onMenu({ x: event.clientX, y: event.clientY, classKey, structure: structureKey })
-                }}
-                onDragStart={(event) => {
-                  event.dataTransfer.setData('text/class', classKey)
-                  event.dataTransfer.effectAllowed = 'move'
-                }}
-              >
-                {classKey}
-              </button>
-            )
-          })}
+          {Array.from({ length: depth }, (_, level) => (
+            <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />
+          ))}
+          {count > 0 ? (
+            <span
+              className="tree-chevron"
+              aria-hidden="true"
+              onClick={(event) => {
+                event.stopPropagation()
+                onToggle(groupId)
+              }}
+            >
+              {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </span>
+          ) : (
+            <span className="tree-chevron" aria-hidden="true" />
+          )}
+          <span className="tree-label">{groupKey}</span>
+          {count > 0 ? <span className="tree-count" aria-hidden="true">{count}</span> : null}
         </div>
-        {groups.filter((item) => String(item.parent ?? '') === groupId).map((child) => renderGroup(child, depth + 1))}
+        {open ? here.map((item) => {
+          const classKey = String(item.key)
+          const classNode: FlatNode = { kind: 'class', structure: structureKey, groupId, groupKey, classKey }
+          return (
+            <button
+              key={classKey}
+              type="button"
+              draggable
+              className={selectedClass === classKey || (focus && sameNode(focus, classNode)) ? 'tree-row on' : 'tree-row'}
+              style={{ paddingLeft: 8 + (depth + 1) * 16 }}
+              onClick={() => {
+                chooseClass(classKey)
+                onFocus(classNode)
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                chooseClass(classKey)
+                onMenu({ x: event.clientX, y: event.clientY, classKey, structure: structureKey })
+              }}
+              onDragStart={(event) => {
+                event.dataTransfer.setData('text/class', classKey)
+                event.dataTransfer.effectAllowed = 'move'
+              }}
+            >
+              {Array.from({ length: depth + 1 }, (_, level) => (
+                <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />
+              ))}
+              <span className="tree-chevron" aria-hidden="true" />
+              <span className="tree-label">{classKey}</span>
+            </button>
+          )
+        }) : null}
+        {open ? childGroups.map((child) => renderGroup(child, depth + 1)) : null}
       </div>
     )
   }
@@ -360,21 +398,26 @@ function ClassCard({ defs }: { defs: Json | undefined }) {
         </div>
         <label className="field">
           <span>{copy.parent}</span>
-          <select
-            value={found.parentKey ?? ''}
-            onChange={(event) =>
+          <Select
+            value={found.parentKey || 'none'}
+            onValueChange={(value) =>
               run('model.set_parent', {
                 structure: found.structure,
                 class: found.key,
-                parent: event.target.value || null,
+                parent: value === 'none' ? null : value,
               })
             }
           >
-            <option value="" />
-            {classes.map((row) => (
-              <option key={row.key} value={row.key}>{row.key}</option>
-            ))}
-          </select>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">—</SelectItem>
+              {classes.map((row) => (
+                <SelectItem key={row.key} value={row.key}>{row.key}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
         {cards.map((card) => {
           const ownIndex = ownKeys.indexOf(card.key)
@@ -415,16 +458,21 @@ function ClassCard({ defs }: { defs: Json | undefined }) {
           }}
         >
           <input value={key} placeholder={copy.addAttribute} onChange={(event) => setKey(event.target.value)} />
-          <select value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="text">text</option>
-            <option value="number">number</option>
-            <option value="boolean">boolean</option>
-            <option value="date">date</option>
-          </select>
+          <Select value={kind} onValueChange={setKind}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="text">text</SelectItem>
+              <SelectItem value="number">number</SelectItem>
+              <SelectItem value="boolean">boolean</SelectItem>
+              <SelectItem value="date">date</SelectItem>
+            </SelectContent>
+          </Select>
           <input value={unit} placeholder={copy.unit} onChange={(event) => setUnit(event.target.value)} />
-          <label><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} /> {copy.required}</label>
-          <label><input type="checkbox" checked={multiple} onChange={(event) => setMultiple(event.target.checked)} /> {copy.multiValue}</label>
-          <label><input type="checkbox" checked={languages} onChange={(event) => setLanguages(event.target.checked)} /> {copy.languages}</label>
+          <label className="check-row"><Checkbox checked={required} onCheckedChange={(value) => setRequired(value === true)} /> {copy.required}</label>
+          <label className="check-row"><Checkbox checked={multiple} onCheckedChange={(value) => setMultiple(value === true)} /> {copy.multiValue}</label>
+          <label className="check-row"><Checkbox checked={languages} onCheckedChange={(value) => setLanguages(value === true)} /> {copy.languages}</label>
           <button className="primary" type="submit">{copy.addAttribute}</button>
         </form>
         {message ? <p className="error">{message}</p> : null}

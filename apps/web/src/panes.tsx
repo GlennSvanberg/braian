@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { Search } from 'lucide-react'
 import { ApiError, api, textValue, type Json } from './api'
+import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
+import { Checkbox } from './components/ui/checkbox'
 import { Kbd } from './components/ui/kbd'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
+import { Switch } from './components/ui/switch'
 import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
 import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
@@ -37,8 +42,8 @@ type ObjRow = { id: string; key: string; type: string; version: string; name: st
 const columns = [
   { id: 'key', header: 'Number', size: 160, sort: 'a_nummer' },
   { id: 'name', header: 'Name', size: 280, sort: 'a_namn__sv' },
-  { id: 'type', header: 'Type', size: 90, sort: 'type_key' },
-  { id: 'status', header: 'Status', size: 96, sort: 'a_status' },
+  { id: 'type', header: 'Type', size: 108, sort: 'type_key' },
+  { id: 'status', header: 'Status', size: 128, sort: 'a_status' },
   { id: 'version', header: 'Version', size: 72, sort: 'version' },
 ]
 
@@ -120,6 +125,21 @@ export function ObjectTable({
     queryKey: ['assortments'],
     queryFn: () => api<{ assortments: Json[] }>('/v1/assortments'),
   })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+      const field = document.querySelector<HTMLInputElement>('.pane.focused [data-testid="quick-filter"]')
+        ?? document.querySelector<HTMLInputElement>('[data-testid="quick-filter"]')
+      if (!field) return
+      event.preventDefault()
+      field.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const filterBy = session.group ? `groups:=${session.group}` : ''
   const probe = useQuery({
@@ -269,40 +289,43 @@ export function ObjectTable({
   const cell = (row: ObjRow, id: string) => {
     if (id === 'key') return row.key
     if (id === 'name') return row.name
-    if (id === 'type') return row.type
-    if (id === 'status') return row.status
-    return row.version
+    if (id === 'type') return <MetaChip>{typeLabel(defs.data, row.type, uiLanguage)}</MetaChip>
+    if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
+    if (id === 'version') return <MetaChip>{row.version}</MetaChip>
+    return ''
   }
 
   return (
     <div className="table-wrap" data-testid="object-table">
       <div className="toolbar">
-        <input
-          data-testid="quick-filter"
-          placeholder={copy.searchPlaceholder}
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-        />
-        <label>
-          {copy.groupBy}
-          <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
-            <option value="">—</option>
-            <option value="type_key">type</option>
-            <option value="a_status">status</option>
-          </select>
+        <label className="search-field">
+          <Search size={14} aria-hidden="true" />
+          <input
+            data-testid="quick-filter"
+            placeholder={copy.search}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          <Kbd>/</Kbd>
         </label>
         <button
           type="button"
+          className={groupBy === '' ? 'filter-chip on' : 'filter-chip'}
           onClick={() => {
+            setGroupBy('')
             setFilter('')
             session.setGroup(null)
           }}
         >
           {copy.all}
         </button>
+        <button type="button" className={groupBy === 'type_key' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'type_key' ? '' : 'type_key')}>{copy.type}</button>
+        <button type="button" className={groupBy === 'a_status' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'a_status' ? '' : 'a_status')}>{copy.status}</button>
         {(assortments.data?.assortments ?? []).map((item) => (
           <button
             key={String(item.id)}
+            type="button"
+            className="filter-chip"
             data-testid="assortment"
             onClick={() => {
               const query = (item.query as Json) ?? {}
@@ -313,10 +336,10 @@ export function ObjectTable({
             {assortmentDisplayName(String(item.name))}
           </button>
         ))}
-        <button onClick={() => mass.mutate()} disabled={selected.length === 0}>{copy.massEdit}</button>
-        <button onClick={exportVisible}>{copy.export}</button>
+        <button type="button" onClick={() => mass.mutate()} disabled={selected.length === 0}>{copy.massEdit}</button>
+        <button type="button" onClick={exportVisible}>{copy.export}</button>
         <NewObject session={session} />
-        <span className="icon-btn" data-testid="row-count">{found} {copy.rows}</span>
+        <span className="row-count" data-testid="row-count">{found} {copy.rows}</span>
       </div>
       <div className="grid" ref={parent} tabIndex={0} onKeyDown={onTableKey}>
         <div className="head">
@@ -455,7 +478,7 @@ function Row({
   selected: string[]
   setSelected: (value: string[] | ((current: string[]) => string[])) => void
   setMenu: (value: { x: number; y: number; id: string } | null) => void
-  cell: (row: ObjRow, id: string) => string
+  cell: (row: ObjRow, id: string) => ReactNode
   flash: boolean
   cursor: number
   style?: CSSProperties
@@ -620,9 +643,35 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       })
       .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
   }
+  const status = textValue(values.status)
+  const number = textValue(values.nummer)
+  const name = textValue(values.namn, uiLanguage)
+  const dirty = Object.keys(draft).length > 0
+  const renderField = (key: string) => {
+    const attribute = attributes.find((item) => item.key === key)
+    const kind = (attribute?.kind as Json) ?? {}
+    const fieldLabel = textValue((attribute?.labels as Json) ?? key, uiLanguage) || key
+    return (
+      <div key={key} className="field">
+        <label>{fieldLabel}</label>
+        <div className={key in draft ? 'control draft-user' : 'control'}>
+          <Editor
+            kind={String(kind.type ?? 'text')}
+            form={String(kind.form ?? '')}
+            multiple={Boolean(attribute?.multiple)}
+            languageDependent={Boolean(attribute?.language_dependent)}
+            value={values[key]}
+            options={optionsFor(lists, String(kind.list ?? ''))}
+            units={unitsFor(families, String(kind.unit_family ?? ''))}
+            onChange={(next) => setDraft((state) => ({ ...state, [key]: next }))}
+          />
+        </div>
+      </div>
+    )
+  }
   return (
     <form
-      className={flashId === session.objectId ? 'form flash' : 'form'}
+      className={flashId === session.objectId ? 'detail-form form flash' : 'detail-form form'}
       data-testid="object-detail"
       onSubmit={(event) => {
         event.preventDefault()
@@ -633,9 +682,10 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return
         const target = event.target as HTMLElement
         if (target.tagName === 'TEXTAREA' && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) return
-        const fields = [...event.currentTarget.querySelectorAll<HTMLElement>('input, textarea, select')]
+        const fields = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-field]')]
         const index = fields.indexOf(target)
         if (event.key === 'Escape') {
+          if (target.closest('[role="listbox"]')) return
           setDraft({})
           return
         }
@@ -645,48 +695,61 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         fields[Math.max(0, Math.min(fields.length - 1, next))]?.focus()
       }}
     >
-      <div className="toolbar field-chips">
-        <span className="chip">{String(object.data.type)}</span>
-        {textValue(values.status) ? <span className="chip">{textValue(values.status)}</span> : null}
-        <strong>{textValue((object.data.values as Json)?.nummer)}</strong>
-      </div>
-      {Object.keys(values).map((key) => {
-        const attribute = attributes.find((item) => item.key === key)
-        const kind = (attribute?.kind as Json) ?? {}
-        const label = textValue((attribute?.labels as Json) ?? key, uiLanguage) || key
-        return (
-          <div key={key} className="field">
-            <label>{label}</label>
-            <div className={key in draft ? 'control draft-user' : 'control'}>
-              <Editor
-                kind={String(kind.type ?? 'text')}
-                form={String(kind.form ?? '')}
-                multiple={Boolean(attribute?.multiple)}
-                languageDependent={Boolean(attribute?.language_dependent)}
-                value={values[key]}
-                options={optionsFor(lists, String(kind.list ?? ''))}
-                units={unitsFor(families, String(kind.unit_family ?? ''))}
-                onChange={(next) => setDraft((state) => ({ ...state, [key]: next }))}
-              />
-            </div>
+      <div className="detail-scroll">
+        <header className="detail-head">
+          <div className="detail-title">
+            <strong>{name || number}</strong>
+            {number ? <span className="detail-id">{number}</span> : null}
           </div>
-        )
-      })}
-      {error ? <p className="error" data-testid="detail-error">{error}</p> : null}
+          <div className="field-chips">
+            <MetaChip>{typeLabel(defs.data, String(object.data.type), uiLanguage)}</MetaChip>
+            {status ? <MetaChip tone={statusTone(status)}>{optionLabel(defs.data, 'status', status, uiLanguage)}</MetaChip> : null}
+            <MetaChip>{String(object.data.version ?? '')}</MetaChip>
+          </div>
+        </header>
+        {fieldSections(Object.keys(values)).map((section) => (
+          <section key={section.id} className="field-card">
+            <h3>{section.title}</h3>
+            {section.keys.map((key) => renderField(key))}
+          </section>
+        ))}
+        {error ? <p className="error" data-testid="detail-error">{error}</p> : null}
+      </div>
       {pendingId ? (
-        <div className="toolbar">
+        <div className="save-bar">
           <span className="hint">{copy.reviewChange}</span>
           <button type="button" onClick={() => { setPendingId(null); setDraft({}) }}>{copy.cancel}</button>
           <button type="button" className="primary" data-testid="confirm-proposal" onClick={confirm}>{copy.confirm}</button>
         </div>
-      ) : (
-        <div className="toolbar">
-          <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
+      ) : dirty ? (
+        <div className="save-bar">
           <button type="button" onClick={() => setDraft({})}>{copy.discard}</button>
+          <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
         </div>
-      )}
+      ) : null}
     </form>
   )
+}
+
+const fieldSectionDefs: Array<{ id: string; title: string; keys: string[] }> = [
+  { id: 'identity', title: copy.identity, keys: ['nummer', 'namn'] },
+  { id: 'description', title: copy.description, keys: ['beskrivning'] },
+  { id: 'classification', title: copy.classification, keys: ['status', 'farg', 'aktiv'] },
+  { id: 'measures', title: copy.measures, keys: ['vikt', 'langd', 'spann'] },
+  { id: 'dates', title: copy.dates, keys: ['lanserad'] },
+  { id: 'references', title: copy.references, keys: ['bild', 'ersatter'] },
+]
+
+function fieldSections(keys: string[]) {
+  const known = new Set<string>()
+  const sections = fieldSectionDefs.flatMap((section) => {
+    const present = section.keys.filter((key) => keys.includes(key))
+    present.forEach((key) => known.add(key))
+    return present.length > 0 ? [{ ...section, keys: present }] : []
+  })
+  const rest = keys.filter((key) => !known.has(key))
+  if (rest.length > 0) sections.push({ id: 'other', title: copy.other, keys: rest })
+  return sections
 }
 
 function optionsFor(lists: Json[], key: string) {
@@ -726,14 +789,14 @@ function Editor({
     return (
       <div className="langs">
         {['sv', 'en', 'de'].map((language) => (
-          <label key={language} className="lang">
-            <b>{language}</b>
+          <div key={language} className="lang-card">
+            <MetaChip>{language}</MetaChip>
             {form === 'long' ? (
-              <textarea value={textValue(record[language])} onChange={(event) => onChange({ ...record, [language]: event.target.value })} />
+              <textarea data-field="true" value={textValue(record[language])} onChange={(event) => onChange({ ...record, [language]: event.target.value })} />
             ) : (
-              <input value={textValue(record[language])} onChange={(event) => onChange({ ...record, [language]: event.target.value })} />
+              <input data-field="true" value={textValue(record[language])} onChange={(event) => onChange({ ...record, [language]: event.target.value })} />
             )}
-          </label>
+          </div>
         ))}
       </div>
     )
@@ -742,9 +805,11 @@ function Editor({
     const items = value.map((item) => textValue(item))
     return (
       <div className="choices">
-        {items.map((item) => <span key={item} className="chip">{item}</span>)}
+        {items.map((item) => <span key={item} className="meta-chip">{item}</span>)}
         <input
+          data-field="true"
           value=""
+          placeholder="+"
           onChange={(event) => {
             const next = event.target.value.trim()
             if (next) onChange([...items, next])
@@ -758,45 +823,48 @@ function Editor({
     const picked = Array.isArray(value) ? value.map(String) : []
     return (
       <div className="choices">
-        {options.map((option) => (
-          <label key={option.code}>
-            <input
-              type="checkbox"
-              checked={picked.includes(option.code)}
-              onChange={(event) =>
-                onChange(event.target.checked ? [...picked, option.code] : picked.filter((code) => code !== option.code))
-              }
-            />
-            {option.label}
-          </label>
-        ))}
+        {options.map((option) => {
+          const on = picked.includes(option.code)
+          return (
+            <button
+              key={option.code}
+              type="button"
+              className={on ? 'choice-chip on' : 'choice-chip'}
+              aria-pressed={on}
+              onClick={() => onChange(on ? picked.filter((code) => code !== option.code) : [...picked, option.code])}
+            >
+              {option.label}
+            </button>
+          )
+        })}
       </div>
     )
   }
   if (kind === 'value_list' && options.length > 0) {
+    const current = textValue(value)
     return (
-      <select value={textValue(value)} onChange={(event) => onChange(event.target.value)}>
-        <option value="" />
-        {options.map((option) => (
-          <option key={option.code} value={option.code}>{option.label}</option>
-        ))}
-      </select>
+      <Select value={current || undefined} onValueChange={onChange}>
+        <SelectTrigger data-field="true">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     )
   }
   if (kind === 'boolean') {
-    return <input type="checkbox" checked={value === true} onChange={(event) => onChange(event.target.checked)} />
+    return <Switch data-field="true" checked={value === true} onCheckedChange={(checked) => onChange(checked)} />
   }
   if (kind === 'range') {
     const record = (value && typeof value === 'object' ? value : {}) as Json
     return (
       <span className="measure">
-        <input value={textValue(record.min)} onChange={(event) => onChange({ ...record, min: event.target.value })} />
-        <input value={textValue(record.max)} onChange={(event) => onChange({ ...record, max: event.target.value })} />
-        {units.length > 0 ? (
-          <select value={String(record.unit ?? units[0])} onChange={(event) => onChange({ ...record, unit: event.target.value })}>
-            {units.map((unit) => <option key={unit}>{unit}</option>)}
-          </select>
-        ) : null}
+        <input data-field="true" value={textValue(record.min)} onChange={(event) => onChange({ ...record, min: event.target.value })} />
+        <input data-field="true" value={textValue(record.max)} onChange={(event) => onChange({ ...record, max: event.target.value })} />
+        <UnitSuffix units={units} value={String(record.unit ?? units[0] ?? '')} onChange={(unit) => onChange({ ...record, unit })} />
       </span>
     )
   }
@@ -804,19 +872,32 @@ function Editor({
     const record = (value && typeof value === 'object' ? value : { value }) as Json
     return (
       <span className="measure">
-        <input value={textValue(record.value)} onChange={(event) => onChange({ ...record, value: event.target.value })} />
-        {units.length > 0 ? (
-          <select value={String(record.unit ?? units[0])} onChange={(event) => onChange({ ...record, unit: event.target.value })}>
-            {units.map((unit) => <option key={unit}>{unit}</option>)}
-          </select>
-        ) : null}
+        <input data-field="true" value={textValue(record.value)} onChange={(event) => onChange({ ...record, value: event.target.value })} />
+        <UnitSuffix units={units} value={String(record.unit ?? units[0] ?? '')} onChange={(unit) => onChange({ ...record, unit })} />
       </span>
     )
   }
   if (form === 'long' || (typeof value === 'string' && value.length > 80)) {
-    return <textarea value={textValue(value)} onChange={(event) => onChange(event.target.value)} />
+    return <textarea data-field="true" value={textValue(value)} onChange={(event) => onChange(event.target.value)} />
   }
-  return <input value={textValue(value)} onChange={(event) => onChange(event.target.value)} />
+  return <input data-field="true" value={textValue(value)} onChange={(event) => onChange(event.target.value)} />
+}
+
+function UnitSuffix({ units, value, onChange }: { units: string[]; value: string; onChange: (unit: string) => void }) {
+  if (units.length === 0) return null
+  if (units.length === 1) return <span className="meta-chip">{units[0]}</span>
+  return (
+    <Select value={value || units[0]} onValueChange={onChange}>
+      <SelectTrigger className="unit-suffix" data-field="true" aria-label={copy.unit}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {units.map((unit) => (
+          <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
 }
 
 function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {
@@ -840,6 +921,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
     <div className="ref">
       <input
         data-testid="object-ref"
+        data-field="true"
         value={open ? q : label}
         placeholder={copy.pickObject}
         onFocus={() => {
@@ -911,7 +993,9 @@ export function HistoryView({ session }: { session: PanesSession }) {
   const names = useMemo(() => {
     const map = new Map<string, string>()
     for (const attribute of (defs.data?.attributes as Json[] | undefined) ?? []) {
-      map.set(String(attribute.id), String(attribute.key))
+      const label = textValue(attribute.labels, uiLanguage) || String(attribute.key)
+      map.set(String(attribute.id), label)
+      map.set(String(attribute.key), label)
     }
     return map
   }, [defs.data])
@@ -956,7 +1040,7 @@ export function HistoryView({ session }: { session: PanesSession }) {
               const after = groupText(pair, 'after', defs.data)
               return (
                 <tr key={key}>
-                  <th>grupp</th>
+                  <th>{copy.group}</th>
                   <td>{before}</td>
                   <td>{after}</td>
                 </tr>
@@ -966,8 +1050,8 @@ export function HistoryView({ session }: { session: PanesSession }) {
             return (
               <tr key={key}>
                 <th>{label}</th>
-                <td>{textValue(pair.before)}</td>
-                <td>{textValue(pair.after)}</td>
+                <td>{valueChip(label, textValue(pair.before), defs.data)}</td>
+                <td>{valueChip(label, textValue(pair.after), defs.data)}</td>
               </tr>
             )
           })}
@@ -977,7 +1061,7 @@ export function HistoryView({ session }: { session: PanesSession }) {
         {Object.entries((asOf.data?.values as Json | undefined) ?? {}).map(([key, value]) => (
           <div key={key}>
             <dt>{key}</dt>
-            <dd>{textValue(value)}</dd>
+            <dd>{valueChip(key, textValue(value), defs.data)}</dd>
           </div>
         ))}
       </dl>
@@ -986,6 +1070,14 @@ export function HistoryView({ session }: { session: PanesSession }) {
 }
 
 export { DataModel } from './data-model'
+
+function valueChip(key: string, value: string, defs: Json | undefined) {
+  if (!value) return value
+  if (key === 'status') return <MetaChip tone={statusTone(value)}>{optionLabel(defs, 'status', value, uiLanguage)}</MetaChip>
+  if (key === 'type' || key === 'type_key') return <MetaChip>{typeLabel(defs, value, uiLanguage)}</MetaChip>
+  if (key === 'version') return <MetaChip>{value}</MetaChip>
+  return value
+}
 
 function groupText(groups: Json, side: 'before' | 'after', defs: Json | undefined) {
   const names = new Map<string, string>()
@@ -1025,7 +1117,7 @@ export function JobHistory({ view }: { view: PanesView }) {
       {(runs.data?.runs ?? []).length === 0 ? <p>{copy.noRows}</p> : null}
       {(runs.data?.runs ?? []).map((row) => (
         <article key={String(row.id)}>
-          {String(row.status)} {String(row.progress_done ?? '')}/{String(row.progress_total ?? '')} {String(row.log ?? '')}
+          <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip> {String(row.progress_done ?? '')}/{String(row.progress_total ?? '')} {String(row.log ?? '')}
         </article>
       ))}
     </div>
@@ -1062,7 +1154,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
       <div data-testid="proposal">
         {(list.data?.proposals ?? []).map((row) => (
           <button key={String(row.id)} onClick={() => session.setProposalId(String(row.id))}>
-            {String(row.title)} · {String(row.status)} · {String(row.source)}
+            {String(row.title)} · <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip> · {String(row.source)}
           </button>
         ))}
         {(list.data?.proposals ?? []).length === 0 ? <p>{copy.proposals}</p> : null}
@@ -1073,7 +1165,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
   const lines = ((proposal.data?.consequence as Json | undefined)?.lines as unknown[] | undefined)?.map(String) ?? []
   return (
     <div data-testid="proposal">
-      <div className="toolbar">
+      <div className="proposal-switch">
         {(list.data?.proposals ?? []).map((row) => (
           <button key={String(row.id)} type="button" className={String(row.id) === session.proposalId ? 'primary' : ''} onClick={() => session.setProposalId(String(row.id))}>
             {String(row.title)}
@@ -1083,6 +1175,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
       <div className="toolbar">
         <strong className={proposal.data?.source === 'agent' ? 'draft-agent' : 'draft-user'}>{String(proposal.data?.title ?? '')}</strong>
         {proposal.data?.source ? <span className="chip">{String(proposal.data.source)}</span> : null}
+        {proposal.data?.status ? <MetaChip tone={statusTone(String(proposal.data.status))}>{String(proposal.data.status)}</MetaChip> : null}
         <button data-testid="accept-all" onClick={() => accept.mutate(undefined)}>{copy.acceptAll}</button>
         <button onClick={() => accept.mutate(picked)}>{copy.acceptSelected}</button>
         {lines.length > 0 && session.proposalId ? (
@@ -1097,17 +1190,18 @@ export function ProposalView({ session }: { session: PanesSession }) {
         </ul>
       ) : null}
       {rows.map((row) => (
-        <label key={String(row.id)} className={row.conflict ? 'error' : row.status === 'pending' ? 'draft-agent' : ''}>
-          <input
-            type="checkbox"
+        <label key={String(row.id)} className={row.conflict ? 'check-row error' : row.status === 'pending' ? 'check-row draft-agent' : 'check-row'}>
+          <Checkbox
             checked={picked.includes(String(row.id))}
-            onChange={(event) =>
+            onCheckedChange={(checked) =>
               setPicked((current) =>
-                event.target.checked ? [...current, String(row.id)] : current.filter((id) => id !== String(row.id)),
+                checked === true ? [...current, String(row.id)] : current.filter((id) => id !== String(row.id)),
               )
             }
           />
-          {String(row.type_key) === 'model' ? String((row.patch as Json | undefined)?.op ?? 'model') : String(row.object_key ?? row.object_id)} · {String(row.status)}
+          {String(row.type_key) === 'model' ? <MetaChip>{String((row.patch as Json | undefined)?.op ?? 'model')}</MetaChip> : String(row.object_key ?? row.object_id)}
+          {' '}
+          <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip>
           {row.conflict ? ` · ${copy.conflict}` : ''}
         </label>
       ))}
