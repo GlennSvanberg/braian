@@ -4,14 +4,14 @@ import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--r-md)] text-[13px] font-medium text-[var(--text)] transition-[background-color,color] duration-150 ease-[cubic-bezier(0.2,0,0,1)] disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:size-3.5',
+  'btn inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--r-md)] text-[13px] font-medium transition-[background-color,color] duration-150 ease-[cubic-bezier(0.2,0,0,1)] disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:size-3.5',
   {
     variants: {
       variant: {
-        default: 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]',
-        raised: 'bg-[var(--raised)] hover:bg-[var(--hover)]',
-        ghost: 'bg-transparent text-[var(--text-2)] hover:bg-[var(--hover)]',
-        danger: 'bg-[var(--danger)] text-white hover:brightness-110',
+        default: 'btn-accent',
+        raised: 'btn-raised',
+        ghost: 'btn-ghost',
+        danger: 'btn-danger',
       },
       size: {
         default: 'h-7 px-2.5',

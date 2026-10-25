@@ -100,11 +100,15 @@ button {
   box-shadow: var(--inset);
 }
 button:hover { background: var(--hover); }
-button.primary, button[data-variant='default'] {
+button.primary, .btn-accent {
   background: var(--accent);
   color: white;
+  box-shadow: none;
 }
-button.primary:hover { background: var(--accent-hover); }
+button.primary:hover, .btn-accent:hover { background: var(--accent-hover); }
+.btn-raised { background: var(--raised); color: var(--text); }
+.btn-ghost { background: transparent; color: var(--text-2); box-shadow: none; }
+.btn-danger { background: var(--danger); color: white; box-shadow: none; }
 input, select, textarea {
   background: var(--raised);
   border: 1px solid transparent;
@@ -272,7 +276,7 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   height: 100%;
   overflow: auto;
   border-radius: var(--r-md);
-  background: var(--bg);
+  background: transparent;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
 }
@@ -428,6 +432,7 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 .login { place-items: center; padding-top: 0; background: var(--bg); }
 .login form { width: min(380px, 92vw); padding: 28px 24px; background: var(--panel); gap: 10px; }
 .login h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.hint { margin: 0; color: var(--muted); font-size: 12px; }
 .login label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
 .login .brand { margin-bottom: 4px; }
 .palette input, .command input { height: 36px; padding: 0 10px; background: var(--panel); }
