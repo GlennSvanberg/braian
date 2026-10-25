@@ -6,7 +6,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use braian_model::{Object, ObjectId, Uuid, ValidationError};
 use braian_store::{
-    Conflict, Error, ObjectOp, ObjectProjection, PrincipalId, StoredObject, WriteReceipt,
+    Conflict, Error, ObjectOp, ObjectProjection, PrincipalId, PrincipalKind, StoredObject,
+    WriteReceipt,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -101,6 +102,9 @@ pub struct ChangeResponse {
     pub actor: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_behalf_of: Option<String>,
+    /// `agent` when the actor wrote for a person, `import` for an integration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Object)]
     pub diff: Option<Value>,
@@ -444,13 +448,23 @@ pub async fn object_changes(
     let names = principal_labels(&state, &ids).await?;
     let mut changes = Vec::with_capacity(rows.len());
     for row in rows {
+        let actor_face = names.get(&row.actor);
+        let behalf = row.on_behalf_of.and_then(|id| names.get(&id));
+        let via = if behalf.is_some() {
+            Some("agent".to_owned())
+        } else if actor_face.is_some_and(|face| face.kind == PrincipalKind::Integration) {
+            Some("import".to_owned())
+        } else {
+            None
+        };
         changes.push(ChangeResponse {
             seq: row.seq,
             at: row.at.to_rfc3339(),
             version: row.version,
             op: row.op.as_str().to_owned(),
             actor: principal_label(&names, row.actor),
-            on_behalf_of: row.on_behalf_of.map(|id| principal_label(&names, id)),
+            on_behalf_of: behalf.map(|face| face.label.clone()),
+            via,
             diff: row.diff,
         });
     }
@@ -625,18 +639,32 @@ async fn conflict_problem(
     problem
 }
 
+struct PrincipalFace {
+    label: String,
+    kind: PrincipalKind,
+}
+
 async fn principal_labels(
     state: &AppState,
     ids: &[PrincipalId],
-) -> Result<HashMap<PrincipalId, String>, Problem> {
+) -> Result<HashMap<PrincipalId, PrincipalFace>, Problem> {
     let mut names = HashMap::new();
     for record in state.store.principals(ids).await.map_err(store_status)? {
         let id = record.id;
-        names.insert(id, record.handle.unwrap_or_else(|| id.to_string()));
+        names.insert(
+            id,
+            PrincipalFace {
+                label: record.handle.clone().unwrap_or_else(|| id.to_string()),
+                kind: record.kind,
+            },
+        );
     }
     Ok(names)
 }
 
-fn principal_label(names: &HashMap<PrincipalId, String>, id: PrincipalId) -> String {
-    names.get(&id).cloned().unwrap_or_else(|| id.to_string())
+fn principal_label(names: &HashMap<PrincipalId, PrincipalFace>, id: PrincipalId) -> String {
+    names
+        .get(&id)
+        .map(|face| face.label.clone())
+        .unwrap_or_else(|| id.to_string())
 }

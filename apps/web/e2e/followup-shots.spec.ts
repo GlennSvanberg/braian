@@ -35,6 +35,8 @@ test('follow-up screenshots', async ({ page }) => {
   await page.getByRole('button', { name: 'History' }).click()
   const history = page.getByTestId('history')
   await expect(history.locator('article').first()).toBeVisible()
+  await expect(history).toContainText('Created by')
+  await history.getByTestId('time-travel').click()
   await expect(history.locator('.asof dt', { hasText: 'Name' })).toBeVisible()
   await expect(history.locator('.asof dt', { hasText: 'Number' })).toBeVisible()
   const labels = await history.locator('.asof dt, .diff th').allTextContents()

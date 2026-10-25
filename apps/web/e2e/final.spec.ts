@@ -71,7 +71,7 @@ test('final surfaces', async ({ page }) => {
   await page.screenshot({ path: `${shots}/graph.png` })
 
   await page.getByRole('button', { name: 'History' }).click()
-  await expect(page.getByTestId('history')).toContainText('create')
+  await expect(page.getByTestId('history')).toContainText('Created by')
   await page.screenshot({ path: `${shots}/history.png` })
 
   await page.getByRole('button', { name: 'Data model' }).click()

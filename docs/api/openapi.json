@@ -1976,6 +1976,13 @@
             ],
             "format": "int64",
             "minimum": 0
+          },
+          "via": {
+            "description": "`agent` when the actor wrote for a person, `import` for an integration.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

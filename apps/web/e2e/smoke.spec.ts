@@ -74,8 +74,11 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await page.screenshot({ path: `${shots}/graph.png` })
 
   await page.getByRole('button', { name: 'History' }).click()
-  await expect(page.getByTestId('history').locator('article').first()).toBeVisible()
+  const entry = page.getByTestId('history').locator('article').first()
+  await expect(entry).toBeVisible()
+  await expect(entry).toContainText('Created by')
   await page.screenshot({ path: `${shots}/history.png` })
+  await entry.click()
   await page.getByTestId('rollback').click()
 
   await page.getByRole('button', { name: 'Review' }).click()

@@ -40,8 +40,8 @@ async function tour(page: Page, theme: 'dark' | 'light') {
   await page.screenshot({ path: `${shots}/graph-${theme}.png` })
 
   await page.getByRole('button', { name: 'History' }).click()
-  await expect(page.getByTestId('field-diff')).toContainText('nummer')
-  await expect(page.getByTestId('history')).toContainText('create')
+  await expect(page.getByTestId('history')).toContainText('Created by')
+  await expect(page.getByTestId('history').locator('.asof')).toHaveCount(0)
   await page.screenshot({ path: `${shots}/history-${theme}.png` })
 
   await page.getByRole('button', { name: 'Data model' }).click()
