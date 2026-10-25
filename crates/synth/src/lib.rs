@@ -13,7 +13,7 @@ mod ids;
 mod measure;
 mod mutate;
 
-pub use definitions::{ExportFormat, definitions, export};
+pub use definitions::{ExportFormat, IndexBudget, definitions, definitions_with, export};
 pub use demo::{DemoSummary, write_demo};
 pub use edits::{Edit, EditKind, edits};
 pub use generate::{objects, objects_iter};

@@ -173,3 +173,35 @@ fn groups(
         ),
     ])
 }
+
+#[test]
+fn an_index_budget_caps_each_flag_without_changing_objects() {
+    let budget = braian_synth::IndexBudget {
+        searchable: Some(10),
+        filterable: Some(5),
+        sortable: Some(2),
+    };
+    let capped = braian_synth::definitions_with(Tier::Medium, 1, budget);
+    let count = |flag: fn(&braian_model::IndexFlags) -> bool| {
+        capped
+            .attributes
+            .iter()
+            .filter(|attribute| flag(&attribute.index))
+            .count()
+    };
+    assert_eq!(count(|flags| flags.searchable), 10);
+    assert_eq!(count(|flags| flags.filterable), 5);
+    assert_eq!(count(|flags| flags.sortable), 2);
+    let full = definitions(Tier::Medium, 1);
+    assert!(
+        full.attributes
+            .iter()
+            .filter(|a| a.index.searchable)
+            .count()
+            > 10
+    );
+    assert_eq!(
+        serde_json::to_vec(&objects(&full, Tier::Medium, 1, 2)).unwrap(),
+        serde_json::to_vec(&objects(&capped, Tier::Medium, 1, 2)).unwrap()
+    );
+}

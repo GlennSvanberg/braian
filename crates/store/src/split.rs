@@ -213,6 +213,33 @@ impl SplitContext {
         parts
     }
 
+    /// Same parts as [`split`](Self::split), borrowing every value. The bulk
+    /// loader serializes these straight into COPY, so no value tree is cloned.
+    pub fn split_ref<'a>(
+        &self,
+        form: StorageForm,
+        values: &'a BTreeMap<AttributeId, Value>,
+    ) -> BTreeMap<String, BTreeMap<String, &'a Value>> {
+        let mut parts: BTreeMap<String, BTreeMap<String, &'a Value>> = BTreeMap::new();
+        for (id, value) in values {
+            let key = attr_key(*id);
+            let group = self.group_of(*id);
+            if self.is_localized(*id)
+                && form != StorageForm::Document
+                && let Some(map) = value.as_object()
+            {
+                for (language, inner) in map {
+                    let part = self.part_name(form, Some(language), group);
+                    parts.entry(part).or_default().insert(key.clone(), inner);
+                }
+                continue;
+            }
+            let part = self.part_name(form, None, group);
+            parts.entry(part).or_default().insert(key, value);
+        }
+        parts
+    }
+
     #[cfg(test)]
     pub fn join(
         &self,
@@ -506,6 +533,57 @@ pub fn diff_from_patch(
     Value::Object(diff)
 }
 
+/// The create diff as a borrowed, serialize-only view: `{attr: {"after": v}}`
+/// plus `$groups` when the object is placed. Same JSON as
+/// [`diff_created`] followed by attaching groups, without cloning the values.
+#[derive(Debug)]
+pub struct CreatedDiff<'a> {
+    pub values: &'a BTreeMap<AttributeId, Value>,
+    pub groups: &'a BTreeMap<braian_model::StructureId, braian_model::GroupId>,
+}
+
+struct After<T>(T);
+
+impl<T: serde::Serialize> serde::Serialize for After<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("after", &self.0)?;
+        map.end()
+    }
+}
+
+struct Groups<'a>(&'a BTreeMap<braian_model::StructureId, braian_model::GroupId>);
+
+impl serde::Serialize for Groups<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (structure, group) in self.0 {
+            map.serialize_entry(
+                &structure.as_uuid().to_string(),
+                &After(group.as_uuid().to_string()),
+            )?;
+        }
+        map.end()
+    }
+}
+
+impl serde::Serialize for CreatedDiff<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let extra = usize::from(!self.groups.is_empty());
+        let mut map = serializer.serialize_map(Some(self.values.len() + extra))?;
+        for (id, value) in self.values {
+            map.serialize_entry(&attr_key(*id), &After(value))?;
+        }
+        if !self.groups.is_empty() {
+            map.serialize_entry("$groups", &Groups(self.groups))?;
+        }
+        map.end()
+    }
+}
+
 pub fn diff_created(values: &BTreeMap<AttributeId, Value>) -> Value {
     let mut diff = Map::new();
     for (id, value) in values {
@@ -640,6 +718,38 @@ mod tests {
                 let joined = ctx.join(form, &encoded).expect("join");
                 assert_eq!(joined, object.values, "{}", form.name());
             }
+        }
+    }
+
+    #[test]
+    fn borrowed_bulk_encoding_matches_the_owned_one() {
+        let defs = definitions(Tier::Medium, 5);
+        let ctx = SplitContext::new(&defs);
+        for object in &objects(&defs, Tier::Medium, 5, 3) {
+            for form in StorageForm::ALL {
+                let owned = serde_json::to_value(ctx.split(form, &object.values)).unwrap();
+                let borrowed = serde_json::to_value(ctx.split_ref(form, &object.values)).unwrap();
+                assert_eq!(owned, borrowed, "{}", form.name());
+            }
+            let mut expected = diff_created(&object.values);
+            let mut placed = Map::new();
+            for (structure, group) in &object.groups {
+                placed.insert(
+                    structure.as_uuid().to_string(),
+                    serde_json::json!({ "after": group.as_uuid().to_string() }),
+                );
+            }
+            if !placed.is_empty() {
+                expected
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("$groups".to_owned(), Value::Object(placed));
+            }
+            let view = CreatedDiff {
+                values: &object.values,
+                groups: &object.groups,
+            };
+            assert_eq!(serde_json::to_value(&view).unwrap(), expected);
         }
     }
 
