@@ -116,7 +116,7 @@ impl utoipa::Modify for PlatformPaths {
             (
                 HttpMethod::Get,
                 "/v1/objects",
-                "List object heads from Postgres",
+                "List object heads. type and q run in SQL before limit; cursor pages the rest",
             ),
             (
                 HttpMethod::Post,

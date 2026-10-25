@@ -150,6 +150,13 @@ impl Store {
         store
     }
 
+    /// Same store, checking out connections from the interactive pool.
+    pub fn on_interactive(&self) -> Self {
+        let mut store = self.clone();
+        store.lane = DbLane::Interactive;
+        store
+    }
+
     pub fn lane(&self) -> DbLane {
         self.lane
     }
@@ -248,6 +255,13 @@ impl Store {
             DbLane::Interactive => &self.interactive,
             DbLane::Bulk => &self.bulk,
         }
+    }
+
+    /// The interactive pool, ignoring this store's lane.
+    ///
+    /// List pages use this so a bulk COPY cannot queue them.
+    pub(crate) fn interactive_pool(&self) -> &Pool {
+        &self.interactive
     }
 }
 
