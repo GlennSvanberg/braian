@@ -157,16 +157,19 @@ pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> Definitio
                         id: root,
                         key: "root".to_owned(),
                         parent: None,
+                        attributes: vec![],
                     },
                     Group {
                         id: mid,
                         key: "mid".to_owned(),
                         parent: Some(root),
+                        attributes: vec![],
                     },
                     Group {
                         id: leaf,
                         key: "leaf".to_owned(),
                         parent: Some(mid),
+                        attributes: vec![],
                     },
                 ],
                 classes: vec![
@@ -182,6 +185,7 @@ pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> Definitio
                     id: flat,
                     key: "flat".to_owned(),
                     parent: None,
+                    attributes: vec![],
                 }],
                 classes: vec![class(&mut ids, "flat", flat, &buckets[4])],
             },

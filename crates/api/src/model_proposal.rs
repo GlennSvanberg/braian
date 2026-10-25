@@ -306,6 +306,45 @@ fn changes_from(
                 .get("required")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            searchable: args
+                .get("searchable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            filterable: args
+                .get("filterable")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            sortable: args
+                .get("sortable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }]),
+        "model.attach_attribute" => Ok(vec![ModelChange::AttachAttribute {
+            attribute: required_str(args, "attribute")?,
+            type_key: optional_str(args, "type"),
+            structure: optional_str(args, "structure"),
+            group: optional_str(args, "group"),
+        }]),
+        "model.detach_attribute" => Ok(vec![ModelChange::DetachAttribute {
+            attribute: required_str(args, "attribute")?,
+            type_key: optional_str(args, "type"),
+            structure: optional_str(args, "structure"),
+            group: optional_str(args, "group"),
+        }]),
+        "model.update_attribute" => Ok(vec![ModelChange::UpdateAttribute {
+            key: required_str(args, "key")?,
+            label: optional_str(args, "label"),
+            kind: optional_str(args, "kind"),
+            unit: optional_str(args, "unit"),
+            clear_unit: args
+                .get("clear_unit")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            languages: args.get("languages").and_then(Value::as_bool),
+            required: args.get("required").and_then(Value::as_bool),
+            searchable: args.get("searchable").and_then(Value::as_bool),
+            filterable: args.get("filterable").and_then(Value::as_bool),
+            sortable: args.get("sortable").and_then(Value::as_bool),
         }]),
         "model.create_class" => Ok(vec![ModelChange::CreateClass {
             structure: required_str(args, "structure")?,
@@ -331,6 +370,13 @@ fn changes_from(
 
 fn text_arg(args: &Value) -> &str {
     args.get("text").and_then(Value::as_str).unwrap_or("")
+}
+
+fn optional_str(args: &Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn required_str(args: &Value, key: &str) -> Result<String, Problem> {
