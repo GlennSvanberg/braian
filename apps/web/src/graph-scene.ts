@@ -85,6 +85,8 @@ export type SceneNode = {
   /** True when the caption is still a key a later fetch can replace. */
   rawCaption: boolean
   objectId?: string
+  typeKey?: string
+  typeName?: string
   properties: SceneProperty[]
 }
 
@@ -110,6 +112,41 @@ const STRUCTURE_NAMES: Record<string, string> = {
 
 export function structureCaption(key: string) {
   return STRUCTURE_NAMES[key] ?? key
+}
+
+export type LegendEntry = { id: string; kind: NodeKind; label: string }
+
+export function legendIdOf(node: { kind: NodeKind; typeKey?: string }) {
+  if (node.kind === 'object' && node.typeKey) return `type-${node.typeKey}`
+  return node.kind
+}
+
+export function isLegendHidden(hidden: Set<string>, node: { kind: NodeKind; typeKey?: string }) {
+  return hidden.has(legendIdOf(node))
+}
+
+export function legendEntries(nodes: Array<{ kind: NodeKind; typeKey?: string; typeName?: string }>): LegendEntry[] {
+  const entries: LegendEntry[] = []
+  const seen = new Set<string>()
+  let untyped = false
+  for (const node of nodes) {
+    if (node.kind !== 'object') continue
+    if (!node.typeKey) {
+      untyped = true
+      continue
+    }
+    const id = `type-${node.typeKey}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    entries.push({ id, kind: 'object', label: node.typeName || node.typeKey })
+  }
+  if (untyped || (entries.length === 0 && nodes.some((node) => node.kind === 'object'))) {
+    entries.push({ id: 'object', kind: 'object', label: copy.nodeObject })
+  }
+  for (const kind of ['class', 'group', 'value', 'assortment'] as const) {
+    if (nodes.some((node) => node.kind === kind)) entries.push({ id: kind, kind, label: kindLabel(kind) })
+  }
+  return entries
 }
 
 export function kindLabel(kind: NodeKind) {
@@ -211,6 +248,8 @@ function putNode(nodes: Map<string, SceneNode>, node: SceneNode) {
       subtitle: node.subtitle || existing.subtitle,
       rawCaption: false,
       objectId: existing.objectId || node.objectId,
+      typeKey: existing.typeKey || node.typeKey,
+      typeName: existing.typeName || node.typeName,
       properties: node.properties.length >= existing.properties.length ? node.properties : existing.properties,
     })
   }
@@ -322,7 +361,7 @@ export function buildScene(input: {
   const name = textValue(values.namn, uiLanguage)
   const selfId = `object:${objectId}`
   const typeKey = String(input.graph.type ?? '')
-  const typeName = typeLabel(input.defs, typeKey, uiLanguage) || typeKey
+  const typeName = (typeKey ? typeLabel(input.defs, typeKey, uiLanguage) || typeKey : '')
   const number = textValue(values.nummer, uiLanguage) || key
   const statusCode = textValue(values.status)
   const status = statusCode ? optionLabel(input.defs, 'status', statusCode, uiLanguage) : ''
@@ -333,6 +372,8 @@ export function buildScene(input: {
     subtitle: typeName || copy.nodeObject,
     rawCaption: false,
     objectId,
+    typeKey: typeKey || undefined,
+    typeName: typeName || undefined,
     properties: [
       { label: copy.type, value: typeName || typeKey || copy.nodeObject },
       { label: copy.number, value: number },
@@ -388,7 +429,9 @@ export function buildScene(input: {
     const nodeId = `object:${otherId}`
     const record = input.known?.[otherId]
     const relKey = String(relation.key ?? otherId)
-    const typeNameForOther = record?.typeKey ? typeLabel(input.defs, record.typeKey, uiLanguage) || record.typeKey : ''
+    const relationType = ((input.defs?.types as Json[]) ?? []).find((item) => String(item.id) === String(relation.type_id ?? ''))
+    const otherKey = record?.typeKey || String(relationType?.key ?? '')
+    const typeNameForOther = otherKey ? typeLabel(input.defs, otherKey, uiLanguage) || otherKey : ''
     const caption = record?.name || typeNameForOther || copy.nodeObject
     putNode(nodes, {
       id: nodeId,
@@ -397,6 +440,8 @@ export function buildScene(input: {
       subtitle: typeNameForOther || copy.nodeObject,
       rawCaption: record === undefined,
       objectId: otherId,
+      typeKey: otherKey || undefined,
+      typeName: typeNameForOther || undefined,
       properties: [
         { label: copy.number, value: relKey },
         { label: copy.type, value: typeNameForOther || copy.nodeObject },
@@ -431,6 +476,8 @@ export function mergeScene(base: Scene, extra: Scene): Scene {
       subtitle: upgrade && node.subtitle ? node.subtitle : existing.subtitle,
       rawCaption: upgrade ? node.rawCaption : existing.rawCaption,
       objectId: existing.objectId || node.objectId,
+      typeKey: upgrade ? node.typeKey || existing.typeKey : existing.typeKey || node.typeKey,
+      typeName: upgrade ? node.typeName || existing.typeName : existing.typeName || node.typeName,
       properties: node.properties.length > existing.properties.length ? node.properties : existing.properties,
     })
   }
@@ -507,7 +554,7 @@ export function expandClass(defs: Json | undefined, structure: string, classKey:
   return { nodes, edges }
 }
 
-export type MemberHit = { id: string; key: string; name: string; type: string; rawCaption?: boolean }
+export type MemberHit = { id: string; key: string; name: string; type: string; typeKey?: string; rawCaption?: boolean }
 
 export function groupMembers(structure: string, group: string, hits: MemberHit[]): Scene {
   const groupId = `group:${structure}:${group}`
@@ -516,13 +563,16 @@ export function groupMembers(structure: string, group: string, hits: MemberHit[]
   for (const hit of hits) {
     if (!hit.id) continue
     const id = `object:${hit.id}`
+    const typeName = hit.type
     nodes.push({
       id,
       kind: 'object',
-      caption: hit.name || copy.nodeObject,
-      subtitle: hit.type || copy.nodeObject,
+      caption: hit.name || typeName || copy.nodeObject,
+      subtitle: typeName || copy.nodeObject,
       rawCaption: hit.rawCaption ?? !hit.name,
       objectId: hit.id,
+      typeKey: hit.typeKey || undefined,
+      typeName: typeName || undefined,
       properties: [
         { label: copy.number, value: hit.key || hit.id },
         { label: copy.type, value: hit.type || copy.nodeObject },

@@ -340,6 +340,7 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
               <button
                 type="button"
                 data-tab={id}
+                data-view-type={frame.viewList.find((view) => view.id === id)?.type ?? ''}
                 className={id === activeId ? 'pane-tab active' : 'pane-tab'}
                 onClick={() => {
                   if (dragged.current) {

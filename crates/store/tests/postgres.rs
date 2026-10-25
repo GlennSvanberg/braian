@@ -121,6 +121,8 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
         id: second,
         key: "other".into(),
         labels: BTreeMap::new(),
+        singular: BTreeMap::new(),
+        plural: BTreeMap::new(),
         key_attribute,
         attributes: vec![key_attribute],
     });

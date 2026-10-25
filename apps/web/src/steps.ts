@@ -1,14 +1,16 @@
 import type { Json } from './api'
 
 /** Palette progress lines. UI copy is English. */
-export function stepText(op: string, args: Json = {}): string {
+export function stepText(op: string, args: Json = {}, typeName?: { singular?: string; plural?: string }): string {
   const query = text(args.q ?? args.text ?? args.filter)
+  const plural = typeName?.plural?.trim()
+  const singular = typeName?.singular?.trim()
   switch (op) {
     case 'read':
       return 'Reading the question…'
     case 'search':
     case 'list_objects':
-      return query ? `Filtering on '${query}'…` : 'Opening a list of articles…'
+      return query ? `Filtering on '${query}'…` : plural ? `Opening a list of ${plural.toLowerCase()}…` : 'Opening a list of objects…'
     case 'ui.filter':
       return `Filtering on '${query}'…`
     case 'ui.group':
@@ -46,7 +48,7 @@ export function stepText(op: string, args: Json = {}): string {
       return 'Reading the layout…'
     case 'ui.select':
     case 'get_object':
-      return 'Opening the object…'
+      return singular ? `Opening the ${singular}…` : 'Opening the object…'
     case 'ui.get_context':
       return 'Reading the screen…'
     case 'ui.get_selection':

@@ -1,5 +1,7 @@
 import { api, type Json } from './api'
+import { copy } from './i18n'
 import { splitPair, tabGroup, type Node } from './layout'
+import { enrichWorkspaceName, type TypeName } from './type-labels'
 
 export type WorkspaceTemplate = {
   id: string
@@ -9,19 +11,30 @@ export type WorkspaceTemplate = {
   layout: (ids: string[]) => Node
 }
 
-export const workspaceTemplates: WorkspaceTemplate[] = [
+export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] {
+  const tables = types.length > 0 ? types : [{ id: '', key: '', singular: 'Object', plural: copy.objects }]
+  const tableViews = tables.map((type) => ({
+    type: 'object_table',
+    title: type.plural,
+    state: type.id ? { object_type: type.id, type_key: type.key } : {},
+  }))
+  return [
   {
     id: 'enrich',
-    name: 'Enrich objects',
+    name: types.length > 0 ? enrichWorkspaceName(types) : copy.enrichObjects,
     summary: 'Tree, table and detail',
     views: [
       { type: 'structure_tree', title: 'Assortment', state: { expanded: ['friluft', 'bygg'] } },
-      { type: 'object_table', title: 'Objects', state: {} },
+      ...tableViews,
       { type: 'object_detail', title: 'Detail', state: { language: 'sv' } },
       { type: 'graph', title: 'Graph', state: {} },
       { type: 'history', title: 'History', state: {} },
     ],
-    layout: (ids) => splitPair('horizontal', 0.22, tabGroup([ids[0]]), splitPair('horizontal', 0.62, tabGroup([ids[1]]), tabGroup(ids.slice(2)))),
+    layout: (ids) => {
+      const tableIds = ids.slice(1, 1 + tableViews.length)
+      const rightIds = ids.slice(1 + tableViews.length)
+      return splitPair('horizontal', 0.22, tabGroup([ids[0] ?? '']), splitPair('horizontal', 0.62, tabGroup(tableIds), tabGroup(rightIds)))
+    },
   },
   {
     id: 'model',
@@ -55,7 +68,8 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
     ],
     layout: (ids) => splitPair('horizontal', 0.5, tabGroup([ids[0]]), tabGroup([ids[1]])),
   },
-]
+  ]
+}
 
 export async function createWorkspaceFromTemplate(template: WorkspaceTemplate, ownerName?: string) {
   const workspaceId = crypto.randomUUID()

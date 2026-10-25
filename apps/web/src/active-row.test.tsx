@@ -80,8 +80,11 @@ function TreeHarness() {
       setGroup,
       setObjectId: () => undefined,
       setProposalId: () => undefined,
+      listType: null,
+      setListType: () => undefined,
       push: () => undefined,
       openWorkspace: () => undefined,
+      openTypeView: () => undefined,
     }),
     [group],
   )
