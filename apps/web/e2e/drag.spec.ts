@@ -104,7 +104,7 @@ test('a group shows attributes inherited from its ancestors', async ({ page }) =
   await login(page)
   await page.getByRole('button', { name: 'Data model' }).click()
   const tree = page.getByTestId('data-model').first()
-  await tree.getByTestId('group-sovsack').getByRole('button').click()
+  await tree.getByTestId('group-sovsack').locator('.model-node').click()
   const table = page.getByTestId('attribute-table')
   await expect(table).toContainText('Weight')
   await expect(table).toContainText('from Outdoor')

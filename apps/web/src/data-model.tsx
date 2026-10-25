@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react'
+import { MoreHorizontal } from 'lucide-react'
 import { ApiError, api, textValue, type Json } from './api'
 import { Checkbox } from './components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
@@ -11,13 +11,12 @@ import {
   attributeKey,
   attributeRows,
   effectiveFields,
-  groupNodes,
   objectTypes,
-  structureKeys,
   type AttributeRow,
   type ModelSelection,
 } from './model-view'
 import { structureCaption } from './graph-scene'
+import { StructureSection } from './structure-tree'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 
@@ -109,7 +108,6 @@ function Checklist({ defs, items }: { defs: Json | undefined; items: string[] })
 function ModelNav({ defs }: { defs: Json | undefined }) {
   const { selection, choose: pick } = useModelSelection()
   const types = objectTypes(defs, uiLanguage)
-  const [collapsed, setCollapsed] = useState<string[]>([])
   useEffect(() => {
     if (selection || types.length === 0) return
     const first = types[0]
@@ -131,54 +129,7 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
           </button>
         ))}
       </section>
-      <section>
-        <h2>{copy.structures}</h2>
-        {structureKeys(defs).map((key) => {
-          const nodes = groupNodes(defs, key)
-          let skipDepth = -1
-          const visible = nodes.filter((node) => {
-            if (skipDepth >= 0) {
-              if (node.depth > skipDepth) return false
-              skipDepth = -1
-            }
-            if (collapsed.includes(node.id)) skipDepth = node.depth
-            return true
-          })
-          return (
-            <div key={key} className="model-tree">
-              <strong>{structureCaption(key)}</strong>
-              {visible.map((node) => {
-                const open = !collapsed.includes(node.id)
-                const on = selection?.kind === 'group' && selection.structure === key && selection.group === node.key
-                const hasChildren = nodes.some((item) => item.depth > node.depth && item.parentKey === node.key)
-                return (
-                  <div key={node.id} data-testid={`group-${node.key}`}>
-                    <button
-                      type="button"
-                      className={on ? 'model-node on' : 'model-node'}
-                      style={{ paddingLeft: 8 + node.depth * 14 }}
-                      onClick={() => pick({ kind: 'group', structure: key, group: node.key })}
-                    >
-                      {hasChildren ? (
-                        <span
-                          className="twist"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setCollapsed((current) => (current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id]))
-                          }}
-                        >
-                          {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-                        </span>
-                      ) : <span className="twist" />}
-                      {structureCaption(node.key)}
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })}
-      </section>
+      <StructureSection defs={defs} selection={selection} onPick={pick} />
     </div>
   )
 }

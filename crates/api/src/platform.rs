@@ -442,6 +442,48 @@ fn registry() -> &'static [Operation] {
             permission: Role::Editor,
             needs_approval: true,
         },
+        Operation {
+            name: "model.create_structure",
+            title: "Create structure",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_structure",
+            title: "Rename structure",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_structure",
+            title: "Delete structure",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.create_group",
+            title: "Create group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_group",
+            title: "Rename group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.move_group",
+            title: "Move group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_group",
+            title: "Delete group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
     ]
 }
 

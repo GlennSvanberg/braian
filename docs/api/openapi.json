@@ -1285,6 +1285,527 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Unknown structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "structure_occupied lists how many objects are still placed in the structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "rename_structure_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StructureRename"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Renamed structure. The key is unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "empty_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures/{id}/groups": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Structure after the group was added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure or parent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "empty_key, invalid_key, or duplicate_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures/{id}/groups/{group}": {
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_group_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Group key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "move_to",
+            "in": "path",
+            "description": "Group key that receives objects from the deleted group and its descendants.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group, descendants, and their classes removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionWrite"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure or group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "group_occupied lists count unless move_to is set. target_in_subtree when move_to is inside the deleted subtree.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "rename_group_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Group key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupRename"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Structure after the rename",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure or group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "empty_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures/{id}/groups/{group}/parent": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "move_group_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Group key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupMove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Structure after the move",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure or group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "cycle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures/{id}/groups/{group}/usage": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "group_usage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Group key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects in the group and its descendants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementCount"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure or group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures/{id}/usage": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "structure_usage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Structure key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects placed anywhere in the structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementCount"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown structure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/structures:create": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "create_structure_route",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StructureCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Empty structure. Add groups afterwards.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Structure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "empty_key, invalid_key, or duplicate_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2333,6 +2854,16 @@
           "key": {
             "type": "string"
           },
+          "labels": {
+            "type": "object",
+            "description": "Display name per language. Empty on revisions written before labels existed.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "parent": {
             "oneOf": [
               {
@@ -2346,10 +2877,63 @@
         },
         "additionalProperties": false
       },
+      "GroupCreate": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent group key. Absent means a root group."
+          }
+        }
+      },
       "GroupId": {
         "type": "string",
         "format": "uuid",
         "description": "Id of a group inside one structure."
+      },
+      "GroupMove": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent group key. `null` makes the group a root."
+          }
+        }
+      },
+      "GroupRename": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
       },
       "IndexFlags": {
         "type": "object",
@@ -2540,6 +3124,20 @@
           }
         }
       },
+      "PlacementCount": {
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live objects in the group and its descendants, or in the whole structure.",
+            "minimum": 0
+          }
+        }
+      },
       "Problem": {
         "type": "object",
         "description": "`application/problem+json` body. Callers branch on `code`.",
@@ -2559,6 +3157,15 @@
             "items": {
               "$ref": "#/components/schemas/ConflictBody"
             }
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Objects that block a structure or group delete.",
+            "minimum": 0
           },
           "current_version": {
             "type": [
@@ -2662,15 +3269,101 @@
             "$ref": "#/components/schemas/StructureId"
           },
           "key": {
-            "type": "string"
+            "type": "string",
+            "description": "Stable wire key. Object placement uses `key:group`, for example `sortiment:talt`."
+          },
+          "labels": {
+            "type": "object",
+            "description": "Display name per language. Empty on revisions written before labels existed.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
+      },
+      "StructureCreate": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "description": "Replaces the single `label` when present.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "StructureError": {
+        "type": "object",
+        "description": "A structure edit that did not change the model.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/StructureErrorCode"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "StructureErrorCode": {
+        "type": "string",
+        "description": "Why a structure edit was refused. `code` is the value clients branch on.",
+        "enum": [
+          "empty_key",
+          "invalid_key",
+          "duplicate_key",
+          "unknown_structure",
+          "unknown_group",
+          "cycle",
+          "target_in_subtree",
+          "group_occupied",
+          "structure_occupied"
+        ]
       },
       "StructureId": {
         "type": "string",
         "format": "uuid",
         "description": "Id of a structure."
+      },
+      "StructureRename": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
       },
       "TextForm": {
         "type": "string",

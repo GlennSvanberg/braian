@@ -44,6 +44,9 @@ pub struct Problem {
     pub conflicts: Vec<ConflictBody>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub definition_errors: Vec<String>,
+    /// Objects that block a structure or group delete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
 }
 
 impl Problem {
@@ -59,7 +62,14 @@ impl Problem {
             current_version: None,
             conflicts: Vec::new(),
             definition_errors: Vec::new(),
+            count: None,
         }
+    }
+
+    pub fn occupied(code: &str, detail: impl Into<String>, count: u64) -> Self {
+        let mut problem = Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, detail);
+        problem.count = Some(count);
+        problem
     }
 
     pub fn unauthorized() -> Self {

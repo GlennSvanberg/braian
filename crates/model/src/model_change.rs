@@ -12,6 +12,7 @@ use crate::definition::{
 };
 use crate::id::{AttributeId, ClassId, GroupId, StructureId, UnitFamilyId};
 use crate::language::LanguageTag;
+use crate::structure::{self, StructureError};
 
 /// One step in a data-model proposal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,10 +134,74 @@ pub enum ModelChange {
         group: String,
         #[serde(default)]
         parent: Option<String>,
+        #[serde(default)]
+        label: String,
     },
     CreateStructure {
         key: String,
+        #[serde(default)]
+        label: String,
     },
+    RenameStructure {
+        structure: String,
+        label: String,
+    },
+    DeleteStructure {
+        structure: String,
+    },
+    RenameGroup {
+        structure: String,
+        group: String,
+        label: String,
+    },
+    /// `parent` none places the group at the root of the structure.
+    MoveGroup {
+        structure: String,
+        group: String,
+        #[serde(default)]
+        parent: Option<String>,
+    },
+    /// `move_to` is a group outside the deleted subtree that should receive its objects.
+    DeleteGroup {
+        structure: String,
+        group: String,
+        #[serde(default)]
+        move_to: Option<String>,
+    },
+}
+
+/// A definition edit that did not apply.
+#[derive(Debug)]
+pub enum ApplyError {
+    Structure(StructureError),
+    Other(String),
+}
+
+impl std::fmt::Display for ApplyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Structure(error) => formatter.write_str(&error.message),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for ApplyError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<&str> for ApplyError {
+    fn from(message: &str) -> Self {
+        Self::Other(message.to_owned())
+    }
+}
+
+impl From<StructureError> for ApplyError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(error)
+    }
 }
 
 /// What a person should read before confirming.
@@ -156,7 +221,7 @@ fn default_filterable() -> bool {
 }
 
 /// Applies every step. Later steps see earlier ones. Idempotent creates stay put.
-pub fn apply_all(defs: &mut DefinitionSet, changes: &[ModelChange]) -> Result<(), String> {
+pub fn apply_all(defs: &mut DefinitionSet, changes: &[ModelChange]) -> Result<(), ApplyError> {
     for change in changes {
         apply_one(defs, change)?;
     }
@@ -167,7 +232,7 @@ pub fn apply_all(defs: &mut DefinitionSet, changes: &[ModelChange]) -> Result<()
 pub fn preview(
     defs: &DefinitionSet,
     changes: &[ModelChange],
-) -> Result<(DefinitionSet, ChangeImpact), String> {
+) -> Result<(DefinitionSet, ChangeImpact), ApplyError> {
     let mut after = defs.clone();
     apply_all(&mut after, changes)?;
     let impact = diff(defs, &after);
@@ -209,16 +274,19 @@ pub fn power_tools(defs: &DefinitionSet) -> Vec<ModelChange> {
     let mut steps = vec![
         ModelChange::CreateStructure {
             key: "power_tools".into(),
+            label: "Power tools".into(),
         },
         ModelChange::CreateGroup {
             structure: "power_tools".into(),
             group: "tools".into(),
             parent: None,
+            label: "Tools".into(),
         },
         ModelChange::CreateGroup {
             structure: "power_tools".into(),
             group: "drills".into(),
             parent: Some("tools".into()),
+            label: "Drills".into(),
         },
         ModelChange::CreateClass {
             structure: "power_tools".into(),
@@ -351,6 +419,35 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                 usage_fields.insert(key.clone());
             }
         }
+        if let Some(previous) = previous {
+            if previous.labels != structure.labels {
+                lines.push(format!(
+                    "Rename structure {} to {}",
+                    structure.key,
+                    display_label(&structure.labels, &structure.key)
+                ));
+            }
+            for old in &previous.groups {
+                let Some(group) = structure.groups.iter().find(|item| item.key == old.key) else {
+                    lines.push(format!("Delete group {}", old.key));
+                    groups.insert(old.id.as_uuid().to_string());
+                    continue;
+                };
+                if old.parent != group.parent {
+                    let parent =
+                        group_key(structure, group.parent).unwrap_or_else(|| "the root".into());
+                    lines.push(format!("Move group {} under {parent}", group.key));
+                    groups.insert(old.id.as_uuid().to_string());
+                }
+                if old.labels != group.labels {
+                    lines.push(format!(
+                        "Rename group {} to {}",
+                        group.key,
+                        display_label(&group.labels, &group.key)
+                    ));
+                }
+            }
+        }
         let old_classes = previous.map(|item| &item.classes);
         for class in &structure.classes {
             let old =
@@ -415,6 +512,15 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             }
         }
     }
+    for old in &before.structures {
+        if after.structures.iter().any(|item| item.key == old.key) {
+            continue;
+        }
+        lines.push(format!("Delete structure {}", old.key));
+        for group in &old.groups {
+            groups.insert(group.id.as_uuid().to_string());
+        }
+    }
     for object_type in &after.types {
         let old = before.types.iter().find(|item| item.key == object_type.key);
         let old_keys = attribute_keys(
@@ -459,48 +565,53 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
     }
 }
 
-fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), String> {
+fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), ApplyError> {
     match change {
-        ModelChange::CreateStructure { key } => {
-            if key.is_empty() {
-                return Err("structure key is empty".into());
-            }
-            if defs.structures.iter().any(|item| item.key == *key) {
-                return Ok(());
-            }
-            let structure_id = StructureId::from_uuid(stable_uuid(&format!("structure:{key}")));
-            defs.structures.push(Structure {
-                id: structure_id,
-                key: key.clone(),
-                groups: vec![Group {
-                    id: GroupId::from_uuid(stable_uuid(&format!("group:{key}:root"))),
-                    key: "root".into(),
-                    parent: None,
-                    attributes: vec![],
-                }],
-                classes: vec![],
-            });
+        ModelChange::CreateStructure { key, label } => {
+            let id = StructureId::from_uuid(stable_uuid(&format!("structure:{key}")));
+            structure::create_structure(defs, id, key, label, false)?;
+            Ok(())
+        }
+        ModelChange::RenameStructure { structure, label } => {
+            structure::rename_structure(defs, structure, label)?;
+            Ok(())
+        }
+        ModelChange::DeleteStructure { structure } => {
+            structure::delete_structure(defs, structure)?;
             Ok(())
         }
         ModelChange::CreateGroup {
             structure,
             group,
             parent,
+            label,
         } => {
-            let structure = structure_mut(defs, structure)?;
-            if structure.groups.iter().any(|item| item.key == *group) {
-                return Ok(());
-            }
-            let parent_id = match parent {
-                Some(key) => Some(group_id(structure, key)?),
-                None => None,
-            };
-            structure.groups.push(Group {
-                id: GroupId::from_uuid(stable_uuid(&format!("group:{}:{group}", structure.key))),
-                key: group.clone(),
-                parent: parent_id,
-                attributes: vec![],
-            });
+            let id = GroupId::from_uuid(stable_uuid(&format!("group:{structure}:{group}")));
+            structure::create_group(defs, id, structure, group, label, parent.as_deref(), false)?;
+            Ok(())
+        }
+        ModelChange::RenameGroup {
+            structure,
+            group,
+            label,
+        } => {
+            structure::rename_group(defs, structure, group, label)?;
+            Ok(())
+        }
+        ModelChange::MoveGroup {
+            structure,
+            group,
+            parent,
+        } => {
+            structure::move_group(defs, structure, group, parent.as_deref())?;
+            Ok(())
+        }
+        ModelChange::DeleteGroup {
+            structure,
+            group,
+            move_to,
+        } => {
+            structure::delete_group(defs, structure, group, move_to.as_deref())?;
             Ok(())
         }
         ModelChange::CreateClass {
@@ -561,7 +672,8 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
                 if !wanted.same_type_and_unit(&existing.kind) {
                     return Err(format!(
                         "attribute {key} already exists with a different type or unit"
-                    ));
+                    )
+                    .into());
                 }
                 return Ok(());
             }
@@ -604,7 +716,7 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             };
             let class = class_mut(structure, class_key)?;
             if parent_id == Some(class.id) {
-                return Err(format!("class {} cannot parent itself", class.key));
+                return Err(format!("class {} cannot parent itself", class.key).into());
             }
             class.parent = parent_id;
             Ok(())
@@ -647,10 +759,9 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             if ids.len() != class.attributes.len()
                 || ids.iter().any(|id| !class.attributes.contains(id))
             {
-                return Err(format!(
-                    "reorder of {} must list the same attributes",
-                    class.key
-                ));
+                return Err(
+                    format!("reorder of {} must list the same attributes", class.key).into(),
+                );
             }
             class.attributes = ids;
             Ok(())
@@ -660,13 +771,15 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             type_key,
             structure,
             group,
-        } => link_attribute(defs, attribute, type_key, structure, group, true),
+        } => link_attribute(defs, attribute, type_key, structure, group, true)
+            .map_err(ApplyError::from),
         ModelChange::DetachAttribute {
             attribute,
             type_key,
             structure,
             group,
-        } => link_attribute(defs, attribute, type_key, structure, group, false),
+        } => link_attribute(defs, attribute, type_key, structure, group, false)
+            .map_err(ApplyError::from),
         ModelChange::UpdateType {
             key,
             language,
@@ -678,7 +791,8 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
             language.as_deref(),
             singular.as_deref(),
             plural.as_deref(),
-        ),
+        )
+        .map_err(ApplyError::from),
         ModelChange::UpdateAttribute {
             key,
             label,
@@ -704,7 +818,8 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Strin
                 filterable: *filterable,
                 sortable: *sortable,
             },
-        ),
+        )
+        .map_err(ApplyError::from),
     }
 }
 
@@ -735,11 +850,13 @@ fn add_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelCh
         let structure = "power_tools".to_owned();
         steps.push(ModelChange::CreateStructure {
             key: structure.clone(),
+            label: String::new(),
         });
         steps.push(ModelChange::CreateGroup {
             structure: structure.clone(),
             group: "tools".into(),
             parent: None,
+            label: String::new(),
         });
         steps.push(ModelChange::CreateClass {
             structure: structure.clone(),
@@ -1130,6 +1247,16 @@ fn class_key(structure: &Structure, id: Option<ClassId>) -> Option<String> {
         .map(|class| class.key.clone())
 }
 
+fn display_label(labels: &BTreeMap<LanguageTag, String>, fallback: &str) -> String {
+    labels
+        .iter()
+        .find(|(tag, _)| tag.as_str() == "en")
+        .or_else(|| labels.iter().next())
+        .map(|(_, label)| label.clone())
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| fallback.to_owned())
+}
+
 fn attribute_keys(defs: &DefinitionSet, ids: &[AttributeId]) -> BTreeSet<String> {
     ids.iter()
         .filter_map(|id| {
@@ -1236,16 +1363,19 @@ mod tests {
             structures: vec![Structure {
                 id: structure,
                 key: "sortiment".into(),
+                labels: BTreeMap::new(),
                 groups: vec![
                     Group {
                         id: tents,
                         key: "talt".into(),
+                        labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![],
                     },
                     Group {
                         id: timber,
                         key: "bygg".into(),
+                        labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![],
                     },
@@ -1345,10 +1475,16 @@ mod tests {
     fn a_second_definition_with_a_different_type_or_unit_is_blocked() {
         let defs = base();
         let text = apply_all(&mut defs.clone(), &[create("weight", "text", None)]);
-        assert!(text.unwrap_err().contains("different type or unit"));
+        assert!(
+            text.unwrap_err()
+                .to_string()
+                .contains("different type or unit")
+        );
         let bare = apply_all(&mut defs.clone(), &[create("weight", "number", None)]);
         assert!(
-            bare.unwrap_err().contains("different type or unit"),
+            bare.unwrap_err()
+                .to_string()
+                .contains("different type or unit"),
             "weight is already a number of family mass"
         );
         let mut same = defs.clone();

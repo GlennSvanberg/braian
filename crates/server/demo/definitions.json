@@ -22,6 +22,16 @@
         { "code": "g", "factor": "1" },
         { "code": "kg", "factor": "1000" }
       ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000012",
+      "key": "co2e",
+      "dimension": "co2e",
+      "base_unit": "kgCO2e",
+      "units": [
+        { "code": "kgCO2e", "factor": "1" },
+        { "code": "gCO2e", "factor": "0.001" }
+      ]
     }
   ],
   "value_lists": [
@@ -44,6 +54,17 @@
         { "code": "gra", "labels": { "sv": "Grå", "en": "Grey", "de": "Grau" } },
         { "code": "gron", "labels": { "sv": "Grön", "en": "Green", "de": "Grün" } },
         { "code": "bla", "labels": { "sv": "Blå", "en": "Blue", "de": "Blau" } }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000022",
+      "key": "eco_label",
+      "labels": { "sv": "Miljömärkning", "en": "Eco label", "de": "Umweltzeichen" },
+      "options": [
+        { "code": "eu_ecolabel", "labels": { "sv": "EU Ecolabel", "en": "EU Ecolabel", "de": "EU Ecolabel" } },
+        { "code": "nordic_swan", "labels": { "sv": "Svanen", "en": "Nordic Swan", "de": "Nordischer Schwan" } },
+        { "code": "fsc", "labels": { "sv": "FSC", "en": "FSC", "de": "FSC" } },
+        { "code": "none", "labels": { "sv": "Ingen", "en": "None", "de": "Keine" } }
       ]
     }
   ],
@@ -155,6 +176,42 @@
       "multiple": false,
       "kind": { "type": "object_ref", "type_key": "artikel" },
       "index": { "searchable": false, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000110",
+      "key": "co2_footprint",
+      "labels": { "sv": "CO2-avtryck", "en": "CO2 footprint", "de": "CO2-Fußabdruck" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000012", "min": "0" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000111",
+      "key": "recyclable",
+      "labels": { "sv": "Återvinningsbar", "en": "Recyclable", "de": "Recycelbar" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "boolean" },
+      "index": { "searchable": false, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000112",
+      "key": "material_origin",
+      "labels": { "sv": "Materialursprung", "en": "Material origin", "de": "Materialherkunft" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 80 },
+      "index": { "searchable": true, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000113",
+      "key": "eco_label",
+      "labels": { "sv": "Miljömärkning", "en": "Eco label", "de": "Umweltzeichen" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "value_list", "list": "eco_label" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
     }
   ],
   "types": [
@@ -212,12 +269,13 @@
     {
       "id": "018f0000-0000-7000-8000-000000000300",
       "key": "sortiment",
+      "labels": { "sv": "eCom", "en": "eCom", "de": "eCom" },
       "groups": [
-        { "id": "018f0000-0000-7000-8000-000000000310", "key": "friluft" },
-        { "id": "018f0000-0000-7000-8000-000000000311", "key": "talt", "parent": "018f0000-0000-7000-8000-000000000310" },
-        { "id": "018f0000-0000-7000-8000-000000000312", "key": "sovsack", "parent": "018f0000-0000-7000-8000-000000000310" },
-        { "id": "018f0000-0000-7000-8000-000000000313", "key": "bygg" },
-        { "id": "018f0000-0000-7000-8000-000000000314", "key": "virke", "parent": "018f0000-0000-7000-8000-000000000313" }
+        { "id": "018f0000-0000-7000-8000-000000000310", "key": "friluft", "labels": { "sv": "Friluft", "en": "Outdoor", "de": "Outdoor" } },
+        { "id": "018f0000-0000-7000-8000-000000000311", "key": "talt", "parent": "018f0000-0000-7000-8000-000000000310", "labels": { "sv": "Tält", "en": "Tents", "de": "Zelte" } },
+        { "id": "018f0000-0000-7000-8000-000000000312", "key": "sovsack", "parent": "018f0000-0000-7000-8000-000000000310", "labels": { "sv": "Sovsäck", "en": "Sleeping bags", "de": "Schlafsäcke" } },
+        { "id": "018f0000-0000-7000-8000-000000000313", "key": "bygg", "labels": { "sv": "Bygg", "en": "Building", "de": "Bau" } },
+        { "id": "018f0000-0000-7000-8000-000000000314", "key": "virke", "parent": "018f0000-0000-7000-8000-000000000313", "labels": { "sv": "Virke", "en": "Timber", "de": "Holz" } }
       ],
       "classes": [
         {
@@ -257,6 +315,35 @@
           "attributes": ["018f0000-0000-7000-8000-000000000105"]
         }
       ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000330",
+      "key": "environment",
+      "labels": { "sv": "Miljö", "en": "Environment", "de": "Umwelt" },
+      "groups": [
+        {
+          "id": "018f0000-0000-7000-8000-000000000331",
+          "key": "climate",
+          "labels": { "sv": "Klimat", "en": "Climate", "de": "Klima" },
+          "attributes": ["018f0000-0000-7000-8000-000000000110"]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000332",
+          "key": "materials",
+          "labels": { "sv": "Material", "en": "Materials", "de": "Materialien" },
+          "attributes": [
+            "018f0000-0000-7000-8000-000000000111",
+            "018f0000-0000-7000-8000-000000000112"
+          ]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000333",
+          "key": "certifications",
+          "labels": { "sv": "Certifieringar", "en": "Certifications", "de": "Zertifizierungen" },
+          "attributes": ["018f0000-0000-7000-8000-000000000113"]
+        }
+      ],
+      "classes": []
     }
   ]
 }

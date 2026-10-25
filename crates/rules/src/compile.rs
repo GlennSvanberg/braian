@@ -585,9 +585,6 @@ fn check(defs: &DefinitionSet, errors: &mut Vec<DefinitionError>) {
     for structure in &defs.structures {
         remember(structure.id.as_uuid(), "structure", errors);
         unique_key(&mut structure_keys, &structure.key, "structure", errors);
-        if structure.groups.is_empty() {
-            errors.push(error(format!("structure {} has no groups", structure.key)));
-        }
         let mut group_keys = HashSet::new();
         let mut group_ids = HashSet::new();
         for group in &structure.groups {
@@ -937,16 +934,19 @@ mod tests {
         defs.structures.push(Structure {
             id: StructureId::from_uuid(id(12)),
             key: "catalog".to_owned(),
+            labels: BTreeMap::new(),
             groups: vec![
                 Group {
                     id: root,
                     key: "root".to_owned(),
+                    labels: BTreeMap::new(),
                     parent: Some(child),
                     attributes: vec![],
                 },
                 Group {
                     id: child,
                     key: "child".to_owned(),
+                    labels: BTreeMap::new(),
                     parent: Some(root),
                     attributes: vec![],
                 },
@@ -1102,16 +1102,19 @@ mod tests {
         defs.structures.push(Structure {
             id: structure,
             key: "catalog".to_owned(),
+            labels: BTreeMap::new(),
             groups: vec![
                 Group {
                     id: root,
                     key: "root".to_owned(),
+                    labels: BTreeMap::new(),
                     parent: None,
                     attributes: vec![],
                 },
                 Group {
                     id: child,
                     key: "child".to_owned(),
+                    labels: BTreeMap::new(),
                     parent: Some(root),
                     attributes: vec![],
                 },
@@ -1265,22 +1268,26 @@ mod tests {
         defs.structures.push(Structure {
             id: structure,
             key: "tools".into(),
+            labels: BTreeMap::new(),
             groups: vec![
                 Group {
                     id: root,
                     key: "root".into(),
+                    labels: BTreeMap::new(),
                     parent: None,
                     attributes: vec![],
                 },
                 Group {
                     id: child,
                     key: "child".into(),
+                    labels: BTreeMap::new(),
                     parent: Some(root),
                     attributes: vec![],
                 },
                 Group {
                     id: other,
                     key: "other".into(),
+                    labels: BTreeMap::new(),
                     parent: None,
                     attributes: vec![],
                 },
@@ -1364,16 +1371,19 @@ mod tests {
                 Structure {
                     id: assortment,
                     key: "assortment".into(),
+                    labels: BTreeMap::new(),
                     groups: vec![
                         Group {
                             id: outdoor,
                             key: "outdoor".into(),
+                            labels: BTreeMap::new(),
                             parent: None,
                             attributes: vec![weight.id],
                         },
                         Group {
                             id: tents,
                             key: "tents".into(),
+                            labels: BTreeMap::new(),
                             parent: Some(outdoor),
                             attributes: vec![length.id],
                         },
@@ -1383,9 +1393,11 @@ mod tests {
                 Structure {
                     id: campaigns,
                     key: "campaigns".into(),
+                    labels: BTreeMap::new(),
                     groups: vec![Group {
                         id: summer,
                         key: "summer".into(),
+                        labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![weight.id, campaign_only.id],
                     }],
@@ -1470,16 +1482,19 @@ mod tests {
             structures: vec![Structure {
                 id: assortment,
                 key: "assortment".into(),
+                labels: BTreeMap::new(),
                 groups: vec![
                     Group {
                         id: outdoor,
                         key: "outdoor".into(),
+                        labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![],
                     },
                     Group {
                         id: tents,
                         key: "tents".into(),
+                        labels: BTreeMap::new(),
                         parent: Some(outdoor),
                         attributes: vec![],
                     },

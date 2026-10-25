@@ -5,8 +5,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use braian_model::{
     Attribute, AttributeId, DefinitionSet, ObjectType, Structure, StructureId, TypeId, UnitFamily,
-    UnitFamilyId, Uuid, delete_attribute, delete_structure, delete_type, delete_unit_family,
-    set_languages, upsert_attribute, upsert_structure, upsert_type, upsert_unit_family,
+    UnitFamilyId, Uuid, delete_attribute, delete_type, delete_unit_family, set_languages,
+    upsert_attribute, upsert_structure, upsert_type, upsert_unit_family,
 };
 use braian_rules::CompiledModel;
 use braian_store::{Actor, Error, WriteReceipt};
@@ -460,6 +460,15 @@ pub async fn put_structure(
     body["id"] = serde_json::json!(structure_id);
     let structure: Structure =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
+    if let Some(previous) = defs.structures.iter().find(|item| item.id == structure_id) {
+        let removed: Vec<_> = previous
+            .groups
+            .iter()
+            .filter(|group| !structure.groups.iter().any(|item| item.id == group.id))
+            .map(|group| group.id)
+            .collect();
+        crate::structures::reject_removed_groups(&state, &removed).await?;
+    }
     let (defs, _) = commit(&state, &identity.actor, |defs| {
         upsert_structure(defs, structure.clone());
         Ok(())
@@ -473,7 +482,11 @@ pub async fn put_structure(
     path = "/v1/structures/{id}",
     tag = "definitions",
     params(("id" = String, Path, description = "Structure key or id")),
-    responses((status = 200, description = "Deleted", body = DefinitionWrite)),
+    responses(
+        (status = 200, description = "Deleted", body = DefinitionWrite),
+        (status = 404, description = "Unknown structure", body = crate::problem::Problem),
+        (status = 422, description = "structure_occupied lists how many objects are still placed in the structure", body = crate::problem::Problem)
+    ),
     security(("bearer" = []))
 )]
 pub async fn delete_structure_route(
@@ -481,23 +494,11 @@ pub async fn delete_structure_route(
     Auth(identity): Auth,
     Path(id): Path<String>,
 ) -> Result<Json<DefinitionWrite>, Problem> {
-    let defs = state.store.definition_set().await.map_err(store_status)?;
-    let structure_id = defs
-        .structures
-        .iter()
-        .find(|item| same_ref(&item.id.as_uuid().to_string(), &item.key, &id))
-        .map(|item| item.id)
-        .ok_or_else(|| missing("structure", &id))?;
-    let (defs, receipt) = commit(&state, &identity.actor, |defs| {
-        if !delete_structure(defs, structure_id) {
-            return Err(missing("structure", &id));
-        }
-        Ok(())
-    })
-    .await?;
+    let (model_revision, seq) =
+        crate::structures::delete_structure_guarded(&state, &identity.actor, &id).await?;
     Ok(Json(DefinitionWrite {
-        model_revision: defs.model_revision,
-        seq: receipt.last_seq,
+        model_revision,
+        seq,
     }))
 }
 

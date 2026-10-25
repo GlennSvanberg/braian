@@ -12,6 +12,7 @@ mod language;
 mod model_change;
 mod object;
 mod patch;
+pub mod structure;
 
 pub use definition::{
     Attribute, AttributeKind, Class, DefinitionSet, Group, IndexFlags, NumberValue, ObjectType,
@@ -28,8 +29,10 @@ pub use id::{
 };
 pub use language::{LanguageTag, LanguageTagError};
 pub use model_change::{
-    ChangeImpact, ModelChange, apply_all, diff as model_diff, interpret, power_tools, preview,
+    ApplyError, ChangeImpact, ModelChange, apply_all, diff as model_diff, interpret, power_tools,
+    preview,
 };
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};
+pub use structure::{GroupRemoval, StructureError, StructureErrorCode};
 pub use uuid::Uuid;
