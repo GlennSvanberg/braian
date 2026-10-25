@@ -234,17 +234,56 @@ POST {{host}}/v1/objects
 Authorization: Bearer {{agent}}
 Content-Type: application/json
 { "type": "item", "values": { "sku": "SKU-AGENT" } }
+HTTP 202
+[Captures]
+proposal: jsonpath "$.proposal_id"
+[Asserts]
+jsonpath "$.needs_approval" == true
+jsonpath "$.source" == "agent"
+
+GET {{host}}/v1/objects?q=SKU-AGENT
+Authorization: Bearer {{token}}
+HTTP 200
+[Asserts]
+jsonpath "$.objects" count == 0
+
+POST {{host}}/v1/proposals/{{proposal}}/accept
+Authorization: Bearer {{agent}}
+Content-Type: application/json
+{}
+HTTP 403
+[Asserts]
+jsonpath "$.code" == "agent_cannot_accept"
+
+POST {{host}}/v1/proposals/{{proposal}}/accept
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{}
+HTTP 200
+[Asserts]
+jsonpath "$.failed" count == 0
+
+GET {{host}}/v1/objects?q=SKU-AGENT
+Authorization: Bearer {{token}}
 HTTP 200
 [Captures]
-agent_object: jsonpath "$.id"
+agent_object: jsonpath "$.objects[0].id"
+[Asserts]
+jsonpath "$.objects[0].key" == "SKU-AGENT"
 
 GET {{host}}/v1/objects/{{agent_object}}/changes
 Authorization: Bearer {{token}}
 HTTP 200
 [Asserts]
 jsonpath "$[0].op" == "create"
-jsonpath "$[0].actor" == "bot"
-jsonpath "$[0].on_behalf_of" == "ada"
+jsonpath "$[0].actor" == "ada"
+
+DELETE {{host}}/v1/objects/{{agent_object}}
+Authorization: Bearer {{agent}}
+If-Match: "1"
+HTTP 403
+[Asserts]
+jsonpath "$.code" == "needs_approval"
 
 DELETE {{host}}/v1/objects/{{agent_object}}
 Authorization: Bearer {{token}}

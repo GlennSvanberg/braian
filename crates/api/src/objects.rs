@@ -6,14 +6,14 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use braian_model::{Object, ObjectId, Uuid, ValidationError};
 use braian_store::{
-    Conflict, Error, ObjectOp, ObjectProjection, PrincipalId, PrincipalKind, StoredObject,
-    WriteReceipt,
+    Conflict, Error, ObjectOp, ObjectProjection, PrincipalId, PrincipalKind, ProposalRow,
+    StoredObject, WriteReceipt,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::auth::Auth;
+use crate::auth::{Auth, Identity};
 use crate::headers::{etag, if_match, require_if_match};
 use crate::problem::{ConflictBody, Problem, store_status};
 use crate::state::{AppState, CachedModel};
@@ -93,6 +93,14 @@ pub struct DeletedResponse {
     pub seq: i64,
 }
 
+/// A write that was filed for a person to accept. Nothing was saved.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Suggestion {
+    pub proposal_id: Uuid,
+    pub needs_approval: bool,
+    pub source: String,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ChangeResponse {
     pub seq: i64,
@@ -122,6 +130,7 @@ pub(crate) struct IncludeQuery {
     request_body(content = CreateObject),
     responses(
         (status = 200, description = "Created object", body = ObjectResponse),
+        (status = 202, description = "Filed as a suggestion. An agent or import does not save.", body = Suggestion),
         (status = 409, description = "Duplicate key", body = crate::problem::Problem),
         (status = 422, description = "Validation failed", body = crate::problem::Problem)
     ),
@@ -149,6 +158,21 @@ pub async fn create_object(
     let errors = cached.model.validate(&object);
     if !errors.is_empty() {
         return Err(Problem::validation(errors, Vec::new()));
+    }
+    if !identity.may_commit() {
+        return file_suggestion(
+            &state,
+            &identity,
+            SuggestionDraft {
+                title: "Create object",
+                object_id: None,
+                object_key: wire_key(&body.values),
+                type_key: Some(body.object_type.clone()),
+                base_version: None,
+                patch: serde_json::json!({ "values": body.values, "groups": body.groups }),
+            },
+        )
+        .await;
     }
     let receipt = state
         .store
@@ -269,6 +293,7 @@ pub async fn batch_get(
     request_body(content = PatchObject),
     responses(
         (status = 200, description = "Updated object", body = ObjectResponse),
+        (status = 202, description = "Filed as a suggestion. An agent or import does not save.", body = Suggestion),
         (status = 409, description = "Conflict", body = crate::problem::Problem),
         (status = 422, description = "Validation failed", body = crate::problem::Problem),
         (status = 428, description = "If-Match is required", body = crate::problem::Problem)
@@ -291,6 +316,21 @@ pub async fn patch_object(
         let report = cached.model.validate_patch(&stored.object, &patch);
         if !report.errors.is_empty() {
             return Err(Problem::validation(report.errors, report.warnings));
+        }
+        if !identity.may_commit() {
+            return file_suggestion(
+                &state,
+                &identity,
+                SuggestionDraft {
+                    title: "Edit object",
+                    object_id: Some(id.as_uuid()),
+                    object_key: Some(stored.key.clone()),
+                    type_key: Some(type_key(&cached.defs, stored.object.type_id)),
+                    base_version: Some(i64::try_from(base).unwrap_or(i64::MAX)),
+                    patch: serde_json::json!({ "values": body.values, "groups": body.groups }),
+                },
+            )
+            .await;
         }
         match state
             .store
@@ -357,6 +397,7 @@ pub async fn patch_object(
     ),
     responses(
         (status = 200, description = "Deleted", body = DeletedResponse),
+        (status = 403, description = "An agent or import cannot delete", body = crate::problem::Problem),
         (status = 409, description = "Conflict", body = crate::problem::Problem),
         (status = 410, description = "Already deleted", body = crate::problem::Problem)
     ),
@@ -368,6 +409,9 @@ pub async fn delete_object(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<DeletedResponse>, Problem> {
+    if !identity.may_commit() {
+        return Err(crate::auth::commit_forbidden());
+    }
     let id = ObjectId::from_uuid(id);
     let base = if_match(&headers)?;
     let receipt = match state
@@ -404,6 +448,63 @@ pub async fn delete_object(
         version,
         seq: receipt.last_seq,
     }))
+}
+
+fn wire_key(values: &BTreeMap<String, Value>) -> Option<String> {
+    ["sku", "nummer"]
+        .into_iter()
+        .find_map(|key| values.get(key).and_then(Value::as_str).map(str::to_owned))
+}
+
+struct SuggestionDraft {
+    title: &'static str,
+    object_id: Option<Uuid>,
+    object_key: Option<String>,
+    type_key: Option<String>,
+    base_version: Option<i64>,
+    patch: Value,
+}
+
+async fn file_suggestion(
+    state: &AppState,
+    identity: &Identity,
+    draft: SuggestionDraft,
+) -> Result<Response, Problem> {
+    let id = Uuid::now_v7();
+    let source = crate::auth::suggestion_source(identity.kind);
+    let row = ProposalRow {
+        id: Uuid::now_v7(),
+        object_id: draft.object_id,
+        object_key: draft.object_key,
+        type_key: draft.type_key,
+        base_version: draft.base_version,
+        patch: draft.patch,
+        status: "pending".into(),
+        conflict: false,
+        position: 0,
+    };
+    state
+        .store
+        .create_proposal(
+            id,
+            draft.title,
+            source,
+            identity.actor.actor,
+            identity.actor.on_behalf_of,
+            false,
+            &[row],
+        )
+        .await
+        .map_err(store_status)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(Suggestion {
+            proposal_id: id,
+            needs_approval: true,
+            source: source.to_owned(),
+        }),
+    )
+        .into_response())
 }
 
 fn note(state: &AppState, op: &str, id: Uuid, version: u64, seq: i64, type_key: &str) {

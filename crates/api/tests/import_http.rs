@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use tower::ServiceExt;
 
-const TOKENS: &str = "ada:human:token-ada;bot:agent@ada:token-bot";
+const TOKENS: &str = "ada:human:token-ada;bot:agent@ada:token-bot;feed:integration:token-import";
 const HUMAN: &str = "token-ada";
 const AGENT: &str = "token-bot";
 
@@ -242,6 +242,17 @@ async fn upload_maps_diffs_and_saves_with_progress_events() {
         "POST",
         &format!("/v1/imports/{id}/save"),
         AGENT,
+        &[("content-type", "application/json")],
+        Some(br#"{"skip_failed":true}"#.to_vec()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{forbidden}");
+    assert_eq!(forbidden["code"], "needs_approval");
+    let (status, forbidden) = call(
+        &app,
+        "POST",
+        &format!("/v1/imports/{id}/save"),
+        "token-import",
         &[("content-type", "application/json")],
         Some(br#"{"skip_failed":true}"#.to_vec()),
     )

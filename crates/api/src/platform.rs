@@ -2,7 +2,7 @@
 //! search, jobs, proposals, history and the live stream.
 //!
 //! Buttons, the command palette, the in-app agent and the MCP endpoint call
-//! [`execute`]. An agent principal never writes directly; the call becomes a
+//! [`execute`]. An agent or import never writes directly; the call becomes a
 //! proposal the person can accept in full or in part.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -664,8 +664,7 @@ pub(crate) fn require(identity: &Identity, role: Role) -> Result<(), Problem> {
 }
 
 fn agent_must_propose(identity: &Identity, op: &Operation) -> bool {
-    identity.kind == braian_store::PrincipalKind::Agent
-        && matches!(op.name, "create_object" | "patch_object" | "set_relation")
+    !identity.may_commit() && matches!(op.name, "create_object" | "patch_object" | "set_relation")
 }
 
 async fn login(
@@ -2018,6 +2017,7 @@ async fn save_assortment(
     Json(body): Json<AssortmentBody>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Editor)?;
+    crate::auth::require_commit(&identity)?;
     let Some(owner) = identity.user_id else {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
@@ -2167,13 +2167,7 @@ async fn bulk(
     Json(body): Json<BulkBody>,
 ) -> Result<(StatusCode, Json<Value>), Problem> {
     require(&identity, Role::Editor)?;
-    if identity.kind == braian_store::PrincipalKind::Agent {
-        return Err(Problem::new(
-            StatusCode::FORBIDDEN,
-            "needs_approval",
-            "an agent files a proposal instead of a bulk write",
-        ));
-    }
+    crate::auth::require_commit(&identity)?;
     let Some(reservation) = state.bulk.try_reserve() else {
         return Err(Problem::new(
             StatusCode::TOO_MANY_REQUESTS,
@@ -2463,11 +2457,11 @@ async fn accept_proposal(
     Json(body): Json<AcceptBody>,
 ) -> Result<AcceptReply, Problem> {
     require(&identity, Role::Editor)?;
-    if identity.kind == braian_store::PrincipalKind::Agent {
+    if !identity.may_commit() {
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
             "agent_cannot_accept",
-            "an agent proposes; a person accepts",
+            "an agent or import proposes; a person accepts",
         ));
     }
     let proposal = state
@@ -3244,7 +3238,7 @@ async fn set_relation(
     Json(body): Json<RelationBody>,
 ) -> Result<StatusCode, Problem> {
     require(&identity, Role::Editor)?;
-    if identity.kind == braian_store::PrincipalKind::Agent {
+    if !identity.may_commit() {
         let row = ProposalRow {
             id: Uuid::now_v7(),
             object_id: Some(id),
@@ -3261,7 +3255,7 @@ async fn set_relation(
             .create_proposal(
                 Uuid::now_v7(),
                 "Relation",
-                "agent",
+                crate::auth::suggestion_source(identity.kind),
                 identity.actor.actor,
                 identity.actor.on_behalf_of,
                 false,
@@ -3531,11 +3525,11 @@ async fn run_operation(
     if op.name.starts_with("ui.") || is_layout_command(op.name) {
         return Ok(ui_command(op.name, args));
     }
-    if identity.kind == braian_store::PrincipalKind::Agent && name == "accept_proposal" {
+    if !identity.may_commit() && name == "accept_proposal" {
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
             "agent_cannot_accept",
-            "an agent proposes; a person accepts",
+            "an agent or import proposes; a person accepts",
         ));
     }
     let agent_write =
@@ -3877,7 +3871,7 @@ async fn propose_operation(
                 .create_proposal(
                     id,
                     "Agent proposal",
-                    "agent",
+                    crate::auth::suggestion_source(identity.kind),
                     identity.actor.actor,
                     identity.actor.on_behalf_of,
                     false,
