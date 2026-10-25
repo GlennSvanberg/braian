@@ -7,6 +7,7 @@ import { Chart } from '@tanstack/react-charts'
 import { ChevronDown, ChevronRight, Moon, Sun } from 'lucide-react'
 import { api, type Json } from './api'
 import { humanizeLive, objectIdFromLive } from './activity'
+import { SearchRefresh } from './live-refresh'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
 import { Kbd } from './components/ui/kbd'
@@ -153,25 +154,29 @@ export function Shell() {
   useEffect(() => {
     if (!booted || !me.isSuccess) return
     const source = new EventSource('/v1/stream', { withCredentials: true })
-    let pending: ReturnType<typeof setTimeout> | undefined
+    const refresh = new SearchRefresh(
+      () => {
+        void queryClient.invalidateQueries({ queryKey: ['objects'] })
+      },
+      (id) => {
+        void queryClient.invalidateQueries({ queryKey: ['object', id] })
+        void queryClient.invalidateQueries({ queryKey: ['object-ref', id] })
+        void queryClient.invalidateQueries({ queryKey: ['history', id] })
+      },
+    )
     source.onopen = () => setLiveState('open')
     source.onmessage = (event) => {
       setLiveState('message')
       const id = objectIdFromLive(event.data)
       if (id) flashObject(id)
       push(humanizeLive(event.data))
-      clearTimeout(pending)
-      pending = setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: ['objects'] })
-        void queryClient.invalidateQueries({ queryKey: ['object'] })
-        void queryClient.invalidateQueries({ queryKey: ['history'] })
-      }, 200)
+      refresh.onEvent(event.data)
     }
     source.onerror = () => {
       if (source.readyState === EventSource.CLOSED) push(copy.offline)
     }
     return () => {
-      clearTimeout(pending)
+      refresh.dispose()
       source.close()
     }
   }, [booted, me.isSuccess, queryClient])

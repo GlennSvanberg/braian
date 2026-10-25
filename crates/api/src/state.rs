@@ -17,6 +17,7 @@ const BULK_FLUSH_EVENTS: u64 = 200;
 const BULK_FLUSH_EVERY: Duration = Duration::from_millis(200);
 
 use crate::auth::Identity;
+use crate::bulk_gate::BulkGate;
 use crate::problem::{Problem, store_status};
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct AppState {
     pub search: Option<Typesense>,
     pub live: broadcast::Sender<Value>,
     pub cookie_secure: bool,
+    pub bulk: BulkGate,
     seen: Arc<Mutex<SeqSeen>>,
     live_tx: mpsc::Sender<Value>,
     index_tx: Option<mpsc::Sender<IndexJob>>,
@@ -184,6 +186,7 @@ impl AppState {
             search,
             live,
             cookie_secure,
+            bulk: BulkGate::from_env(),
             seen: Arc::new(Mutex::new(SeqSeen::new(SEQ_SEEN_CAP))),
             live_tx,
             index_tx,

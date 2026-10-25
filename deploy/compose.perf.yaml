@@ -1,0 +1,35 @@
+# CPU pins for a perf or deploy host with 8 vCPUs.
+# Dev `just up` does not load this file.
+#
+#   docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres redpanda typesense
+#
+# Cores 0-2 Postgres, 3 Braian (taskset on the host), 4 Redpanda,
+# 5 the load generator, 6-7 Typesense. See docs/dev.md.
+
+services:
+  postgres:
+    cpuset: "0,1,2"
+    cpus: 3.0
+
+  redpanda:
+    cpuset: "4"
+    cpus: 1.0
+
+  typesense:
+    cpuset: "6,7"
+    cpus: 2.0
+    command:
+      - --data-dir=/data
+      - --api-key=${TYPESENSE_API_KEY:?sätt i .env}
+      - --enable-cors
+      - --thread-pool-size=2
+
+  # Optional. Build or tag an image that contains `braian-bench`, then:
+  #   docker compose -f compose.yaml -f deploy/compose.perf.yaml --profile perf run --rm perf-load
+  perf-load:
+    profiles: ["perf"]
+    image: ${BRAIAN_PERF_IMAGE:-braian-bench:local}
+    cpuset: "5"
+    cpus: 1.0
+    network_mode: host
+    entrypoint: ["braian-bench", "perf-load"]

@@ -540,6 +540,7 @@ async fn seed_catalog(
         source: "seed-catalog".into(),
         ..actor.clone()
     };
+    let store = store.on_bulk();
     let batch = store.open_batch(&bulk).await?;
     let mut pending = Vec::new();
     let mut inserted = 0u32;

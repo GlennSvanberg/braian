@@ -1016,13 +1016,7 @@ impl Store {
             .query_one(
                 "SELECT count(DISTINCT v.object_id)::bigint
                  FROM object_values v
-                 WHERE v.\"values\" ? $1
-                   AND NOT EXISTS (
-                     SELECT 1 FROM object_values newer
-                     WHERE newer.object_id = v.object_id
-                       AND newer.part = v.part
-                       AND newer.version > v.version
-                   )",
+                 WHERE v.is_latest AND v.\"values\" ? $1",
                 &[&attribute_id.to_string()],
             )
             .await?;
@@ -1039,13 +1033,7 @@ impl Store {
             .query(
                 "SELECT DISTINCT v.object_id
                  FROM object_values v
-                 WHERE v.\"values\" ? $1
-                   AND NOT EXISTS (
-                     SELECT 1 FROM object_values newer
-                     WHERE newer.object_id = v.object_id
-                       AND newer.part = v.part
-                       AND newer.version > v.version
-                   )
+                 WHERE v.is_latest AND v.\"values\" ? $1
                  LIMIT $2",
                 &[&attribute_id.to_string(), &limit],
             )

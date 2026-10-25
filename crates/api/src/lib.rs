@@ -7,6 +7,7 @@
 //! Objects are created, patched, read and deleted with validation always on.
 
 mod auth;
+mod bulk_gate;
 mod definitions;
 mod headers;
 mod model_proposal;
@@ -78,6 +79,7 @@ pub fn into_router(state: AppState) -> axum::Router {
         )
         .route("/v1/languages", put(definitions::put_languages))
         .route("/v1/objects", post(objects::create_object))
+        .route("/v1/objects:batchGet", post(objects::batch_get))
         .route(
             "/v1/objects/{id}",
             get(objects::get_object)
