@@ -33,7 +33,7 @@ Postgres is the source of truth. A relay publishes each change to Redpanda, and 
 
 ## Architecture
 
-Writers share one operation layer. Commits land in Postgres. Logical replication feeds the relay, which publishes interactive and bulk lanes on separate Redpanda topics so a fast edit does not wait on a bulk batch. The indexer updates Typesense. Search returns to the UI. The same topics drive SSE back to open UIs and webhooks out to other systems. The landing page calls that outbound stream `/subscribe`; the routes are `GET /v1/stream` and `/v1/webhooks`.
+Writers share one operation layer. Commits land in Postgres. Logical replication feeds the relay, which publishes interactive and bulk lanes on separate Redpanda topics so a fast edit does not wait on a bulk batch. The indexer updates Typesense. Search returns to the UI. The same topics drive SSE back to open UIs and webhooks out to other systems. The routes are `GET /v1/stream` and `/v1/webhooks`.
 
 ```mermaid
 flowchart LR

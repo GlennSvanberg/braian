@@ -28,7 +28,7 @@ function entry(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       handler(html, ctx) {
-        const src = ctx.server ? '/src/main.tsx' : '/src/theme.ts'
+        const src = ctx.server ? '/src/main.tsx' : '/src/client.ts'
         return html.replace('<!--entry-->', `<script type="module" src="${src}"></script>`)
       },
     },
