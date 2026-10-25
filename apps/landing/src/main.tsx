@@ -1,8 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
-import './styles.css'
-import './theme'
+import { bindMotion } from './client'
 
 const root = document.getElementById('root')
 if (root) {
@@ -11,4 +10,5 @@ if (root) {
       <App />
     </StrictMode>,
   )
+  window.setTimeout(bindMotion, 50)
 }

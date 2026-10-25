@@ -21,9 +21,11 @@ if (!html.includes(placeholder)) {
 if (!markup.includes('Try the demo') || !markup.includes('View on GitHub')) {
   throw new Error('prerendered page is missing a call to action')
 }
-const describedAsChatbot = markup.replace(/not a chatbot/gi, '')
-if (/chatbot/i.test(describedAsChatbot)) {
+if (/chatbot/i.test(markup)) {
   throw new Error('prerendered page describes the agent as a chatbot')
+}
+if (!markup.includes('Measured on an 8 vCPU VPS')) {
+  throw new Error('performance figures are missing their hardware footnote')
 }
 
 writeFileSync(indexPath, html.replace(placeholder, `<div id="root">${markup}</div>`))
