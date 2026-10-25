@@ -2,6 +2,8 @@ import { score, type FrecencyEntry } from './frecency'
 
 export type PaletteGroup = 'recent' | 'best' | 'object' | 'views' | 'search' | 'ask'
 
+export type PaletteChip = { text: string; tone: 'neutral' | 'ok' | 'warn' | 'danger' | 'info' }
+
 export type PaletteItem = {
   id: string
   group: PaletteGroup
@@ -10,6 +12,7 @@ export type PaletteItem = {
   kbd?: string
   shortcut?: string
   sourceId?: string
+  chips?: PaletteChip[]
 }
 
 export const groupTitle: Record<Exclude<PaletteGroup, 'ask'>, string> = {

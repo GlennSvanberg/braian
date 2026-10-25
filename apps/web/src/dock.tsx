@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Maximize2, Minimize2, MoreHorizontal, Plus, X } from 'lucide-react'
+import { ViewGlyph } from './chips'
 import { Kbd } from './components/ui/kbd'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
 import { viewDisplayTitle } from './demo-labels'
 import { copy } from './i18n'
 import {
@@ -28,11 +30,13 @@ type Hover =
   | { kind: 'edge'; zone: Exclude<Zone, 'center'> }
   | { kind: 'pane'; anchor: string; zone: Zone; tabIndex?: number }
 
-type Drag = { view: string; title: string; x: number; y: number; hover: Hover | null }
+type Drag = { view: string; title: string; type: string; x: number; y: number; hover: Hover | null }
 
 const EDGE = 10
 const PREVIEW_INSET = 4
-const GHOST_OFFSET = 12
+/** Bottom-right of the pointer, clear of the centred zone chip. */
+const GHOST_X = 18
+const GHOST_Y = 22
 const EDGE_SHARE = 0.3
 const SPLIT_GAP = 6
 
@@ -100,6 +104,7 @@ export function WorkspaceDock({
   }
 
   return (
+    <TooltipProvider delayDuration={400} disableHoverableContent>
     <div
       ref={rootRef}
       className={drag ? 'dock-root dragging' : 'dock-root'}
@@ -136,8 +141,9 @@ export function WorkspaceDock({
       ) : null}
       {drag && typeof document !== 'undefined'
         ? createPortal(
-            <div className="drag-ghost" data-testid="drag-ghost" style={{ left: drag.x + GHOST_OFFSET, top: drag.y + GHOST_OFFSET }}>
-              {drag.title}
+            <div className="drag-ghost" data-testid="drag-ghost" style={{ left: drag.x + GHOST_X, top: drag.y + GHOST_Y }}>
+              <ViewGlyph type={drag.type} />
+              <span>{drag.title}</span>
             </div>,
             document.body,
           )
@@ -145,6 +151,7 @@ export function WorkspaceDock({
       {menu ? (
         <ViewMenu
           menu={menu}
+          zoomed={doc.zoom === menu.view}
           onClose={() => setMenu(null)}
           onRun={(name, args) => {
             setMenu(null)
@@ -158,6 +165,7 @@ export function WorkspaceDock({
         />
       ) : null}
     </div>
+    </TooltipProvider>
   )
 }
 
@@ -284,14 +292,16 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
     if (event.target instanceof Element && event.target.closest('.tab-x')) return
     const startX = event.clientX
     const startY = event.clientY
+    const meta = frame.viewList.find((view) => view.id === id)
     const title = titleOf(frame.viewList, id)
+    const type = meta?.type ?? ''
     let started = false
     const move = (ev: PointerEvent) => {
       if (!started && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return
       started = true
       dragged.current = true
       const hoverAt = frame.rootRef.current ? hitTest(frame.rootRef.current, ev.clientX, ev.clientY, id) : null
-      const next: Drag = { view: id, title, x: ev.clientX, y: ev.clientY, hover: hoverAt }
+      const next: Drag = { view: id, title, type, x: ev.clientX, y: ev.clientY, hover: hoverAt }
       frame.dragRef.current = next
       frame.onDrag(next)
     }
@@ -322,41 +332,51 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
     >
       <div className="pane-tabs">
         {leaf.views.map((id) => (
-          <button
-            key={id}
-            type="button"
-            data-tab={id}
-            className={id === activeId ? 'pane-tab active' : 'pane-tab'}
-            onClick={() => {
-              if (dragged.current) {
-                dragged.current = false
-                return
-              }
-              frame.commit(activateDoc(frame.docRef.current, id))
-            }}
-            onPointerDown={(event) => beginDrag(event, id)}
-            onMouseDown={(event) => {
-              if (event.button === 1) {
-                event.preventDefault()
-                frame.run('close_view', { view: id })
-              }
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault()
-              frame.onMenu({ x: event.clientX, y: event.clientY, view: id })
-            }}
-          >
-            <span>{titleOf(frame.viewList, id)}</span>
-            <span
-              className="tab-x"
-              onClick={(event) => {
-                event.stopPropagation()
-                frame.run('close_view', { view: id })
-              }}
-            >
-              <X size={12} aria-hidden="true" />
-            </span>
-          </button>
+          <Tooltip key={id}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-tab={id}
+                className={id === activeId ? 'pane-tab active' : 'pane-tab'}
+                onClick={() => {
+                  if (dragged.current) {
+                    dragged.current = false
+                    return
+                  }
+                  frame.commit(activateDoc(frame.docRef.current, id))
+                }}
+                onDoubleClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  dragged.current = false
+                  frame.run('zoom', { view: id })
+                }}
+                onPointerDown={(event) => beginDrag(event, id)}
+                onMouseDown={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault()
+                    frame.run('close_view', { view: id })
+                  }
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  frame.onMenu({ x: event.clientX, y: event.clientY, view: id })
+                }}
+              >
+                <span>{titleOf(frame.viewList, id)}</span>
+                <span
+                  className="tab-x"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    frame.run('close_view', { view: id })
+                  }}
+                >
+                  <X size={12} aria-hidden="true" />
+                </span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{frame.doc.zoom === id ? copy.doubleClickRestore : copy.doubleClickMaximize}</TooltipContent>
+          </Tooltip>
         ))}
         <div className="pane-chrome">
           <button type="button" className="icon-btn" aria-label={copy.addView} onClick={() => activeId && frame.onAddView(activeId)}>
@@ -370,15 +390,26 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
           >
             <MoreHorizontal size={14} aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            className="icon-btn"
-            data-testid="pane-maximize"
-            aria-label={frame.doc.zoom ? copy.restore : copy.maximize}
-            onClick={() => activeId && frame.run('zoom', { view: activeId })}
-          >
-            {frame.doc.zoom ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="icon-btn"
+                data-testid="pane-maximize"
+                aria-label={frame.doc.zoom ? copy.restore : copy.maximize}
+                aria-keyshortcuts="Control+Alt+Z"
+                onClick={() => activeId && frame.run('zoom', { view: activeId })}
+              >
+                {frame.doc.zoom ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <span>{frame.doc.zoom ? copy.restore : copy.maximize}</span>
+              <Kbd>Ctrl</Kbd>
+              <Kbd>Alt</Kbd>
+              <Kbd>Z</Kbd>
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
       <div className="pane-body">
@@ -395,11 +426,13 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
 
 function ViewMenu({
   menu,
+  zoomed,
   onClose,
   onRun,
   onAdd,
 }: {
   menu: { x: number; y: number; view: string }
+  zoomed: boolean
   onClose: () => void
   onRun: (name: string, args?: Record<string, unknown>) => void
   onAdd: () => void
@@ -439,7 +472,7 @@ function ViewMenu({
       {item('move_view_right', copy.moveRight, ['Ctrl', 'Alt', '→'])}
       {item('move_view_up', copy.moveUp, ['Ctrl', 'Alt', '↑'])}
       {item('move_view_down', copy.moveDown, ['Ctrl', 'Alt', '↓'])}
-      {item('zoom', menu ? copy.maximize : copy.maximize, ['Ctrl', 'Alt', 'Z'])}
+      {item('zoom', zoomed ? copy.restore : copy.maximize, ['Ctrl', 'Alt', 'Z'])}
       {item('close_view', copy.closeView, ['Ctrl', 'Alt', 'W'])}
     </div>
   )
