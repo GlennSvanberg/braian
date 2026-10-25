@@ -308,6 +308,7 @@ export function CommandPalette({
     }
     if (rows.length === 0 || mode === 'ai') return
     event.preventDefault()
+    event.stopPropagation()
     if (event.key === 'Enter') {
       const chosen = active == null ? 0 : active
       const item = rows[chosen]
@@ -372,6 +373,7 @@ export function CommandPalette({
         className={mode === 'ai' ? 'ai-panel' : undefined}
         shouldFilter={false}
         loop={false}
+        disablePointerSelection
         value={selected == null ? '' : rows[selected]?.id ?? ''}
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDownCapture={onKeyDown}
@@ -444,7 +446,7 @@ export function CommandPalette({
                         key={row.id}
                         value={row.id}
                         className={index === selected ? `hit on${row.group === 'ask' ? ' ask' : ''}` : `hit${row.group === 'ask' ? ' ask' : ''}`}
-                        onMouseEnter={() => setActive(index)}
+                        onPointerDown={() => setActive(index)}
                         onSelect={() => run(row)}
                       >
                         <span className="hit-copy">
@@ -470,7 +472,7 @@ export function CommandPalette({
           <CommandItem
             value={askRow.id}
             className={rows.indexOf(askRow) === selected ? 'hit on ask' : 'hit ask'}
-            onMouseEnter={() => setActive(rows.indexOf(askRow))}
+            onPointerDown={() => setActive(rows.indexOf(askRow))}
             onSelect={() => run(askRow)}
           >
             <span className="hit-copy">
@@ -481,7 +483,7 @@ export function CommandPalette({
           </CommandItem>
         ) : null}
         <div className="palette-foot">
-          <span>{activeRow ? activeRow.subtitle : '↵ run'}</span>
+          <span data-testid="palette-active">{activeRow ? activeRow.subtitle : '↵ run'}</span>
           <span><CornerDownLeft size={12} aria-hidden="true" /> run · Ctrl+↵ actions · Tab ask AI · Esc close</span>
         </div>
       </Command>

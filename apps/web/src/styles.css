@@ -500,6 +500,7 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   color: var(--text-2);
 }
 .tree button.on, .tree-row.on { background: var(--accent-dim); color: var(--text); }
+.tree-row:hover:not(.on) { background: color-mix(in srgb, var(--accent-dim) 65%, transparent); }
 .tree strong { display: block; padding: 6px 8px 2px; font-size: 12px; font-weight: 500; color: var(--muted); }
 .tree-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-count {
