@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Search } from 'lucide-react'
+import { MoreHorizontal, Search } from 'lucide-react'
 import { ApiError, api, textValue, type Json } from './api'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Checkbox } from './components/ui/checkbox'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
+import { Slider } from './components/ui/slider'
 import { Kbd } from './components/ui/kbd'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
 import { Switch } from './components/ui/switch'
@@ -126,6 +128,22 @@ export function ObjectTable({
     queryFn: () => api<{ assortments: Json[] }>('/v1/assortments'),
   })
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const barRef = useRef<HTMLDivElement>(null)
+  const filtersRef = useRef<HTMLDivElement>(null)
+  const [overflow, setOverflow] = useState(false)
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    const filters = filtersRef.current
+    if (!bar || !filters) return
+    const update = () => {
+      const reserved = 140 + 124 + 88 + 36 + 32
+      setOverflow(filters.scrollWidth > bar.clientWidth - reserved)
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(bar)
+    update()
+    return () => observer.disconnect()
+  }, [assortments.data, groupBy, selected.length])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
@@ -297,7 +315,7 @@ export function ObjectTable({
 
   return (
     <div className="table-wrap" data-testid="object-table">
-      <div className="toolbar">
+      <div className="toolbar object-bar" ref={barRef}>
         <label className="search-field">
           <Search size={14} aria-hidden="true" />
           <input
@@ -308,36 +326,53 @@ export function ObjectTable({
           />
           <Kbd>/</Kbd>
         </label>
-        <button
-          type="button"
-          className={groupBy === '' ? 'filter-chip on' : 'filter-chip'}
-          onClick={() => {
-            setGroupBy('')
-            setFilter('')
-            session.setGroup(null)
-          }}
-        >
-          {copy.all}
-        </button>
-        <button type="button" className={groupBy === 'type_key' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'type_key' ? '' : 'type_key')}>{copy.type}</button>
-        <button type="button" className={groupBy === 'a_status' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'a_status' ? '' : 'a_status')}>{copy.status}</button>
-        {(assortments.data?.assortments ?? []).map((item) => (
-          <button
-            key={String(item.id)}
-            type="button"
-            className="filter-chip"
-            data-testid="assortment"
-            onClick={() => {
-              const query = (item.query as Json) ?? {}
-              setFilter(String(query.text ?? ''))
-              session.setGroup(query.group ? String(query.group) : null)
-            }}
-          >
-            {assortmentDisplayName(String(item.name))}
-          </button>
-        ))}
-        <button type="button" onClick={() => mass.mutate()} disabled={selected.length === 0}>{copy.massEdit}</button>
-        <button type="button" onClick={exportVisible}>{copy.export}</button>
+        <div className="toolbar-measure" ref={filtersRef} aria-hidden="true" inert>
+          <TableFilters
+            groupBy={groupBy}
+            setGroupBy={setGroupBy}
+            setFilter={setFilter}
+            setGroup={session.setGroup}
+            assortments={assortments.data?.assortments ?? []}
+            massDisabled={selected.length === 0}
+            onMass={() => mass.mutate()}
+            onExport={exportVisible}
+          />
+        </div>
+        {overflow ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="icon-btn" aria-label={copy.moreActions} data-testid="toolbar-more">
+                <MoreHorizontal size={14} aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <TableFilters
+                groupBy={groupBy}
+                setGroupBy={setGroupBy}
+                setFilter={setFilter}
+                setGroup={session.setGroup}
+                assortments={assortments.data?.assortments ?? []}
+                massDisabled={selected.length === 0}
+                onMass={() => mass.mutate()}
+                onExport={exportVisible}
+                menu
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <div className="toolbar-actions">
+            <TableFilters
+              groupBy={groupBy}
+              setGroupBy={setGroupBy}
+              setFilter={setFilter}
+              setGroup={session.setGroup}
+              assortments={assortments.data?.assortments ?? []}
+              massDisabled={selected.length === 0}
+              onMass={() => mass.mutate()}
+              onExport={exportVisible}
+            />
+          </div>
+        )}
         <NewObject session={session} />
         <span className="row-count" data-testid="row-count">{found} {copy.rows}</span>
       </div>
@@ -526,6 +561,69 @@ async function loadPage(q: string, filter: string, sort: string, groupBy: string
   return body
 }
 
+function TableFilters({
+  groupBy,
+  setGroupBy,
+  setFilter,
+  setGroup,
+  assortments,
+  massDisabled,
+  onMass,
+  onExport,
+  menu = false,
+}: {
+  groupBy: string
+  setGroupBy: (value: string) => void
+  setFilter: (value: string) => void
+  setGroup: (value: string | null) => void
+  assortments: Json[]
+  massDisabled: boolean
+  onMass: () => void
+  onExport: () => void
+  menu?: boolean
+}) {
+  const clear = () => {
+    setGroupBy('')
+    setFilter('')
+    setGroup(null)
+  }
+  const applyAssortment = (item: Json) => {
+    const query = (item.query as Json) ?? {}
+    setFilter(String(query.text ?? ''))
+    setGroup(query.group ? String(query.group) : null)
+  }
+  if (menu) {
+    return (
+      <>
+        <DropdownMenuItem onSelect={clear}>{copy.all}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setGroupBy(groupBy === 'type_key' ? '' : 'type_key')}>{copy.type}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setGroupBy(groupBy === 'a_status' ? '' : 'a_status')}>{copy.status}</DropdownMenuItem>
+        {assortments.map((item) => (
+          <DropdownMenuItem key={String(item.id)} onSelect={() => applyAssortment(item)}>
+            {assortmentDisplayName(String(item.name))}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuItem disabled={massDisabled} onSelect={onMass}>{copy.massEdit}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onExport}>{copy.export}</DropdownMenuItem>
+      </>
+    )
+  }
+  return (
+    <>
+      <button type="button" className={groupBy === '' ? 'filter-chip on' : 'filter-chip'} onClick={clear}>{copy.all}</button>
+      <button type="button" className={groupBy === 'type_key' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'type_key' ? '' : 'type_key')}>{copy.type}</button>
+      <button type="button" className={groupBy === 'a_status' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'a_status' ? '' : 'a_status')}>{copy.status}</button>
+      {assortments.map((item) => (
+        <button key={String(item.id)} type="button" className="filter-chip" data-testid="assortment" onClick={() => applyAssortment(item)}>
+          {assortmentDisplayName(String(item.name))}
+        </button>
+      ))}
+      <button type="button" onClick={onMass} disabled={massDisabled}>{copy.massEdit}</button>
+      <button type="button" onClick={onExport}>{copy.export}</button>
+    </>
+  )
+}
+
 function NewObject({ session }: { session: PanesSession }) {
   const [open, setOpen] = useState(false)
   const [nummer, setNummer] = useState('')
@@ -534,7 +632,7 @@ function NewObject({ session }: { session: PanesSession }) {
   if (!open) return <button onClick={() => setOpen(true)}>{copy.newObject}</button>
   return (
     <form
-      className="toolbar"
+      className="create-row"
       onSubmit={(event) => {
         event.preventDefault()
         const group = session.group?.split(':')[1]
@@ -647,6 +745,12 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const number = textValue(values.nummer)
   const name = textValue(values.namn, uiLanguage)
   const dirty = Object.keys(draft).length > 0
+  const typeDef = ((defs.data?.types as Json[]) ?? []).find((item) => item.key === object.data?.type)
+  const typeIds = new Set(((typeDef?.attributes as unknown[]) ?? []).map(String))
+  const fileKeys = attributes
+    .filter((item) => typeIds.has(String(item.id)) && String((item.kind as Json)?.type) === 'file_ref')
+    .map((item) => String(item.key))
+  const valueKeys = [...new Set([...Object.keys(values), ...fileKeys])]
   const renderField = (key: string) => {
     const attribute = attributes.find((item) => item.key === key)
     const kind = (attribute?.kind as Json) ?? {}
@@ -707,7 +811,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             <MetaChip>{String(object.data.version ?? '')}</MetaChip>
           </div>
         </header>
-        {fieldSections(Object.keys(values)).map((section) => (
+        {fieldSections(valueKeys).map((section) => (
           <section key={section.id} className="field-card">
             <h3>{section.title}</h3>
             {section.keys.map((key) => renderField(key))}
@@ -819,6 +923,7 @@ function Editor({
     )
   }
   if (kind === 'object_ref') return <ObjectRefField value={value} onChange={onChange} />
+  if (kind === 'file_ref') return <FileField value={value} onChange={onChange} />
   if (kind === 'value_list' && options.length > 0 && multiple) {
     const picked = Array.isArray(value) ? value.map(String) : []
     return (
@@ -900,6 +1005,49 @@ function UnitSuffix({ units, value, onChange }: { units: string[]; value: string
   )
 }
 
+function FileField({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const [name, setName] = useState('')
+  const id = typeof value === 'string' ? value : ''
+  const label = name || (id ? `${copy.file} ${id.slice(0, 8)}` : '')
+  return (
+    <div className="file-field">
+      <input
+        ref={input}
+        className="file-input"
+        type="file"
+        data-testid="file-input"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (!file) return
+          setName(file.name)
+          onChange(crypto.randomUUID())
+          event.target.value = ''
+        }}
+      />
+      {label ? (
+        <span data-testid="file-chip"><MetaChip>{label}</MetaChip></span>
+      ) : (
+        <span className="hint" data-testid="file-chip">{copy.noFile}</span>
+      )}
+      <button type="button" data-field="true" onClick={() => input.current?.click()}>
+        {id ? copy.replaceFile : copy.chooseFile}
+      </button>
+      {id ? (
+        <button
+          type="button"
+          onClick={() => {
+            setName('')
+            onChange(null)
+          }}
+        >
+          {copy.clearFile}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {
   const id = typeof value === 'string' ? value : ''
   const current = useQuery({
@@ -956,6 +1104,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
 }
 
 export function GraphView({ session }: { session: PanesSession }) {
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const graph = useQuery({
     queryKey: ['graph', session.objectId],
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}/graph`),
@@ -964,7 +1113,7 @@ export function GraphView({ session }: { session: PanesSession }) {
   if (!session.objectId) return <StateNote tone="empty" title={copy.graphEmpty} testId="graph" />
   if (graph.isError) return <StateNote tone="error" title={copy.graphError} testId="graph" />
   if (!graph.data) return <StateNote tone="loading" title={copy.graphLoading} testId="graph" />
-  return <GraphMap data={graph.data} onOpen={(id) => { if (id) session.setObjectId(id) }} />
+  return <GraphMap data={graph.data} defs={defs.data} onOpen={(id) => { if (id) session.setObjectId(id) }} />
 }
 
 export function HistoryView({ session }: { session: PanesSession }) {
@@ -990,32 +1139,31 @@ export function HistoryView({ session }: { session: PanesSession }) {
       }),
     onSuccess: (proposal) => session.setProposalId(String(proposal.id)),
   })
-  const names = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const attribute of (defs.data?.attributes as Json[] | undefined) ?? []) {
-      const label = textValue(attribute.labels, uiLanguage) || String(attribute.key)
-      map.set(String(attribute.id), label)
-      map.set(String(attribute.key), label)
-    }
-    return map
-  }, [defs.data])
   const selected = rows.find((row) => Number(row.seq) === current) ?? rows.at(-1)
   const diff = (selected?.diff as Json | undefined) ?? {}
+  const seqs = rows.map((row) => Number(row.seq))
+  const minSeq = seqs[0] ?? 0
+  const maxSeq = seqs.at(-1) ?? 0
+  const when = formatWhen(selected?.at)
   return (
     <div data-testid="history">
-      <p className="hint">{copy.asOf} at #{current}</p>
-      <label>
-        {copy.asOf}
-        <input
-          data-testid="as-of"
-          type="range"
-          min={Number(rows[0]?.seq ?? 0)}
-          max={Number(rows.at(-1)?.seq ?? 0)}
-          value={current}
-          onChange={(event) => setSeq(Number(event.target.value))}
-        />
-      </label>
-      <button data-testid="rollback" onClick={() => rollback.mutate()}>{copy.rollback}</button>
+      <div className="history-asof">
+        <span className="hint">{copy.asOf}</span>
+        {rows.length > 0 ? (
+          <Slider
+            data-testid="as-of"
+            min={minSeq}
+            max={maxSeq === minSeq ? minSeq + 1 : maxSeq}
+            step={1}
+            disabled={maxSeq === minSeq}
+            value={[Math.min(maxSeq === minSeq ? minSeq : maxSeq, Math.max(minSeq, current || maxSeq))]}
+            onValueChange={([next]) => setSeq(nearestSeq(seqs, next ?? maxSeq))}
+            aria-label={copy.asOf}
+          />
+        ) : null}
+        {when ? <span data-testid="as-of-when"><MetaChip>{when}</MetaChip></span> : null}
+        <button type="button" data-testid="rollback" onClick={() => rollback.mutate()}>{copy.rollback}</button>
+      </div>
       <div className="timeline">
         {rows.map((row) => (
           <article key={String(row.seq)} className={Number(row.seq) === current ? 'selected' : ''}>
@@ -1046,12 +1194,12 @@ export function HistoryView({ session }: { session: PanesSession }) {
                 </tr>
               )
             }
-            const label = names.get(key) ?? key
+            const label = fieldLabel(defs.data, key)
             return (
               <tr key={key}>
                 <th>{label}</th>
-                <td>{valueChip(label, textValue(pair.before), defs.data)}</td>
-                <td>{valueChip(label, textValue(pair.after), defs.data)}</td>
+                <td>{renderValue(pair.before, key, defs.data)}</td>
+                <td>{renderValue(pair.after, key, defs.data)}</td>
               </tr>
             )
           })}
@@ -1060,8 +1208,8 @@ export function HistoryView({ session }: { session: PanesSession }) {
       <dl className="asof">
         {Object.entries((asOf.data?.values as Json | undefined) ?? {}).map(([key, value]) => (
           <div key={key}>
-            <dt>{key}</dt>
-            <dd>{valueChip(key, textValue(value), defs.data)}</dd>
+            <dt>{fieldLabel(defs.data, key)}</dt>
+            <dd>{renderValue(value, key, defs.data)}</dd>
           </div>
         ))}
       </dl>
@@ -1071,12 +1219,93 @@ export function HistoryView({ session }: { session: PanesSession }) {
 
 export { DataModel } from './data-model'
 
-function valueChip(key: string, value: string, defs: Json | undefined) {
-  if (!value) return value
-  if (key === 'status') return <MetaChip tone={statusTone(value)}>{optionLabel(defs, 'status', value, uiLanguage)}</MetaChip>
-  if (key === 'type' || key === 'type_key') return <MetaChip>{typeLabel(defs, value, uiLanguage)}</MetaChip>
-  if (key === 'version') return <MetaChip>{value}</MetaChip>
-  return value
+const LANGS = ['sv', 'en', 'de']
+
+function isLanguageMap(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  return keys.length > 0 && keys.every((key) => LANGS.includes(key))
+}
+
+function attributeBy(defs: Json | undefined, key: string) {
+  return ((defs?.attributes as Json[]) ?? []).find((item) => String(item.id) === key || String(item.key) === key)
+}
+
+function fieldLabel(defs: Json | undefined, key: string) {
+  if (key === '$groups') return copy.group
+  const attribute = attributeBy(defs, key)
+  return textValue(attribute?.labels, uiLanguage) || String(attribute?.key ?? key)
+}
+
+function nearestSeq(seqs: number[], value: number) {
+  if (seqs.length === 0) return value
+  return seqs.reduce((best, seq) => (Math.abs(seq - value) < Math.abs(best - value) ? seq : best))
+}
+
+function formatWhen(value: unknown) {
+  if (typeof value !== 'string' || !value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function renderValue(value: unknown, field: string, defs: Json | undefined): ReactNode {
+  if (value == null || value === '') return ''
+  if (isLanguageMap(value)) {
+    const present = LANGS.filter((language) => language in value && value[language] != null)
+    return (
+      <span className="lang-values">
+        {present.map((language) => (
+          <span key={language} className="lang-inline">
+            <MetaChip>{language}</MetaChip>
+            <span>{textValue(value[language], language)}</span>
+          </span>
+        ))}
+      </span>
+    )
+  }
+  const attribute = attributeBy(defs, field)
+  const kind = (attribute?.kind as Json) ?? {}
+  const kindType = String(kind.type ?? '')
+  const attrKey = String(attribute?.key ?? field)
+  if (Array.isArray(value)) {
+    return (
+      <span className="lang-inline">
+        {value.map((item, index) => {
+          const code = textValue(item)
+          if (!code) return null
+          if (kindType === 'value_list') {
+            const list = String(kind.list ?? attrKey)
+            return (
+              <MetaChip key={`${code}-${index}`} tone={list === 'status' ? statusTone(code) : 'neutral'}>
+                {optionLabel(defs, list, code, uiLanguage)}
+              </MetaChip>
+            )
+          }
+          return <MetaChip key={`${code}-${index}`}>{code}</MetaChip>
+        })}
+      </span>
+    )
+  }
+  if (kindType === 'value_list') {
+    const code = textValue(value)
+    const list = String(kind.list ?? attrKey)
+    return <MetaChip tone={list === 'status' ? statusTone(code) : 'neutral'}>{optionLabel(defs, list, code, uiLanguage)}</MetaChip>
+  }
+  if (field === 'type' || field === 'type_key' || attrKey === 'type' || attrKey === 'type_key') {
+    return <MetaChip>{typeLabel(defs, textValue(value), uiLanguage)}</MetaChip>
+  }
+  if (kindType === 'file_ref' || kindType === 'object_ref') {
+    const id = textValue(value)
+    if (!id) return ''
+    return <MetaChip>{kindType === 'file_ref' ? `${copy.file} ${id.slice(0, 8)}` : id.slice(0, 8)}</MetaChip>
+  }
+  if (kindType === 'date') {
+    const text = textValue(value)
+    return text ? <MetaChip>{text}</MetaChip> : ''
+  }
+  if (kindType === 'boolean') return <MetaChip>{value === true ? copy.yes : copy.no}</MetaChip>
+  return textValue(value, uiLanguage)
 }
 
 function groupText(groups: Json, side: 'before' | 'after', defs: Json | undefined) {

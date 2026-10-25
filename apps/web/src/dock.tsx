@@ -16,6 +16,7 @@ import {
   setDivider,
   setTabIndex,
   views,
+  zoomView,
   zoneFromPoint,
   type LayoutDoc,
   type Leaf,
@@ -87,7 +88,8 @@ export function WorkspaceDock({
   }, [drag])
 
   const open = views(doc.layout)
-  const zoomed = doc.zoom ? leaves(doc.layout).find((leaf) => leaf.views.includes(doc.zoom ?? '')) : undefined
+  const zoomHost = doc.zoom ? leaves(doc.layout).find((leaf) => leaf.views.includes(doc.zoom ?? '')) : undefined
+  const zoomed = zoomHost && doc.zoom ? { ...zoomHost, views: [doc.zoom], active: 0 } : undefined
   const shared: Frame = {
     doc,
     viewList,
@@ -286,6 +288,7 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
   const hover = frame.drag?.hover
   const preview = hover?.kind === 'pane' && leaf.views.includes(hover.anchor) ? hover.zone : null
   const dragged = useRef(false)
+  const pendingActive = useRef<{ view: string; timer: number } | null>(null)
 
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>, id: string) => {
     if (event.button !== 0) return
@@ -327,7 +330,7 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
       onMouseDown={(event) => {
         if (!(event.target instanceof Element)) return
         if (event.target.closest('button, a, input, textarea, select')) return
-        if (activeId) frame.commit(activateDoc(frame.docRef.current, activeId))
+        if (activeId && !frame.doc.zoom) frame.commit(activateDoc(frame.docRef.current, activeId))
       }}
     >
       <div className="pane-tabs">
@@ -341,17 +344,39 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
                 onClick={() => {
                   if (dragged.current) {
                     dragged.current = false
+                    if (pendingActive.current) window.clearTimeout(pendingActive.current.timer)
+                    pendingActive.current = null
                     return
                   }
+                  if (frame.docRef.current.zoom) return
                   frame.commit(activateDoc(frame.docRef.current, id))
+                  if (pendingActive.current) window.clearTimeout(pendingActive.current.timer)
+                  const timer = window.setTimeout(() => {
+                    pendingActive.current = null
+                  }, 500)
+                  if (pendingActive.current) pendingActive.current.timer = timer
                 }}
                 onDoubleClick={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
                   dragged.current = false
-                  frame.run('zoom', { view: id })
+                  const previous = pendingActive.current?.view
+                  if (pendingActive.current) window.clearTimeout(pendingActive.current.timer)
+                  pendingActive.current = null
+                  const current = frame.docRef.current
+                  if (current.zoom === id) {
+                    frame.commit(zoomView(current, id))
+                    return
+                  }
+                  const base = previous ? activateDoc(current, previous) : current
+                  frame.commit(zoomView(base, id))
                 }}
-                onPointerDown={(event) => beginDrag(event, id)}
+                onPointerDown={(event) => {
+                  if (!frame.docRef.current.zoom && !pendingActive.current) {
+                    pendingActive.current = { view: leaf.views[leaf.active] ?? id, timer: 0 }
+                  }
+                  beginDrag(event, id)
+                }}
                 onMouseDown={(event) => {
                   if (event.button === 1) {
                     event.preventDefault()

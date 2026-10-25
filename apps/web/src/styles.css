@@ -368,6 +368,24 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 }
 .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex: none; min-height: 30px; }
 .toolbar button, .toolbar .search-field, .save-bar button { height: 30px; }
+.object-bar { position: relative; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+.object-bar .search-field { flex: 1 1 140px; min-width: 120px; max-width: 280px; }
+.object-bar .row-count { flex: none; }
+.object-bar .icon-btn { width: 30px; height: 30px; padding: 0; justify-content: center; flex: none; }
+.object-bar button, .create-row button, .create-row input { white-space: nowrap; flex: none; }
+.toolbar-actions { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.toolbar-measure {
+  position: absolute;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.create-row { display: inline-flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.create-row input { width: 140px; height: 30px; }
 .toolbar .select-trigger { width: auto; min-width: 108px; flex: none; }
 .search-field {
   display: inline-flex;
@@ -508,7 +526,8 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 .detail-empty li { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .form, .detail-form { display: flex; flex-direction: column; gap: 8px; }
 .detail-form { flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden; }
-.detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; scroll-padding-bottom: 12px; }
+.field { scroll-margin-bottom: 12px; }
 .detail-head { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 0; }
 .detail-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .detail-title strong { font-size: 18px; font-weight: 600; }
@@ -700,7 +719,47 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 }
 .ref-menu button { text-align: left; border: none; background: transparent; box-shadow: none; border-radius: var(--r-md); }
 .ref-menu button:hover { background: var(--accent-dim); }
-.asof { display: grid; gap: 2px 8px; margin-top: 8px; }
+.history-asof { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.history-asof .hint, .history-asof button, .history-asof [data-testid='as-of-when'] { flex: none; white-space: nowrap; }
+.history-asof .slider { flex: 1 1 140px; min-width: 120px; }
+.slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  touch-action: none;
+  user-select: none;
+}
+.slider { width: 100%; }
+.slider-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 28%, transparent);
+}
+.slider-range {
+  position: absolute;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.slider-thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+}
+.slider-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.slider[data-disabled] { opacity: 0.55; }
+.file-field { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.file-input { display: none; }
+.lang-values { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.lang-inline { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+[data-testid='history'] { display: flex; flex-direction: column; gap: 10px; }
+.asof { display: grid; gap: 4px 8px; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
 .asof div { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 8px; }
 .asof dt { color: var(--muted); text-align: right; font-size: 12px; }
 .asof dd { margin: 0; background: var(--raised); border-radius: var(--r-md); padding: 2px 8px; }

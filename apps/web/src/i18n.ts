@@ -162,6 +162,14 @@ export const copy = {
   graphLoading: 'Drawing the graph…',
   graphError: 'The graph could not be loaded.',
   attributeProvenance: 'Attribute provenance',
+  moreActions: 'More actions',
+  chooseFile: 'Choose file',
+  replaceFile: 'Replace',
+  clearFile: 'Remove',
+  noFile: 'No file',
+  file: 'File',
+  yes: 'Yes',
+  no: 'No',
 } as const
 
 export type MessageKey = keyof typeof copy
