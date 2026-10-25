@@ -66,14 +66,18 @@ apiEnv.BRAIAN_API_ADDR = '127.0.0.1:8095'
 apiEnv.BRAIAN_SEED_COUNT = process.env.BRAIAN_E2E_SEED_COUNT || '250'
 apiEnv.BRAIAN_AGENT_MOCK = process.env.BRAIAN_AGENT_MOCK || '1'
 
+const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const windows = process.platform === 'win32'
+
 const api = spawn(binary, ['all'], { cwd: root, env: apiEnv, stdio: 'inherit' })
 const web = spawn(
-  'pnpm',
+  pnpm,
   ['--dir', 'apps/web', 'exec', 'vite', 'dev', '--host', '127.0.0.1', '--port', '3010', '--strictPort'],
   {
     cwd: root,
     env: { ...process.env, BRAIAN_API_PROXY: 'http://127.0.0.1:8095' },
     stdio: 'inherit',
+    shell: windows,
   },
 )
 
@@ -91,9 +95,10 @@ let code = 1
 try {
   await waitFor('http://127.0.0.1:8095/healthz')
   await waitFor('http://127.0.0.1:3010/')
-  execFileSync('pnpm', ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts'], {
+  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts'], {
     cwd: root,
     stdio: 'inherit',
+    shell: windows,
     env: { ...process.env, BRAIAN_WEB_URL: 'http://127.0.0.1:3010' },
   })
   code = 0

@@ -1,13 +1,15 @@
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
+import { demoCredentials } from './demo'
 
 const shots = '/opt/cursor/artifacts/screenshots'
 mkdirSync(shots, { recursive: true })
 
 async function login(page: Page) {
+  const demo = demoCredentials()
   await page.goto('/')
-  await page.getByTestId('email').fill(process.env.BRAIAN_DEMO_EMAIL ?? 'admin@braian.local')
-  await page.getByTestId('password').fill(process.env.BRAIAN_DEMO_PASSWORD ?? 'braian-demo')
+  await page.getByTestId('email').fill(demo.email)
+  await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Logga in' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
 }

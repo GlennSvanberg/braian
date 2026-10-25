@@ -171,7 +171,36 @@ fn registry() -> &'static [Operation] {
 }
 
 fn find_op(name: &str) -> Option<&'static Operation> {
-    registry().iter().find(|op| op.name == name)
+    registry()
+        .iter()
+        .find(|op| op.name == name || tool_name(op.name) == name)
+}
+
+/// OpenAI tool names allow letters, digits, underscore and hyphen. Dots in an
+/// operation name become underscores. The mapping is stable: the same
+/// operation always produces the same tool name, and the tool name resolves
+/// back to that operation.
+fn tool_name(operation: &str) -> String {
+    let mut name = String::with_capacity(operation.len());
+    for character in operation.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+            name.push(character);
+        } else {
+            name.push('_');
+        }
+    }
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+    {
+        name.insert_str(0, "op_");
+    }
+    name
+}
+
+fn operation_for_tool(tool: &str) -> Option<&'static str> {
+    find_op(tool).map(|op| op.name)
 }
 
 fn require(identity: &Identity, role: Role) -> Result<(), Problem> {
@@ -324,7 +353,7 @@ async fn mcp(
         }),
         "tools/list" => json!({
             "tools": registry().iter().map(|op| json!({
-                "name": op.name,
+                "name": tool_name(op.name),
                 "description": op.title,
                 "inputSchema": { "type": "object" }
             })).collect::<Vec<_>>()
@@ -332,6 +361,7 @@ async fn mcp(
         "tools/call" => {
             let params = body.get("params").cloned().unwrap_or(Value::Null);
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+            let name = operation_for_tool(name).unwrap_or(name);
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             match execute(&state, &identity, name, &args).await {
                 Ok(value) => json!({
@@ -373,66 +403,229 @@ async fn agent(
         })));
     }
     let model = std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into());
+    let mut messages = vec![json!({
+        "role": "system",
+        "content": "Du är Braian-agenten. Du agerar alltid för den inloggade personen. Skrivande ändringar ska bli förslag, inte direkta skrivningar. Svara på svenska."
+    })];
+    messages.extend(body.messages);
+    let client = reqwest::Client::new();
+    let url = openai_responses_url();
+    let payload = post_openai(&client, &url, &key, &responses_body(&model, &messages)).await?;
+    let calls = function_calls(&payload);
+    let mut tool_results = Vec::new();
+    let mut outputs = Vec::new();
+    for call in &calls {
+        let operation = operation_for_tool(&call.name).unwrap_or(call.name.as_str());
+        let args: Value = serde_json::from_str(&call.arguments).unwrap_or(json!({}));
+        let result = execute(&state, &identity, operation, &args)
+            .await
+            .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }));
+        tool_results.push(json!({ "name": operation, "result": result }));
+        if !call.call_id.is_empty() {
+            outputs.push(json!({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": result.to_string(),
+            }));
+        }
+    }
+    let mut reply = reply_text(&payload);
+    if !outputs.is_empty()
+        && let Some(id) = payload.get("id").and_then(Value::as_str)
+    {
+        let follow_up = json!({
+            "model": model,
+            "previous_response_id": id,
+            "input": outputs,
+            "reasoning": { "effort": "none" },
+        });
+        match post_openai(&client, &url, &key, &follow_up).await {
+            Ok(next) => {
+                let text = reply_text(&next);
+                if !text.is_empty() {
+                    reply = text;
+                }
+            }
+            Err(problem) => {
+                tracing::error!(detail = %problem.detail, "openai follow-up failed");
+                if reply.is_empty() {
+                    reply = problem.detail;
+                }
+            }
+        }
+    }
+    if reply.is_empty() {
+        reply = if tool_results.is_empty() {
+            "Modellen svarade utan text.".into()
+        } else {
+            "Agenten körde verktyg men modellen gav ingen text.".into()
+        };
+    }
+    Ok(Json(json!({
+        "available": true,
+        "model": model,
+        "reply": reply,
+        "tools": tool_results
+    })))
+}
+
+fn openai_responses_url() -> String {
+    let base = std::env::var("OPENAI_BASE_URL")
+        .unwrap_or_else(|_| "https://api.openai.com".into())
+        .trim_end_matches('/')
+        .to_owned();
+    format!("{base}/v1/responses")
+}
+
+fn responses_body(model: &str, messages: &[Value]) -> Value {
     let tools = registry()
         .iter()
         .map(|op| {
             json!({
                 "type": "function",
-                "function": {
-                    "name": op.name,
-                    "description": op.title,
-                    "parameters": { "type": "object" }
+                "name": tool_name(op.name),
+                "description": op.title,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
                 }
             })
         })
         .collect::<Vec<_>>();
-    let mut messages = vec![json!({
-        "role": "system",
-        "content": "Du är Braian-agenten. Du agerar alltid för den inloggade personen. Skrivande ändringar ska bli förslag, inte direkta skrivningar. Svara på svenska."
-    })];
-    for message in body.messages {
-        messages.push(message);
+    json!({
+        "model": model,
+        "input": messages,
+        "tools": tools,
+        "reasoning": { "effort": "none" }
+    })
+}
+
+struct FunctionCall {
+    name: String,
+    call_id: String,
+    arguments: String,
+}
+
+fn function_calls(payload: &Value) -> Vec<FunctionCall> {
+    let Some(output) = payload.get("output").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    output
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+        .map(|item| FunctionCall {
+            name: item
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            call_id: item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            arguments: item
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}")
+                .to_owned(),
+        })
+        .collect()
+}
+
+fn reply_text(payload: &Value) -> String {
+    if let Some(text) = payload.get("output_text").and_then(Value::as_str)
+        && !text.is_empty()
+    {
+        return text.to_owned();
     }
-    let client = reqwest::Client::new();
-    let response = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .bearer_auth(key)
-        .json(&json!({ "model": model, "messages": messages, "tools": tools }))
-        .send()
-        .await
-        .map_err(|error| Problem::new(StatusCode::BAD_GATEWAY, "agent", error.to_string()))?;
-    let payload: Value = response
-        .json()
-        .await
-        .map_err(|error| Problem::new(StatusCode::BAD_GATEWAY, "agent", error.to_string()))?;
-    let message = payload
-        .pointer("/choices/0/message")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let mut tool_results = Vec::new();
-    if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
-        for call in calls {
-            let name = call
-                .pointer("/function/name")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let raw = call
-                .pointer("/function/arguments")
-                .and_then(Value::as_str)
-                .unwrap_or("{}");
-            let args: Value = serde_json::from_str(raw).unwrap_or(json!({}));
-            let result = execute(&state, &identity, name, &args)
-                .await
-                .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }));
-            tool_results.push(json!({ "name": name, "result": result }));
+    let Some(output) = payload.get("output").and_then(Value::as_array) else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    for item in output {
+        let Some(content) = item.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for block in content {
+            if let Some(text) = block.get("text").and_then(Value::as_str)
+                && !text.is_empty()
+            {
+                parts.push(text);
+            }
         }
     }
-    Ok(Json(json!({
-        "available": true,
-        "model": model,
-        "reply": message.get("content").and_then(Value::as_str).unwrap_or(""),
-        "tools": tool_results
-    })))
+    parts.join("")
+}
+
+async fn post_openai(
+    client: &reqwest::Client,
+    url: &str,
+    key: &str,
+    body: &Value,
+) -> Result<Value, Problem> {
+    let response = client
+        .post(url)
+        .bearer_auth(key)
+        .json(body)
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "openai request failed before a response");
+            Problem::new(
+                StatusCode::BAD_GATEWAY,
+                "agent",
+                "Modellen gick inte att nå. Kontrollera nätverket och försök igen.",
+            )
+        })?;
+    let status = response.status();
+    let text = response.text().await.map_err(|error| {
+        tracing::error!(%error, "openai response body could not be read");
+        Problem::new(
+            StatusCode::BAD_GATEWAY,
+            "agent",
+            "Modellen svarade men svaret gick inte att läsa.",
+        )
+    })?;
+    if !status.is_success() {
+        let detail = openai_error(status, &text);
+        tracing::error!(%status, body = %clip(&text, 500), "openai responses request failed");
+        return Err(Problem::new(StatusCode::BAD_GATEWAY, "agent", detail));
+    }
+    serde_json::from_str(&text).map_err(|error| {
+        tracing::error!(%error, body = %clip(&text, 500), "openai response was not json");
+        Problem::new(
+            StatusCode::BAD_GATEWAY,
+            "agent",
+            "Modellen svarade med något som inte var JSON.",
+        )
+    })
+}
+
+fn openai_error(status: StatusCode, body: &str) -> String {
+    let message = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| "okänt fel".into());
+    format!(
+        "Modellen svarade inte. OpenAI ({status}) sa: {}",
+        clip(&message, 240)
+    )
+}
+
+fn clip(text: &str, max: usize) -> String {
+    let mut clipped = String::new();
+    for character in text.chars().take(max) {
+        clipped.push(character);
+    }
+    clipped
 }
 
 async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<Response, Problem> {
@@ -2483,4 +2676,129 @@ struct MassBody {
     #[serde(default)]
     values: BTreeMap<String, Value>,
     limit: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::Json;
+    use axum::routing::post;
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    #[test]
+    fn dotted_names_become_underscores_and_map_back() {
+        assert_eq!(tool_name("create_object"), "create_object");
+        assert_eq!(tool_name("a.b.c"), "a_b_c");
+        assert!(!tool_name("a.b").contains('.'));
+        for op in registry() {
+            let wire = tool_name(op.name);
+            assert!(!wire.contains('.'), "{wire}");
+            assert_eq!(operation_for_tool(&wire), Some(op.name));
+        }
+    }
+
+    #[tokio::test]
+    async fn mocked_openai_receives_responses_tools_without_dots() {
+        let seen = Arc::new(Mutex::new(None));
+        let captured = Arc::clone(&seen);
+        let app = axum::Router::new().route(
+            "/v1/responses",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let captured = Arc::clone(&captured);
+                async move {
+                    let authorized = headers
+                        .get(header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        == Some("Bearer test-key");
+                    *captured.lock().expect("lock") = Some((authorized, body));
+                    Json(json!({
+                        "output_text": "Hej",
+                        "output": [{
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Hej"}]
+                        }]
+                    }))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let body = responses_body("gpt-6-luna", &[json!({ "role": "user", "content": "hej" })]);
+        let url = format!("http://{address}/v1/responses");
+        let payload = post_openai_when_up(&url, "test-key", &body)
+            .await
+            .expect("openai");
+        assert_eq!(reply_text(&payload), "Hej");
+        let (authorized, sent) = seen.lock().expect("lock").clone().expect("body");
+        assert!(authorized);
+        assert_eq!(sent["model"], "gpt-6-luna");
+        assert_eq!(sent["reasoning"]["effort"], "none");
+        let tools = sent["tools"].as_array().expect("tools");
+        assert!(!tools.is_empty());
+        for tool in tools {
+            assert_eq!(tool["type"], "function");
+            let name = tool["name"].as_str().expect("name");
+            assert!(
+                !name.contains('.'),
+                "tool name {name} is not a valid OpenAI function name"
+            );
+            assert!(
+                name.chars()
+                    .all(|character| character.is_ascii_alphanumeric()
+                        || character == '_'
+                        || character == '-')
+            );
+            assert_eq!(tool["parameters"]["type"], "object");
+            assert!(operation_for_tool(name).is_some(), "{name}");
+        }
+        assert!(tools.iter().any(|tool| tool["name"] == "create_object"));
+    }
+
+    #[tokio::test]
+    async fn mocked_openai_error_is_a_swedish_message() {
+        let app = axum::Router::new().route(
+            "/v1/responses",
+            post(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": { "message": "reasoning_effort must be none" } })),
+                )
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let error = post_openai_when_up(
+            &format!("http://{address}/v1/responses"),
+            "test-key",
+            &json!({ "model": "gpt-6-luna" }),
+        )
+        .await
+        .expect_err("status");
+        assert!(error.detail.contains("Modellen svarade inte"));
+        assert!(error.detail.contains("reasoning_effort must be none"));
+    }
+
+    async fn post_openai_when_up(url: &str, key: &str, body: &Value) -> Result<Value, Problem> {
+        let client = reqwest::Client::new();
+        let mut last = None;
+        for _ in 0..40 {
+            match post_openai(&client, url, key, body).await {
+                Err(problem) if problem.detail.contains("gick inte att nå") => {
+                    last = Some(problem);
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                other => return other,
+            }
+        }
+        Err(last.expect("attempt"))
+    }
 }

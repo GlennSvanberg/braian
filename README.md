@@ -23,11 +23,24 @@ just dev
 
 ## Windows och Docker Desktop
 
-- Kör Docker Desktop med WSL2. Klona repot i Linux-filsystemet (`~/src`), inte under `/mnt/c`.
-- `just` anropar PowerShell på Windows (`windows-shell` i justfilen). Rust, Node 22 och pnpm 10 behövs i samma skal som `just`.
+Kör Docker Desktop. Snabbast går det i WSL2 med repot i Linux-filsystemet (`~/src`), inte under `/mnt/c`. Rust, Node 22 och pnpm 10 ska ligga i samma skal som startkommandot.
+
+`just` finns inte i en vanlig Windows-installation. Installera det med `winget install --id Casey.Just` eller `scoop install just`. Justfilen anropar PowerShell (`windows-shell`). Utan `just` är motsvarigheterna:
+
+```powershell
+copy .env.example .env
+.\scripts\up.ps1
+pnpm install
+.\scripts\dev.ps1
+```
+
+`scripts/dev.ps1` läser `.env` (värden med citattecken, till exempel `BRAIAN_DEV_TOKENS`, behåller semikolon) och startar sedan samma processer som `just dev`.
+
+Rust-bygget kompilerar `rdkafka` med feature `cmake-build`, så CMake och en C++-kompilator behövs. Visual Studio Build Tools med workloaden "Desktop development with C++" ger båda. CMake kan också installeras med `winget install --id Kitware.CMake`, men kompilatorn från Build Tools behövs ändå. Samma feature används i CI, som bygger `librdkafka` med CMake. `dynamic-linking` skulle i stället kräva en systeminstallerad `librdkafka`.
+
 - Portar på värden: Postgres 5433, Redpanda 19092, Typesense 8108, Redpanda Console 8080, API 8090, webb 3000. API:t ligger på 8090 för att konsolen redan tar 8080.
 - Lämna `BRAIAN_COOKIE_SECURE=0` lokalt. Sätt den till 1 bara bakom HTTPS.
-- Playwright-röken (`node scripts/e2e.mjs`) är körd på Linux. Den skapar databasen `braian_e2e` och ett eget sökalias, utan Kafka, så `just dev` kan stå kvar.
+- Playwright-röken (`node scripts/e2e.mjs`) är körd på Linux. Den skapar databasen `braian_e2e` och ett eget sökalias, utan Kafka, så `just dev` kan stå kvar. På Windows startar skriptet `pnpm.cmd` med `shell: true`, så Node hittar pnpm.
 
 Mer om portar och kommandon: [docs/dev.md](docs/dev.md). Vad som fungerar ikväll: [docs/status.md](docs/status.md).
 

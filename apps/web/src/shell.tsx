@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useChat, fetchServerSentEvents } from '@tanstack/ai-react'
 import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
-import { api, type Json } from './api'
+import { ApiError, api, type Json } from './api'
 import { sv } from './i18n'
 import { dockTab, isSplit, type LayoutNode, type Zone } from './layout'
 import {
@@ -565,8 +564,9 @@ function Help({ onClose }: { onClose: () => void }) {
 
 function AgentPanel({ onClose, session }: { onClose: () => void; session: Session }) {
   const status = useQuery({ queryKey: ['agent-status'], queryFn: () => api<{ available: boolean; model: string; reply?: string }>('/api/chat') })
-  const chat = useChat({ connection: fetchServerSentEvents('/api/chat'), threadId: 'braian' })
+  const [lines, setLines] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([])
   const [input, setInput] = useState('')
+  const [pending, setPending] = useState(false)
   return (
     <aside className="agent" data-testid="agent">
       <header>
@@ -575,21 +575,41 @@ function AgentPanel({ onClose, session }: { onClose: () => void; session: Sessio
       </header>
       <div className="log">
         {status.data && !status.data.available ? <p className="bubble assistant">{status.data.reply}</p> : null}
-        {chat.messages.map((message) => (
-          <p key={message.id} className={message.role === 'user' ? 'bubble user' : 'bubble assistant'}>
-            {message.parts.map((part) => (part.type === 'text' ? part.content : '')).join('')}
+        {lines.map((line, index) => (
+          <p key={`${line.role}-${index}`} className={line.role === 'user' ? 'bubble user' : 'bubble assistant'}>
+            {line.text}
           </p>
         ))}
-        {chat.error ? <p className="error">{sv.agentUnavailable}</p> : null}
       </div>
       <form
         className="toolbar"
         onSubmit={(event) => {
           event.preventDefault()
-          if (!input.trim()) return
-          void chat.sendMessage(input.trim())
-          session.push(`${sv.agent}: ${input.trim()}`)
+          const text = input.trim()
+          if (!text || pending) return
+          const history = [...lines, { role: 'user' as const, text }]
+          setLines(history)
           setInput('')
+          setPending(true)
+          session.push(`${sv.agent}: ${text}`)
+          void api<{ reply?: string; tools?: Json[] }>('/v1/agent', {
+            method: 'POST',
+            body: JSON.stringify({
+              messages: history.map((line) => ({ role: line.role, content: line.text })),
+            }),
+          })
+            .then((result) => {
+              const tools = (result.tools ?? [])
+                .map((tool) => `${String(tool.name)}: ${JSON.stringify(tool.result)}`)
+                .join('\n')
+              const reply = [result.reply, tools].filter(Boolean).join('\n')
+              setLines([...history, { role: 'assistant', text: reply || sv.agentEmpty }])
+            })
+            .catch((error: unknown) => {
+              const message = error instanceof ApiError ? error.message : sv.agentEmpty
+              setLines([...history, { role: 'assistant', text: message }])
+            })
+            .finally(() => setPending(false))
         }}
       >
         <input value={input} onChange={(event) => setInput(event.target.value)} placeholder={sv.askAgent} />

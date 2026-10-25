@@ -367,7 +367,19 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_dev_tokens;
+    use super::{hash_password, parse_dev_tokens, verify_password};
+
+    #[test]
+    fn password_hash_stays_fast_when_the_debug_profile_optimizes_argon2() {
+        let started = std::time::Instant::now();
+        let hash = hash_password("correct horse").expect("hash");
+        assert!(verify_password(&hash, "correct horse"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "hashing took {:?}; argon2 and blake2 need opt-level in the dev profile",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn an_agent_token_must_name_a_person() {
