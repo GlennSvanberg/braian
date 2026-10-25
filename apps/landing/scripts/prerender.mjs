@@ -27,6 +27,13 @@ if (/chatbot/i.test(markup)) {
 if (!markup.includes('Measured on an 8 vCPU VPS')) {
   throw new Error('performance figures are missing their hardware footnote')
 }
+const collapsed = markup.match(/aria-expanded="false"/g)?.length ?? 0
+if (collapsed < 10) {
+  throw new Error(`disclosure cards should render collapsed, found ${collapsed}`)
+}
+if (!markup.includes('Moving between them is instant')) {
+  throw new Error('disclosure body copy is missing')
+}
 
 writeFileSync(indexPath, html.replace(placeholder, `<div id="root">${markup}</div>`))
 

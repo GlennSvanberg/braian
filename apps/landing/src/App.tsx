@@ -1,4 +1,5 @@
 import { Button, ButtonLink } from '@/components/ui/button'
+import { DisclosureList } from '@/components/disclosure'
 import { Mark } from '@/components/mark'
 import {
   agent,
@@ -117,12 +118,12 @@ function Hero() {
   )
 }
 
-function SectionHead({ id, eyebrow, title, lede }: { id: string; eyebrow?: string; title: string; lede: string }) {
+function SectionHead({ id, eyebrow, title, lede }: { id: string; eyebrow?: string; title: string; lede?: string }) {
   return (
     <div className="section-head">
       {eyebrow ? <p className="eyebrow eyebrow-accent">{eyebrow}</p> : null}
       <h2 id={id}>{title}</h2>
-      <p className="lede">{lede}</p>
+      {lede ? <p className="lede">{lede}</p> : null}
     </div>
   )
 }
@@ -131,15 +132,7 @@ function Speed() {
   return (
     <section className="section" id="speed" aria-labelledby="speed-title">
       <SectionHead id="speed-title" eyebrow={speed.eyebrow} title={speed.title} lede={speed.lede} />
-      <ul className="points points-4">
-        {speed.points.map((point, i) => (
-          <li key={point.title} className="sheet point">
-            <span className="point-index mono">0{i + 1}</span>
-            <h3>{point.title}</h3>
-            <p>{point.body}</p>
-          </li>
-        ))}
-      </ul>
+      <DisclosureList items={speed.points} idPrefix="speed" columns="4" numbered />
     </section>
   )
 }
@@ -151,16 +144,9 @@ function Agent() {
       <div className="agent-board">
         <figure className="agent-stage">
           <AgentPanel />
-          <figcaption className="caption">Illustrative session in the demo catalog.</figcaption>
+          <figcaption className="caption">Demo catalog</figcaption>
         </figure>
-        <ul className="agent-points">
-          {agent.points.map((point) => (
-            <li key={point.title}>
-              <h3>{point.title}</h3>
-              <p>{point.body}</p>
-            </li>
-          ))}
-        </ul>
+        <DisclosureList items={agent.points} idPrefix="agent" columns="side" />
       </div>
     </section>
   )
@@ -240,17 +226,13 @@ function Architecture() {
           stream and webhook events to external consumers.
         </p>
         <DataFlow />
-        <p className="stack">{architecture.stack}</p>
+        <ul className="oss-facts flow-stack" aria-label="Stack">
+          {architecture.stack.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
       </figure>
-      <ul className="principles">
-        {architecture.principles.map((item) => (
-          <li key={item.title} className="sheet principle">
-            <h3>{item.title}</h3>
-            <p>{item.body}</p>
-            <code className="mono">{item.code}</code>
-          </li>
-        ))}
-      </ul>
+      <DisclosureList items={architecture.principles} idPrefix="architecture" columns="3" />
       <div className="sheet job">
         <div className="job-copy">
           <h3>{architecture.job.title}</h3>
