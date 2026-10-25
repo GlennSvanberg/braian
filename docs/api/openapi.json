@@ -576,6 +576,15 @@
         ]
       }
     },
+    "/v1/objects/names": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Display names for a batch of objects",
+        "responses": {}
+      }
+    },
     "/v1/objects/{id}": {
       "get": {
         "tags": [

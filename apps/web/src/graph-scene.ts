@@ -7,11 +7,70 @@ export const NODE_KINDS = ['object', 'class', 'group', 'value', 'assortment'] as
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const NODE_RADIUS: Record<NodeKind, number> = {
-  object: 34,
-  class: 24,
-  group: 26,
-  value: 22,
-  assortment: 28,
+  object: 22,
+  class: 16,
+  group: 18,
+  value: 15,
+  assortment: 20,
+}
+
+/** Circle size grows with how many edges the node has, capped so hubs stay readable. */
+export function nodeRadius(kind: NodeKind, degree: number) {
+  const links = Number.isFinite(degree) ? degree : 0
+  const extra = Math.min(14, Math.max(0, links - 1) * 2)
+  return NODE_RADIUS[kind] + extra
+}
+
+/** One or two letters drawn inside the circle. Never a clipped name. */
+export function nodeMark(caption: string) {
+  const words = caption
+    .split(/[\s/]+/)
+    .map((word) => word.trim())
+    .filter(Boolean)
+  const first = words[0] ?? ''
+  if (!first) return ''
+  if (words.length === 1) {
+    const chars = [...first]
+    if (chars.length <= 3) return first
+    return chars[0] ?? ''
+  }
+  const a = [...first][0] ?? ''
+  const b = [...(words[1] ?? '')][0] ?? ''
+  return `${a}${b}`.toLocaleUpperCase('en')
+}
+
+export function labelPriority(kind: NodeKind, active: boolean) {
+  if (active) return 5
+  if (kind === 'object') return 3
+  if (kind === 'assortment' || kind === 'group') return 2
+  if (kind === 'class') return 1
+  return 0
+}
+
+export function labelVisibleAtZoom(priority: number, zoom: number) {
+  if (priority >= 5) return true
+  if (zoom < 0.5) return priority >= 2
+  if (zoom < 0.7) return priority >= 1
+  return true
+}
+
+export type LabelBox = { id: string; priority: number; left: number; top: number; right: number; bottom: number }
+
+export function visibleLabelIds(boxes: LabelBox[], zoom: number) {
+  const sorted = [...boxes].sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id))
+  const kept: LabelBox[] = []
+  const ids = new Set<string>()
+  for (const box of sorted) {
+    if (!labelVisibleAtZoom(box.priority, zoom)) continue
+    if (kept.some((other) => boxesOverlap(other, box))) continue
+    kept.push(box)
+    ids.add(box.id)
+  }
+  return ids
+}
+
+function boxesOverlap(left: LabelBox, right: LabelBox) {
+  return left.left < right.right && right.left < left.right && left.top < right.bottom && right.top < left.bottom
 }
 
 export const SCENE_NODE_CAP = 400
@@ -224,9 +283,9 @@ export function buildScene(input: {
   putNode(nodes, {
     id: selfId,
     kind: 'object',
-    caption: name || key || objectId,
+    caption: name || typeName || copy.nodeObject,
     subtitle: typeName || copy.nodeObject,
-    rawCaption: !name,
+    rawCaption: false,
     objectId,
     properties: [
       { label: copy.type, value: typeName || typeKey || copy.nodeObject },
@@ -305,25 +364,34 @@ export function buildScene(input: {
     const otherId = String(relation.object_id ?? '')
     if (!otherId) continue
     const nodeId = `object:${otherId}`
-    const known = input.known?.[otherId]
+    const record = input.known?.[otherId]
     const relKey = String(relation.key ?? otherId)
-    const typeNameForOther = known?.typeKey ? typeLabel(input.defs, known.typeKey, uiLanguage) || known.typeKey : ''
+    const typeNameForOther = record?.typeKey ? typeLabel(input.defs, record.typeKey, uiLanguage) || record.typeKey : ''
+    const caption = record?.name || typeNameForOther || copy.nodeObject
     putNode(nodes, {
       id: nodeId,
       kind: 'object',
-      caption: known?.name || relKey,
+      caption,
       subtitle: typeNameForOther || copy.nodeObject,
-      rawCaption: !known?.name,
+      rawCaption: record === undefined,
       objectId: otherId,
       properties: [
         { label: copy.number, value: relKey },
         { label: copy.type, value: typeNameForOther || copy.nodeObject },
+        { label: copy.identity, value: relKey },
       ],
     })
     putEdge(edges, link(selfId, relationLabel(String(relation.kind ?? '')), nodeId))
   }
 
   return { nodes: [...nodes.values()], edges: [...edges.values()] }
+}
+
+function prefersIncoming(existing: SceneNode, incoming: SceneNode) {
+  if (existing.rawCaption && !incoming.rawCaption) return true
+  const incomingNamed = !incoming.rawCaption && incoming.caption !== copy.nodeObject
+  const existingNamed = !existing.rawCaption && existing.caption !== copy.nodeObject
+  return incomingNamed && !existingNamed
 }
 
 export function mergeScene(base: Scene, extra: Scene): Scene {
@@ -334,12 +402,12 @@ export function mergeScene(base: Scene, extra: Scene): Scene {
       nodes.set(node.id, node)
       continue
     }
-    const upgrade = existing.rawCaption && !node.rawCaption
+    const upgrade = prefersIncoming(existing, node)
     nodes.set(node.id, {
       ...existing,
       caption: upgrade ? node.caption : existing.caption,
       subtitle: upgrade && node.subtitle ? node.subtitle : existing.subtitle,
-      rawCaption: upgrade ? false : existing.rawCaption,
+      rawCaption: upgrade ? node.rawCaption : existing.rawCaption,
       objectId: existing.objectId || node.objectId,
       properties: node.properties.length > existing.properties.length ? node.properties : existing.properties,
     })
@@ -429,7 +497,7 @@ export function groupMembers(structure: string, group: string, hits: MemberHit[]
     nodes.push({
       id,
       kind: 'object',
-      caption: hit.name || hit.key || hit.id,
+      caption: hit.name || copy.nodeObject,
       subtitle: hit.type || copy.nodeObject,
       rawCaption: hit.rawCaption ?? !hit.name,
       objectId: hit.id,
