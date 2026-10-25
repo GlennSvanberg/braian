@@ -101,8 +101,8 @@ p { margin: 20px 0 0; font-size: 24px; color: var(--text-2); }
   <div class="sheet">
     <div>
       <div class="brand">${mark}<span>Braian</span></div>
-      <h1>Every click is instant.<br /><span>And it understands you.</span></h1>
-      <p>Open source · MIT · Self-hosted</p>
+      <h1>Open-source PIM where<br /><span>every click is instant.</span></h1>
+      <p>A system that understands you, and keeps making your work easier.</p>
     </div>
     <div class="command">
       <div class="input">Search, go to, do, or ask AI</div>
