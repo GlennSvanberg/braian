@@ -17,6 +17,6 @@ Mätt 2026-10-25. Det här är inte perf-load och inte kedjan Postgres → Redpa
 
 En egen anslutning räcker inte. 4 × 500 har redan en egen anslutning för upserten och ligger ändå på 197 ms p95, medan importen själv tar 2–3,5 s. Med en samtidig import på 100 dokument är upserten 49 ms p95 trots att importen tar ~180 ms: Typesense har en tråd ledig (`thread-pool-size=2`, samtidighet 1).
 
-Indexerns standard är därför 100 dokument och samtidighet 1, med tak 200 respektive 2. När det interaktiva spåret eller `interactive_pressure` är aktivt blir nästa våg ett anrop på högst 100. En tidigare körning med lättare dokument (12 fält) gav samma ordning: 4 × 500 upsert p95 117 ms, 1 × 150 p95 19 ms.
+Mätningen motiverade taket 200 dokument och samtidighet 2, och att en upptagen våg stannar på ett anrop. Standard vid mättillfället var 100 × 1. Arkitekturgranskningen samma dag höjde den lediga standarden till 200 × 2 och lät pressure använda 200 × 1; en köad interaktiv händelse är fortfarande högst 100 × 1. En tidigare körning med lättare dokument (12 fält) gav samma ordning: 4 × 500 upsert p95 117 ms, 1 × 150 p95 19 ms.
 
 Hela ändring→sökbar-kedjan på 50 000 objekt är inte körd här. Den kräver Redpanda och den pinnade 8-vCPU-layouten.

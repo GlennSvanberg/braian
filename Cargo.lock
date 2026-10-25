@@ -527,6 +527,7 @@ dependencies = [
  "anyhow",
  "braian-model",
  "braian-rules",
+ "braian-search",
  "clap",
  "proptest",
  "rand 0.10.3",
