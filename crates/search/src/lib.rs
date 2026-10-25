@@ -4,7 +4,7 @@
 //! also get the value in the family's base unit, as a float used only for
 //! sorting and range filters. The exact decimal stays in Postgres.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use braian_model::{AttributeKind, DefinitionSet, Object};
 use braian_rules::CompiledModel;
@@ -210,34 +210,51 @@ impl Typesense {
         }
     }
 
+    /// Imports documents without letting an older `seq` replace a newer one.
+    ///
+    /// New ids are created in one batch. An id that is already stored is
+    /// deleted only when `seq` is greater than the stored value, then created
+    /// again, so the write is a full document and still loses to a newer seq.
     pub async fn import(&self, collection: &str, docs: &[Value]) -> Result<(), Error> {
         if docs.is_empty() {
             return Ok(());
         }
-        let mut body = String::new();
-        for doc in docs {
-            body.push_str(&serde_json::to_string(doc)?);
-            body.push('\n');
+        let docs = prefer_newer(docs);
+        let ids: Vec<String> = docs.iter().filter_map(doc_id).collect();
+        let stored = self.stored_seqs(collection, &ids).await?;
+        let plan = plan_import(&stored, &docs);
+        let creates: Vec<Value> = plan
+            .create
+            .iter()
+            .map(|index| docs[*index].clone())
+            .collect();
+        let mut updates: Vec<Value> = plan
+            .update
+            .iter()
+            .map(|index| docs[*index].clone())
+            .collect();
+        let created = self.import_action(collection, &creates, "create").await?;
+        for (doc, line) in creates.into_iter().zip(created) {
+            if line.already_exists {
+                updates.push(doc);
+            }
         }
-        let response = self
-            .client
-            .post(format!(
-                "{}/collections/{collection}/documents/import?action=upsert",
-                self.base
-            ))
-            .header("X-TYPESENSE-API-KEY", &self.api_key)
-            .header("Content-Type", "text/plain")
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| Error::Typesense(error.to_string()))?;
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|error| Error::Typesense(error.to_string()))?;
-        if !status.is_success() || text.contains("\"success\":false") {
-            return Err(Error::Typesense(format!("import {status}: {text}")));
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let mut pending = tokio::task::JoinSet::new();
+        for doc in updates {
+            let search = self.clone();
+            let collection = collection.to_owned();
+            pending.spawn(async move { search.replace_if_newer(&collection, &doc).await });
+            if pending.len() >= 8
+                && let Some(joined) = pending.join_next().await
+            {
+                joined.map_err(|error| Error::Typesense(error.to_string()))??;
+            }
+        }
+        while let Some(joined) = pending.join_next().await {
+            joined.map_err(|error| Error::Typesense(error.to_string()))??;
         }
         Ok(())
     }
@@ -331,6 +348,283 @@ impl Typesense {
         }
         Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
     }
+
+    async fn import_action(
+        &self,
+        collection: &str,
+        docs: &[Value],
+        action: &str,
+    ) -> Result<Vec<ImportLine>, Error> {
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut body = String::new();
+        for doc in docs {
+            body.push_str(&serde_json::to_string(doc)?);
+            body.push('\n');
+        }
+        let response = self
+            .client
+            .post(format!(
+                "{}/collections/{collection}/documents/import?action={action}",
+                self.base
+            ))
+            .header("X-TYPESENSE-API-KEY", &self.api_key)
+            .header("Content-Type", "text/plain")
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| Error::Typesense(error.to_string()))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|error| Error::Typesense(error.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::Typesense(format!("import {status}: {text}")));
+        }
+        let mut lines = Vec::new();
+        for line in text.lines().filter(|line| !line.is_empty()) {
+            let parsed: Value = serde_json::from_str(line).unwrap_or(Value::Null);
+            let success = parsed
+                .get("success")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let error = parsed
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let already_exists = error.to_ascii_lowercase().contains("already exists");
+            if !success && !already_exists {
+                return Err(Error::Typesense(format!("import {status}: {line}")));
+            }
+            lines.push(ImportLine {
+                already_exists: !success && already_exists,
+            });
+        }
+        Ok(lines)
+    }
+
+    async fn stored_seqs(
+        &self,
+        collection: &str,
+        ids: &[String],
+    ) -> Result<HashMap<String, i64>, Error> {
+        let mut stored = HashMap::new();
+        for chunk in ids.chunks(80) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let list = chunk
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let filter = format!("id:[{list}]");
+            let response = self
+                .client
+                .get(format!(
+                    "{}/collections/{collection}/documents/search",
+                    self.base
+                ))
+                .header("X-TYPESENSE-API-KEY", &self.api_key)
+                .query(&[
+                    ("q", "*"),
+                    ("query_by", "key"),
+                    ("filter_by", filter.as_str()),
+                    ("include_fields", "id,seq"),
+                    ("per_page", "250"),
+                ])
+                .send()
+                .await
+                .map_err(|error| Error::Typesense(error.to_string()))?;
+            let status = response.status();
+            let body: Value = response
+                .json()
+                .await
+                .map_err(|error| Error::Typesense(error.to_string()))?;
+            if !status.is_success() {
+                return Err(Error::Typesense(format!("seq lookup {status}: {body}")));
+            }
+            let Some(hits) = body.get("hits").and_then(Value::as_array) else {
+                continue;
+            };
+            for hit in hits {
+                let Some(document) = hit.get("document") else {
+                    continue;
+                };
+                let Some(id) = doc_id(document) else {
+                    continue;
+                };
+                if let Some(seq) = doc_seq(document) {
+                    stored.insert(id, seq);
+                }
+            }
+        }
+        Ok(stored)
+    }
+
+    async fn stored_seq(&self, collection: &str, id: &str) -> Result<Option<i64>, Error> {
+        let response = self
+            .client
+            .get(format!(
+                "{}/collections/{collection}/documents/{id}",
+                self.base
+            ))
+            .header("X-TYPESENSE-API-KEY", &self.api_key)
+            .send()
+            .await
+            .map_err(|error| Error::Typesense(error.to_string()))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let status = response.status();
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| Error::Typesense(error.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::Typesense(format!("read {id}: {status}: {body}")));
+        }
+        Ok(doc_seq(&body))
+    }
+
+    async fn delete_where(&self, collection: &str, filter: &str) -> Result<u64, Error> {
+        let response = self
+            .client
+            .delete(format!("{}/collections/{collection}/documents", self.base))
+            .header("X-TYPESENSE-API-KEY", &self.api_key)
+            .query(&[("filter_by", filter)])
+            .send()
+            .await
+            .map_err(|error| Error::Typesense(error.to_string()))?;
+        let status = response.status();
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| Error::Typesense(error.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::Typesense(format!("delete where {status}: {body}")));
+        }
+        Ok(body.get("num_deleted").and_then(Value::as_u64).unwrap_or(0))
+    }
+
+    /// Deletes the stored document when its seq is older, then creates `doc`.
+    /// A concurrent newer write is left in place.
+    async fn replace_if_newer(&self, collection: &str, doc: &Value) -> Result<(), Error> {
+        let (Some(id), Some(seq)) = (doc_id(doc), doc_seq(doc)) else {
+            self.import_action(collection, std::slice::from_ref(doc), "upsert")
+                .await?;
+            return Ok(());
+        };
+        for _ in 0..3 {
+            let deleted = self
+                .delete_where(collection, &format!("id:=`{id}` && seq:<{seq}"))
+                .await?;
+            let stored = self.stored_seq(collection, &id).await?;
+            if deleted == 0 && stored.is_some_and(|current| current >= seq) {
+                return Ok(());
+            }
+            if deleted == 0 && stored.is_some() {
+                continue;
+            }
+            let lines = self
+                .import_action(collection, std::slice::from_ref(doc), "create")
+                .await?;
+            if lines.first().is_none_or(|line| !line.already_exists) {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+}
+
+struct ImportLine {
+    already_exists: bool,
+}
+
+/// What to do with one document given the seq already stored for its id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeqDecision {
+    Create,
+    Update,
+    Skip,
+}
+
+pub fn seq_decision(stored: Option<i64>, incoming: i64) -> SeqDecision {
+    match stored {
+        None => SeqDecision::Create,
+        Some(stored) if incoming > stored => SeqDecision::Update,
+        Some(_) => SeqDecision::Skip,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportPlan {
+    pub create: Vec<usize>,
+    pub update: Vec<usize>,
+    pub skip: Vec<usize>,
+}
+
+/// Indexes into `docs`. A missing id is created. A missing seq on an existing
+/// id is updated, because there is no version to compare.
+pub fn plan_import(stored: &HashMap<String, i64>, docs: &[Value]) -> ImportPlan {
+    let mut plan = ImportPlan {
+        create: Vec::new(),
+        update: Vec::new(),
+        skip: Vec::new(),
+    };
+    for (index, doc) in docs.iter().enumerate() {
+        let Some(id) = doc_id(doc) else {
+            plan.create.push(index);
+            continue;
+        };
+        let decision = match stored.get(&id).copied() {
+            None => SeqDecision::Create,
+            Some(stored_seq) => match doc_seq(doc) {
+                Some(incoming) => seq_decision(Some(stored_seq), incoming),
+                None => SeqDecision::Update,
+            },
+        };
+        match decision {
+            SeqDecision::Create => plan.create.push(index),
+            SeqDecision::Update => plan.update.push(index),
+            SeqDecision::Skip => plan.skip.push(index),
+        }
+    }
+    plan
+}
+
+fn doc_id(doc: &Value) -> Option<String> {
+    doc.get("id").and_then(Value::as_str).map(str::to_owned)
+}
+
+fn doc_seq(doc: &Value) -> Option<i64> {
+    doc.get("seq").and_then(Value::as_i64)
+}
+
+/// One document per id, keeping the highest seq. Documents without an id stay.
+fn prefer_newer(docs: &[Value]) -> Vec<Value> {
+    let mut best: HashMap<String, usize> = HashMap::new();
+    let mut out = Vec::new();
+    for doc in docs {
+        let Some(id) = doc_id(doc) else {
+            out.push(doc.clone());
+            continue;
+        };
+        if let Some(index) = best.get(&id).copied() {
+            let previous = doc_seq(&out[index]).unwrap_or(i64::MIN);
+            let incoming = doc_seq(doc).unwrap_or(i64::MIN);
+            if incoming >= previous {
+                out[index] = doc.clone();
+            }
+            continue;
+        }
+        best.insert(id, out.len());
+        out.push(doc.clone());
+    }
+    out
 }
 
 fn parse_page(body: &Value) -> SearchPage {
@@ -593,4 +887,45 @@ fn scalar_number(
     let entered = braian_model::NumberValue { value: raw, unit };
     let normalized = model.normalize(attribute.id, &entered).ok()?;
     normalized.to_f64()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn an_older_seq_does_not_replace_a_newer_document() {
+        assert_eq!(seq_decision(Some(10), 4), SeqDecision::Skip);
+        assert_eq!(seq_decision(Some(10), 10), SeqDecision::Skip);
+        assert_eq!(seq_decision(Some(10), 11), SeqDecision::Update);
+        assert_eq!(seq_decision(None, 1), SeqDecision::Create);
+
+        let mut stored = HashMap::new();
+        stored.insert("obj".into(), 10);
+        let docs = vec![
+            json!({"id": "obj", "seq": 4}),
+            json!({"id": "obj", "seq": 12}),
+            json!({"id": "fresh", "seq": 1}),
+        ];
+        let plan = plan_import(&stored, &docs);
+        assert_eq!(plan.skip, vec![0]);
+        assert_eq!(plan.update, vec![1]);
+        assert_eq!(plan.create, vec![2]);
+    }
+
+    #[test]
+    fn the_same_id_keeps_only_the_highest_seq() {
+        let docs = vec![
+            json!({"id": "obj", "seq": 3, "key": "old"}),
+            json!({"id": "obj", "seq": 9, "key": "new"}),
+            json!({"id": "obj", "seq": 5, "key": "mid"}),
+            json!({"id": "other", "seq": 1}),
+        ];
+        let kept = prefer_newer(&docs);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0]["seq"], 9);
+        assert_eq!(kept[0]["key"], "new");
+        assert_eq!(kept[1]["id"], "other");
+    }
 }

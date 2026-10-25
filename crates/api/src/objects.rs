@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -319,6 +319,7 @@ fn note(state: &AppState, op: &str, id: Uuid, version: u64, seq: i64, type_key: 
         "version": version,
         "type": type_key,
     }));
+    state.index_after_commit(id, seq);
 }
 
 #[utoipa::path(
@@ -340,6 +341,16 @@ pub async fn object_changes(
         return Err(store_status(Error::NotFound(id)));
     }
     let rows = state.store.changes_for(id).await.map_err(store_status)?;
+    let mut ids = Vec::new();
+    for row in &rows {
+        ids.push(row.actor);
+        if let Some(id) = row.on_behalf_of {
+            ids.push(id);
+        }
+    }
+    ids.sort_by_key(|id| id.as_uuid());
+    ids.dedup();
+    let names = principal_labels(&state, &ids).await?;
     let mut changes = Vec::with_capacity(rows.len());
     for row in rows {
         changes.push(ChangeResponse {
@@ -347,11 +358,8 @@ pub async fn object_changes(
             at: row.at.to_rfc3339(),
             version: row.version,
             op: row.op.as_str().to_owned(),
-            actor: principal_name(&state, row.actor).await?,
-            on_behalf_of: match row.on_behalf_of {
-                Some(id) => Some(principal_name(&state, id).await?),
-                None => None,
-            },
+            actor: principal_label(&names, row.actor),
+            on_behalf_of: row.on_behalf_of.map(|id| principal_label(&names, id)),
             diff: row.diff,
         });
     }
@@ -427,15 +435,20 @@ async fn conflict_problem(
     current_version: u64,
     conflicts: Vec<Conflict>,
 ) -> Problem {
+    let mut ids = Vec::new();
+    for conflict in &conflicts {
+        ids.push(conflict.actor);
+        if let Some(id) = conflict.on_behalf_of {
+            ids.push(id);
+        }
+    }
+    ids.sort_by_key(|id| id.as_uuid());
+    ids.dedup();
+    let names = principal_labels(state, &ids).await.unwrap_or_default();
     let mut body = Vec::with_capacity(conflicts.len());
     for conflict in conflicts {
-        let actor = principal_name(state, conflict.actor)
-            .await
-            .unwrap_or_else(|_| conflict.actor.to_string());
-        let on_behalf_of = match conflict.on_behalf_of {
-            Some(id) => principal_name(state, id).await.ok(),
-            None => None,
-        };
+        let actor = principal_label(&names, conflict.actor);
+        let on_behalf_of = conflict.on_behalf_of.map(|id| principal_label(&names, id));
         body.push(ConflictBody {
             attribute: conflict.attribute.map(|id| {
                 cached
@@ -470,9 +483,18 @@ async fn conflict_problem(
     problem
 }
 
-async fn principal_name(state: &AppState, id: PrincipalId) -> Result<String, Problem> {
-    match state.store.principal(id).await.map_err(store_status)? {
-        Some(record) => Ok(record.handle.unwrap_or_else(|| record.id.to_string())),
-        None => Ok(id.to_string()),
+async fn principal_labels(
+    state: &AppState,
+    ids: &[PrincipalId],
+) -> Result<HashMap<PrincipalId, String>, Problem> {
+    let mut names = HashMap::new();
+    for record in state.store.principals(ids).await.map_err(store_status)? {
+        let id = record.id;
+        names.insert(id, record.handle.unwrap_or_else(|| id.to_string()));
     }
+    Ok(names)
+}
+
+fn principal_label(names: &HashMap<PrincipalId, String>, id: PrincipalId) -> String {
+    names.get(&id).cloned().unwrap_or_else(|| id.to_string())
 }

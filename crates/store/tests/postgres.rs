@@ -6,7 +6,7 @@ use braian_model::{
 };
 use braian_rules::CompiledModel;
 use braian_store::testing::TestDb;
-use braian_store::{Actor, BatchKind, ObjectOp, PrincipalKind};
+use braian_store::{Actor, BatchKind, ObjectOp, ObjectProjection, PrincipalKind};
 use braian_synth::{EditKind, Tier, definitions, edits, objects, objects_iter};
 
 fn actor(principal: braian_store::PrincipalId, behalf: Option<braian_store::PrincipalId>) -> Actor {
@@ -29,6 +29,40 @@ async fn setup(tier: Tier, seed: u64) -> (TestDb, braian_model::DefinitionSet, A
     let who = actor(human, None);
     db.store().put_definitions(&who, &defs).await.unwrap();
     (db, defs, who)
+}
+
+#[tokio::test]
+async fn principals_load_in_one_batch() {
+    let db = TestDb::create().await;
+    let ada = db
+        .store()
+        .upsert_principal("ada", PrincipalKind::Human, "Ada")
+        .await
+        .unwrap();
+    let scout = db
+        .store()
+        .upsert_principal("scout", PrincipalKind::Agent, "Scout")
+        .await
+        .unwrap();
+    let missing = braian_store::PrincipalId::new();
+    let found = db
+        .store()
+        .principals(&[ada, missing, scout, ada])
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 2);
+    assert!(
+        found
+            .iter()
+            .any(|row| row.id == ada && row.handle.as_deref() == Some("ada"))
+    );
+    assert!(
+        found
+            .iter()
+            .any(|row| row.id == scout && row.handle.as_deref() == Some("scout"))
+    );
+    assert!(found.iter().all(|row| row.id != missing));
+    assert!(db.store().principals(&[]).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -727,6 +761,231 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
         .get(&attribute)
         .and_then(|value| value.get(language.as_str()));
     assert_eq!(value, None);
+}
+
+#[tokio::test]
+async fn a_create_stores_a_marker_and_history_rebuilds_version_one() {
+    let (db, defs, who) = setup(Tier::Light, 21).await;
+    let object = objects(&defs, Tier::Light, 21, 1).pop().unwrap();
+    db.store()
+        .write_batch(&who, vec![ObjectOp::Create(object.clone())])
+        .await
+        .unwrap();
+
+    let stored_rows = db.store().stored_changes(object.id).await.unwrap();
+    let raw = stored_rows
+        .iter()
+        .find(|change| change.op == braian_store::ChangeOp::Create)
+        .unwrap()
+        .diff
+        .as_ref()
+        .unwrap();
+    let raw_keys = raw.as_object().unwrap();
+    assert!(raw_keys.contains_key("$created"), "{raw}");
+    assert!(
+        raw_keys.keys().all(|key| key.starts_with('$')),
+        "create diff stored attribute values: {raw}"
+    );
+
+    assert_create_diff(
+        db.store()
+            .changes_for(object.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|change| change.op == braian_store::ChangeOp::Create)
+            .unwrap()
+            .diff
+            .as_ref()
+            .unwrap(),
+        &object,
+    );
+    let history = db
+        .store()
+        .history(Some(object.id.as_uuid()), None, 10)
+        .await
+        .unwrap();
+    assert_create_diff(
+        history
+            .iter()
+            .find(|entry| entry.op == "create")
+            .unwrap()
+            .diff
+            .as_ref()
+            .unwrap(),
+        &object,
+    );
+
+    let edit = edits(&defs, Tier::Light, 21, EditKind::OneLanguage, 0..1)
+        .next()
+        .unwrap();
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: braian_model::ObjectPatch {
+                    values: edit.patch.clone(),
+                    groups: BTreeMap::new(),
+                },
+                base_version: 1,
+                read_version: 1,
+            }],
+        )
+        .await
+        .unwrap();
+
+    let version_one = db.store().values_at_version(object.id, 1).await.unwrap();
+    assert_eq!(version_one, object.values);
+    let current = db.store().get_object(object.id).await.unwrap().unwrap();
+    assert_ne!(current.object.values, object.values);
+    assert_eq!(current.version, 2);
+
+    assert_create_diff(
+        db.store()
+            .changes_for(object.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|change| change.op == braian_store::ChangeOp::Create)
+            .unwrap()
+            .diff
+            .as_ref()
+            .unwrap(),
+        &object,
+    );
+    let stored_again = db.store().stored_changes(object.id).await.unwrap();
+    let raw_again = stored_again
+        .iter()
+        .find(|change| change.op == braian_store::ChangeOp::Create)
+        .unwrap()
+        .diff
+        .as_ref()
+        .unwrap();
+    assert_eq!(raw_again, raw);
+}
+
+#[tokio::test]
+async fn batch_read_pipelines_and_can_project_parts() {
+    let (db, defs, who) = setup(Tier::Light, 23).await;
+    let sample = objects(&defs, Tier::Light, 23, 4);
+    db.store()
+        .write_batch(&who, sample.iter().cloned().map(ObjectOp::Create).collect())
+        .await
+        .unwrap();
+    let ids: Vec<_> = sample.iter().map(|object| object.id).collect();
+    let loaded = db.store().get_objects(&ids).await.unwrap();
+    assert_eq!(loaded.len(), sample.len());
+    for (stored, object) in loaded.iter().zip(&sample) {
+        assert_eq!(stored.object, *object);
+    }
+
+    let head = sample[0].id;
+    let identity = db
+        .store()
+        .get_objects_projected(
+            &[head],
+            &ObjectProjection {
+                groups: false,
+                values: false,
+                parts: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(identity.len(), 1);
+    assert_eq!(identity[0].key, loaded[0].key);
+    assert!(identity[0].object.values.is_empty());
+    assert!(identity[0].object.groups.is_empty());
+
+    let parts = db.store().stored_parts(head).await.unwrap();
+    let part = parts.keys().next().cloned().unwrap();
+    let projected = db
+        .store()
+        .get_objects_projected(
+            &[head],
+            &ObjectProjection {
+                groups: true,
+                values: true,
+                parts: Some(vec![part.clone()]),
+            },
+        )
+        .await
+        .unwrap();
+    let only = &projected[0];
+    assert_eq!(only.object.groups, loaded[0].object.groups);
+    assert!(!only.object.values.is_empty());
+    assert!(only.object.values.len() < loaded[0].object.values.len());
+    for (id, value) in &only.object.values {
+        assert_eq!(loaded[0].object.values.get(id), Some(value));
+    }
+
+    let plans = explain_batch_read(
+        &db.database_url(),
+        &[head.as_uuid(), sample[1].id.as_uuid()],
+    )
+    .await;
+    assert!(
+        plans
+            .iter()
+            .any(|plan| plan.contains("Index") || plan.contains("Bitmap")),
+        "batch read did not use an index:\n{}",
+        plans.join("\n---\n")
+    );
+}
+
+async fn explain_batch_read(url: &str, ids: &[braian_model::Uuid]) -> Vec<String> {
+    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let statements = [
+        "SELECT id, type_id, key, version, model_revision, deleted_at FROM objects WHERE id = ANY($1)",
+        "SELECT object_id, structure_id, group_id FROM object_structures WHERE object_id = ANY($1)",
+        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\" FROM object_values WHERE object_id = ANY($1) ORDER BY object_id, part, version DESC",
+    ];
+    let mut plans = Vec::new();
+    for sql in statements {
+        let rows = client
+            .query(&format!("EXPLAIN (ANALYZE, BUFFERS) {sql}"), &[&ids])
+            .await
+            .unwrap();
+        let plan = rows
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>()
+            .join("\n");
+        plans.push(plan);
+    }
+    plans
+}
+
+fn assert_create_diff(diff: &serde_json::Value, object: &Object) {
+    let map = diff.as_object().expect("create diff");
+    assert!(map.get("$created").is_none(), "{diff}");
+    for (id, value) in &object.values {
+        let entry = map
+            .get(&id.as_uuid().to_string())
+            .unwrap_or_else(|| panic!("missing {id} in {diff}"))
+            .as_object()
+            .unwrap();
+        assert!(entry.get("before").is_none());
+        assert_eq!(entry.get("after"), Some(value));
+    }
+    for key in map.keys() {
+        if key.starts_with('$') {
+            continue;
+        }
+        let id = AttributeId::from_uuid(key.parse().unwrap());
+        assert!(object.values.contains_key(&id), "{key}");
+    }
+    if object.groups.is_empty() {
+        assert!(map.get("$groups").is_none());
+    } else {
+        assert!(map.get("$groups").is_some());
+    }
 }
 
 fn value_update(id: braian_model::ObjectId, values: ValuePatch, base: u64, read: u64) -> ObjectOp {

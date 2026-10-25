@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::Error;
 use crate::ids::{Actor, BatchId, ChangeOp, PrincipalId, PrincipalKind};
 use crate::session::Store;
-use crate::split::{self, diff_created, diff_from_patch};
+use crate::split::{self, diff_from_patch};
 use crate::types::{
     BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectOp, PrincipalRecord, StoredObject,
     WriteReceipt,
@@ -220,36 +220,71 @@ impl Store {
         Ok(Some(stored))
     }
 
-    /// Loads many objects in three queries (`objects`, `object_structures`, `object_values`).
+    /// Loads many objects in three pipelined queries (`objects`, `object_structures`, `object_values`).
     ///
     /// Ids that are missing are omitted. The result follows `ids`, without duplicates.
     pub async fn get_objects(&self, ids: &[ObjectId]) -> Result<Vec<StoredObject>, Error> {
+        self.get_objects_projected(ids, &crate::types::ObjectProjection::full())
+            .await
+    }
+
+    /// Same as [`Self::get_objects`], skipping groups, values, or value parts that
+    /// the caller did not ask for.
+    pub async fn get_objects_projected(
+        &self,
+        ids: &[ObjectId],
+        projection: &crate::types::ObjectProjection,
+    ) -> Result<Vec<StoredObject>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let uuids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
         let client = self.pool().get().await?;
-        let rows = client
-            .query(
-                "SELECT id, type_id, key, version, model_revision, deleted_at
-                 FROM objects WHERE id = ANY($1)",
-                &[&uuids],
-            )
-            .await?;
-        let group_rows = client
-            .query(
-                "SELECT object_id, structure_id, group_id
-                 FROM object_structures WHERE object_id = ANY($1)",
-                &[&uuids],
-            )
-            .await?;
-        let part_rows = client
-            .query(
-                "SELECT object_id, part, \"values\"
-                 FROM object_values WHERE object_id = ANY($1)",
-                &[&uuids],
-            )
-            .await?;
+        let params: [&(dyn ToSql + Sync); 1] = [&uuids];
+        let rows_fut = client.query(
+            "SELECT id, type_id, key, version, model_revision, deleted_at
+             FROM objects WHERE id = ANY($1)",
+            &params,
+        );
+        let groups_fut = async {
+            if !projection.groups {
+                return Ok(Vec::new());
+            }
+            client
+                .query(
+                    "SELECT object_id, structure_id, group_id
+                     FROM object_structures WHERE object_id = ANY($1)",
+                    &[&uuids],
+                )
+                .await
+        };
+        let parts_fut = async {
+            if !projection.values {
+                return Ok(Vec::new());
+            }
+            if let Some(parts) = &projection.parts {
+                client
+                    .query(
+                        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
+                         FROM object_values
+                         WHERE object_id = ANY($1) AND part = ANY($2)
+                         ORDER BY object_id, part, version DESC",
+                        &[&uuids, parts],
+                    )
+                    .await
+            } else {
+                client
+                    .query(
+                        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
+                         FROM object_values WHERE object_id = ANY($1)
+                         ORDER BY object_id, part, version DESC",
+                        &[&uuids],
+                    )
+                    .await
+            }
+        };
+        let (rows, group_rows, part_rows) =
+            futures::future::try_join3(rows_fut, groups_fut, parts_fut).await?;
         let mut groups: HashMap<Uuid, Vec<(Uuid, Uuid)>> = HashMap::new();
         for row in &group_rows {
             groups
@@ -310,7 +345,8 @@ impl Store {
         let client = self.pool().get().await?;
         let rows = client
             .query(
-                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 ORDER BY part",
+                "SELECT DISTINCT ON (part) part, \"values\" FROM object_values
+                 WHERE object_id = $1 ORDER BY part, version DESC",
                 &[&id.as_uuid()],
             )
             .await?;
@@ -354,15 +390,66 @@ impl Store {
         }))
     }
 
-    pub async fn changes_for(&self, id: ObjectId) -> Result<Vec<ChangeRow>, Error> {
+    /// Loads many principals in one query. Unknown ids are omitted.
+    pub async fn principals(&self, ids: &[PrincipalId]) -> Result<Vec<PrincipalRecord>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let uuids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
         let client = self.pool().get().await?;
         let rows = client
             .query(
-                "SELECT seq, at, batch_id, object_id, version, op, actor, on_behalf_of, diff FROM changes WHERE object_id = $1 ORDER BY seq",
-                &[&id.as_uuid()],
+                "SELECT id, kind, name, handle FROM principals WHERE id = ANY($1)",
+                &[&uuids],
             )
             .await?;
-        rows.iter().map(change_from_row).collect()
+        rows.iter()
+            .map(|row| {
+                Ok(PrincipalRecord {
+                    id: PrincipalId::from_uuid(row.get("id")),
+                    kind: PrincipalKind::parse(row.get("kind"))?,
+                    name: row.get("name"),
+                    handle: row.get("handle"),
+                })
+            })
+            .collect()
+    }
+
+    /// Change log for one object. A create row is rebuilt from `object_values`
+    /// version 1 so the stored diff can stay a marker.
+    pub async fn changes_for(&self, id: ObjectId) -> Result<Vec<ChangeRow>, Error> {
+        let client = self.pool().get().await?;
+        let mut rows = stored_changes(&**client, id).await?;
+        self.expand_change_rows(&**client, &mut rows).await?;
+        Ok(rows)
+    }
+
+    /// Change rows as written. A create diff is a `$created` marker, not the values.
+    pub async fn stored_changes(&self, id: ObjectId) -> Result<Vec<ChangeRow>, Error> {
+        let client = self.pool().get().await?;
+        stored_changes(&**client, id).await
+    }
+
+    /// Values from one `object_values` version. Version 1 is the create snapshot
+    /// and is never rewritten.
+    pub async fn values_at_version(
+        &self,
+        id: ObjectId,
+        version: u64,
+    ) -> Result<BTreeMap<braian_model::AttributeId, Value>, Error> {
+        let client = self.pool().get().await?;
+        let version = as_i64(version)?;
+        let rows = client
+            .query(
+                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND version = $2",
+                &[&id.as_uuid(), &version],
+            )
+            .await?;
+        let encoded = rows
+            .iter()
+            .map(|row| (row.get("part"), row.get("values")))
+            .collect();
+        split::join_parts(self.form(), &encoded).map_err(|message| Error::Corrupt(id, message))
     }
 
     /// Monthly partition that holds `seq`, for example `changes_2026_10`.
@@ -444,7 +531,8 @@ impl Store {
             .await?;
         let parts = client
             .query(
-                "SELECT part, \"values\" FROM object_values WHERE object_id = $1",
+                "SELECT DISTINCT ON (part) part, \"values\" FROM object_values
+                 WHERE object_id = $1 ORDER BY part, version DESC",
                 &[&id.as_uuid()],
             )
             .await?;
@@ -664,7 +752,7 @@ async fn insert_object(
     for (part, document) in &parts {
         let value = Value::Object(document.clone());
         tx.execute(
-            "INSERT INTO object_values (object_id, part, \"values\") VALUES ($1, $2, $3)",
+            "INSERT INTO object_values (object_id, part, version, \"values\") VALUES ($1, $2, 1, $3)",
             &[&object.id.as_uuid(), part, &value],
         )
         .await?;
@@ -676,8 +764,7 @@ async fn insert_object(
         )
         .await?;
     }
-    let mut diff = diff_created(&object.values);
-    attach_created_groups(&mut diff, &object.groups);
+    let diff = split::create_marker(&object.groups);
     let seq = insert_change(
         tx,
         batch,
@@ -737,33 +824,28 @@ async fn update_object(
     }
     let before = parts.clone();
     defs.split.apply_patch(form, &mut parts, &patch.values);
+    let version_i64 = as_i64(current_version + 1)?;
     for part in before.keys() {
-        if !parts.contains_key(part) {
-            tx.execute(
-                "DELETE FROM object_values WHERE object_id = $1 AND part = $2",
-                &[&id.as_uuid(), part],
-            )
-            .await?;
+        if parts.contains_key(part) {
+            continue;
         }
+        let empty = Value::Object(serde_json::Map::new());
+        tx.execute(
+            "INSERT INTO object_values (object_id, part, version, \"values\") VALUES ($1, $2, $3, $4)",
+            &[&id.as_uuid(), part, &version_i64, &empty],
+        )
+        .await?;
     }
     for (part, document) in &parts {
         if before.get(part) == Some(document) {
             continue;
         }
         let value = Value::Object(document.clone());
-        if before.contains_key(part) {
-            tx.execute(
-                "UPDATE object_values SET \"values\" = $3 WHERE object_id = $1 AND part = $2",
-                &[&id.as_uuid(), part, &value],
-            )
-            .await?;
-        } else {
-            tx.execute(
-                "INSERT INTO object_values (object_id, part, \"values\") VALUES ($1, $2, $3)",
-                &[&id.as_uuid(), part, &value],
-            )
-            .await?;
-        }
+        tx.execute(
+            "INSERT INTO object_values (object_id, part, version, \"values\") VALUES ($1, $2, $3, $4)",
+            &[&id.as_uuid(), part, &version_i64, &value],
+        )
+        .await?;
     }
     let placed = apply_groups(tx, id, patch).await?;
     let revision = as_i64(defs.set.model_revision)?;
@@ -910,19 +992,22 @@ async fn copy_creates(
         .map_err(|error| map_unique(error, TypeId::from_uuid(Uuid::nil()), ""))?;
 
     let sink = tx
-        .copy_in("COPY object_values (object_id, part, \"values\") FROM STDIN WITH (FORMAT binary)")
+        .copy_in(
+            "COPY object_values (object_id, part, version, \"values\") FROM STDIN WITH (FORMAT binary)",
+        )
         .await?;
     let mut writer = std::pin::pin!(BinaryCopyInWriter::new(
         sink,
-        &[Type::UUID, Type::TEXT, Type::JSONB],
+        &[Type::UUID, Type::TEXT, Type::INT8, Type::JSONB],
     ));
+    let value_version = 1i64;
     for object in objects {
         let id = object.id.as_uuid();
         for (part, document) in defs.split.split_ref(form, &object.values) {
             let value = tokio_postgres::types::Json(&document);
             writer
                 .as_mut()
-                .write(&[&id as &(dyn ToSql + Sync), &part, &value])
+                .write(&[&id as &(dyn ToSql + Sync), &part, &value_version, &value])
                 .await?;
         }
     }
@@ -976,10 +1061,7 @@ async fn copy_creates(
     ));
     for object in objects {
         let object_id = object.id.as_uuid();
-        let diff = tokio_postgres::types::Json(split::CreatedDiff {
-            values: &object.values,
-            groups: &object.groups,
-        });
+        let diff = tokio_postgres::types::Json(split::create_marker(&object.groups));
         writer
             .as_mut()
             .write(&[
@@ -1041,6 +1123,122 @@ async fn insert_change(
     Ok(row.get(0))
 }
 
+async fn stored_changes(
+    client: &impl tokio_postgres::GenericClient,
+    id: ObjectId,
+) -> Result<Vec<ChangeRow>, Error> {
+    let rows = client
+        .query(
+            "SELECT seq, at, batch_id, object_id, version, op, actor, on_behalf_of, diff FROM changes WHERE object_id = $1 ORDER BY seq",
+            &[&id.as_uuid()],
+        )
+        .await?;
+    rows.iter().map(change_from_row).collect()
+}
+
+impl Store {
+    pub(crate) async fn expand_history_diffs(
+        &self,
+        client: &impl tokio_postgres::GenericClient,
+        entries: &mut [crate::product::HistoryEntry],
+    ) -> Result<(), Error> {
+        let mut ids = Vec::new();
+        for entry in entries.iter() {
+            if entry.diff.as_ref().is_some_and(split::is_create_marker)
+                && let Some(id) = entry.object_id
+            {
+                ids.push(id);
+            }
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        ids.sort();
+        ids.dedup();
+        let created = created_values(self, client, &ids).await?;
+        let empty = BTreeMap::new();
+        for entry in entries.iter_mut() {
+            let Some(diff) = entry.diff.as_ref() else {
+                continue;
+            };
+            if !split::is_create_marker(diff) {
+                continue;
+            }
+            let values = entry
+                .object_id
+                .and_then(|id| created.get(&id))
+                .unwrap_or(&empty);
+            let expanded = split::expand_create_marker(diff, values);
+            entry.diff = Some(expanded);
+        }
+        Ok(())
+    }
+
+    async fn expand_change_rows(
+        &self,
+        client: &impl tokio_postgres::GenericClient,
+        rows: &mut [ChangeRow],
+    ) -> Result<(), Error> {
+        let mut ids = Vec::new();
+        for row in rows.iter() {
+            if row.diff.as_ref().is_some_and(split::is_create_marker)
+                && let Some(id) = row.object_id
+            {
+                ids.push(id.as_uuid());
+            }
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        ids.sort();
+        ids.dedup();
+        let created = created_values(self, client, &ids).await?;
+        let empty = BTreeMap::new();
+        for row in rows.iter_mut() {
+            let Some(diff) = row.diff.as_ref() else {
+                continue;
+            };
+            if !split::is_create_marker(diff) {
+                continue;
+            }
+            let values = row
+                .object_id
+                .and_then(|id| created.get(&id.as_uuid()))
+                .unwrap_or(&empty);
+            let expanded = split::expand_create_marker(diff, values);
+            row.diff = Some(expanded);
+        }
+        Ok(())
+    }
+}
+
+async fn created_values(
+    store: &Store,
+    client: &impl tokio_postgres::GenericClient,
+    ids: &[Uuid],
+) -> Result<HashMap<Uuid, BTreeMap<braian_model::AttributeId, Value>>, Error> {
+    let rows = client
+        .query(
+            "SELECT object_id, part, \"values\" FROM object_values WHERE object_id = ANY($1) AND version = 1",
+            &[&ids],
+        )
+        .await?;
+    let mut parts: HashMap<Uuid, BTreeMap<String, Value>> = HashMap::new();
+    for row in &rows {
+        parts
+            .entry(row.get("object_id"))
+            .or_default()
+            .insert(row.get("part"), row.get("values"));
+    }
+    let mut values = HashMap::with_capacity(parts.len());
+    for (id, encoded) in parts {
+        let joined = split::join_parts(store.form(), &encoded)
+            .map_err(|message| Error::Corrupt(ObjectId::from_uuid(id), message))?;
+        values.insert(id, joined);
+    }
+    Ok(values)
+}
+
 fn change_from_row(row: &tokio_postgres::Row) -> Result<ChangeRow, Error> {
     let op =
         ChangeOp::parse(row.get("op")).ok_or_else(|| Error::Data("unknown change op".into()))?;
@@ -1085,18 +1283,32 @@ async fn load_parts_for_update(
     let rows = match form {
         crate::split::StorageForm::Document => {
             tx.query(
-                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND part = ANY($2) FOR UPDATE",
+                "SELECT v.part, v.\"values\"
+                 FROM object_values v
+                 JOIN (
+                    SELECT part, MAX(version) AS version
+                    FROM object_values WHERE object_id = $1 GROUP BY part
+                 ) latest ON v.object_id = $1 AND v.part = latest.part AND v.version = latest.version
+                 WHERE v.part = ANY($2)
+                 FOR UPDATE OF v",
                 &[&id.as_uuid(), &stale.destinations],
             )
             .await?
         }
         crate::split::StorageForm::PerLanguage => {
             tx.query(
-                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND (
-                    part = ANY($2)
-                    OR (part = '' AND \"values\" ?| $3::text[])
-                    OR (part <> '' AND \"values\" ?| $4::text[])
-                ) FOR UPDATE",
+                "SELECT v.part, v.\"values\"
+                 FROM object_values v
+                 JOIN (
+                    SELECT part, MAX(version) AS version
+                    FROM object_values WHERE object_id = $1 GROUP BY part
+                 ) latest ON v.object_id = $1 AND v.part = latest.part AND v.version = latest.version
+                 WHERE (
+                    v.part = ANY($2)
+                    OR (v.part = '' AND v.\"values\" ?| $3::text[])
+                    OR (v.part <> '' AND v.\"values\" ?| $4::text[])
+                 )
+                 FOR UPDATE OF v",
                 &[
                     &id.as_uuid(),
                     &stale.destinations,
@@ -1108,11 +1320,18 @@ async fn load_parts_for_update(
         }
         crate::split::StorageForm::PerLanguageGroup => {
             tx.query(
-                "SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND (
-                    part = ANY($2)
-                    OR (part LIKE '#%' AND split_part(part, '#', 2) = ANY($3::text[]) AND \"values\" ?| $4::text[])
-                    OR (part NOT LIKE '#%' AND split_part(part, '#', 2) = ANY($5::text[]) AND \"values\" ?| $6::text[])
-                ) FOR UPDATE",
+                "SELECT v.part, v.\"values\"
+                 FROM object_values v
+                 JOIN (
+                    SELECT part, MAX(version) AS version
+                    FROM object_values WHERE object_id = $1 GROUP BY part
+                 ) latest ON v.object_id = $1 AND v.part = latest.part AND v.version = latest.version
+                 WHERE (
+                    v.part = ANY($2)
+                    OR (v.part LIKE '#%' AND split_part(v.part, '#', 2) = ANY($3::text[]) AND v.\"values\" ?| $4::text[])
+                    OR (v.part NOT LIKE '#%' AND split_part(v.part, '#', 2) = ANY($5::text[]) AND v.\"values\" ?| $6::text[])
+                 )
+                 FOR UPDATE OF v",
                 &[
                     &id.as_uuid(),
                     &stale.destinations,
@@ -1364,26 +1583,6 @@ fn definition_diff(before: Option<&DefinitionSet>, after: &DefinitionSet) -> Val
         }));
     }
     serde_json::json!({ "entities": entities })
-}
-
-fn attach_created_groups(
-    diff: &mut Value,
-    groups: &std::collections::BTreeMap<braian_model::StructureId, braian_model::GroupId>,
-) {
-    if groups.is_empty() {
-        return;
-    }
-    let Some(object) = diff.as_object_mut() else {
-        return;
-    };
-    let mut placed = Map::new();
-    for (structure, group) in groups {
-        placed.insert(
-            structure.as_uuid().to_string(),
-            serde_json::json!({ "after": group.as_uuid().to_string() }),
-        );
-    }
-    object.insert("$groups".to_owned(), Value::Object(placed));
 }
 
 fn diff_entities<T: PartialEq>(

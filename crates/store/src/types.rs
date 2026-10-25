@@ -4,6 +4,33 @@ use serde_json::Value;
 
 use crate::ids::{BatchId, ChangeOp, PrincipalId};
 
+/// Which pieces [`crate::Store::get_objects_projected`] loads.
+///
+/// A full object is groups plus every latest value part. `parts` limits the
+/// value documents when `values` is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectProjection {
+    pub groups: bool,
+    pub values: bool,
+    pub parts: Option<Vec<String>>,
+}
+
+impl ObjectProjection {
+    pub fn full() -> Self {
+        Self {
+            groups: true,
+            values: true,
+            parts: None,
+        }
+    }
+}
+
+impl Default for ObjectProjection {
+    fn default() -> Self {
+        Self::full()
+    }
+}
+
 /// One object as stored, including the fields that are not part of the model object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredObject {
