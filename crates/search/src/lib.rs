@@ -56,19 +56,41 @@ pub struct SearchPage {
 #[derive(Clone)]
 pub struct Typesense {
     client: reqwest::Client,
+    /// Separate pool from [`Self::client`]. Bulk imports keep their connections
+    /// until Typesense finishes the batch; interactive upserts use this one.
+    interactive: reqwest::Client,
     base: String,
     api_key: String,
     alias: String,
 }
 
+fn http_client(idle_per_host: usize) -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(idle_per_host)
+        .http1_only()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 impl Typesense {
     pub fn new(base: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: http_client(8),
+            interactive: http_client(2),
             base: base.into().trim_end_matches('/').to_owned(),
             api_key: api_key.into(),
             alias: ALIAS.to_owned(),
         }
+    }
+
+    /// Sends every request on the interactive connection pool.
+    ///
+    /// A bulk `documents/import` holds its HTTP connection for the whole batch.
+    /// Upserts on this handle do not wait for that connection to come free.
+    pub fn interactive_writer(&self) -> Self {
+        let mut writer = self.clone();
+        writer.client = self.interactive.clone();
+        writer
     }
 
     /// Tests use a private alias so they do not share one collection.

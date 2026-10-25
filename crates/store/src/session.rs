@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use tokio_postgres::NoTls;
 
 use crate::error::Error;
+use crate::gauge::{self, Gauge};
 use crate::pressure::{self, InteractiveGuard, InteractiveLoad, YieldLimits};
 use crate::split::StorageForm;
 use crate::types::CachedDefs;
@@ -107,6 +108,9 @@ pub struct Store {
     lane: DbLane,
     yield_limits: YieldLimits,
     load: InteractiveLoad,
+    /// Keeps the pressure publisher running until the last store clone is dropped.
+    #[expect(dead_code)]
+    gauge: Gauge,
     form: StorageForm,
     definitions: Arc<RwLock<Option<Arc<CachedDefs>>>>,
 }
@@ -152,6 +156,8 @@ impl Store {
         drop(client);
         handle.abort();
 
+        let load = InteractiveLoad::new();
+        let gauge = gauge::start(config.clone(), load.clone());
         let interactive = Pool::builder(Manager::new(config.clone(), NoTls))
             .max_size(pools.interactive.max(1))
             .build()?;
@@ -163,7 +169,8 @@ impl Store {
             bulk,
             lane: DbLane::Interactive,
             yield_limits: pools.yield_limits(),
-            load: InteractiveLoad::new(),
+            load,
+            gauge,
             form,
             definitions: Arc::new(RwLock::new(None)),
         })
@@ -222,15 +229,24 @@ impl Store {
         self.load.inflight()
     }
 
+    /// Interactive requests this process should yield for.
+    ///
+    /// The count is this process plus fresh rows other processes have
+    /// published to `interactive_pressure`. A crashed process drops out
+    /// after a few hundred milliseconds.
+    pub fn interactive_pressure(&self) -> usize {
+        self.load.total()
+    }
+
     /// Rows to take from a remaining bulk slice.
     ///
     /// Interactive stores return `remaining`. Bulk stores shrink it while
-    /// [`Self::interactive_inflight`] is above zero.
+    /// [`Self::interactive_pressure`] is above zero.
     pub(crate) fn bulk_take(&self, remaining: usize) -> usize {
         if remaining == 0 || self.lane != DbLane::Bulk {
             return remaining;
         }
-        pressure::bulk_pace(self.load.inflight(), remaining, self.yield_limits)
+        pressure::bulk_pace(self.load.total(), remaining, self.yield_limits)
             .chunk
             .min(remaining)
             .max(1)
@@ -239,8 +255,9 @@ impl Store {
     /// Gives the scheduler a turn before the next bulk slice, then waits.
     ///
     /// Interactive stores return immediately. With interactive requests in
-    /// flight the wait grows and stops at [`PoolConfig::bulk_yield_max`], so
-    /// the import continues. An idle bulk lane waits [`PoolConfig::bulk_yield`].
+    /// flight, here or in another process, the wait grows and stops at
+    /// [`PoolConfig::bulk_yield_max`], so the import continues. An idle bulk
+    /// lane waits [`PoolConfig::bulk_yield`].
     pub async fn yield_between_bulk_batches(&self) {
         if self.lane != DbLane::Bulk {
             return;
