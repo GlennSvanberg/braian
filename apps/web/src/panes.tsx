@@ -29,6 +29,7 @@ import {
 } from './type-labels'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
+import { classSections } from './class-sections'
 import { objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishSelection, publishTable } from './ui-context'
@@ -808,6 +809,51 @@ function NewObject({ session, typeKey, singular }: { session: PanesSession; type
       <button className="primary" type="submit" data-testid="create-object">{copy.save}</button>
       {error ? <span className="error" data-testid="validation-error">{error}</span> : null}
     </form>
+  )
+}
+
+export function ClassAttributes({ session }: { session: PanesSession }) {
+  const object = useQuery({
+    queryKey: ['object', session.objectId],
+    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    enabled: Boolean(session.objectId),
+  })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const types = typeNames(defs.data, uiLanguage)
+  const listed = session.listType ? types.find((item) => item.key === session.listType) : undefined
+  if (!session.objectId || !object.data) {
+    const empty = listed
+      ? `Select a ${listed.singular.toLowerCase()} to see the attributes on its classes.`
+      : copy.classAttributesEmpty
+    return (
+      <div className="detail-empty" data-testid="class-empty">
+        <p>{empty}</p>
+      </div>
+    )
+  }
+  const sections = classSections(defs.data, String(object.data.type ?? ''), object.data.groups, uiLanguage)
+  if (sections.length === 0) {
+    return (
+      <div className="detail-empty" data-testid="class-empty">
+        <p>{copy.noClasses}</p>
+      </div>
+    )
+  }
+  return (
+    <div className="class-attributes" data-testid="class-attributes">
+      {sections.map((section) => (
+        <section key={section.id} className="class-section" data-testid="class-section">
+          <h3>{section.title}</h3>
+          {section.attributes.length === 0 ? <p className="hint">{copy.noClassAttributes}</p> : null}
+          {section.attributes.map((attribute) => (
+            <div key={attribute.id} className="class-attr" data-testid="class-attribute">
+              <span>{attribute.label}</span>
+              <span>{attribute.kind}</span>
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
   )
 }
 

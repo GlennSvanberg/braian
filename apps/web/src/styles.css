@@ -1741,6 +1741,11 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 .import-cell.error { box-shadow: inset 0 0 0 1px var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); border-radius: var(--r-sm); }
 .import-popover { position: fixed; right: 24px; bottom: 72px; z-index: 2; min-width: 220px; justify-items: stretch; }
 .import-confirm { position: fixed; inset: 0; margin: auto; height: max-content; z-index: 3; }
+.class-attributes { display: flex; flex-direction: column; gap: 14px; padding: 12px 14px; overflow: auto; min-height: 0; }
+.class-section h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
+.class-attr { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.class-attr span:last-child { color: var(--muted); }
+
 @media (max-width: 720px) {
   .import-top { grid-template-columns: minmax(0, 1fr) auto; }
   .import-steps { grid-column: 1 / -1; order: 3; flex-wrap: wrap; }

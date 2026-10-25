@@ -4,11 +4,11 @@ import { demoCredentials } from './demo'
 
 const shots = '/opt/cursor/artifacts/final'
 
-async function resetEnrich(page: Page) {
+async function resetProducts(page: Page) {
   const listed = await page.request.get('/v1/workspaces')
   const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
-  const enrich = body.workspaces.find((item) => item.name === 'Enrich')
-  if (!enrich) throw new Error('missing Enrich')
+  const enrich = body.workspaces.find((item) => item.name === 'Products')
+  if (!enrich) throw new Error('missing Products')
   await page.evaluate(() => sessionStorage.setItem('braian.layout.suppressFlush', '1'))
   const me = await page.request.get('/v1/me')
   const userId = ((await me.json()) as { user_id?: string }).user_id
@@ -30,7 +30,7 @@ async function login(page: Page) {
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByTestId('object-table')).toBeVisible()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
-  await resetEnrich(page)
+  await resetProducts(page)
 }
 
 async function hold(page: Page, tabName: string, x: number, y: number) {
@@ -126,7 +126,7 @@ test('polish screenshots', async ({ page }) => {
   await expect(page.getByTestId('proposal')).toBeVisible()
   await page.screenshot({ path: `${shots}/review-dark.png` })
 
-  await page.getByRole('button', { name: 'Enrich' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: 'Products' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
   const objects = page.locator('section.pane').filter({ has: page.locator('.pane-tab', { hasText: 'Products' }) })
   const box = await objects.boundingBox()
@@ -152,5 +152,5 @@ test('polish screenshots', async ({ page }) => {
   await expect(page.getByTestId('dock')).toHaveAttribute('data-zoom', '')
   await expect(page.getByTestId('dock')).toHaveAttribute('data-leaves', leavesBefore ?? '')
   await page.screenshot({ path: `${shots}/restored.png` })
-  await resetEnrich(page)
+  await resetProducts(page)
 })

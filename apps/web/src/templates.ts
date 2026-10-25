@@ -1,7 +1,6 @@
 import { api, type Json } from './api'
-import { copy } from './i18n'
 import { splitPair, tabGroup, type Node } from './layout'
-import { enrichWorkspaceName, type TypeName } from './type-labels'
+import type { TypeName } from './type-labels'
 
 export type WorkspaceTemplate = {
   id: string
@@ -11,32 +10,42 @@ export type WorkspaceTemplate = {
   layout: (ids: string[]) => Node
 }
 
-export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] {
-  const tables = types.length > 0 ? types : [{ id: '', key: '', singular: 'Object', plural: copy.objects }]
-  const tableViews = tables.map((type) => ({
-    type: 'object_table',
-    title: type.plural,
-    state: type.id ? { object_type: type.id, type_key: type.key } : {},
-  }))
-  return [
-  {
-    id: 'enrich',
-    name: types.length > 0 ? enrichWorkspaceName(types) : copy.enrichObjects,
-    summary: 'Tree, table and detail',
+const TABLE_STATE = {
+  columns: ['nummer', 'namn', 'type', 'status', 'farg', 'vikt', 'langd'],
+  sort: 'nummer',
+}
+
+export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
+  return {
+    id: `type:${type.key}`,
+    name: type.plural,
+    summary: 'Assortments, structure, list, detail, graph, history and classes',
     views: [
       { type: 'structure_tree', title: 'eCom', state: { expanded: ['friluft', 'bygg'] } },
       { type: 'assortment_list', title: 'Assortments', state: {} },
-      ...tableViews,
+      {
+        type: 'object_table',
+        title: type.plural,
+        state: { ...TABLE_STATE, object_type: type.id, type_key: type.key },
+      },
       { type: 'object_detail', title: 'Detail', state: { language: 'sv' } },
       { type: 'graph', title: 'Graph', state: {} },
       { type: 'history', title: 'History', state: {} },
+      { type: 'class_attributes', title: 'Classes', state: {} },
     ],
-    layout: (ids) => {
-      const tableIds = ids.slice(2, 2 + tableViews.length)
-      const rightIds = ids.slice(2 + tableViews.length)
-      return splitPair('horizontal', 0.22, tabGroup([ids[0] ?? '', ids[1] ?? ''].filter(Boolean)), splitPair('horizontal', 0.62, tabGroup(tableIds), tabGroup(rightIds)))
-    },
-  },
+    layout: (ids) =>
+      splitPair(
+        'horizontal',
+        0.22,
+        tabGroup([ids[0] ?? '', ids[1] ?? ''].filter(Boolean)),
+        splitPair('horizontal', 0.62, tabGroup([ids[2] ?? ''].filter(Boolean)), tabGroup(ids.slice(3))),
+      ),
+  }
+}
+
+export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] {
+  return [
+  ...types.filter((type) => type.id && type.key).map(typeWorkspaceTemplate),
   {
     id: 'model',
     name: 'Data model',
@@ -72,17 +81,16 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
   ]
 }
 
-export async function createWorkspaceFromTemplate(template: WorkspaceTemplate, ownerName?: string) {
+export async function createWorkspaceFromTemplate(template: WorkspaceTemplate, options?: { shareToken?: string }) {
   const workspaceId = crypto.randomUUID()
   const viewIds = template.views.map(() => crypto.randomUUID())
-  const name = ownerName ? `${template.name}` : template.name
   await api('/v1/workspaces', {
     method: 'POST',
     body: JSON.stringify({
       id: workspaceId,
-      name,
+      name: template.name,
       locked: false,
-      share_token: `user-${workspaceId.slice(0, 8)}`,
+      share_token: options?.shareToken ?? `user-${workspaceId.slice(0, 8)}`,
       layout: template.layout(viewIds),
     }),
   })

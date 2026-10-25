@@ -44,7 +44,7 @@ async function clearPersonalLayout(page: Page, workspaceId: string) {
 
 test('column width is restored after reload', async ({ page }) => {
   await login(page)
-  const before = await workspaceByName(page.request, 'Enrich')
+  const before = await workspaceByName(page.request, 'Products')
   const view = before.views.find((item) => item.type === 'object_table')
   if (!view) throw new Error('missing object table')
   const handle = page.getByTestId('resize-name')
@@ -55,7 +55,7 @@ test('column width is restored after reload', async ({ page }) => {
   await page.mouse.move(box.x + 70, box.y + box.height / 2)
   await page.mouse.up()
   await expect.poll(async () => {
-    const current = await workspaceByName(page.request, 'Enrich')
+    const current = await workspaceByName(page.request, 'Products')
     const table = current.views.find((item) => item.id === view.id)?.state.table as { sizes?: { name?: number } } | undefined
     return table?.sizes?.name ?? 0
   }).toBeGreaterThan(200)
@@ -78,7 +78,7 @@ test('column width is restored after reload', async ({ page }) => {
 
 test('dragging a pane tab docks it and can be restored', async ({ page }) => {
   await login(page)
-  const before = await workspaceByName(page.request, 'Enrich')
+  const before = await workspaceByName(page.request, 'Products')
   await clearPersonalLayout(page, before.id)
   const dividers = await page.getByTestId('split-divider').count()
   try {

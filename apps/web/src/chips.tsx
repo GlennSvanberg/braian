@@ -4,6 +4,7 @@ import {
   Boxes,
   FileText,
   History,
+  Layers,
   LayoutDashboard,
   ListChecks,
   ListTree,
@@ -48,6 +49,7 @@ export function ViewGlyph({ type }: { type: string }) {
   if (type === 'object_detail') return <FileText {...props} />
   if (type === 'graph') return <Waypoints {...props} />
   if (type === 'history') return <History {...props} />
+  if (type === 'class_attributes') return <Layers {...props} />
   if (type === 'data_model') return <Boxes {...props} />
   if (type === 'dashboard') return <LayoutDashboard {...props} />
   if (type === 'proposal') return <ScrollText {...props} />

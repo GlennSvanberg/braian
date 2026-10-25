@@ -69,7 +69,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
   await expect(page.getByTestId('jobs')).toContainText('succeeded')
   await page.screenshot({ path: `${shots}/jobs-${theme}.png` })
 
-  await page.getByRole('button', { name: 'Enrich' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: 'Products' }).click()
 }
 
 test('clean catalog screenshots', async ({ page }) => {
