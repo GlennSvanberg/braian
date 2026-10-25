@@ -69,6 +69,15 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
+      - name: librdkafka build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
+          if [ ! -e /usr/include/curl ]; then sudo ln -s /usr/include/x86_64-linux-gnu/curl /usr/include/curl; fi
+          if [ ! -e /usr/lib/x86_64-linux-gnu/libstdc++.so ]; then
+            so=$(echo /usr/lib/gcc/x86_64-linux-gnu/*/libstdc++.so)
+            sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
+          fi
       - name: Start Postgres
         run: |
           cat > .env << 'EOF'
@@ -101,6 +110,15 @@ jobs:
           sudo find /tmp -type f -name hurl -exec mv {} /usr/local/bin/hurl \;
           sudo chmod +x /usr/local/bin/hurl
           hurl --version
+      - name: librdkafka build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcurl4-openssl-dev
+          if [ ! -e /usr/include/curl ]; then sudo ln -s /usr/include/x86_64-linux-gnu/curl /usr/include/curl; fi
+          if [ ! -e /usr/lib/x86_64-linux-gnu/libstdc++.so ]; then
+            so=$(echo /usr/lib/gcc/x86_64-linux-gnu/*/libstdc++.so)
+            sudo ln -sf "$so" /usr/lib/x86_64-linux-gnu/libstdc++.so
+          fi
       - name: Start Postgres
         run: |
           cat > .env << 'EOF'
