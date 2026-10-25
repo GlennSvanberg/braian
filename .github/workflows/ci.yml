@@ -198,6 +198,8 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir apps/web exec tsc --noEmit
           pnpm --dir apps/web exec vitest run
+          pnpm --dir apps/landing exec tsc --noEmit
+          pnpm --dir apps/landing build
 
   licenses:
     runs-on: ubuntu-latest
