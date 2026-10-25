@@ -20,7 +20,7 @@ futures.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 reqwest.workspace = true
-rust_xlsxwriter.workspace = true
+rust_xlsxwriter = { workspace = true, features = ["constant_memory"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true
@@ -29,6 +29,7 @@ tokio.workspace = true
 tracing.workspace = true
 utoipa.workspace = true
 uuid = { workspace = true, features = ["v7", "serde"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 braian-store.workspace = true

@@ -45,7 +45,8 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/search", get(search))
         .route("/v1/objects", get(list_objects))
         .route("/v1/objects/names", post(object_names))
-        .route("/v1/export", post(export_xlsx))
+        .route("/v1/export", post(crate::export::export_xlsx))
+        .route("/v1/exports/{id}", get(crate::export::download_export))
         .route("/v1/stats", get(stats))
         .route("/v1/workspaces", get(list_workspaces).post(save_workspace))
         .route("/v1/workspaces/{id}", get(get_workspace))
@@ -173,7 +174,7 @@ fn registry() -> &'static [Operation] {
         },
         Operation {
             name: "export",
-            title: "Export table",
+            title: "Export",
             permission: Role::Viewer,
             needs_approval: false,
         },
@@ -263,7 +264,7 @@ fn registry() -> &'static [Operation] {
         },
         Operation {
             name: "ui.export",
-            title: "Export visible table",
+            title: "Export",
             permission: Role::Viewer,
             needs_approval: false,
         },
@@ -563,7 +564,7 @@ fn operation_for_tool(tool: &str) -> Option<&'static str> {
     find_op(tool).map(|op| op.name)
 }
 
-fn require(identity: &Identity, role: Role) -> Result<(), Problem> {
+pub(crate) fn require(identity: &Identity, role: Role) -> Result<(), Problem> {
     if identity.role.allows(role) {
         Ok(())
     } else {
@@ -1257,93 +1258,6 @@ fn decode_cursor(cursor: &str) -> Option<Uuid> {
     Some(Uuid::from_bytes(bytes))
 }
 
-async fn export_xlsx(
-    State(state): State<AppState>,
-    Auth(identity): Auth,
-    Json(body): Json<ExportBody>,
-) -> Result<Response, Problem> {
-    require(&identity, Role::Viewer)?;
-    let columns = if body.columns.is_empty() {
-        vec!["key".into(), "type".into()]
-    } else {
-        body.columns
-    };
-    let mut records = Vec::new();
-    if let Some(search) = &state.search {
-        let page = search
-            .search(&SearchQuery {
-                text: body.q.unwrap_or_else(|| "*".into()),
-                language: body.lang.unwrap_or_else(|| "sv".into()),
-                filter_by: body.filter.unwrap_or_default(),
-                sort_by: String::new(),
-                group_by: String::new(),
-                page: 1,
-                per_page: 250,
-            })
-            .await
-            .map_err(|error| Problem::new(StatusCode::BAD_GATEWAY, "search", error.to_string()))?;
-        for hit in page.hits {
-            records.push(hit.document);
-        }
-    } else {
-        let listed = list_objects(
-            State(state.clone()),
-            Auth(identity.clone()),
-            Query(ListParams {
-                q: body.q,
-                r#type: body.r#type,
-                limit: Some(2000),
-                cursor: None,
-            }),
-        )
-        .await?;
-        if let Some(rows) = listed.0.get("objects").and_then(Value::as_array) {
-            records.extend(rows.iter().cloned());
-        }
-    }
-    let bytes = rows_to_xlsx(&columns, &records)
-        .map_err(|error| Problem::new(StatusCode::INTERNAL_SERVER_ERROR, "export", error))?;
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header(
-            header::CONTENT_DISPOSITION,
-            "attachment; filename=\"braian.xlsx\"",
-        )
-        .body(Body::from(bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
-}
-
-fn rows_to_xlsx(columns: &[String], rows: &[Value]) -> Result<Vec<u8>, String> {
-    let mut workbook = rust_xlsxwriter::Workbook::new();
-    let sheet = workbook.add_worksheet();
-    for (col, name) in columns.iter().enumerate() {
-        sheet
-            .write_string(0, col as u16, name)
-            .map_err(|error| error.to_string())?;
-    }
-    for (row_index, row) in rows.iter().enumerate() {
-        for (col, name) in columns.iter().enumerate() {
-            let text = cell_text(row, name);
-            sheet
-                .write_string((row_index as u32) + 1, col as u16, &text)
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    workbook.save_to_buffer().map_err(|error| error.to_string())
-}
-
-fn cell_text(row: &Value, name: &str) -> String {
-    match row.get(name) {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string(),
-    }
-}
-
 async fn stats(
     State(state): State<AppState>,
     Auth(identity): Auth,
@@ -1796,7 +1710,7 @@ async fn bulk(
     ))
 }
 
-fn emit_job(state: &AppState, id: Uuid, status: &str, done: i32, total: i32) {
+pub(crate) fn emit_job(state: &AppState, id: Uuid, status: &str, done: i32, total: i32) {
     state.emit(json!({
         "op": "job",
         "id": id,
@@ -3262,7 +3176,9 @@ async fn run_operation(
                     .0,
             )
         }
-        "export" => Ok(json!({ "hint": "POST /v1/export returns the workbook" })),
+        "export" => Ok(
+            json!({ "hint": "POST /v1/export returns the xlsx file, or a job when the view is large" }),
+        ),
         "get_layout" => {
             let id = args
                 .get("workspace")
@@ -3599,17 +3515,6 @@ struct ListParams {
     limit: Option<i64>,
     /// Opaque `next_cursor` from the previous page.
     cursor: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ExportBody {
-    #[serde(default)]
-    columns: Vec<String>,
-    q: Option<String>,
-    lang: Option<String>,
-    filter: Option<String>,
-    #[serde(rename = "type")]
-    r#type: Option<String>,
 }
 
 #[derive(Deserialize)]

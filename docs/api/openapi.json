@@ -350,7 +350,16 @@
         "tags": [
           "platform"
         ],
-        "summary": "Export the current search as xlsx",
+        "summary": "Export the current view as an xlsx file. Large exports run as a job.",
+        "responses": {}
+      }
+    },
+    "/v1/exports/{id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Download a finished xlsx export",
         "responses": {}
       }
     },
