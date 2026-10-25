@@ -352,6 +352,30 @@ fn changes_from(
             filterable: args.get("filterable").and_then(Value::as_bool),
             sortable: args.get("sortable").and_then(Value::as_bool),
         }]),
+        "model.create_group" => Ok(vec![ModelChange::CreateGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            parent: optional_str(args, "parent"),
+        }]),
+        "model.rename_group" => Ok(vec![ModelChange::RenameGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            name: required_str(args, "name")?,
+        }]),
+        "model.move_group" => Ok(vec![ModelChange::MoveGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            parent: optional_str(args, "parent"),
+        }]),
+        "model.duplicate_group" => Ok(vec![ModelChange::DuplicateGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+            name: required_str(args, "name")?,
+        }]),
+        "model.delete_group" => Ok(vec![ModelChange::DeleteGroup {
+            structure: required_str(args, "structure")?,
+            group: required_str(args, "group")?,
+        }]),
         "model.create_class" => Ok(vec![ModelChange::CreateClass {
             structure: required_str(args, "structure")?,
             class_key: required_str(args, "class")?,

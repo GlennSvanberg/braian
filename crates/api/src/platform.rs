@@ -419,8 +419,44 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.create_group",
+            title: "Add group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_group",
+            title: "Rename group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.move_group",
+            title: "Move group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.duplicate_group",
+            title: "Duplicate group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_group",
+            title: "Delete group",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
             name: "model.create_class",
             title: "Create class",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "assortment.save",
+            title: "Save assortment",
             permission: Role::Editor,
             needs_approval: true,
         },
@@ -1980,6 +2016,78 @@ async fn save_assortment(
     Ok(Json(json!({ "id": id })))
 }
 
+async fn propose_assortment(
+    state: &AppState,
+    identity: &Identity,
+    args: &Value,
+) -> Result<Value, Problem> {
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "assortment", "missing name"))?;
+    let query = args.get("query").cloned().unwrap_or(json!({}));
+    let id = Uuid::now_v7();
+    let row = ProposalRow {
+        id: Uuid::now_v7(),
+        object_id: None,
+        object_key: Some(name.to_owned()),
+        type_key: Some("assortment".into()),
+        base_version: None,
+        patch: json!({ "name": name, "query": query, "id": args.get("id").cloned() }),
+        status: "pending".into(),
+        conflict: false,
+        position: 0,
+    };
+    state
+        .store
+        .create_proposal(
+            id,
+            &format!("Save assortment {name}"),
+            "user",
+            identity.actor.actor,
+            identity.actor.on_behalf_of,
+            false,
+            &[row],
+        )
+        .await
+        .map_err(store_status)?;
+    Ok(
+        json!({ "proposal_id": id, "id": id, "needs_approval": true, "title": format!("Save assortment {name}") }),
+    )
+}
+
+async fn apply_assortment_row(
+    state: &AppState,
+    identity: &Identity,
+    row: &Value,
+) -> Result<i64, Problem> {
+    let patch = row.get("patch").cloned().unwrap_or(json!({}));
+    let name = patch
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("Assortment");
+    let query = patch.get("query").cloned().unwrap_or(json!({}));
+    let Some(owner) = identity.user_id else {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "no_user",
+            "sign in to save an assortment",
+        ));
+    };
+    let id = patch
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .unwrap_or_else(Uuid::now_v7);
+    state
+        .store
+        .save_assortment(id, owner, name, &query)
+        .await
+        .map_err(store_status)?;
+    Ok(0)
+}
+
 async fn list_job_types(
     State(state): State<AppState>,
     Auth(identity): Auth,
@@ -2510,6 +2618,9 @@ async fn apply_selected(
 async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
     if crate::model_proposal::is_model_row(row) {
         return crate::model_proposal::apply_row(state, identity, row).await;
+    }
+    if row.get("type_key").and_then(Value::as_str) == Some("assortment") {
+        return apply_assortment_row(state, identity, row).await;
     }
     let cached = state.models.get(&state.store).await?;
     let patch_body = row.get("patch").cloned().unwrap_or(json!({}));
@@ -3721,6 +3832,7 @@ async fn propose_operation(
         name if name.starts_with("model.") => {
             crate::model_proposal::propose(state, identity, name, args).await
         }
+        "assortment.save" => propose_assortment(state, identity, args).await,
         "create_object" | "patch_object" | "set_relation" => {
             let id = Uuid::now_v7();
             let object_id = args

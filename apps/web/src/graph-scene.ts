@@ -3,7 +3,7 @@ import { optionLabel, typeLabel } from './chips'
 import { copy, uiLanguage } from './i18n'
 
 /** Five node kinds. Colours come from DESIGN.md tokens in the canvas, not from here. */
-export const NODE_KINDS = ['object', 'class', 'group', 'value', 'assortment'] as const
+export const NODE_KINDS = ['object', 'class', 'group', 'value', 'structure'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const NODE_RADIUS: Record<NodeKind, number> = {
@@ -11,7 +11,7 @@ export const NODE_RADIUS: Record<NodeKind, number> = {
   class: 16,
   group: 18,
   value: 15,
-  assortment: 20,
+  structure: 20,
 }
 
 /** Circle size grows with how many edges the node has, capped so hubs stay readable. */
@@ -42,7 +42,7 @@ export function nodeMark(caption: string) {
 export function labelPriority(kind: NodeKind, active: boolean) {
   if (active) return 5
   if (kind === 'object') return 3
-  if (kind === 'assortment' || kind === 'group') return 2
+  if (kind === 'structure' || kind === 'group') return 2
   if (kind === 'class') return 1
   return 0
 }
@@ -102,7 +102,7 @@ export type Scene = { nodes: SceneNode[]; edges: SceneEdge[] }
 export type KnownObject = { name: string; typeKey: string }
 
 const STRUCTURE_NAMES: Record<string, string> = {
-  sortiment: copy.assortment,
+  sortiment: copy.structure,
   friluft: copy.structureOutdoor,
   talt: copy.assortmentTents,
   sovsack: copy.structureSleepingBags,
@@ -143,7 +143,7 @@ export function legendEntries(nodes: Array<{ kind: NodeKind; typeKey?: string; t
   if (untyped || (entries.length === 0 && nodes.some((node) => node.kind === 'object'))) {
     entries.push({ id: 'object', kind: 'object', label: copy.nodeObject })
   }
-  for (const kind of ['class', 'group', 'value', 'assortment'] as const) {
+  for (const kind of ['class', 'group', 'value', 'structure'] as const) {
     if (nodes.some((node) => node.kind === kind)) entries.push({ id: kind, kind, label: kindLabel(kind) })
   }
   return entries
@@ -154,7 +154,7 @@ export function kindLabel(kind: NodeKind) {
   if (kind === 'class') return copy.nodeClass
   if (kind === 'group') return copy.nodeGroup
   if (kind === 'value') return copy.nodeValue
-  return copy.nodeAssortment
+  return copy.nodeStructure
 }
 
 export function relationLabel(kind: string) {
@@ -318,30 +318,30 @@ function linkSource(
     if (groupKey) {
       const groupId = `group:${structure}:${groupKey}`
       putNode(nodes, groupNode(structure, groupKey))
-      putNode(nodes, assortmentNode(structure))
+      putNode(nodes, structureNode(structure))
       putEdge(edges, link(classId, copy.appliesIn, groupId))
-      putEdge(edges, link(groupId, copy.inAssortment, `assortment:${structure}`))
+      putEdge(edges, link(groupId, copy.inStructure, `structure:${structure}`))
     }
     return
   }
   if (typeof source.group === 'string' && source.group) {
     const groupId = `group:${structure}:${source.group}`
     putNode(nodes, groupNode(structure, source.group))
-    putNode(nodes, assortmentNode(structure))
+    putNode(nodes, structureNode(structure))
     putEdge(edges, link(valueId, inherited ? copy.inherited : copy.fromGroup, groupId))
-    putEdge(edges, link(groupId, copy.inAssortment, `assortment:${structure}`))
+    putEdge(edges, link(groupId, copy.inStructure, `structure:${structure}`))
     return
   }
   putEdge(edges, link(valueId, copy.fromType, selfId))
 }
 
-function assortmentNode(structure: string): SceneNode {
+function structureNode(structure: string): SceneNode {
   const caption = structureCaption(structure)
   return {
-    id: `assortment:${structure}`,
-    kind: 'assortment',
+    id: `structure:${structure}`,
+    kind: 'structure',
     caption,
-    subtitle: copy.nodeAssortment,
+    subtitle: copy.nodeStructure,
     rawCaption: !named(structure),
     properties: [{ label: copy.structure, value: caption }],
   }
@@ -386,11 +386,11 @@ export function buildScene(input: {
   for (const [structure, groupKey] of Object.entries(groups)) {
     if (typeof groupKey !== 'string' || !groupKey) continue
     const groupId = `group:${structure}:${groupKey}`
-    const assortmentId = `assortment:${structure}`
+    const structureId = `structure:${structure}`
     putNode(nodes, groupNode(structure, groupKey))
-    putNode(nodes, assortmentNode(structure))
+    putNode(nodes, structureNode(structure))
     putEdge(edges, link(selfId, copy.placedIn, groupId))
-    putEdge(edges, link(groupId, copy.inAssortment, assortmentId))
+    putEdge(edges, link(groupId, copy.inStructure, structureId))
   }
 
   const attributes = (input.graph.attributes as Json[]) ?? []
@@ -584,18 +584,18 @@ export function groupMembers(structure: string, group: string, hits: MemberHit[]
   return { nodes, edges }
 }
 
-export function expandAssortment(defs: Json | undefined, structure: string): Scene {
+export function expandStructure(defs: Json | undefined, structure: string): Scene {
   const found = structuresOf(defs).find((item) => String(item.key) === structure)
   const groups = (found?.groups as Json[]) ?? []
   const byId = new Map(groups.map((group) => [String(group.id), String(group.key ?? '')]))
-  const nodes: SceneNode[] = [assortmentNode(structure)]
+  const nodes: SceneNode[] = [structureNode(structure)]
   const edges: SceneEdge[] = []
   for (const group of groups) {
     const key = String(group.key ?? '')
     if (!key) continue
     const id = `group:${structure}:${key}`
     nodes.push(groupNode(structure, key))
-    edges.push(link(id, copy.inAssortment, `assortment:${structure}`))
+    edges.push(link(id, copy.inStructure, `structure:${structure}`))
     const parentKey = byId.get(String(group.parent ?? ''))
     if (parentKey) edges.push(link(id, copy.parent, `group:${structure}:${parentKey}`))
   }

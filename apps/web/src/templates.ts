@@ -24,16 +24,17 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
     name: types.length > 0 ? enrichWorkspaceName(types) : copy.enrichObjects,
     summary: 'Tree, table and detail',
     views: [
-      { type: 'structure_tree', title: 'Assortment', state: { expanded: ['friluft', 'bygg'] } },
+      { type: 'structure_tree', title: 'Structure', state: { expanded: ['friluft', 'bygg'] } },
+      { type: 'assortment_list', title: 'Assortments', state: {} },
       ...tableViews,
       { type: 'object_detail', title: 'Detail', state: { language: 'sv' } },
       { type: 'graph', title: 'Graph', state: {} },
       { type: 'history', title: 'History', state: {} },
     ],
     layout: (ids) => {
-      const tableIds = ids.slice(1, 1 + tableViews.length)
-      const rightIds = ids.slice(1 + tableViews.length)
-      return splitPair('horizontal', 0.22, tabGroup([ids[0] ?? '']), splitPair('horizontal', 0.62, tabGroup(tableIds), tabGroup(rightIds)))
+      const tableIds = ids.slice(2, 2 + tableViews.length)
+      const rightIds = ids.slice(2 + tableViews.length)
+      return splitPair('horizontal', 0.22, tabGroup([ids[0] ?? '', ids[1] ?? ''].filter(Boolean)), splitPair('horizontal', 0.62, tabGroup(tableIds), tabGroup(rightIds)))
     },
   },
   {

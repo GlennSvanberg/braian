@@ -4,8 +4,9 @@ import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
-import { ChevronDown, ChevronRight, Moon, Sun } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
 import { api, type Json } from './api'
+import { AssortmentList } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { ImportScreen } from './import/view'
 import { dropImportFiles, onImportLive, openImport, resumeImport, setImportDrag } from './import/controller'
@@ -18,6 +19,9 @@ import { Toaster } from './components/ui/sonner'
 import { workspaceDisplayName } from './demo-labels'
 import { WorkspaceDock } from './dock'
 import { flashObject } from './flash'
+import { structureCaption } from './graph-scene'
+import { dropReparents, groupKeyFromLabel } from './structure-tree'
+import { publishProposal } from './proposal-bus'
 import { copy } from './i18n'
 import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
@@ -762,6 +766,7 @@ function Login({ onDone }: { onDone: () => void }) {
 
 function ViewBody({ view, session, workspace }: { view: View; session: Session; workspace: Workspace }) {
   if (view.type === 'structure_tree') return <StructureTree session={session} view={view} />
+  if (view.type === 'assortment_list') return <AssortmentList session={session} />
   if (view.type === 'object_table') return <ObjectTable session={session} view={view} workspace={workspace} />
   if (view.type === 'object_detail') return <ObjectDetail session={session} />
   if (view.type === 'graph') return <GraphView session={session} />
@@ -779,6 +784,17 @@ function treeRowDomId(structureKey: string, key: string) {
   return `tree-row-${structureKey}-${key}`
 }
 
+type TreeEntry = {
+  structureKey: string
+  key: string
+  id: string
+  parentKey: string | null
+  depth: number
+  kids: boolean
+  open: boolean
+  count: number
+}
+
 export function StructureTree({ session, view }: { session: Session; view: View }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const counts = useQuery({
@@ -786,6 +802,10 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     queryFn: () => api<Json>('/v1/search?group=groups&per_page=1'),
   })
   const [openKeys, setOpenKeys] = useState<string[]>(() => (view.state.expanded as string[] | undefined) ?? [])
+  const [menu, setMenu] = useState<{ x: number; y: number; row: TreeEntry } | null>(null)
+  const [editing, setEditing] = useState<{ row: TreeEntry; mode: 'rename' | 'child' | 'sibling'; value: string } | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null)
+  const [dropId, setDropId] = useState<string | null>(null)
   const structures = (defs.data?.structures as Json[] | undefined) ?? []
   const countOf = (structure: string, key: string) => {
     const groups = (counts.data?.groups as Json[] | undefined) ?? []
@@ -795,23 +815,23 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   const toggle = (key: string) => {
     setOpenKeys((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
   }
-  const entries: { structureKey: string; key: string; id: string; depth: number; kids: boolean; open: boolean; count: number }[] = []
+  const entries: TreeEntry[] = []
   for (const structure of structures) {
     const groups = (structure.groups as Json[]) ?? []
     const structureKey = String(structure.key)
-    const walk = (parent: string | undefined, depth: number) => {
+    const walk = (parentId: string | undefined, parentKey: string | null, depth: number) => {
       for (const group of groups) {
-        const child = parent ? String(group.parent ?? '') === parent : !group.parent
+        const child = parentId ? String(group.parent ?? '') === parentId : !group.parent
         if (!child) continue
         const key = String(group.key)
         const id = String(group.id)
         const kids = groups.some((item) => String(item.parent ?? '') === id)
         const open = openKeys.includes(key)
-        entries.push({ structureKey, key, id, depth, kids, open, count: countOf(structureKey, key) })
-        if (kids && open) walk(id, depth + 1)
+        entries.push({ structureKey, key, id, parentKey, depth, kids, open, count: countOf(structureKey, key) })
+        if (kids && open) walk(id, key, depth + 1)
       }
     }
-    walk(undefined, 0)
+    walk(undefined, null, 0)
   }
   const activeIndex = entries.findIndex((row) => session.group === `${row.structureKey}:${row.key}`)
   const activeRow = activeIndex >= 0 ? entries[activeIndex] : undefined
@@ -819,10 +839,90 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     if (!activeRow) return
     document.getElementById(treeRowDomId(activeRow.structureKey, activeRow.key))?.scrollIntoView({ block: 'nearest' })
   }, [session.group, entries.length])
+  useEffect(() => {
+    if (!menu) return
+    const close = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-testid="context-menu"], [data-testid="delete-group"]')) return
+      setMenu(null)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [menu])
+  useEffect(() => {
+    if (!editing) return
+    const close = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-testid="tree-edit"]')) return
+      setEditing(null)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [editing])
   const choose = (index: number) => {
     const row = entries[index]
     if (!row) return
     session.setGroup(`${row.structureKey}:${row.key}`)
+  }
+  const propose = async (name: string, args: Json) => {
+    setMenu(null)
+    setEditing(null)
+    setPendingDelete(null)
+    try {
+      const result = await api<Json>(`/v1/operations/${name}`, { method: 'POST', body: JSON.stringify(args) })
+      const id = String(result.proposal_id ?? result.id ?? '')
+      if (id) {
+        publishProposal(id)
+        session.setProposalId(id)
+      }
+      session.push(copy.proposed)
+    } catch (reason) {
+      session.push(reason instanceof Error ? reason.message : copy.validation)
+    }
+  }
+  const startEdit = (row: TreeEntry, mode: 'rename' | 'child' | 'sibling') => {
+    setMenu(null)
+    setPendingDelete(null)
+    if (mode === 'child' && !openKeys.includes(row.key)) setOpenKeys((current) => [...current, row.key])
+    setEditing({ row, mode, value: mode === 'rename' ? structureCaption(row.key) : '' })
+  }
+  const commitEdit = (typedRaw?: string) => {
+    if (!editing) return
+    const { row, mode } = editing
+    const typed = (typedRaw ?? editing.value).trim()
+    setEditing(null)
+    if (!typed) return
+    if (mode === 'rename') {
+      if (typed === structureCaption(row.key) || typed === row.key) return
+      const name = groupKeyFromLabel(typed)
+      if (!name || name === row.key) return
+      void propose('model.rename_group', { structure: row.structureKey, group: row.key, name })
+      return
+    }
+    const name = groupKeyFromLabel(typed)
+    if (!name) return
+    const parent = mode === 'child' ? row.key : row.parentKey
+    void propose('model.create_group', {
+      structure: row.structureKey,
+      group: name,
+      ...(parent ? { parent } : {}),
+    })
+  }
+  const openMenu = (row: TreeEntry, x: number, y: number) => {
+    session.setGroup(`${row.structureKey}:${row.key}`)
+    setPendingDelete(null)
+    setMenu({
+      row,
+      x: Math.max(8, Math.min(x, window.innerWidth - 220)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 240)),
+    })
+  }
+  const groupsOf = (structureKey: string) => {
+    const structure = structures.find((item) => String(item.key) === structureKey)
+    return ((structure?.groups as Json[]) ?? []).map((group) => ({
+      id: String(group.id),
+      parent: group.parent ? String(group.parent) : null,
+    }))
   }
   return (
     <div
@@ -832,6 +932,29 @@ export function StructureTree({ session, view }: { session: Session; view: View 
       tabIndex={0}
       aria-activedescendant={activeRow ? treeRowDomId(activeRow.structureKey, activeRow.key) : undefined}
       onKeyDown={(event) => {
+        if (event.target instanceof HTMLInputElement) return
+        if (event.key === 'Escape') {
+          setMenu(null)
+          setEditing(null)
+          setPendingDelete(null)
+          return
+        }
+        if (event.key === 'F2' && activeRow) {
+          event.preventDefault()
+          startEdit(activeRow, 'rename')
+          return
+        }
+        if (event.key === 'Insert' && activeRow) {
+          event.preventDefault()
+          startEdit(activeRow, 'child')
+          return
+        }
+        if ((event.key === 'Delete' || event.key === 'Backspace') && activeRow && !pendingDelete) {
+          event.preventDefault()
+          setMenu(null)
+          setPendingDelete(activeRow)
+          return
+        }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) return
         event.preventDefault()
         event.stopPropagation()
@@ -853,9 +976,10 @@ export function StructureTree({ session, view }: { session: Session; view: View 
         const rows = entries.filter((row) => row.structureKey === structureKey)
         return (
           <div key={structureKey}>
-            <strong>{structureKey}</strong>
+            <strong>{structureCaption(structureKey)}</strong>
             {rows.map((row) => {
               const selected = session.group === `${structureKey}:${row.key}`
+              const Icon = row.kids ? (row.open ? FolderOpen : Folder) : File
               return (
                 <div key={row.id} className="tree-branch">
                   <button
@@ -865,9 +989,38 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                     aria-selected={selected}
                     aria-expanded={row.kids ? row.open : undefined}
                     tabIndex={-1}
-                    className={selected ? 'tree-row on' : 'tree-row'}
+                    draggable
+                    className={dropId === row.id ? 'tree-row drop' : selected ? 'tree-row on' : 'tree-row'}
                     style={{ paddingLeft: 8 + row.depth * 16 }}
                     onClick={() => session.setGroup(`${structureKey}:${row.key}`)}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      openMenu(row, event.clientX, event.clientY)
+                    }}
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData('text/plain', JSON.stringify({ structureKey, id: row.id, key: row.key }))
+                      event.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      setDropId(row.id)
+                    }}
+                    onDragLeave={() => setDropId((current) => (current === row.id ? null : current))}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      setDropId(null)
+                      const raw = event.dataTransfer.getData('text/plain')
+                      if (!raw) return
+                      let dragged: { structureKey?: string; id?: string; key?: string }
+                      try {
+                        dragged = JSON.parse(raw) as { structureKey?: string; id?: string; key?: string }
+                      } catch {
+                        return
+                      }
+                      if (dragged.structureKey !== structureKey || !dragged.id || !dragged.key) return
+                      if (!dropReparents(groupsOf(structureKey), dragged.id, row.id)) return
+                      void propose('model.move_group', { structure: structureKey, group: dragged.key, parent: row.key })
+                    }}
                   >
                     {Array.from({ length: row.depth }, (_, level) => (
                       <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />
@@ -887,15 +1040,77 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                     ) : (
                       <span className="tree-chevron" aria-hidden="true" />
                     )}
-                    <span className="tree-label">{row.key}</span>
+                    <Icon size={14} className="tree-icon" aria-hidden="true" />
+                    <span className="tree-label">{structureCaption(row.key)}</span>
                     {row.count > 0 ? <span className="tree-count">{row.count}</span> : null}
                   </button>
+                  {editing?.row.id === row.id ? (
+                    <input
+                      className="tree-edit"
+                      data-testid="tree-edit"
+                      autoFocus
+                      placeholder={editing.mode === 'rename' ? '' : copy.newGroup}
+                      value={editing.value}
+                      style={{ marginLeft: 28 + row.depth * 16 }}
+                      onChange={(event) => setEditing({ ...editing, value: event.target.value })}
+                      onKeyDown={(event) => {
+                        event.stopPropagation()
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          commitEdit(event.currentTarget.value)
+                        }
+                        if (event.key === 'Escape') {
+                          event.preventDefault()
+                          setEditing(null)
+                        }
+                      }}
+                    />
+                  ) : null}
                 </div>
               )
             })}
           </div>
         )
       })}
+      {menu && !pendingDelete ? (
+        <div
+          className="menu"
+          data-testid="context-menu"
+          role="menu"
+          style={{ left: menu.x, top: menu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button type="button" onClick={() => { session.setGroup(`${menu.row.structureKey}:${menu.row.key}`); setMenu(null) }}>{copy.open}</button>
+          <button type="button" onClick={() => startEdit(menu.row, 'rename')}>{copy.rename}<kbd>F2</kbd></button>
+          <button type="button" onClick={() => startEdit(menu.row, 'child')}>{copy.addChild}<kbd>Ins</kbd></button>
+          <button type="button" onClick={() => startEdit(menu.row, 'sibling')}>{copy.addSibling}</button>
+          <button
+            type="button"
+            onClick={() => void propose('model.duplicate_group', {
+              structure: menu.row.structureKey,
+              group: menu.row.key,
+              name: `${menu.row.key}_copy`,
+            })}
+          >
+            {copy.duplicate}
+          </button>
+          <button type="button" className="danger" onClick={() => setPendingDelete(menu.row)}>{copy.deleteGroup}<kbd>Del</kbd></button>
+        </div>
+      ) : null}
+      {pendingDelete ? (
+        <div className="menu" data-testid="delete-group" role="dialog" style={{ left: menu?.x ?? 24, top: menu?.y ?? 24 }} onPointerDown={(event) => event.stopPropagation()}>
+          <p className="menu-note">{copy.deleteGroupConfirm}</p>
+          <p className="menu-note">{pendingDelete.count} {copy.affectedObjects}</p>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => void propose('model.delete_group', { structure: pendingDelete.structureKey, group: pendingDelete.key })}
+          >
+            {copy.deleteGroup}
+          </button>
+          <button type="button" onClick={() => { setPendingDelete(null); setMenu(null) }}>{copy.cancel}</button>
+        </div>
+      ) : null}
     </div>
   )
 }

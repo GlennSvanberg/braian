@@ -17,7 +17,7 @@ import { MetaChip, typeLabel } from './chips'
 import {
   buildScene,
   capScene,
-  expandAssortment,
+  expandStructure,
   expandClass,
   groupMembers,
   isLegendHidden,
@@ -216,10 +216,10 @@ export function GraphMap({
           defs: defsRef.current,
           known: nextKnown,
         })
-      } else if (node.kind === 'class' || node.kind === 'group' || node.kind === 'assortment') {
+      } else if (node.kind === 'class' || node.kind === 'group' || node.kind === 'structure') {
         const parsed = parseTypedId(node.id)
         if (node.kind === 'class') extra = expandClass(defsRef.current, parsed.structure, parsed.key)
-        if (node.kind === 'assortment') extra = expandAssortment(defsRef.current, parsed.structure)
+        if (node.kind === 'structure') extra = expandStructure(defsRef.current, parsed.structure)
         if (node.kind === 'group') {
           const params = new URLSearchParams({
             filter: `groups:=${parsed.structure}:${parsed.key}`,
@@ -310,7 +310,7 @@ export function GraphMap({
           class: swatch('class'),
           group: swatch('group'),
           value: swatch('value'),
-          assortment: swatch('assortment'),
+          structure: swatch('structure'),
         },
         text: token('--text'),
         text2: token('--text-2'),

@@ -20,7 +20,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   page.on('pageerror', (error) => errors.push(error.message))
 
   await login(page)
-  await expect(page.getByTestId('structure-tree')).toContainText('talt')
+  await expect(page.getByTestId('structure-tree')).toContainText('Tents')
   const filter = page.getByTestId('quick-filter').first()
   if ((await filter.inputValue()) !== '') await filter.fill('')
   await expect(page.getByTestId('object-row').first()).toBeVisible()

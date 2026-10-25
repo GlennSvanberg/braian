@@ -29,6 +29,7 @@ import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
 type SessionLike = {
   objectId: string | null
   listType?: string | null
+  group?: string | null
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
   push: (line: string) => void
@@ -122,7 +123,7 @@ export function CommandPalette({
 
   useEffect(() => {
     if (stack.length > 0 || mode !== 'list') return
-    const index = rows.findIndex((row) => row.sourceId === 'model:command')
+    const index = rows.findIndex((row) => row.sourceId === 'model:command' || row.sourceId === 'assortment:save')
     if (index >= 0) setActive(index)
   }, [query, mode, stack.length])
   useEffect(() => {
@@ -135,6 +136,30 @@ export function CommandPalette({
     if (id !== 'ask') {
       touch(remembered)
       void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
+    }
+    if (id === 'assortment:save') {
+      const name = query.replace(/^save assortment\s+/i, '').trim()
+      void api<Json>('/v1/operations/assortment.save', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          query: {
+            ...(session.listType ? { type: session.listType } : {}),
+            ...(session.group ? { group: session.group } : {}),
+          },
+        }),
+      })
+        .then((result) => {
+          const proposalId = String(result.proposal_id ?? result.id ?? '')
+          if (!proposalId) return
+          publishProposal(proposalId)
+          session.setProposalId(proposalId)
+          onClose()
+        })
+        .catch((reason: unknown) => {
+          session.push(reason instanceof Error ? reason.message : copy.validation)
+        })
+      return
     }
     if (id === 'model:command') {
       void api<Json>('/v1/operations/model.command', {
