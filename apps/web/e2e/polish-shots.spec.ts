@@ -83,7 +83,7 @@ test('polish screenshots', async ({ page }) => {
   await page.screenshot({ path: `${shots}/history-dark.png` })
 
   await page.getByRole('button', { name: 'Graph' }).click()
-  await expect(page.locator('svg[data-testid=graph]')).toBeVisible()
+  await expect(page.locator('canvas[data-testid=graph]')).toBeVisible()
   await page.getByRole('button', { name: 'Open full size' }).click()
   await expect(page.getByTestId('graph-full')).toBeVisible()
   await page.screenshot({ path: `${shots}/graph-full-dark.png` })
