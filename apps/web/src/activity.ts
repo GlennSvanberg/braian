@@ -25,6 +25,7 @@ export function humanizeLive(raw: string): string {
       const total = typeof event.total === 'number' ? event.total : 0
       return `live · Job ${status} ${done}/${total}`
     }
+    if (op === 'import') return ''
     return `live · ${op}${key ? ` ${key}` : ''}`
   } catch {
     return `live · ${text}`
@@ -34,6 +35,7 @@ export function humanizeLive(raw: string): string {
 export function objectIdFromLive(raw: string): string | null {
   try {
     const event = JSON.parse(raw) as Record<string, unknown>
+    if (event.op === 'import') return null
     const id = event.object_id ?? event.id
     return typeof id === 'string' ? id : null
   } catch {

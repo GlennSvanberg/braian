@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest'
+import {
+  acceptsFile,
+  ariaMap,
+  cellClass,
+  confidenceLabel,
+  curve,
+  firstDroppedFile,
+  isFileDrag,
+  lineTone,
+  mappedLines,
+  matchBanner,
+  redoColumns,
+  rowClass,
+  saveLabel,
+  setTarget,
+  stepIndex,
+  undoColumns,
+  type ColumnLine,
+} from './model'
+
+const lines: ColumnLine[] = [
+  { col: 0, target: 'type:sku', confidence: 0.97, source: 'deterministic' },
+  { col: 1, target: 'type:name', confidence: 0.42, source: 'decisions', low: true },
+  { col: 2, target: 'unmapped', confidence: 0, source: 'deterministic', reason: 'empty' },
+]
+
+describe('import mapping helpers', () => {
+  it('accepts spreadsheets and treats tsv and txt as csv', () => {
+    expect(acceptsFile('Prices.XLSX')).toBe(true)
+    expect(acceptsFile('a.xls')).toBe(true)
+    expect(acceptsFile('a.csv')).toBe(true)
+    expect(acceptsFile('a.tsv')).toBe(true)
+    expect(acceptsFile('notes.txt')).toBe(true)
+    expect(acceptsFile('photo.png')).toBe(false)
+  })
+
+  it('opens the drop overlay only for file drags', () => {
+    expect(isFileDrag(['Files'])).toBe(true)
+    expect(isFileDrag(['text/plain'])).toBe(false)
+  })
+
+  it('takes the first file and names it', () => {
+    expect(firstDroppedFile(['a.csv', 'b.csv'])).toEqual({
+      name: 'a.csv',
+      notice: 'One file at a time — importing a.csv',
+    })
+    expect(firstDroppedFile(['photo.png'])).toEqual({
+      error: 'Only .xlsx, .xls and .csv can be imported',
+    })
+  })
+
+  it('draws one line per mapped column and flags low confidence', () => {
+    expect(mappedLines(lines).map((line) => line.col)).toEqual([0, 1])
+    expect(lineTone(lines[0]!)).toBe('ok')
+    expect(lineTone(lines[1]!)).toBe('warn')
+    expect(confidenceLabel('deterministic', 0.97)).toBe('97 %')
+    expect(confidenceLabel('manual', 1)).toBe('✓')
+    expect(matchBanner(lines)).toEqual({ matched: 2, total: 3, marked: 1 })
+    expect(ariaMap('Artnr', 'SKU', 0.97)).toBe('Column Artnr maps to SKU, 97 percent')
+  })
+
+  it('changes, removes, adds and undoes a line', () => {
+    const removed = setTarget(lines, 0, 'unmapped')
+    expect(removed.columns[0]?.target).toBe('unmapped')
+    const added = setTarget(removed.columns, 2, 'type:weight')
+    expect(added.columns[2]?.target).toBe('type:weight')
+    expect(added.columns[2]?.source).toBe('manual')
+    const stolen = setTarget(lines, 1, 'type:sku')
+    expect(stolen.displaced?.col).toBe(0)
+    expect(stolen.columns[0]?.target).toBe('unmapped')
+    expect(stolen.columns[1]?.target).toBe('type:sku')
+    const undone = undoColumns([lines], stolen.columns, [])
+    expect(undone.current).toEqual(lines)
+    const redone = redoColumns(undone.history, undone.current, undone.future)
+    expect(redone.current[1]?.target).toBe('type:sku')
+  })
+
+  it('bends a mapping line the same way as the graph', () => {
+    const path = curve({ x: 0, y: 10 }, { x: 200, y: 40 })
+    expect(path.width).toBe(1.25)
+    expect(path.widthHover).toBe(1.8)
+    expect(path.control.x).toBeGreaterThan(0)
+  })
+
+  it('paints preview rows and the save label', () => {
+    expect(rowClass('new')).toContain('new')
+    expect(rowClass('delete')).toContain('delete')
+    expect(cellClass('changed')).toContain('changed')
+    expect(cellClass('error')).toContain('error')
+    expect(saveLabel(0, 12)).toBe('Save 12 changes')
+    expect(saveLabel(3, 12)).toBe('Import the rest, skip 3 failing rows')
+    expect(stepIndex('mapping')).toBe(1)
+    expect(stepIndex('preview')).toBe(2)
+    expect(stepIndex('saving')).toBe(3)
+  })
+})

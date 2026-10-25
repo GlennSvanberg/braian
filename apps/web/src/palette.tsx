@@ -171,6 +171,11 @@ export function CommandPalette({
       onClose()
       return
     }
+    if (id === 'import:file') {
+      window.dispatchEvent(new Event('braian-import-open'))
+      onClose()
+      return
+    }
     if (id === 'object:open') {
       dispatchUi('ui.open_view', { title: 'Detail', zone: 'center' })
       onClose()
@@ -526,6 +531,7 @@ function buildCatalog(
       title: template.name,
       subtitle: `Template · ${template.summary}`,
     })),
+    { id: 'import:file', group: 'views', title: copy.importFile, subtitle: 'Drop an Excel or CSV file' },
     { id: 'theme:light', group: 'views', title: 'Light', subtitle: 'Switch theme', shortcut: undefined },
     { id: 'theme:dark', group: 'views', title: 'Dark', subtitle: 'Switch theme' },
     { id: 'layout:move_view_left', group: 'views', title: 'Move view left', subtitle: 'Move the focused view left', kbd: 'Ctrl+Alt+←', shortcut: 'Ctrl+Alt+Left' },

@@ -7,6 +7,9 @@ import { Chart } from '@tanstack/react-charts'
 import { ChevronDown, ChevronRight, Moon, Sun } from 'lucide-react'
 import { api, type Json } from './api'
 import { humanizeLive, objectIdFromLive } from './activity'
+import { ImportScreen } from './import/view'
+import { dropImportFiles, onImportLive, openImport, resumeImport, setImportDrag } from './import/controller'
+import { importRefreshesObjects, isFileDrag } from './import/model'
 import { SearchRefresh } from './live-refresh'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
@@ -119,6 +122,50 @@ export function Shell() {
   paletteModeRef.current = paletteMode
 
   useEffect(() => {
+    const files = (event: DragEvent) => isFileDrag(event.dataTransfer?.types ?? [])
+    let depth = 0
+    const enter = (event: DragEvent) => {
+      if (!files(event)) return
+      event.preventDefault()
+      depth += 1
+      setImportDrag(true)
+    }
+    const over = (event: DragEvent) => {
+      if (!files(event)) return
+      event.preventDefault()
+    }
+    const leave = (event: DragEvent) => {
+      if (!files(event)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setImportDrag(false)
+    }
+    const drop = (event: DragEvent) => {
+      if (!files(event)) return
+      event.preventDefault()
+      depth = 0
+      setImportDrag(false)
+      const list = [...(event.dataTransfer?.files ?? [])]
+      if (list.length > 0) dropImportFiles(list)
+    }
+    const open = () => openImport()
+    window.addEventListener('dragenter', enter)
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    window.addEventListener('braian-import-open', open)
+    const params = new URLSearchParams(window.location.search)
+    const sessionId = params.get('import')
+    if (sessionId && !params.get('importPreview')) void resumeImport(sessionId)
+    return () => {
+      window.removeEventListener('dragenter', enter)
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+      window.removeEventListener('braian-import-open', open)
+    }
+  }, [])
+
+  useEffect(() => {
     setBooted(true)
     const stored = readStore<string>('braian.theme', 'dark')
     setTheme(stored === 'light' ? 'light' : 'dark')
@@ -170,7 +217,12 @@ export function Shell() {
       setLiveState('message')
       const id = objectIdFromLive(event.data)
       if (id) flashObject(id)
-      push(humanizeLive(event.data))
+      onImportLive(event.data)
+      const sentence = humanizeLive(event.data)
+      if (sentence) push(sentence)
+      if (importRefreshesObjects(event.data)) {
+        void queryClient.invalidateQueries({ queryKey: ['objects'] })
+      }
       refresh.onEvent(event.data)
     }
     source.onerror = () => {
@@ -393,7 +445,14 @@ export function Shell() {
   }
 
   if (!booted || me.isLoading) return <p className="pane-body">{copy.loading}</p>
-  if (me.isError || !me.data) return <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+  if (me.isError || !me.data) {
+    return (
+      <>
+        <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+        <ImportScreen />
+      </>
+    )
+  }
   const user = me.data
   const userName = user.display_name || user.handle || user.email || ''
   const userEmail = user.email || user.handle || ''
@@ -579,6 +638,7 @@ export function Shell() {
           <button type="button" onClick={() => setTabMenu(null)}>{copy.close}</button>
         </div>
       ) : null}
+      <ImportScreen />
       {help ? <Help onClose={() => setHelp(false)} /> : null}
       <Toaster theme={theme} />
     </div>

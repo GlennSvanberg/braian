@@ -159,6 +159,7 @@ fn template_name() -> String {
         include_str!("../migrations/V7__value_versions.sql"),
         include_str!("../migrations/V8__current_values.sql"),
         include_str!("../migrations/V9__object_list.sql"),
+        include_str!("../migrations/V10__imports.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {

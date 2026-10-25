@@ -11,6 +11,7 @@ mod bulk_gate;
 mod definitions;
 mod export;
 mod headers;
+pub mod import;
 mod model_proposal;
 mod objects;
 mod platform;
@@ -43,7 +44,8 @@ pub fn router(store: Store, identities: Vec<Identity>) -> axum::Router {
 }
 
 pub fn into_router(state: AppState) -> axum::Router {
-    axum::Router::new()
+    import::spawn_janitor(state.clone());
+    let limited = axum::Router::new()
         .route("/healthz", get(health))
         .route("/v1/me", get(me))
         .route("/v1/openapi.json", get(openapi_json))
@@ -90,7 +92,13 @@ pub fn into_router(state: AppState) -> axum::Router {
         )
         .route("/v1/objects/{id}/changes", get(objects::object_changes))
         .merge(platform::routes())
-        .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .merge(import::routes())
+        .layer(DefaultBodyLimit::max(BODY_LIMIT));
+    let upload = axum::Router::new()
+        .route("/v1/imports", post(import::upload))
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024));
+    upload
+        .merge(limited)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             track_interactive,
@@ -104,10 +112,20 @@ pub fn into_router(state: AppState) -> axum::Router {
 /// bulk submission itself do not. Counting the stream would pause every
 /// import for as long as a browser tab stayed open.
 pub(crate) fn counts_as_interactive(path: &str) -> bool {
-    !matches!(
+    if matches!(
         path,
         "/healthz" | "/v1/openapi.json" | "/v1/stream" | "/v1/bulk"
-    )
+    ) {
+        return false;
+    }
+    // Queuing an import save only reserves the bulk gate. The job runs on the
+    // bulk lane and must not look like an interactive request while it waits.
+    if let Some(rest) = path.strip_prefix("/v1/imports/")
+        && rest.ends_with("/save")
+    {
+        return false;
+    }
+    true
 }
 
 async fn track_interactive(
@@ -193,6 +211,15 @@ mod tests {
         assert!(!counts_as_interactive("/v1/openapi.json"));
         assert!(!counts_as_interactive("/v1/stream"));
         assert!(!counts_as_interactive("/v1/bulk"));
+        assert!(!counts_as_interactive(
+            "/v1/imports/00000000-0000-0000-0000-000000000000/save"
+        ));
+        assert!(counts_as_interactive(
+            "/v1/imports/00000000-0000-0000-0000-000000000000"
+        ));
+        assert!(counts_as_interactive(
+            "/v1/imports/00000000-0000-0000-0000-000000000000/approve"
+        ));
     }
 }
 
