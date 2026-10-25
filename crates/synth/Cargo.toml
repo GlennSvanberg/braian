@@ -21,4 +21,5 @@ serde_norway.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+braian-search = { path = "../search" }
 proptest.workspace = true

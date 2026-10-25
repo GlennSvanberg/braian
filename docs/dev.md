@@ -147,9 +147,10 @@ slice som inte hunnit bli durable, inte halva slice:n.
 `BRAIAN_BULK_QUEUE` (standard 4) hur många som får vänta. Fler får 429.
 `BRAIAN_BULK_CHUNK` (standard 25) är raderna per transaktion i `POST /v1/bulk`
 när ingen interaktiv trafik pågår. `braian-bench perf-load` läser
-`BRAIAN_POOL_BULK` när den är satt, samma variabel som `braian`. Övriga
-pool- och yield-värden i bänken stannar på kodens standard, så att en
-export av yield-tiderna i skalet inte ändrar en mätning.
+`BRAIAN_POOL_BULK` och `BRAIAN_BULK_YIELD_MS`, `BRAIAN_BULK_YIELD_STEP_MS`
+och `BRAIAN_BULK_YIELD_MAX_MS` när de är satta, även `0`. Den interaktiva
+poolen stannar på kodens standard, så att en export av den inte ändrar en
+mätning.
 
 `POST /v1/objects:batchGet` läser upp till 200 id. Utan `values`, `fields`
 eller `parts` kommer bara huvudet och grupperna. `fields` är attributnycklar;
@@ -181,19 +182,23 @@ Typesense är klar med hela anropet, och den interaktiva upserten ska inte
 vänta på den anslutningen.
 
 Bulk-spåret läser `BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000) och
-importerar dem i korta vågor. `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (standard
-100, tak 200) är dokumenten per anrop och
-`BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` (standard 1, tak 2) är anropen i
-en våg. Fyra anrop på 500 dokument höll Typesense så länge att en enstaka
-upsert fick vänta ut importen, och väntan innan flushen hjälpte inte när
-anropet redan pågick. Före varje våg tittar spåret på det interaktiva
-topicet och på `interactive_pressure`. Är något av dem aktivt väntar det
-högst `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` (standard 100) och skickar sedan
-ett anrop på högst 100 dokument. Standard en samtidig import lämnar en
-Typesense-tråd ledig på layouten ovan (`--thread-pool-size=2`). Sätt
-samtidigheten till 2 när värden ska ikapp och den interaktiva latensen
-väger mindre; taket 2 går inte att höja förbi. Omindexering använder
-samma vågor och stannar också för `interactive_pressure`.
+importerar dem i vågor. `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (standard 200,
+tak 200) är dokumenten per anrop och `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY`
+(standard 2, tak 2) är anropen i en våg när ingen interaktiv trafik pågår.
+Fyra anrop på 500 dokument höll Typesense så länge att en enstaka upsert
+fick vänta ut importen. Före varje våg tittar spåret på det interaktiva
+topicet och på `interactive_pressure`:
+
+- Tomt topic och ingen pressure: den konfigurerade vågen, standard 200 × 2.
+- Pressure men tomt topic: ett anrop på den konfigurerade batchen (en
+  Typesense-tråd ledig) och högst 15 ms väntan.
+- Händelser i topicet, eller en flush som pågår: ett anrop på högst 100
+  dokument, och väntan upp till `BRAIAN_INDEXER_BULK_YIELD_MAX_MS`
+  (standard 100). Sedan importerar det ändå.
+
+`0` stänger av väntan. Omindexering använder samma vågor. På layouten ovan
+följer standardens 2 anrop Typesense-trådarna (`--thread-pool-size=2`);
+under pressure lämnas en tråd ledig.
 
 På en maskin med färre kärnor, ändra `cpuset` i overlayet innan det startas.
 En kärna som inte finns gör att containern inte startar.

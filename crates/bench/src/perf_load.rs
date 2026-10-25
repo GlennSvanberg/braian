@@ -146,6 +146,12 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
     let config = admin::parse_config(&args.database_url)?;
     let mut pools = PoolConfig::default();
     pools.bulk = bulk_pool_size(pools.bulk);
+    pools = apply_yield_overrides(
+        pools,
+        env_string("BRAIAN_BULK_YIELD_MS").as_deref(),
+        env_string("BRAIAN_BULK_YIELD_STEP_MS").as_deref(),
+        env_string("BRAIAN_BULK_YIELD_MAX_MS").as_deref(),
+    );
     let store = Store::connect_with(config, STORAGE_FORM, pools).await?;
     let bulk_pool = store.on_bulk().pool_max();
     let identities = braian_api::identities(&store, TOKENS).await?;
@@ -379,15 +385,43 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
 
 /// `BRAIAN_POOL_BULK` when it is set, otherwise the code default.
 ///
-/// `braian` reads the same variable. Other bench knobs stay on
-/// [`PoolConfig::default`] so a shell export of yield timings does not
-/// change a run.
+/// `braian` reads the same variable. The interactive pool stays on
+/// [`PoolConfig::default`] so a shell export of that size does not change a run.
 fn bulk_pool_size(default: usize) -> usize {
     std::env::var("BRAIAN_POOL_BULK")
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|value: &usize| *value > 0)
         .unwrap_or(default)
+}
+
+fn env_string(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// `BRAIAN_BULK_YIELD_*` when set, including `0`. Unset or unparsable keeps
+/// the code default. perf-load used to ignore these, so a yield A/B on the
+/// loader required a code patch.
+fn apply_yield_overrides(
+    mut pools: PoolConfig,
+    yield_ms: Option<&str>,
+    step_ms: Option<&str>,
+    max_ms: Option<&str>,
+) -> PoolConfig {
+    pools.bulk_yield = millis_override(yield_ms, pools.bulk_yield);
+    pools.bulk_yield_step = millis_override(step_ms, pools.bulk_yield_step);
+    pools.bulk_yield_max = millis_override(max_ms, pools.bulk_yield_max);
+    pools
+}
+
+fn millis_override(raw: Option<&str>, default: Duration) -> Duration {
+    match raw {
+        Some(value) => value
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .unwrap_or(default),
+        None => default,
+    }
 }
 
 fn print_stats(name: &str, stats: &Option<Stats>) {
@@ -612,4 +646,32 @@ async fn probe(
         patch_ms,
         searchable_ms,
     })
+}
+
+#[cfg(test)]
+mod yield_env {
+    use std::time::Duration;
+
+    use braian_store::PoolConfig;
+
+    use super::apply_yield_overrides;
+
+    #[test]
+    fn yield_overrides_honor_zero_and_keep_the_default_when_unset() {
+        let pools = PoolConfig::default();
+        let tuned = apply_yield_overrides(pools, Some("0"), Some("8"), Some("40"));
+        assert_eq!(tuned.bulk_yield, Duration::ZERO);
+        assert_eq!(tuned.bulk_yield_step, Duration::from_millis(8));
+        assert_eq!(tuned.bulk_yield_max, Duration::from_millis(40));
+        assert_eq!(tuned.bulk, pools.bulk);
+        assert_eq!(tuned.interactive, pools.interactive);
+
+        let same = apply_yield_overrides(pools, None, None, None);
+        assert_eq!(same.bulk_yield, pools.bulk_yield);
+        assert_eq!(same.bulk_yield_step, pools.bulk_yield_step);
+        assert_eq!(same.bulk_yield_max, pools.bulk_yield_max);
+
+        let junk = apply_yield_overrides(pools, Some("nope"), None, None);
+        assert_eq!(junk.bulk_yield, pools.bulk_yield);
+    }
 }
