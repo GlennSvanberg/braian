@@ -1,17 +1,25 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
+import { Group, Panel, Separator } from 'react-resizable-panels'
 import { Moon, Sun } from 'lucide-react'
-import { ApiError, api, type Json } from './api'
+import { api, type Json } from './api'
+import { humanizeLive, objectIdFromLive } from './activity'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
+import { Kbd } from './components/ui/kbd'
 import { Toaster } from './components/ui/sonner'
 import { viewDisplayTitle, workspaceDisplayName } from './demo-labels'
+import { flashObject } from './flash'
 import { copy } from './i18n'
 import { dockTab, isSplit, type LayoutNode, type Zone } from './layout'
+import { CommandPalette } from './palette'
+import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
+import { onUi } from './ui-bus'
+import { onViewRequest, requestView } from './view-focus'
 import {
   DataModel,
   GraphView,
@@ -23,6 +31,7 @@ import {
 } from './panes'
 
 type View = { id: string; type: string; title: string; pane?: string; position?: number; state: Json }
+type ListedWorkspace = { id: string; name: string; locked?: boolean; share_token?: string; layout?: LayoutNode }
 type Workspace = { id: string; name: string; locked: boolean; share_token?: string; layout: LayoutNode; views: View[] }
 type Me = {
   email?: string
@@ -68,12 +77,14 @@ export function Shell() {
   const [group, setGroup] = useState<string | null>(null)
   const [objectId, setObjectId] = useState<string | null>(null)
   const [proposalId, setProposalId] = useState<string | null>(null)
-  const logRef = useRef<HTMLPreElement>(null)
-  const statusRef = useRef<HTMLSpanElement>(null)
-  const [palette, setPalette] = useState(false)
+  const [logText, setLogText] = useState('')
+  const [liveState, setLiveState] = useState('closed')
+  const [statusLine, setStatusLine] = useState<string>(copy.activity)
+  const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai'>(null)
   const [help, setHelp] = useState(false)
-  const [agentOpen, setAgentOpen] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  const placeRef = useRef<(name: string, args: Json) => void>(() => {})
 
   useEffect(() => {
     setBooted(true)
@@ -88,16 +99,13 @@ export function Shell() {
   const push = (line: string) => {
     const stamp = new Date().toLocaleTimeString('en-GB', { hour12: false })
     const text = `${stamp} ${line}`
-    if (statusRef.current) statusRef.current.textContent = text
-    const log = logRef.current
-    if (!log) return
-    const lines = [text, ...(log.textContent ?? '').split('\n').filter(Boolean)].slice(0, 6)
-    log.textContent = lines.join('\n')
+    setStatusLine(text)
+    setLogText((current) => [text, ...current.split('\n').filter(Boolean)].slice(0, 6).join('\n'))
   }
 
   const workspaces = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => api<{ workspaces: Array<{ id: string; name: string; share_token?: string }> }>('/v1/workspaces'),
+    queryFn: () => api<{ workspaces: ListedWorkspace[] }>('/v1/workspaces'),
     enabled: booted && me.isSuccess,
   })
   useEffect(() => {
@@ -115,12 +123,12 @@ export function Shell() {
     if (!booted || !me.isSuccess) return
     const source = new EventSource('/v1/stream', { withCredentials: true })
     let pending: ReturnType<typeof setTimeout> | undefined
-    source.onopen = () => {
-      if (logRef.current) logRef.current.dataset.live = 'open'
-    }
+    source.onopen = () => setLiveState('open')
     source.onmessage = (event) => {
-      if (logRef.current) logRef.current.dataset.live = 'message'
-      push(`live ${event.data}`)
+      setLiveState('message')
+      const id = objectIdFromLive(event.data)
+      if (id) flashObject(id)
+      push(humanizeLive(event.data))
       clearTimeout(pending)
       pending = setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
@@ -138,14 +146,32 @@ export function Shell() {
   }, [booted, me.isSuccess, queryClient])
 
   useEffect(() => {
+    const protectDrag = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('.pane-tab, .pane-tabs')) event.stopPropagation()
+    }
+    window.addEventListener('pointerdown', protectDrag, true)
+    return () => window.removeEventListener('pointerdown', protectDrag, true)
+  }, [])
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault()
+        movePaneFocus(event.key)
+        return
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setPalette(true)
+        setPaletteMode('list')
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
+        event.preventDefault()
+        setPaletteMode('ai')
       }
       if (event.key === 'Escape') {
-        setPalette(false)
         setHelp(false)
+        setTabMenu(null)
       }
       if (event.key === 'F1') {
         event.preventDefault()
@@ -163,6 +189,22 @@ export function Shell() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [workspaces.data])
+
+  useEffect(() => {
+    return onUi((event) => {
+      if (event.name === 'ui.set_theme') setTheme(event.args.theme === 'light' ? 'light' : 'dark')
+      if (event.name === 'ui.open_workspace' && typeof event.args.id === 'string') setWorkspaceId(event.args.id)
+      if (event.name === 'ui.open_template' && typeof event.args.id === 'string') {
+        setWorkspaceId(event.args.id)
+        void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      }
+      if (event.name === 'ui.open_view' || event.name === 'ui.place' || event.name === 'ui.link') {
+        const token = String(event.args.title ?? event.args.id ?? '')
+        if (token) requestView(token)
+      }
+      if (event.name === 'ui.place' || event.name === 'ui.link') placeRef.current(event.name, event.args)
+    })
+  }, [queryClient])
 
   const session: Session = {
     group,
@@ -196,6 +238,32 @@ export function Shell() {
       }),
     }).then(() => queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] }))
   }
+  placeRef.current = (_name, args) => {
+    if (!workspace.data) return
+    const token = String(args.id ?? args.title ?? '')
+    const view = workspace.data.views.find((item) => item.id === token || item.title === token || item.type === token)
+    const zone = (String(args.zone ?? 'right') as Zone) || 'right'
+    const active = workspace.data.views.find((item) => item.type === 'object_table') ?? workspace.data.views[0]
+    if (view && active) saveLayout(dockTab(workspace.data.layout, view.id, zone === 'center' ? 'right' : zone, active.id))
+  }
+
+  const toggleLock = (item: ListedWorkspace) => {
+    void api('/v1/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: item.id,
+        name: item.name,
+        locked: !item.locked,
+        share_token: item.share_token,
+        layout: item.layout ?? { tabs: [] },
+      }),
+    }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      void queryClient.invalidateQueries({ queryKey: ['workspace', item.id] })
+      push(item.locked ? copy.unlockWorkspace : copy.lockWorkspace)
+    })
+    setTabMenu(null)
+  }
 
   return (
     <div className="app" style={{ zoom }}>
@@ -210,6 +278,10 @@ export function Shell() {
               key={item.id}
               className={item.id === workspaceId ? 'tab active' : 'tab'}
               onClick={() => setWorkspaceId(item.id)}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setTabMenu({ x: event.clientX, y: event.clientY, id: item.id })
+              }}
             >
               {workspaceDisplayName(item.name, item.share_token)}
               <span className="icon-btn"> {index < 9 ? index + 1 : ''}</span>
@@ -222,7 +294,7 @@ export function Shell() {
           {theme === 'dark' ? <Sun aria-hidden="true" size={14} /> : <Moon aria-hidden="true" size={14} />}
           {theme === 'dark' ? copy.themeLight : copy.themeDark}
         </button>
-        <button className="icon-btn" onClick={() => setAgentOpen(true)}>{copy.agent}</button>
+        <button className="icon-btn" onClick={() => setPaletteMode('ai')}>{copy.agent}</button>
         <span>{userName}</span>
         <button
           className="icon-btn"
@@ -238,18 +310,62 @@ export function Shell() {
           <p>{copy.loading}</p>
         )}
       </main>
-      <pre className="activity" data-testid="activity-log" ref={logRef} />
+      <pre className="activity" data-testid="activity-log" data-live={liveState}>{logText}</pre>
       <footer className="status">
         <span>{userEmail}</span>
         <span>{user.role}</span>
         <span data-testid="live-flag">{copy.connected}</span>
         {workspace.data?.locked ? <span>{copy.locked}</span> : null}
         <span className="grow" />
-        <span ref={statusRef}>{copy.activity}</span>
+        <span>{statusLine}</span>
       </footer>
-      {palette ? <Palette session={session} onClose={() => setPalette(false)} onAsk={() => { setPalette(false); setAgentOpen(true) }} /> : null}
+      {paletteMode ? (
+        <CommandPalette
+          key={paletteMode}
+          ai={paletteMode === 'ai'}
+          session={session}
+          workspaces={workspaces.data?.workspaces ?? []}
+          views={workspace.data?.views ?? []}
+          onClose={() => setPaletteMode(null)}
+        />
+      ) : null}
+      {tabMenu ? (
+        <div className="menu" style={{ left: tabMenu.x, top: tabMenu.y }} data-testid="workspace-menu">
+          {workspaces.data?.workspaces.filter((item) => item.id === tabMenu.id).map((item) => (
+            <div key={item.id}>
+              <button type="button" onClick={() => toggleLock(item)}>{item.locked ? copy.unlockWorkspace : copy.lockWorkspace}</button>
+              <button
+                type="button"
+                onClick={() => {
+                  const link = item.share_token ? `${window.location.origin}/share/${item.share_token}` : item.id
+                  void navigator.clipboard?.writeText(link)
+                  push(copy.copyShare)
+                  setTabMenu(null)
+                }}
+              >
+                {copy.copyShare}
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              const template = workspaceTemplates[0]
+              if (!template) return
+              void createWorkspaceFromTemplate(template).then((id) => {
+                void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+                setWorkspaceId(id)
+                push(copy.newWorkspace)
+              })
+              setTabMenu(null)
+            }}
+          >
+            {copy.newWorkspace}
+          </button>
+          <button type="button" onClick={() => setTabMenu(null)}>{copy.close}</button>
+        </div>
+      ) : null}
       {help ? <Help onClose={() => setHelp(false)} /> : null}
-      {agentOpen ? <AgentPanel onClose={() => setAgentOpen(false)} session={session} /> : null}
       <Toaster theme={theme} />
     </div>
   )
@@ -294,51 +410,38 @@ function LayoutView({
   workspace,
   session,
   onLayout,
+  path = 'p',
 }: {
   node: LayoutNode
   workspace: Workspace
   session: Session
   onLayout: (layout: LayoutNode) => void
+  path?: string
 }) {
-  const split = isSplit(node)
-  const [ratio, setRatio] = useState(split ? node.ratio : 0.5)
-  const ratioRef = useRef(ratio)
-  if (!split) {
+  if (!isSplit(node)) {
     return <Pane leaf={node} workspace={workspace} session={session} onLayout={onLayout} root={workspace.layout} />
   }
+  const left = `${path}a`
+  const right = `${path}b`
   return (
-    <div className={`split ${node.direction}`} style={{ alignItems: 'stretch' }}>
-      <div style={{ flex: `${ratio} 1 0%`, alignSelf: 'stretch', minWidth: 0, minHeight: 0 }}>
-        <LayoutView node={node.first} workspace={workspace} session={session} onLayout={onLayout} />
-      </div>
-      <div
-        className="divider"
-        data-testid="split-divider"
-        onMouseDown={(event) => {
-          if (workspace.locked) return
-          const start = node.direction === 'row' ? event.clientX : event.clientY
-          const parent = event.currentTarget.parentElement
-          const size = node.direction === 'row' ? parent?.clientWidth ?? 1 : parent?.clientHeight ?? 1
-          const base = ratioRef.current
-          const move = (moveEvent: MouseEvent) => {
-            const delta = (node.direction === 'row' ? moveEvent.clientX : moveEvent.clientY) - start
-            const next = Math.min(0.85, Math.max(0.15, base + delta / size))
-            ratioRef.current = next
-            setRatio(next)
-          }
-          const up = () => {
-            window.removeEventListener('mousemove', move)
-            window.removeEventListener('mouseup', up)
-            onLayout(replaceRatio(workspace.layout, node, ratioRef.current))
-          }
-          window.addEventListener('mousemove', move)
-          window.addEventListener('mouseup', up)
-        }}
-      />
-      <div style={{ flex: `${1 - ratio} 1 0%`, alignSelf: 'stretch', minWidth: 0, minHeight: 0 }}>
-        <LayoutView node={node.second} workspace={workspace} session={session} onLayout={onLayout} />
-      </div>
-    </div>
+    <Group
+      className={`split ${node.direction}`}
+      orientation={node.direction === 'row' ? 'horizontal' : 'vertical'}
+      defaultLayout={{ [left]: node.ratio * 100, [right]: (1 - node.ratio) * 100 }}
+      onLayoutChanged={(layout, meta) => {
+        if (!meta.isUserInteraction || workspace.locked) return
+        const next = (layout[left] ?? node.ratio * 100) / 100
+        onLayout(replaceRatio(workspace.layout, node, Math.min(0.85, Math.max(0.15, next))))
+      }}
+    >
+      <Panel className="pane-slot" id={left} minSize="15" defaultSize={`${node.ratio * 100}`}>
+        <LayoutView path={left} node={node.first} workspace={workspace} session={session} onLayout={onLayout} />
+      </Panel>
+      <Separator className="divider" data-testid="split-divider" disabled={workspace.locked} />
+      <Panel className="pane-slot" id={right} minSize="15" defaultSize={`${(1 - node.ratio) * 100}`}>
+        <LayoutView path={right} node={node.second} workspace={workspace} session={session} onLayout={onLayout} />
+      </Panel>
+    </Group>
   )
 }
 
@@ -383,6 +486,15 @@ function Pane({
   const [active, setActive] = useState(leaf.active ?? leaf.tabs[0])
   const dockId = useDockDrag()
   const view = workspace.views.find((item) => item.id === active) ?? workspace.views.find((item) => item.id === leaf.tabs[0])
+  useEffect(() => {
+    return onViewRequest((token) => {
+      const match = leaf.tabs.find((id) => {
+        const tab = workspace.views.find((item) => item.id === id)
+        return id === token || tab?.title === token || tab?.type === token
+      })
+      if (match) setActive(match)
+    })
+  }, [leaf.tabs, workspace.views])
   const acceptDock = (zone: Zone) => {
     const id = dockDrag
     setDockDrag(null)
@@ -390,7 +502,7 @@ function Pane({
     onLayout(dockTab(root, id, zone, view.id))
   }
   return (
-    <section className="pane">
+    <section className="pane" data-pane tabIndex={-1}>
       <div className="pane-tabs">
         {leaf.tabs.map((id) => {
           const tab = workspace.views.find((item) => item.id === id)
@@ -464,7 +576,29 @@ function StructureTree({ session, view }: { session: Session; view: View }) {
   const expanded = (view.state.expanded as string[] | undefined) ?? []
   const structures = (defs.data?.structures as Json[] | undefined) ?? []
   return (
-    <div className="tree" data-testid="structure-tree">
+    <div
+      className="tree"
+      data-testid="structure-tree"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) return
+        const buttons = [...event.currentTarget.querySelectorAll('button')]
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        if (event.key === 'Enter') {
+          if (index >= 0) buttons[index]?.click()
+          return
+        }
+        event.preventDefault()
+        const next = event.key === 'ArrowDown'
+          ? Math.min(buttons.length - 1, index + 1)
+          : event.key === 'ArrowUp'
+            ? Math.max(0, index < 0 ? buttons.length - 1 : index - 1)
+            : event.key === 'Home'
+              ? 0
+              : buttons.length - 1
+        buttons[next]?.focus()
+      }}
+    >
       {structures.map((structure) => {
         const groups = (structure.groups as Json[]) ?? []
         const keyById = new Map(groups.map((group) => [String(group.id), String(group.key)]))
@@ -541,105 +675,29 @@ function EmbedView({ session, view }: { session: Session; view: View }) {
   return <iframe title={copy.product} src={src} style={{ width: '100%', height: '100%', border: 0 }} />
 }
 
-function Palette({ session, onClose, onAsk }: { session: Session; onClose: () => void; onAsk: () => void }) {
-  const [q, setQ] = useState('')
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const armed = useRef(false)
-  const found = useQuery({
-    queryKey: ['palette', q],
-    queryFn: () => api<{ objects: Json[] }>(`/v1/objects?q=${encodeURIComponent(q)}&limit=20`),
-    enabled: q.length > 0,
-  })
-  const ops = useQuery({ queryKey: ['ops'], queryFn: () => api<{ operations: Json[] }>('/v1/operations') })
-  const hits = [
-    ...(found.data?.objects ?? []).map((row) => ({
-      id: String(row.id),
-      kind: 'object' as const,
-      label: `${String(row.key)} · ${String(row.type)}`,
-      run: () => {
-        session.setObjectId(String(row.id))
-        onClose()
-      },
-    })),
-    { id: 'ask', kind: 'command' as const, label: copy.askAgent, run: onAsk },
-    ...(ops.data?.operations ?? []).slice(0, 6).map((op) => ({
-      id: String(op.name),
-      kind: 'command' as const,
-      label: String(op.title),
-      run: () => {},
-    })),
-  ]
-  const hitsRef = useRef(hits)
-  hitsRef.current = hits
-  const resultKey = hits.filter((hit) => hit.kind === 'object').map((hit) => hit.id).join('\n')
-  const activeIndex = hits.findIndex((hit) => hit.id === activeId)
-  useEffect(() => {
-    if (!armed.current) return
-    const list = hitsRef.current
-    const selected = list.find((hit) => hit.id === activeId)
-    if (selected?.kind === 'object') return
-    const first = list.find((hit) => hit.kind === 'object')
-    if (first) setActiveId(first.id)
-  }, [resultKey, activeId])
-  useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>('.hit.on')?.scrollIntoView({ block: 'nearest' })
-  }, [activeId])
 
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLFormElement>) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Enter') return
-    event.preventDefault()
-    if (hits.length === 0) return
-    if (event.key === 'Enter') {
-      const chosen = !armed.current || activeIndex < 0 ? 0 : activeIndex
-      hits[chosen]?.run()
-      return
-    }
-    const next = event.key === 'ArrowDown'
-      ? (!armed.current || activeIndex < 0 ? 0 : Math.min(activeIndex + 1, hits.length - 1))
-      : (!armed.current || activeIndex < 0 ? hits.length - 1 : Math.max(activeIndex - 1, 0))
-    armed.current = true
-    setActiveId(hits[next].id)
+
+function movePaneFocus(key: string) {
+  const panes = [...document.querySelectorAll<HTMLElement>('[data-pane]')]
+  if (panes.length === 0) return
+  const active = document.activeElement as HTMLElement | null
+  const current = panes.findIndex((pane) => pane === active || pane.contains(active))
+  const origin = (panes[Math.max(0, current)] ?? panes[0]).getBoundingClientRect()
+  const score = (pane: HTMLElement) => {
+    const box = pane.getBoundingClientRect()
+    const dx = box.left + box.width / 2 - (origin.left + origin.width / 2)
+    const dy = box.top + box.height / 2 - (origin.top + origin.height / 2)
+    if (key === 'ArrowRight') return dx > 8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
+    if (key === 'ArrowLeft') return dx < -8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
+    if (key === 'ArrowDown') return dy > 8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
+    return dy < -8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
   }
-
-  return (
-    <div className="palette" data-testid="palette" onClick={onClose}>
-      <form onClick={(event) => event.stopPropagation()} onSubmit={(event) => event.preventDefault()} onKeyDown={onKeyDown}>
-        <input
-          data-testid="palette-input"
-          autoFocus
-          autoComplete="off"
-          role="combobox"
-          aria-expanded={hits.length > 0}
-          aria-controls="palette-list"
-          aria-activedescendant={activeIndex >= 0 ? `palette-hit-${activeIndex}` : undefined}
-          placeholder={copy.commandPlaceholder}
-          value={q}
-          onChange={(event) => {
-            setQ(event.target.value)
-            setActiveId(null)
-            armed.current = false
-          }}
-        />
-        <div className="palette-list" id="palette-list" role="listbox" ref={listRef}>
-          {hits.map((hit, index) => (
-            <button
-              key={hit.id}
-              id={`palette-hit-${index}`}
-              type="button"
-              role="option"
-              aria-selected={index === activeIndex}
-              className={index === activeIndex ? 'hit on' : 'hit'}
-              onMouseEnter={() => setActiveId(hit.id)}
-              onClick={hit.run}
-            >
-              {hit.label}
-            </button>
-          ))}
-        </div>
-      </form>
-    </div>
-  )
+  const next = panes
+    .map((pane, index) => ({ pane, index, score: score(pane) }))
+    .filter((item) => item.index !== current && Number.isFinite(item.score))
+    .sort((left, right) => left.score - right.score)[0]
+  const target = next?.pane ?? panes[(Math.max(0, current) + 1) % panes.length]
+  target.focus()
 }
 
 function Help({ onClose }: { onClose: () => void }) {
@@ -647,68 +705,14 @@ function Help({ onClose }: { onClose: () => void }) {
     <div className="help" onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()}>
         <strong>{copy.shortcuts}</strong>
-        <p><kbd>Ctrl</kbd>+<kbd>K</kbd> {copy.commandPlaceholder}</p>
-        <p><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> workspaces</p>
-        <p><kbd>F1</kbd> {copy.shortcuts}</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>K</Kbd> {copy.commandPlaceholder}</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>J</Kbd> {copy.agent}</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+arrows focus the next pane</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>1</Kbd>…<Kbd>9</Kbd> workspaces</p>
+        <p><Kbd>F1</Kbd> {copy.shortcuts}</p>
         <button onClick={onClose}>{copy.close}</button>
       </div>
     </div>
   )
 }
 
-function AgentPanel({ onClose, session }: { onClose: () => void; session: Session }) {
-  const status = useQuery({ queryKey: ['agent-status'], queryFn: () => api<{ available: boolean; model: string; reply?: string }>('/api/chat') })
-  const [lines, setLines] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([])
-  const [input, setInput] = useState('')
-  const [pending, setPending] = useState(false)
-  return (
-    <aside className="agent" data-testid="agent">
-      <header>
-        <span>{copy.agent} · {status.data?.model ?? 'gpt-6-luna'}</span>
-        <button onClick={onClose}>{copy.close}</button>
-      </header>
-      <div className="log">
-        {status.data && !status.data.available ? <p className="bubble assistant">{status.data.reply}</p> : null}
-        {lines.map((line, index) => (
-          <p key={`${line.role}-${index}`} className={line.role === 'user' ? 'bubble user' : 'bubble assistant'}>
-            {line.text}
-          </p>
-        ))}
-      </div>
-      <form
-        className="toolbar"
-        onSubmit={(event) => {
-          event.preventDefault()
-          const text = input.trim()
-          if (!text || pending) return
-          const history = [...lines, { role: 'user' as const, text }]
-          setLines(history)
-          setInput('')
-          setPending(true)
-          session.push(`${copy.agent}: ${text}`)
-          void api<{ reply?: string; tools?: Json[] }>('/v1/agent', {
-            method: 'POST',
-            body: JSON.stringify({
-              messages: history.map((line) => ({ role: line.role, content: line.text })),
-            }),
-          })
-            .then((result) => {
-              const tools = (result.tools ?? [])
-                .map((tool) => `${String(tool.name)}: ${JSON.stringify(tool.result)}`)
-                .join('\n')
-              const reply = [result.reply, tools].filter(Boolean).join('\n')
-              setLines([...history, { role: 'assistant', text: reply || copy.agentEmpty }])
-            })
-            .catch((error: unknown) => {
-              const message = error instanceof ApiError ? error.message : copy.agentEmpty
-              setLines([...history, { role: 'assistant', text: message }])
-            })
-            .finally(() => setPending(false))
-        }}
-      >
-        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder={copy.askAgent} />
-        <button className="primary" type="submit">{copy.send}</button>
-      </form>
-    </aside>
-  )
-}

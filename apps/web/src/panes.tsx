@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, textValue, type Json } from './api'
+import { Kbd } from './components/ui/kbd'
 import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
+import { onFlash } from './flash'
+import { GraphMap } from './graph-map'
 import { copy, uiLanguage } from './i18n'
+import { dispatchUi, onUi } from './ui-bus'
 
 export type PanesSession = {
   group: string | null
@@ -77,9 +81,13 @@ export function ObjectTable({
   const [order, setOrder] = useState(initial.order)
   const [sizes, setSizes] = useState<Record<string, number>>(initial.sizes)
   const [selected, setSelected] = useState<string[]>([])
+  const [hidden, setHidden] = useState<string[]>([])
+  const [cursor, setCursor] = useState(-1)
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  const [flashId, setFlashId] = useState('')
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
+  useEffect(() => onFlash(setFlashId), [])
 
   useEffect(() => {
     const timer = setTimeout(() => setQueryText(filter), 120)
@@ -149,7 +157,20 @@ export function ObjectTable({
   }))
 
   const ordered = order.filter((id) => columns.some((column) => column.id === id))
-  const shown = ordered.length > 0 ? ordered : columns.map((column) => column.id)
+  const shown = (ordered.length > 0 ? ordered : columns.map((column) => column.id)).filter((id) => !hidden.includes(id))
+  const exportVisible = () => {
+    void api<Blob>('/v1/export', {
+      method: 'POST',
+      body: JSON.stringify({ q: queryText || '*', filter: filterBy, columns: ['key', 'type_key', 'a_namn__sv', 'a_status'] }),
+    }).then((blob) => {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'braian.xlsx'
+      link.click()
+      URL.revokeObjectURL(url)
+    })
+  }
   const mass = useMutation({
     mutationFn: () =>
       api<Json>('/v1/operations/mass_edit', {
@@ -166,6 +187,82 @@ export function ObjectTable({
       session.push(`${copy.proposals} ${result.id}`)
     },
   })
+
+  useEffect(() => onUi((event) => {
+    const args = event.args
+    if (event.name === 'ui.filter') setFilter(String(args.q ?? args.text ?? args.filter ?? ''))
+    if (event.name === 'ui.group') setGroupBy(String(args.group ?? args.by ?? ''))
+    if (event.name === 'ui.sort' && args.sort) setSort(String(args.sort))
+    if (event.name === 'ui.select' && args.id) {
+      session.setObjectId(String(args.id))
+      setSelected([String(args.id)])
+    }
+    if (event.name === 'ui.select_rows' && Array.isArray(args.ids)) setSelected(args.ids.map(String))
+    if (event.name === 'ui.show_column') {
+      const column = String(args.column ?? args.id ?? '')
+      setHidden((current) => current.filter((id) => id !== column))
+    }
+    if (event.name === 'ui.hide_column') setHidden((current) => [...new Set([...current, String(args.column ?? args.id ?? '')])])
+    if (event.name === 'ui.move_column') {
+      const from = String(args.from ?? args.column ?? '')
+      const to = String(args.to ?? '')
+      if (!from) return
+      setOrder((current) => {
+        const next = current.filter((item) => item !== from)
+        const at = to ? next.indexOf(to) : next.length
+        next.splice(at < 0 ? next.length : at, 0, from)
+        return next
+      })
+    }
+    if (event.name === 'ui.export') exportVisible()
+  }), [filterBy, queryText, session])
+
+  const moveCursor = (next: number, extend: boolean) => {
+    const clamped = Math.max(0, Math.min(Math.max(found - 1, 0), next))
+    setCursor(clamped)
+    virtualizer.scrollToIndex(clamped)
+    const row = byIndex.get(clamped)
+    if (!row) return
+    session.setObjectId(row.id)
+    if (!extend) {
+      setSelected([row.id])
+      return
+    }
+    const [start, end] = cursor < clamped ? [cursor, clamped] : [clamped, Math.max(cursor, 0)]
+    const ids: string[] = []
+    for (let index = start; index <= end; index += 1) {
+      const item = byIndex.get(index)
+      if (item) ids.push(item.id)
+    }
+    setSelected(ids.length > 0 ? ids : [row.id])
+  }
+
+  const onTableKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey || event.altKey || event.metaKey) return
+    if (!['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', 'Enter', 'Escape'].includes(event.key)) return
+    if (event.key === 'Escape') {
+      setMenu(null)
+      return
+    }
+    event.preventDefault()
+    if (event.key === 'Enter') {
+      const row = byIndex.get(cursor)
+      if (row) session.setObjectId(row.id)
+      return
+    }
+    const next = event.key === 'ArrowDown'
+      ? cursor + 1
+      : event.key === 'ArrowUp'
+        ? cursor - 1
+        : event.key === 'PageDown'
+          ? cursor + 10
+          : event.key === 'PageUp'
+            ? cursor - 10
+            : event.key === 'Home'
+              ? 0
+              : found - 1
+    moveCursor(next, event.shiftKey)
+  }
 
   const cell = (row: ObjRow, id: string) => {
     if (id === 'key') return row.key
@@ -215,27 +312,11 @@ export function ObjectTable({
           </button>
         ))}
         <button onClick={() => mass.mutate()} disabled={selected.length === 0}>{copy.massEdit}</button>
-        <button
-          onClick={() => {
-            void api<Blob>('/v1/export', {
-              method: 'POST',
-              body: JSON.stringify({ q: queryText || '*', filter: filterBy, columns: ['key', 'type_key', 'a_namn__sv', 'a_status'] }),
-            }).then((blob) => {
-              const url = URL.createObjectURL(blob)
-              const link = document.createElement('a')
-              link.href = url
-              link.download = 'braian.xlsx'
-              link.click()
-              URL.revokeObjectURL(url)
-            })
-          }}
-        >
-          {copy.export}
-        </button>
+        <button onClick={exportVisible}>{copy.export}</button>
         <NewObject session={session} />
         <span className="icon-btn" data-testid="row-count">{found} {copy.rows}</span>
       </div>
-      <div className="grid" ref={parent}>
+      <div className="grid" ref={parent} tabIndex={0} onKeyDown={onTableKey}>
         <div className="head">
           {shown.map((id) => {
             const column = columns.find((item) => item.id === id)
@@ -295,7 +376,7 @@ export function ObjectTable({
               <div key={group.key}>
                 <strong>{group.key || '—'} ({group.found})</strong>
                 {group.hits.map((row) => (
-                  <Row key={row.id} row={row} shown={shown} sizes={sizes} session={session} selected={selected} setSelected={setSelected} setMenu={setMenu} cell={cell} />
+                  <Row key={row.id} row={row} index={0} shown={shown} sizes={sizes} session={session} selected={selected} setSelected={setSelected} setMenu={setMenu} cell={cell} flash={flashId === row.id} cursor={cursor} />
                 ))}
               </div>
             ))}
@@ -311,6 +392,7 @@ export function ObjectTable({
                 <Row
                   key={row.id}
                   row={row}
+                  index={item.index}
                   shown={shown}
                   sizes={sizes}
                   session={session}
@@ -318,6 +400,8 @@ export function ObjectTable({
                   setSelected={setSelected}
                   setMenu={setMenu}
                   cell={cell}
+                  flash={flashId === row.id}
+                  cursor={cursor}
                   style={{ position: 'absolute', transform: `translateY(${item.start}px)`, width: '100%' }}
                 />
               )
@@ -328,10 +412,15 @@ export function ObjectTable({
       {probe.isError ? <p className="error">{(probe.error as Error).message}</p> : null}
       {!probe.isLoading && found === 0 ? <p>{copy.noRows}</p> : null}
       {menu ? (
-        <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="context-menu">
-          <button onClick={() => { session.setObjectId(menu.id); setMenu(null) }}>{copy.open}</button>
-          <button onClick={() => { void queryClient.invalidateQueries({ queryKey: ['history', menu.id] }); setMenu(null) }}>{copy.history}</button>
-          <button onClick={() => setMenu(null)}>{copy.close}</button>
+        <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="context-menu" role="menu">
+          <button type="button" onClick={() => { session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
+          <button type="button" onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
+          <button type="button" onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
+          <button type="button" onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
+          <button type="button" onClick={() => { setHidden((current) => [...new Set([...current, 'status'])]); setMenu(null) }}>{copy.hideColumn}</button>
+          <button type="button" onClick={() => { mass.mutate(); setMenu(null) }}>{copy.massEdit}</button>
+          <button type="button" onClick={() => { exportVisible(); setMenu(null) }}>{copy.export}</button>
+          <button type="button" onClick={() => setMenu(null)}>{copy.close} <Kbd>Esc</Kbd></button>
         </div>
       ) : null}
     </div>
@@ -340,6 +429,7 @@ export function ObjectTable({
 
 function Row({
   row,
+  index,
   shown,
   sizes,
   session,
@@ -347,26 +437,36 @@ function Row({
   setSelected,
   setMenu,
   cell,
+  flash,
+  cursor,
   style,
 }: {
   row: ObjRow
+  index: number
   shown: string[]
   sizes: Record<string, number>
   session: PanesSession
   selected: string[]
-  setSelected: (value: string[]) => void
+  setSelected: (value: string[] | ((current: string[]) => string[])) => void
   setMenu: (value: { x: number; y: number; id: string } | null) => void
   cell: (row: ObjRow, id: string) => string
+  flash: boolean
+  cursor: number
   style?: CSSProperties
 }) {
+  const marked = session.objectId === row.id || selected.includes(row.id) || cursor === index
   return (
     <div
       data-testid="object-row"
-      className={session.objectId === row.id ? 'row selected' : 'row'}
+      data-index={index}
+      tabIndex={-1}
+      className={marked ? `row selected${flash ? ' flash' : ''}` : flash ? 'row flash' : 'row'}
       style={style}
-      onClick={() => {
+      onClick={(event) => {
         session.setObjectId(row.id)
-        setSelected(selected.includes(row.id) ? selected.filter((id) => id !== row.id) : [...selected, row.id])
+        if (event.shiftKey) setSelected((current) => current.includes(row.id) ? current : [...current, row.id])
+        else if (event.metaKey || event.ctrlKey) setSelected((current) => current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id])
+        else setSelected([row.id])
       }}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -444,6 +544,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const [draft, setDraft] = useState<Json>({})
   const [error, setError] = useState('')
+  const [flashId, setFlashId] = useState('')
+  useEffect(() => onFlash(setFlashId), [])
   useEffect(() => setDraft({}), [session.objectId])
   if (!session.objectId) return <p>{copy.detail}</p>
   if (!object.data) return <p>{copy.loading}</p>
@@ -468,11 +570,27 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   }
   return (
     <form
-      className="form"
+      className={flashId === session.objectId ? 'form flash' : 'form'}
       data-testid="object-detail"
       onSubmit={(event) => {
         event.preventDefault()
         save()
+      }}
+      onKeyDown={(event) => {
+        if (event.ctrlKey || event.altKey || event.metaKey) return
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return
+        const target = event.target as HTMLElement
+        if (target.tagName === 'TEXTAREA' && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) return
+        const fields = [...event.currentTarget.querySelectorAll<HTMLElement>('input, textarea, select')]
+        const index = fields.indexOf(target)
+        if (event.key === 'Escape') {
+          setDraft({})
+          return
+        }
+        if (index < 0) return
+        event.preventDefault()
+        const next = event.key === 'ArrowDown' ? index + 1 : event.key === 'ArrowUp' ? index - 1 : event.key === 'Home' ? 0 : fields.length - 1
+        fields[Math.max(0, Math.min(fields.length - 1, next))]?.focus()
       }}
     >
       <strong className="span">{String(object.data.type)} · {textValue((object.data.values as Json)?.nummer)}</strong>
@@ -553,6 +671,21 @@ function Editor({
             )}
           </label>
         ))}
+      </div>
+    )
+  }
+  if (multiple && Array.isArray(value) && kind !== 'value_list') {
+    const items = value.map((item) => textValue(item))
+    return (
+      <div className="choices">
+        {items.map((item) => <span key={item} className="chip">{item}</span>)}
+        <input
+          value=""
+          onChange={(event) => {
+            const next = event.target.value.trim()
+            if (next) onChange([...items, next])
+          }}
+        />
       </div>
     )
   }
@@ -683,38 +816,7 @@ export function GraphView({ session }: { session: PanesSession }) {
     enabled: Boolean(session.objectId),
   })
   if (!graph.data) return <p data-testid="graph">{copy.graph}</p>
-  const relations = (graph.data.relations as Json[]) ?? []
-  const attributes = (graph.data.attributes as Json[]) ?? []
-  return (
-    <div className="graph-wrap">
-      <svg className="graph" data-testid="graph" viewBox="0 0 360 120">
-        <rect x="110" y="36" width="140" height="32" rx="3" fill="var(--select)" />
-        <text x="180" y="56" textAnchor="middle" fill="var(--text)">{String(graph.data.key)}</text>
-        {relations.slice(0, 3).map((relation, index) => (
-          <g key={`${String(relation.kind)}-${String(relation.key)}`}>
-            <line x1="250" y1="52" x2="300" y2={18 + index * 36} stroke="var(--accent)" />
-            <text x="304" y={22 + index * 36} fill="var(--text)">{String(relation.key)}</text>
-          </g>
-        ))}
-      </svg>
-      <div className="origin">
-        {relations.map((relation) => (
-          <p key={`${String(relation.kind)}-${String(relation.key)}`}>{String(relation.kind)} → {String(relation.key)}</p>
-        ))}
-        {attributes.map((attribute) => {
-          const source = ((attribute.sources as Json[]) ?? [])[0] ?? {}
-          const origin = source.class
-            ? `${copy.origin}: ${String(source.class)} / ${String(source.structure ?? '')}`
-            : `${copy.origin}: ${String(source.from ?? 'type')}`
-          return (
-            <p key={String(attribute.key)}>
-              <b>{String(attribute.label ?? attribute.key)}</b> {origin}
-            </p>
-          )
-        })}
-      </div>
-    </div>
-  )
+  return <GraphMap data={graph.data} onOpen={(id) => { if (id) session.setObjectId(id) }} />
 }
 
 export function HistoryView({ session }: { session: PanesSession }) {
@@ -751,6 +853,7 @@ export function HistoryView({ session }: { session: PanesSession }) {
   const diff = (selected?.diff as Json | undefined) ?? {}
   return (
     <div data-testid="history">
+      <p className="hint">{copy.asOf} at #{current}</p>
       <label>
         {copy.asOf}
         <input
@@ -946,6 +1049,7 @@ export function DataModel({ view }: { view: PanesView }) {
       {message ? <p>{message}</p> : null}
       {impact.data ? (
         <div data-testid="impact-result">
+          <strong>Consequence</strong>
           <p>{copy.affected}: {String(impact.data.affected_objects)} · {copy.invalid} {String(impact.data.invalid_objects)}</p>
           <p>{copy.samples}: {((impact.data.samples as Json[]) ?? []).map((item) => String(item.key)).join(', ')}</p>
           {((impact.data.jobs as Json[]) ?? []).map((job) => (
