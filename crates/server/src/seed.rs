@@ -143,10 +143,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
     Ok(())
 }
 
-async fn seed_demo_surface(
-    store: &Store,
-    user: &braian_store::UserRecord,
-) -> anyhow::Result<()> {
+async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> anyhow::Result<()> {
     let workspaces = [
         (
             "018f2000-0000-7000-8000-000000000001",

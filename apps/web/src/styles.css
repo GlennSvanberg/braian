@@ -331,6 +331,10 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 .tree button.on { background: var(--accent-dim); color: var(--text); }
 .tree strong { display: block; padding: 6px 8px 2px; font-size: 12px; font-weight: 500; color: var(--muted); }
 
+.detail-empty { display: grid; gap: 10px; align-content: start; padding: 8px 4px; color: var(--text-2); }
+.detail-empty p { margin: 0; font-size: 13px; }
+.detail-empty ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.detail-empty li { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .form { display: flex; flex-direction: column; gap: 6px; }
 .form > .toolbar { display: flex; gap: 4px; }
 .form > strong { font-size: 18px; font-weight: 600; padding: 2px 2px 6px; }
@@ -477,7 +481,7 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   color: var(--text);
 }
 .hit:hover, .hit.on, .hit[data-selected='true'] { background: var(--accent-dim); }
-.hit.ask { position: sticky; bottom: 0; z-index: 1; background: var(--raised); border-top: 1px solid var(--border); }
+.hit.ask { z-index: 1; background: var(--raised); border-top: 1px solid var(--border); flex: none; }
 .hit small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
 .hit .hit-title { font-size: 13px; }
 .hit kbd, .menu kbd { margin-left: auto; }

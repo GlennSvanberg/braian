@@ -84,7 +84,7 @@ export function CommandPalette({
   const run = (item: PaletteItem) => {
     const id = item.sourceId ?? item.id
     if (id !== 'ask') touch(item.group === 'best' ? id : item.id.startsWith('best:') ? id : item.id)
-    if (item.shortcut) toast(`Nästa gång: ${item.shortcut}`)
+    if (item.shortcut) toast(`Next time: ${item.shortcut}`)
     if (id === 'ask' || item.group === 'ask') {
       void ask(query)
       return
@@ -300,7 +300,8 @@ export function CommandPalette({
     setActive(next)
   }
 
-  const groups = groupBlocks(rows)
+  const groups = groupBlocks(rows.filter((row) => row.group !== 'ask'))
+  const askRow = rows.find((row) => row.group === 'ask')
   const nothingElse = rows.length === 1 && rows[0]?.group === 'ask'
   const selected = nothingElse ? 0 : active
 
@@ -318,7 +319,7 @@ export function CommandPalette({
           data-testid="palette-input"
           autoFocus
           value={query}
-          placeholder={mode === 'ai' ? 'Fråga AI' : 'Search objects, open views, or ask the agent'}
+          placeholder={mode === 'ai' ? 'Ask AI' : 'Search objects, open views, or ask the agent'}
           onValueChange={(value) => {
             setQuery(value)
             setActive(null)
@@ -356,8 +357,8 @@ export function CommandPalette({
                 ))}
                 {proposal.error ? <p className="error">{proposal.error}</p> : null}
                 <div className="toolbar">
-                  <button type="button" onClick={() => void api(`/v1/proposals/${proposal.id}/discard`, { method: 'POST' }).then(() => setProposal(null))}>Avbryt</button>
-                  <button type="button" className="primary" onClick={() => void api(`/v1/proposals/${proposal.id}/accept`, { method: 'POST', body: '{}' }).then(() => { session.setProposalId(proposal.id); setProposal(null); session.push('Bekräfta') })}>Bekräfta</button>
+                  <button type="button" onClick={() => void api(`/v1/proposals/${proposal.id}/discard`, { method: 'POST' }).then(() => setProposal(null))}>Cancel</button>
+                  <button type="button" className="primary" onClick={() => void api(`/v1/proposals/${proposal.id}/accept`, { method: 'POST', body: '{}' }).then(() => { session.setProposalId(proposal.id); setProposal(null); session.push('Confirm') })}>Confirm</button>
                 </div>
               </div>
             ) : null}
@@ -389,9 +390,23 @@ export function CommandPalette({
               ))}
             </CommandList>
         )}
+        {mode === 'list' && askRow ? (
+          <CommandItem
+            value={askRow.id}
+            className={rows.indexOf(askRow) === selected ? 'hit on ask' : 'hit ask'}
+            onMouseEnter={() => setActive(rows.indexOf(askRow))}
+            onSelect={() => run(askRow)}
+          >
+            <span className="hit-copy">
+              <span className="hit-title">{highlight(askRow.title, query)}</span>
+              <small>{askRow.subtitle}</small>
+            </span>
+            {askRow.kbd ? <Kbd>{askRow.kbd}</Kbd> : null}
+          </CommandItem>
+        ) : null}
         <div className="palette-foot">
-          <span>{activeRow ? activeRow.subtitle : '↵ kör'}</span>
-          <span><CornerDownLeft size={12} aria-hidden="true" /> kör · Ctrl+↵ åtgärder · Tab fråga AI · Esc stäng</span>
+          <span>{activeRow ? activeRow.subtitle : '↵ run'}</span>
+          <span><CornerDownLeft size={12} aria-hidden="true" /> run · Ctrl+↵ actions · Tab ask AI · Esc close</span>
         </div>
       </Command>
     </div>

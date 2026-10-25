@@ -576,7 +576,7 @@ async fn drive_agent(
     }
     let mut messages = vec![json!({
         "role": "system",
-        "content": "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. Reply in English."
+        "content": "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. Reply in English. The one-sentence answer and every explanation the person reads must be English."
     })];
     messages.extend(incoming);
     let client = reqwest::Client::new();
@@ -1431,7 +1431,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
             .update_job_progress(
                 id,
                 done,
-                &format!("{done} rader behandlade"),
+                &format!("{done} rows processed"),
                 &Value::Array(errors.clone()),
             )
             .await;
@@ -1447,7 +1447,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
             id,
             status,
             done,
-            &format!("{done} rader, {} fel", errors.len()),
+            &format!("{done} rows, {} errors", errors.len()),
             &Value::Array(errors),
         )
         .await;
