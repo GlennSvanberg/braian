@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Reindex => {
             let store = connect().await?;
             let search = typesense().ok_or_else(|| anyhow::anyhow!("TYPESENSE_URL is not set"))?;
-            let seq = braian_indexer::reindex(&store, &search).await?;
+            let seq = braian_indexer::reindex(&store.on_bulk(), &search).await?;
             println!("reindex seq {seq}");
             Ok(())
         }
@@ -209,6 +209,7 @@ async fn indexer() -> anyhow::Result<()> {
 }
 
 async fn run_indexer(store: Store, brokers: &str) -> anyhow::Result<()> {
+    let store = store.on_bulk();
     let search = typesense().ok_or_else(|| anyhow::anyhow!("TYPESENSE_URL is not set"))?;
     let indexer = braian_indexer::Indexer::new(store, search, brokers, "braian-indexer")?;
     let (_tx, rx) = watch::channel(false);

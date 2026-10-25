@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use deadpool_postgres::{Manager, Pool};
 use tokio::sync::RwLock;
@@ -11,26 +12,107 @@ use crate::types::CachedDefs;
 use refinery::embed_migrations;
 embed_migrations!("migrations");
 
+/// Which connection pool a cloned [`Store`] checks out from.
+///
+/// Interactive reads and edits use [`DbLane::Interactive`]. Bulk import,
+/// bulk jobs and the indexer use [`DbLane::Bulk`], whose pool is capped so a
+/// large COPY cannot take every connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DbLane {
+    Interactive,
+    Bulk,
+}
+
+/// Pool sizes and the pause between bulk batches.
+///
+/// [`PoolConfig::from_env`] is what `braian` uses. Tests and the benches call
+/// [`PoolConfig::default`] through [`Store::connect_config`], so a developer
+/// shell cannot change their pool sizes by accident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolConfig {
+    pub interactive: usize,
+    pub bulk: usize,
+    /// Sleep after each bulk batch, on top of a scheduler yield.
+    /// Zero still yields the task.
+    pub bulk_yield: Duration,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            interactive: 24,
+            bulk: 4,
+            bulk_yield: Duration::from_millis(1),
+        }
+    }
+}
+
+impl PoolConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            interactive: positive_env("BRAIAN_POOL_INTERACTIVE", defaults.interactive),
+            bulk: positive_env("BRAIAN_POOL_BULK", defaults.bulk),
+            bulk_yield: duration_env("BRAIAN_BULK_YIELD_MS", defaults.bulk_yield),
+        }
+    }
+}
+
+fn positive_env(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value: &usize| *value > 0)
+        .unwrap_or(default)
+}
+
+fn duration_env(name: &str, default: Duration) -> Duration {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .unwrap_or(default),
+        Err(_) => default,
+    }
+}
+
 #[derive(Clone)]
 pub struct Store {
-    pool: Pool,
+    interactive: Pool,
+    bulk: Pool,
+    lane: DbLane,
+    bulk_yield: Duration,
     form: StorageForm,
     definitions: Arc<RwLock<Option<Arc<CachedDefs>>>>,
 }
 
+/// One checked-out connection. Drop it to return the connection to the pool.
+pub struct HeldConnection {
+    _connection: deadpool_postgres::Object,
+}
+
 impl Store {
     pub async fn connect(database_url: &str) -> Result<Self, Error> {
-        Self::connect_form(database_url, crate::STORAGE_FORM).await
+        let config = parse_config(database_url)?;
+        Self::connect_with(config, crate::STORAGE_FORM, PoolConfig::from_env()).await
     }
 
     pub async fn connect_form(database_url: &str, form: StorageForm) -> Result<Self, Error> {
         let config = parse_config(database_url)?;
-        Self::connect_config(config, form).await
+        Self::connect_with(config, form, PoolConfig::from_env()).await
     }
 
     pub async fn connect_config(
         config: tokio_postgres::Config,
         form: StorageForm,
+    ) -> Result<Self, Error> {
+        Self::connect_with(config, form, PoolConfig::default()).await
+    }
+
+    pub async fn connect_with(
+        config: tokio_postgres::Config,
+        form: StorageForm,
+        pools: PoolConfig,
     ) -> Result<Self, Error> {
         let migrate_with = config.clone();
         let (mut client, connection) = migrate_with.connect(NoTls).await?;
@@ -45,13 +127,68 @@ impl Store {
         drop(client);
         handle.abort();
 
-        let manager = Manager::new(config, NoTls);
-        let pool = Pool::builder(manager).max_size(32).build()?;
+        let interactive = Pool::builder(Manager::new(config.clone(), NoTls))
+            .max_size(pools.interactive.max(1))
+            .build()?;
+        let bulk = Pool::builder(Manager::new(config, NoTls))
+            .max_size(pools.bulk.max(1))
+            .build()?;
         Ok(Self {
-            pool,
+            interactive,
+            bulk,
+            lane: DbLane::Interactive,
+            bulk_yield: pools.bulk_yield,
             form,
             definitions: Arc::new(RwLock::new(None)),
         })
+    }
+
+    /// Same store, checking out connections from the capped bulk pool.
+    pub fn on_bulk(&self) -> Self {
+        let mut store = self.clone();
+        store.lane = DbLane::Bulk;
+        store
+    }
+
+    pub fn lane(&self) -> DbLane {
+        self.lane
+    }
+
+    /// Connections this lane may hold at once.
+    pub fn pool_max(&self) -> usize {
+        self.pool().status().max_size
+    }
+
+    /// Connections this lane can check out right now.
+    pub fn pool_available(&self) -> usize {
+        self.pool().status().available
+    }
+
+    /// Open connections on this lane, idle or checked out.
+    pub fn pool_size(&self) -> usize {
+        self.pool().status().size
+    }
+
+    /// Checks out one connection on this store's lane.
+    pub async fn hold_connection(&self) -> Result<HeldConnection, Error> {
+        Ok(HeldConnection {
+            _connection: self.pool().get().await?,
+        })
+    }
+
+    /// Gives the scheduler a turn after a bulk batch, then waits
+    /// [`PoolConfig::bulk_yield`] when this store is on the bulk lane.
+    ///
+    /// Interactive stores return immediately. A bulk COPY that never yields
+    /// keeps the runtime on the import task while a GET sits in the queue.
+    pub async fn yield_between_bulk_batches(&self) {
+        if self.lane != DbLane::Bulk {
+            return;
+        }
+        tokio::task::yield_now().await;
+        if !self.bulk_yield.is_zero() {
+            tokio::time::sleep(self.bulk_yield).await;
+        }
     }
 
     pub fn form(&self) -> StorageForm {
@@ -66,7 +203,7 @@ impl Store {
     }
 
     pub(crate) async fn refresh_defs(&self) -> Result<Arc<CachedDefs>, Error> {
-        let client = self.pool.get().await?;
+        let client = self.pool().get().await?;
         let row = client
             .query_opt(
                 "SELECT model_revision, definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1",
@@ -107,7 +244,10 @@ impl Store {
     }
 
     pub(crate) fn pool(&self) -> &Pool {
-        &self.pool
+        match self.lane {
+            DbLane::Interactive => &self.interactive,
+            DbLane::Bulk => &self.bulk,
+        }
     }
 }
 

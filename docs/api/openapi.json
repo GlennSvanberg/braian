@@ -882,6 +882,61 @@
         "responses": {}
       }
     },
+    "/v1/objects:batchGet": {
+      "post": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "batch_get",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchGetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Objects in request order. Missing and deleted ids are omitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchGetResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Too many ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "tags": [
@@ -1794,6 +1849,85 @@
             }
           }
         ]
+      },
+      "BatchGetRequest": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Attribute keys. The server maps them to the parts that store them."
+          },
+          "groups": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Defaults to loading groups. They are small and decide which values apply."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "include": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "languages": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Limits localized `fields` to these language tags."
+          },
+          "parts": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Storage part names, such as `sv#0`."
+          },
+          "values": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Defaults to false. `fields` or `parts` load those value documents anyway."
+          }
+        }
+      },
+      "BatchGetResponse": {
+        "type": "object",
+        "required": [
+          "objects"
+        ],
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectResponse"
+            }
+          }
+        }
       },
       "ChangeResponse": {
         "type": "object",

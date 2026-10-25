@@ -5,7 +5,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use braian_model::{Object, ObjectId, Uuid, ValidationError};
-use braian_store::{Conflict, Error, ObjectOp, PrincipalId, StoredObject, WriteReceipt};
+use braian_store::{
+    Conflict, Error, ObjectOp, ObjectProjection, PrincipalId, StoredObject, WriteReceipt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -29,6 +31,36 @@ pub struct CreateObject {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub values: BTreeMap<String, Value>,
+}
+
+/// How many ids one batch read accepts.
+pub const BATCH_GET_LIMIT: usize = 200;
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BatchGetRequest {
+    pub ids: Vec<Uuid>,
+    /// Defaults to loading groups. They are small and decide which values apply.
+    #[serde(default)]
+    pub groups: Option<bool>,
+    /// Defaults to false. `fields` or `parts` load those value documents anyway.
+    #[serde(default)]
+    pub values: Option<bool>,
+    /// Storage part names, such as `sv#0`.
+    #[serde(default)]
+    pub parts: Option<Vec<String>>,
+    /// Attribute keys. The server maps them to the parts that store them.
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
+    /// Limits localized `fields` to these language tags.
+    #[serde(default)]
+    pub languages: Option<Vec<String>>,
+    #[serde(default)]
+    pub include: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BatchGetResponse {
+    pub objects: Vec<ObjectResponse>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -133,7 +165,13 @@ pub async fn create_object(
         receipt.last_seq,
         &body.object_type,
     );
-    Ok(object_response(&cached, &stored, receipt.last_seq, false))
+    Ok(object_response(
+        &cached,
+        &stored,
+        receipt.last_seq,
+        false,
+        true,
+    ))
 }
 
 #[utoipa::path(
@@ -160,13 +198,60 @@ pub async fn get_object(
     let cached = state.models.get(&state.store).await?;
     let id = ObjectId::from_uuid(id);
     let stored = load(&state, id).await?;
-    let seq = latest_seq(&state, id).await?;
+    let seq = state.store.latest_seq(id).await.map_err(store_status)?;
     Ok(object_response(
         &cached,
         &stored,
         seq,
         includes_inapplicable(&query),
+        true,
     ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/objects:batchGet",
+    tag = "objects",
+    request_body(content = BatchGetRequest),
+    responses(
+        (status = 200, description = "Objects in request order. Missing and deleted ids are omitted.", body = BatchGetResponse),
+        (status = 400, description = "Too many ids", body = crate::problem::Problem),
+        (status = 422, description = "Unknown field", body = crate::problem::Problem)
+    ),
+    security(("bearer" = []))
+)]
+pub async fn batch_get(
+    State(state): State<AppState>,
+    Auth(_): Auth,
+    Json(body): Json<BatchGetRequest>,
+) -> Result<Json<BatchGetResponse>, Problem> {
+    if body.ids.len() > BATCH_GET_LIMIT {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "batch_too_large",
+            format!("batch get accepts at most {BATCH_GET_LIMIT} ids"),
+        ));
+    }
+    let cached = state.models.get(&state.store).await?;
+    let projection = projection_for(&state, &cached, &body).await?;
+    let full_values = projection.values && projection.parts.is_none();
+    let ids: Vec<ObjectId> = body.ids.iter().copied().map(ObjectId::from_uuid).collect();
+    let loaded = state
+        .store
+        .get_objects_projected(&ids, &projection)
+        .await
+        .map_err(store_status)?;
+    let seqs = state.store.latest_seqs(&ids).await.map_err(store_status)?;
+    let include = includes_inapplicable_text(body.include.as_deref());
+    let mut objects = Vec::with_capacity(loaded.len());
+    for stored in loaded {
+        if stored.deleted_at.is_some() {
+            continue;
+        }
+        let seq = seqs.get(&stored.object.id).copied().unwrap_or(0);
+        objects.push(object_body(&cached, &stored, seq, include, full_values));
+    }
+    Ok(Json(BatchGetResponse { objects }))
 }
 
 #[utoipa::path(
@@ -233,7 +318,13 @@ pub async fn patch_object(
                     receipt.last_seq,
                     &type_key(&cached.defs, stored.object.type_id),
                 );
-                return Ok(object_response(&cached, &stored, receipt.last_seq, false));
+                return Ok(object_response(
+                    &cached,
+                    &stored,
+                    receipt.last_seq,
+                    false,
+                    true,
+                ));
             }
             Err(Error::StaleRead { .. }) => continue,
             Err(Error::Conflict {
@@ -371,27 +462,9 @@ fn object_response(
     stored: &StoredObject,
     seq: i64,
     include_inapplicable: bool,
+    validate: bool,
 ) -> Response {
-    let applicable = cached
-        .model
-        .applicable_ids(stored.object.type_id, &stored.object.groups)
-        .unwrap_or_default();
-    let warnings = cached.model.validate(&stored.object);
-    let body = ObjectResponse {
-        id: stored.object.id.as_uuid(),
-        object_type: type_key(&cached.defs, stored.object.type_id),
-        groups: groups_to_wire(&cached.defs, &stored.object.groups),
-        values: values_to_wire(
-            &cached.model,
-            &applicable,
-            &stored.object.values,
-            include_inapplicable,
-        ),
-        version: stored.version,
-        seq,
-        model_revision: stored.object.model_revision,
-        warnings,
-    };
+    let body = object_body(cached, stored, seq, include_inapplicable, validate);
     (
         StatusCode::OK,
         [(header::ETAG, etag(stored.version))],
@@ -408,9 +481,77 @@ async fn load(state: &AppState, id: ObjectId) -> Result<StoredObject, Problem> {
     }
 }
 
-async fn latest_seq(state: &AppState, id: ObjectId) -> Result<i64, Problem> {
-    let changes = state.store.changes_for(id).await.map_err(store_status)?;
-    Ok(changes.last().map(|change| change.seq).unwrap_or(0))
+fn object_body(
+    cached: &CachedModel,
+    stored: &StoredObject,
+    seq: i64,
+    include_inapplicable: bool,
+    validate: bool,
+) -> ObjectResponse {
+    let applicable = cached
+        .model
+        .applicable_ids(stored.object.type_id, &stored.object.groups)
+        .unwrap_or_default();
+    // A partial projection is missing attributes on purpose. Validating it
+    // would report those gaps as if the stored object were incomplete.
+    let warnings = if validate {
+        cached.model.validate(&stored.object)
+    } else {
+        Vec::new()
+    };
+    ObjectResponse {
+        id: stored.object.id.as_uuid(),
+        object_type: type_key(&cached.defs, stored.object.type_id),
+        groups: groups_to_wire(&cached.defs, &stored.object.groups),
+        values: values_to_wire(
+            &cached.model,
+            &applicable,
+            &stored.object.values,
+            include_inapplicable,
+        ),
+        version: stored.version,
+        seq,
+        model_revision: stored.object.model_revision,
+        warnings,
+    }
+}
+
+async fn projection_for(
+    state: &AppState,
+    cached: &CachedModel,
+    body: &BatchGetRequest,
+) -> Result<ObjectProjection, Problem> {
+    let groups = body.groups.unwrap_or(true);
+    if let Some(parts) = &body.parts {
+        return Ok(ObjectProjection {
+            groups,
+            values: true,
+            parts: Some(parts.clone()),
+        });
+    }
+    if let Some(fields) = &body.fields
+        && !fields.is_empty()
+    {
+        let mut ids = Vec::with_capacity(fields.len());
+        for field in fields {
+            ids.push(crate::wire::resolve_attribute(&cached.model, field)?);
+        }
+        let parts = state
+            .store
+            .parts_for_attributes(&ids, body.languages.as_deref())
+            .await
+            .map_err(store_status)?;
+        return Ok(ObjectProjection {
+            groups,
+            values: true,
+            parts: Some(parts),
+        });
+    }
+    Ok(ObjectProjection {
+        groups,
+        values: body.values.unwrap_or(false),
+        parts: None,
+    })
 }
 
 fn version_of(receipt: &WriteReceipt, id: ObjectId) -> u64 {
@@ -423,10 +564,11 @@ fn version_of(receipt: &WriteReceipt, id: ObjectId) -> u64 {
 }
 
 fn includes_inapplicable(query: &IncludeQuery) -> bool {
-    query
-        .include
-        .as_deref()
-        .is_some_and(|value| value.split(',').any(|item| item.trim() == "inapplicable"))
+    includes_inapplicable_text(query.include.as_deref())
+}
+
+fn includes_inapplicable_text(include: Option<&str>) -> bool {
+    include.is_some_and(|value| value.split(',').any(|item| item.trim() == "inapplicable"))
 }
 
 async fn conflict_problem(

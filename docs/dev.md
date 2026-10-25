@@ -111,6 +111,49 @@ En Postgres som bara kör en Braian kan behålla taket från `compose.yaml`
 Relayn återskapar sin slot och ber om omindexering om taket ändå nås. Det tar
 inte med sig någon annan installation.
 
+## Interaktiv trafik och massinläsning
+
+API:t har två Postgres-pooler. Interaktiva läsningar och skrivningar tar
+`BRAIAN_POOL_INTERACTIVE` (standard 24). Massinläsning, bulk-jobb och indexern
+tar `BRAIAN_POOL_BULK` (standard 4), så att en COPY inte kan ta alla anslutningar.
+Mellan bulk-batcher ger körningen tillbaka tråden och väntar
+`BRAIAN_BULK_YIELD_MS` millisekunder (standard 1, `0` väntar inte men yieldar
+ändå). `BRAIAN_BULK_JOBS` (standard 1) är hur många bulk-jobb som kör, och
+`BRAIAN_BULK_QUEUE` (standard 4) hur många som får vänta. Fler får 429.
+`BRAIAN_BULK_CHUNK` (standard 25) är raderna per transaktion i `POST /v1/bulk`.
+
+`POST /v1/objects:batchGet` läser upp till 200 id. Utan `values`, `fields`
+eller `parts` kommer bara huvudet och grupperna. `fields` är attributnycklar;
+`languages` begränsar språkberoende fält till de delarna.
+
+## Typesense och indexern på en 8-kärnig värd
+
+`deploy/compose.perf.yaml` är ett overlay för en värd med 8 vCPU, samma klass
+som perf-körningarna. Det ger Typesense två egna kärnor och lastgeneratorn en.
+Dev-compose (`just up`) använder det inte.
+
+```
+docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres redpanda typesense
+```
+
+| Kärnor | Process |
+| --- | --- |
+| 0–2 | Postgres |
+| 3 | `taskset -c 3` på `braian api`, `braian relay` och `braian indexer` |
+| 4 | Redpanda (`--smp=1` i dev-compose) |
+| 5 | lastgeneratorn (`perf`-profilen, eller `taskset -c 5`) |
+| 6–7 | Typesense, `--thread-pool-size=2` |
+
+Indexern importerar redan parallellt. `BRAIAN_INDEXER_IMPORT_CONCURRENCY`
+(standard 4) är hur många `documents/import`-anrop som pågår samtidigt, och
+`BRAIAN_INDEXER_IMPORT_BATCH` (standard 100) är dokumenten per anrop. På
+layouten ovan, sätt samtidigheten till 2 så den följer Typesense-trådarna,
+och lämna batchen på 100. `BRAIAN_INDEXER_BATCH` (standard 200) är hur många
+händelser som läses från Postgres innan en import.
+
+På en maskin med färre kärnor, ändra `cpuset` i overlayet innan det startas.
+En kärna som inte finns gör att containern inte startar.
+
 ## Postgres-MCP
 
 `.cursor/mcp.json` startar Postgres MCP Pro i läsläge mot utvecklingsdatabasen,

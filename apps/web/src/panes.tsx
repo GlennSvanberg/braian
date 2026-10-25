@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MoreHorizontal, Search } from 'lucide-react'
 import { ApiError, api, textValue, type Json } from './api'
+import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Checkbox } from './components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
@@ -550,6 +551,8 @@ function Row({
   )
 }
 
+// The table reads search documents. Those already carry the columns on screen,
+// so a list does not load full objects from Postgres.
 async function loadPage(q: string, filter: string, sort: string, groupBy: string, page: number) {
   const params = new URLSearchParams({ page: String(page), per_page: String(pageSize) })
   if (q) params.set('q', q)
@@ -1051,8 +1054,11 @@ function FileField({ value, onChange }: { value: unknown; onChange: (value: unkn
 function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {
   const id = typeof value === 'string' ? value : ''
   const current = useQuery({
-    queryKey: ['object', id],
-    queryFn: () => api<Json>(`/v1/objects/${id}`),
+    queryKey: ['object-ref', id],
+    queryFn: () =>
+      batchGetObjects([id], { groups: true, fields: ['nummer', 'namn'], languages: [uiLanguage] }).then(
+        (rows) => rows[0] ?? null,
+      ),
     enabled: /^[0-9a-f-]{36}$/i.test(id),
   })
   const label = current.data

@@ -4,6 +4,11 @@
 //! not hold an interactive edit. Duplicate ids in one batch collapse to the
 //! highest sequence, and the document is the current Postgres row. The search
 //! import refuses an older `seq`, so the two lanes can write at the same time.
+//!
+//! `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH` and
+//! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the Postgres read and the parallel
+//! Typesense `documents/import` calls. Concurrency above 1 is what uses more
+//! than one Typesense thread.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

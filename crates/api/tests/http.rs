@@ -816,3 +816,89 @@ async fn personal_layout_round_trips_and_layout_commands_are_ui() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn batch_get_defaults_to_heads_and_can_project_fields() {
+    let (_db, app) = app().await;
+    let mut ids = Vec::new();
+    for sku in ["A", "B"] {
+        let (status, _, created) = call(
+            &app,
+            "POST",
+            "/v1/objects",
+            Some(HUMAN),
+            &[("content-type", "application/json")],
+            Some(&format!(
+                r#"{{"type":"item","groups":{{"catalog":"root"}},"values":{{"sku":"{sku}","name":{{"sv":"Stol {sku}","en-GB":"Chair {sku}"}}}}}}"#
+            )),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        ids.push(created["id"].as_str().unwrap().to_owned());
+    }
+    let (status, _, lean) = call(
+        &app,
+        "POST",
+        "/v1/objects:batchGet",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(r#"{{"ids":["{}","{}"]}}"#, ids[0], ids[1])),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{lean}");
+    let objects = lean["objects"].as_array().unwrap();
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[0]["id"], ids[0]);
+    assert_eq!(objects[1]["id"], ids[1]);
+    assert!(
+        objects[0]["values"].as_object().unwrap().is_empty(),
+        "{lean}"
+    );
+    assert_eq!(objects[0]["groups"]["catalog"], "root");
+    assert!(objects[0]["version"].as_u64().unwrap() >= 1);
+
+    let (status, _, projected) = call(
+        &app,
+        "POST",
+        "/v1/objects:batchGet",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"ids":["{}"],"fields":["name"],"languages":["sv"]}}"#,
+            ids[0]
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{projected}");
+    let one = &projected["objects"][0];
+    assert_eq!(one["values"]["name"]["sv"], "Stol A");
+    assert!(one["values"].get("sku").is_none(), "{projected}");
+    assert!(one["values"]["name"].get("en-GB").is_none(), "{projected}");
+
+    let (status, _, missing) = call(
+        &app,
+        "POST",
+        "/v1/objects:batchGet",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"ids":[],"fields":["no-such-field"]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{missing}");
+
+    let too_many = (0..201)
+        .map(|_| format!("\"{}\"", ids[0]))
+        .collect::<Vec<_>>()
+        .join(",");
+    let (status, _, limited) = call(
+        &app,
+        "POST",
+        "/v1/objects:batchGet",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(r#"{{"ids":[{too_many}]}}"#)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{limited}");
+    assert_eq!(limited["code"], "batch_too_large");
+}

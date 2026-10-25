@@ -151,6 +151,7 @@ impl Store {
         let defs = self.defs().await?;
         let receipt = apply_ops(&tx, self.form(), &defs, batch, actor, &ops).await?;
         tx.commit().await?;
+        self.yield_between_bulk_batches().await;
         Ok(receipt)
     }
 
@@ -174,6 +175,7 @@ impl Store {
             .await?;
         copy_creates(&tx, self.form(), &defs, batch, actor, objects).await?;
         tx.commit().await?;
+        self.yield_between_bulk_batches().await;
         Ok(())
     }
 
@@ -265,19 +267,18 @@ impl Store {
             if let Some(parts) = &projection.parts {
                 client
                     .query(
-                        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
+                        "SELECT object_id, part, \"values\"
                          FROM object_values
-                         WHERE object_id = ANY($1) AND part = ANY($2)
-                         ORDER BY object_id, part, version DESC",
+                         WHERE object_id = ANY($1) AND is_latest AND part = ANY($2)",
                         &[&uuids, parts],
                     )
                     .await
             } else {
                 client
                     .query(
-                        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
-                         FROM object_values WHERE object_id = ANY($1)
-                         ORDER BY object_id, part, version DESC",
+                        "SELECT object_id, part, \"values\"
+                         FROM object_values
+                         WHERE object_id = ANY($1) AND is_latest",
                         &[&uuids],
                     )
                     .await
@@ -345,8 +346,8 @@ impl Store {
         let client = self.pool().get().await?;
         let rows = client
             .query(
-                "SELECT DISTINCT ON (part) part, \"values\" FROM object_values
-                 WHERE object_id = $1 ORDER BY part, version DESC",
+                "SELECT part, \"values\" FROM object_values
+                 WHERE object_id = $1 AND is_latest",
                 &[&id.as_uuid()],
             )
             .await?;
@@ -428,6 +429,51 @@ impl Store {
     pub async fn stored_changes(&self, id: ObjectId) -> Result<Vec<ChangeRow>, Error> {
         let client = self.pool().get().await?;
         stored_changes(&**client, id).await
+    }
+
+    /// Highest change sequence for one object. This does not load the diff.
+    pub async fn latest_seq(&self, id: ObjectId) -> Result<i64, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT seq FROM changes WHERE object_id = $1 ORDER BY seq DESC LIMIT 1",
+                &[&id.as_uuid()],
+            )
+            .await?;
+        Ok(row.map(|row| row.get(0)).unwrap_or(0))
+    }
+
+    /// Highest change sequence for each id that has one. Missing ids are omitted.
+    pub async fn latest_seqs(&self, ids: &[ObjectId]) -> Result<HashMap<ObjectId, i64>, Error> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let uuids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT DISTINCT ON (object_id) object_id, seq
+                 FROM changes
+                 WHERE object_id = ANY($1)
+                 ORDER BY object_id, seq DESC",
+                &[&uuids],
+            )
+            .await?;
+        let mut seqs = HashMap::with_capacity(rows.len());
+        for row in &rows {
+            seqs.insert(ObjectId::from_uuid(row.get("object_id")), row.get("seq"));
+        }
+        Ok(seqs)
+    }
+
+    /// Parts that store `ids`. `languages` limits localized attributes.
+    pub async fn parts_for_attributes(
+        &self,
+        ids: &[braian_model::AttributeId],
+        languages: Option<&[String]>,
+    ) -> Result<Vec<String>, Error> {
+        let defs = self.defs().await?;
+        Ok(defs.split.parts_covering(self.form(), ids, languages))
     }
 
     /// Values from one `object_values` version. Version 1 is the create snapshot
@@ -531,8 +577,8 @@ impl Store {
             .await?;
         let parts = client
             .query(
-                "SELECT DISTINCT ON (part) part, \"values\" FROM object_values
-                 WHERE object_id = $1 ORDER BY part, version DESC",
+                "SELECT part, \"values\" FROM object_values
+                 WHERE object_id = $1 AND is_latest",
                 &[&id.as_uuid()],
             )
             .await?;
@@ -751,11 +797,7 @@ async fn insert_object(
     let parts = defs.split.split(form, &object.values);
     for (part, document) in &parts {
         let value = Value::Object(document.clone());
-        tx.execute(
-            "INSERT INTO object_values (object_id, part, version, \"values\") VALUES ($1, $2, 1, $3)",
-            &[&object.id.as_uuid(), part, &value],
-        )
-        .await?;
+        insert_part_version(tx, object.id.as_uuid(), part, 1, &value).await?;
     }
     for (structure, group) in &object.groups {
         tx.execute(
@@ -830,22 +872,14 @@ async fn update_object(
             continue;
         }
         let empty = Value::Object(serde_json::Map::new());
-        tx.execute(
-            "INSERT INTO object_values (object_id, part, version, \"values\") VALUES ($1, $2, $3, $4)",
-            &[&id.as_uuid(), part, &version_i64, &empty],
-        )
-        .await?;
+        insert_part_version(tx, id.as_uuid(), part, version_i64, &empty).await?;
     }
     for (part, document) in &parts {
         if before.get(part) == Some(document) {
             continue;
         }
         let value = Value::Object(document.clone());
-        tx.execute(
-            "INSERT INTO object_values (object_id, part, version, \"values\") VALUES ($1, $2, $3, $4)",
-            &[&id.as_uuid(), part, &version_i64, &value],
-        )
-        .await?;
+        insert_part_version(tx, id.as_uuid(), part, version_i64, &value).await?;
     }
     let placed = apply_groups(tx, id, patch).await?;
     let revision = as_i64(defs.set.model_revision)?;
@@ -1272,6 +1306,30 @@ fn row_error(object: &Object, error: &Error) -> BulkRowError {
     }
 }
 
+async fn insert_part_version(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    part: &str,
+    version: i64,
+    value: &Value,
+) -> Result<(), Error> {
+    if version > 1 {
+        tx.execute(
+            "UPDATE object_values SET is_latest = false
+             WHERE object_id = $1 AND part = $2 AND is_latest",
+            &[&id, &part],
+        )
+        .await?;
+    }
+    tx.execute(
+        "INSERT INTO object_values (object_id, part, version, \"values\", is_latest)
+         VALUES ($1, $2, $3, $4, true)",
+        &[&id, &part, &version, value],
+    )
+    .await?;
+    Ok(())
+}
+
 async fn load_parts_for_update(
     tx: &Transaction<'_>,
     form: crate::split::StorageForm,
@@ -1285,11 +1343,7 @@ async fn load_parts_for_update(
             tx.query(
                 "SELECT v.part, v.\"values\"
                  FROM object_values v
-                 JOIN (
-                    SELECT part, MAX(version) AS version
-                    FROM object_values WHERE object_id = $1 GROUP BY part
-                 ) latest ON v.object_id = $1 AND v.part = latest.part AND v.version = latest.version
-                 WHERE v.part = ANY($2)
+                 WHERE v.object_id = $1 AND v.is_latest AND v.part = ANY($2)
                  FOR UPDATE OF v",
                 &[&id.as_uuid(), &stale.destinations],
             )
@@ -1299,11 +1353,7 @@ async fn load_parts_for_update(
             tx.query(
                 "SELECT v.part, v.\"values\"
                  FROM object_values v
-                 JOIN (
-                    SELECT part, MAX(version) AS version
-                    FROM object_values WHERE object_id = $1 GROUP BY part
-                 ) latest ON v.object_id = $1 AND v.part = latest.part AND v.version = latest.version
-                 WHERE (
+                 WHERE v.object_id = $1 AND v.is_latest AND (
                     v.part = ANY($2)
                     OR (v.part = '' AND v.\"values\" ?| $3::text[])
                     OR (v.part <> '' AND v.\"values\" ?| $4::text[])
@@ -1322,11 +1372,7 @@ async fn load_parts_for_update(
             tx.query(
                 "SELECT v.part, v.\"values\"
                  FROM object_values v
-                 JOIN (
-                    SELECT part, MAX(version) AS version
-                    FROM object_values WHERE object_id = $1 GROUP BY part
-                 ) latest ON v.object_id = $1 AND v.part = latest.part AND v.version = latest.version
-                 WHERE (
+                 WHERE v.object_id = $1 AND v.is_latest AND (
                     v.part = ANY($2)
                     OR (v.part LIKE '#%' AND split_part(v.part, '#', 2) = ANY($3::text[]) AND v.\"values\" ?| $4::text[])
                     OR (v.part NOT LIKE '#%' AND split_part(v.part, '#', 2) = ANY($5::text[]) AND v.\"values\" ?| $6::text[])
