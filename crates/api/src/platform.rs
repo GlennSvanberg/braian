@@ -167,7 +167,106 @@ fn registry() -> &'static [Operation] {
             permission: Role::Viewer,
             needs_approval: false,
         },
+        Operation {
+            name: "ui.open_view",
+            title: "Open view",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.open_template",
+            title: "Open workspace template",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.open_workspace",
+            title: "Open workspace",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.place",
+            title: "Place view",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.link",
+            title: "Link views",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.filter",
+            title: "Filter table",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.group",
+            title: "Group table",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.sort",
+            title: "Sort table",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.select",
+            title: "Select object",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.select_rows",
+            title: "Select rows",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.show_column",
+            title: "Show column",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.hide_column",
+            title: "Hide column",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.move_column",
+            title: "Move column",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.set_theme",
+            title: "Set theme",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.export",
+            title: "Export visible table",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
     ]
+}
+
+fn ui_command(name: &str, args: &Value) -> Value {
+    json!({
+        "ui": true,
+        "name": name,
+        "args": args,
+        "applied": false,
+    })
 }
 
 fn find_op(name: &str) -> Option<&'static Operation> {
@@ -392,35 +491,136 @@ async fn agent(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Json(body): Json<AgentBody>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Response, Problem> {
     require(&identity, Role::Viewer)?;
-    let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
-    if key.trim().is_empty() || std::env::var("BRAIAN_AGENT_MOCK").ok().as_deref() == Some("1") {
-        return Ok(Json(json!({
-            "available": false,
-            "model": std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into()),
-            "reply": "No model is connected. Set OPENAI_API_KEY to talk to the agent. Proposals, mass edit, and restore still work via operations."
-        })));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    if body.stream {
+        let state = state.clone();
+        let identity = identity.clone();
+        let messages = body.messages;
+        tokio::spawn(async move {
+            drive_agent(&state, &identity, messages, &tx).await;
+        });
+        let frames = stream::unfold(rx, |mut rx| async move {
+            let event = rx.recv().await?;
+            let frame = Bytes::from(format!("data: {event}\n\n"));
+            Some((Ok::<Bytes, Infallible>(frame), rx))
+        });
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .header("x-accel-buffering", "no")
+            .body(Body::from_stream(frames))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()));
     }
+    drive_agent(&state, &identity, body.messages, &tx).await;
+    drop(tx);
+    let mut reply = String::new();
+    let mut available = true;
+    let mut tools = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        match event.get("type").and_then(Value::as_str) {
+            Some("answer") => {
+                reply = event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                available = event
+                    .get("available")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+            }
+            Some("error") => {
+                reply = event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                available = false;
+            }
+            Some("tool") => tools.push(json!({
+                "name": event.get("name").cloned().unwrap_or(Value::Null),
+                "result": event.get("result").cloned().unwrap_or(Value::Null),
+            })),
+            _ => {}
+        }
+    }
+    Ok(Json(json!({
+        "available": available,
+        "model": std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into()),
+        "reply": reply,
+        "tools": tools
+    }))
+    .into_response())
+}
+
+async fn drive_agent(
+    state: &AppState,
+    identity: &Identity,
+    incoming: Vec<Value>,
+    tx: &tokio::sync::mpsc::UnboundedSender<Value>,
+) {
+    let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
     let model = std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into());
+    let unavailable =
+        key.trim().is_empty() || std::env::var("BRAIAN_AGENT_MOCK").ok().as_deref() == Some("1");
+    if unavailable {
+        let _ = tx.send(json!({
+            "type": "answer",
+            "available": false,
+            "text": "No model is connected. Set OPENAI_API_KEY to talk to the agent. Proposals, mass edit, and restore still work via operations."
+        }));
+        return;
+    }
     let mut messages = vec![json!({
         "role": "system",
         "content": "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. Reply in English."
     })];
-    messages.extend(body.messages);
+    messages.extend(incoming);
     let client = reqwest::Client::new();
     let url = openai_responses_url();
-    let payload = post_openai(&client, &url, &key, &responses_body(&model, &messages)).await?;
+    let payload = match post_openai(&client, &url, &key, &responses_body(&model, &messages)).await {
+        Ok(payload) => payload,
+        Err(problem) => {
+            let _ = tx.send(json!({ "type": "error", "text": problem.detail }));
+            return;
+        }
+    };
     let calls = function_calls(&payload);
-    let mut tool_results = Vec::new();
     let mut outputs = Vec::new();
     for call in &calls {
         let operation = operation_for_tool(&call.name).unwrap_or(call.name.as_str());
         let args: Value = serde_json::from_str(&call.arguments).unwrap_or(json!({}));
-        let result = execute(&state, &identity, operation, &args)
+        let step_id = if call.call_id.is_empty() {
+            operation.to_owned()
+        } else {
+            call.call_id.clone()
+        };
+        let _ = tx.send(json!({
+            "type": "step",
+            "id": step_id,
+            "op": operation,
+            "args": args,
+            "state": "run"
+        }));
+        let result = run_operation(state, identity, operation, &args, true)
             .await
             .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }));
-        tool_results.push(json!({ "name": operation, "result": result }));
+        let _ = tx.send(json!({ "type": "tool", "name": operation, "result": result }));
+        let proposed = result.get("proposal_id").is_some()
+            || result.get("needs_approval").and_then(Value::as_bool) == Some(true)
+            || result.get("id").is_some() && result.get("rows").is_some();
+        if proposed {
+            let _ = tx.send(json!({ "type": "proposal", "proposal": result }));
+        }
+        let _ = tx.send(json!({
+            "type": "step",
+            "id": step_id,
+            "op": operation,
+            "state": "done"
+        }));
         if !call.call_id.is_empty() {
             outputs.push(json!({
                 "type": "function_call_output",
@@ -455,18 +655,13 @@ async fn agent(
         }
     }
     if reply.is_empty() {
-        reply = if tool_results.is_empty() {
+        reply = if calls.is_empty() {
             "The model replied without text.".into()
         } else {
             "The agent ran tools but the model returned no text.".into()
         };
     }
-    Ok(Json(json!({
-        "available": true,
-        "model": model,
-        "reply": reply,
-        "tools": tool_results
-    })))
+    let _ = tx.send(json!({ "type": "answer", "text": reply, "available": true }));
 }
 
 fn openai_responses_url() -> String {
@@ -2102,6 +2297,16 @@ pub async fn execute(
     name: &str,
     args: &Value,
 ) -> Result<Value, Problem> {
+    run_operation(state, identity, name, args, false).await
+}
+
+async fn run_operation(
+    state: &AppState,
+    identity: &Identity,
+    name: &str,
+    args: &Value,
+    from_agent: bool,
+) -> Result<Value, Problem> {
     let Some(op) = find_op(name) else {
         return Err(Problem::new(
             StatusCode::NOT_FOUND,
@@ -2110,6 +2315,9 @@ pub async fn execute(
         ));
     };
     require(identity, op.permission)?;
+    if op.name.starts_with("ui.") {
+        return Ok(ui_command(op.name, args));
+    }
     if identity.kind == braian_store::PrincipalKind::Agent && name == "accept_proposal" {
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
@@ -2117,7 +2325,9 @@ pub async fn execute(
             "an agent proposes; a person accepts",
         ));
     }
-    if op.needs_approval || agent_must_propose(identity, op) {
+    let agent_write =
+        from_agent && matches!(op.name, "create_object" | "patch_object" | "set_relation");
+    if op.needs_approval || agent_must_propose(identity, op) || agent_write {
         return propose_operation(state, identity, name, args).await;
     }
     match name {
@@ -2367,7 +2577,7 @@ async fn propose_operation(
             .await?
             .0)
         }
-        "create_object" | "patch_object" => {
+        "create_object" | "patch_object" | "set_relation" => {
             let id = Uuid::now_v7();
             let object_id = args
                 .get("id")
@@ -2519,6 +2729,8 @@ struct TokenBody {
 #[derive(Deserialize)]
 struct AgentBody {
     messages: Vec<Value>,
+    #[serde(default)]
+    stream: bool,
 }
 
 #[derive(Deserialize)]
@@ -2758,6 +2970,33 @@ mod tests {
             assert!(operation_for_tool(name).is_some(), "{name}");
         }
         assert!(tools.iter().any(|tool| tool["name"] == "create_object"));
+        assert!(tools.iter().any(|tool| tool["name"] == "ui_filter"));
+    }
+
+    #[test]
+    fn ui_filter_tool_name_maps_back_and_echoes_args() {
+        assert_eq!(tool_name("ui.filter"), "ui_filter");
+        assert_eq!(operation_for_tool("ui_filter"), Some("ui.filter"));
+        let value = ui_command("ui.filter", &json!({ "q": "tält" }));
+        assert_eq!(value["ui"], true);
+        assert_eq!(value["name"], "ui.filter");
+        assert_eq!(value["args"]["q"], "tält");
+        assert_eq!(value["applied"], false);
+    }
+
+    #[test]
+    fn function_call_named_ui_filter_maps_to_the_operation() {
+        let payload = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "ui_filter",
+                "call_id": "call_1",
+                "arguments": "{\"q\":\"tält\"}"
+            }]
+        });
+        let calls = function_calls(&payload);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(operation_for_tool(&calls[0].name), Some("ui.filter"));
     }
 
     #[tokio::test]
