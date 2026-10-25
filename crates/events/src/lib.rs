@@ -197,24 +197,126 @@ impl Subscription {
     }
 
     pub async fn next(&self) -> Result<ChangeEvent, Error> {
+        let held = self.next_held().await?;
+        self.consumer
+            .store_offset(&held.topic, held.partition, held.offset)?;
+        Ok(held.event)
+    }
+
+    /// The next event, without storing its offset.
+    ///
+    /// The bulk indexer reads the following batch while the current import is
+    /// still in flight. Storing that offset here would make the commit of the
+    /// current batch include the following one.
+    pub async fn next_held(&self) -> Result<HeldEvent, Error> {
         loop {
             let message = self.consumer.recv().await?;
             let Some(payload) = message.payload() else {
                 continue;
             };
-            let event: ChangeEvent = serde_json::from_slice(payload)?;
-            self.consumer.store_offset_from_message(&message)?;
-            return Ok(event);
+            let event = serde_json::from_slice(payload)?;
+            return Ok(HeldEvent {
+                topic: message.topic().to_owned(),
+                partition: message.partition(),
+                offset: message.offset(),
+                event,
+            });
         }
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        match self.consumer.commit_consumer_state(CommitMode::Sync) {
-            Ok(()) => Ok(()),
-            // A subscription that saw no records in this window has nothing to commit.
-            // Failing the process there stops indexing after the first interactive batch.
-            Err(error) if error.to_string().contains("NoOffset") => Ok(()),
-            Err(error) => Err(error.into()),
+        commit_state(&self.consumer)
+    }
+
+    /// Stores and commits only `held`. An empty slice commits nothing.
+    pub fn commit_held(&self, held: &[HeldEvent]) -> Result<(), Error> {
+        if held.is_empty() {
+            return Ok(());
         }
+        for (topic, partition, offset) in commit_points(held) {
+            self.consumer.store_offset(&topic, partition, offset)?;
+        }
+        commit_state(&self.consumer)
+    }
+}
+
+/// A consumed event whose offset is still uncommitted.
+#[derive(Debug)]
+pub struct HeldEvent {
+    pub event: ChangeEvent,
+    pub topic: String,
+    pub partition: i32,
+    pub offset: i64,
+}
+
+/// Highest stored offset per topic and partition.
+///
+/// librdkafka's `store_offset_from_message` records the message offset itself,
+/// not the following one. Committing that offset is what `Subscription::next`
+/// does for the interactive lane.
+pub fn commit_points(held: &[HeldEvent]) -> Vec<(String, i32, i64)> {
+    let mut points = Vec::new();
+    for item in held {
+        if let Some((_, _, offset)) = points
+            .iter_mut()
+            .find(|(topic, partition, _)| topic == &item.topic && *partition == item.partition)
+        {
+            if item.offset > *offset {
+                *offset = item.offset;
+            }
+        } else {
+            points.push((item.topic.clone(), item.partition, item.offset));
+        }
+    }
+    points
+}
+
+fn commit_state(consumer: &StreamConsumer) -> Result<(), Error> {
+    match consumer.commit_consumer_state(CommitMode::Sync) {
+        Ok(()) => Ok(()),
+        // A subscription that saw no records in this window has nothing to commit.
+        // Failing the process there stops indexing after the first interactive batch.
+        Err(error) if error.to_string().contains("NoOffset") => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChangeEvent, HeldEvent, commit_points};
+    use uuid::Uuid;
+
+    fn held(topic: &str, partition: i32, offset: i64) -> HeldEvent {
+        HeldEvent {
+            event: ChangeEvent {
+                seq: offset,
+                op: "update".into(),
+                object_id: Some(Uuid::nil()),
+                version: None,
+                batch_id: Uuid::nil(),
+                kind: "bulk".into(),
+                at: String::new(),
+            },
+            topic: topic.into(),
+            partition,
+            offset,
+        }
+    }
+
+    #[test]
+    fn commit_points_keep_the_highest_offset_on_each_partition() {
+        let points = commit_points(&[
+            held("braian.changes.bulk", 0, 4),
+            held("braian.changes.bulk", 0, 9),
+            held("braian.changes.bulk", 0, 7),
+            held("braian.changes.interactive", 0, 2),
+        ]);
+        assert_eq!(
+            points,
+            vec![
+                ("braian.changes.bulk".into(), 0, 9),
+                ("braian.changes.interactive".into(), 0, 2),
+            ]
+        );
     }
 }
