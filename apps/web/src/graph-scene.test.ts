@@ -22,6 +22,16 @@ const defs: Json = {
     { key: 'farg', labels: { en: 'Colour', de: 'Farbe', sv: 'Färg' }, kind: { type: 'value_list', list: 'farg' } },
     { key: 'vikt', labels: { en: 'Weight' }, kind: { type: 'number' } },
   ],
+  structures: [
+    {
+      key: 'sortiment',
+      labels: { en: 'eCom', sv: 'eCom' },
+      groups: [
+        { id: 'outdoor', key: 'friluft', labels: { en: 'Outdoor' } },
+        { id: 'tents', key: 'talt', parent: 'outdoor', labels: { en: 'Tents' } },
+      ],
+    },
+  ],
 }
 
 const graph: Json = {
@@ -93,7 +103,7 @@ describe('graph scene', () => {
     expect(captions).toContain('Description')
     expect(captions).toContain('Outdoor')
     expect(captions).toContain('Tents')
-    expect(captions).toContain('Assortment')
+    expect(captions).toContain('eCom')
     expect(captions.some((caption) => ['farg', 'namn', 'friluft', 'nummer', 'Nummer', 'Farbe', 'Beschreibung'].includes(caption))).toBe(false)
 
     const colour = scene.nodes.find((node) => node.caption === 'Colour')

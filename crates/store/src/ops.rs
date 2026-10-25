@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use braian_model::{DefinitionSet, Object, ObjectId, TypeId};
+use braian_model::{DefinitionSet, GroupId, Object, ObjectId, StructureId, TypeId};
 use futures::StreamExt;
 use serde_json::{Map, Value};
 use tokio_postgres::Transaction;
@@ -470,6 +470,74 @@ impl Store {
     /// The current definition set, or [`Error::NoDefinitions`] when nothing has been stored.
     pub async fn definition_set(&self) -> Result<braian_model::DefinitionSet, Error> {
         Ok(self.defs().await?.set.clone())
+    }
+
+    /// Moves live objects from `from` onto `to` in one structure and writes a change per object.
+    ///
+    /// The indexer reloads the object from Postgres, so the search document follows the new group.
+    pub async fn reassign_members(
+        &self,
+        actor: &Actor,
+        structure: StructureId,
+        from: &[GroupId],
+        to: GroupId,
+    ) -> Result<u64, Error> {
+        if from.is_empty() {
+            return Ok(0);
+        }
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        self.ensure_actor(&tx, actor).await?;
+        let batch = insert_batch(&tx, actor).await?;
+        let from_ids: Vec<Uuid> = from.iter().map(|id| id.as_uuid()).collect();
+        let rows = tx
+            .query(
+                "SELECT o.id, s.group_id
+                 FROM objects o
+                 JOIN object_structures s ON s.object_id = o.id
+                 WHERE o.deleted_at IS NULL AND s.structure_id = $1 AND s.group_id = ANY($2)
+                 FOR UPDATE OF o",
+                &[&structure.as_uuid(), &from_ids],
+            )
+            .await?;
+        let mut moved = 0u64;
+        for row in &rows {
+            let object_id: Uuid = row.get(0);
+            let before: Uuid = row.get(1);
+            tx.execute(
+                "UPDATE object_structures SET group_id = $3 WHERE object_id = $1 AND structure_id = $2",
+                &[&object_id, &structure.as_uuid(), &to.as_uuid()],
+            )
+            .await?;
+            let version_row = tx
+                .query_one(
+                    "UPDATE objects SET version = version + 1, updated_at = now() WHERE id = $1 RETURNING version",
+                    &[&object_id],
+                )
+                .await?;
+            let version: i64 = version_row.get(0);
+            let diff = serde_json::json!({
+                "$groups": {
+                    structure.as_uuid().to_string(): {
+                        "before": before.to_string(),
+                        "after": to.as_uuid().to_string(),
+                    }
+                }
+            });
+            insert_change(
+                &tx,
+                batch,
+                Some(ObjectId::from_uuid(object_id)),
+                Some(version),
+                ChangeOp::Update,
+                actor,
+                &diff,
+            )
+            .await?;
+            moved += 1;
+        }
+        tx.commit().await?;
+        Ok(moved)
     }
 
     /// Latest stored model revision. `None` when no definitions have been stored.
