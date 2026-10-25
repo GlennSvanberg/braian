@@ -336,8 +336,8 @@ export function focusDirection(doc: LayoutDoc, zone: Zone): LayoutDoc {
 
 export function zoomView(doc: LayoutDoc, view: string): LayoutDoc {
   if (!views(doc.layout).includes(view)) return doc
-  const zoom = doc.zoom === view ? undefined : view
-  return { ...focusView(doc, view), zoom }
+  if (doc.zoom === view) return { ...doc, zoom: undefined }
+  return { ...doc, zoom: view }
 }
 
 export function resetLayout(doc: LayoutDoc, canonical?: Node): LayoutDoc {
@@ -423,7 +423,9 @@ export function applyLayoutCommand(
     return { doc: closeView(doc, view), handled: true }
   }
   if (name === 'zoom') {
-    const view = resolveView(args.view ?? args.id, catalog) ?? focused(doc)
+    const explicit = resolveView(args.view ?? args.id, catalog)
+    if (doc.zoom && !explicit) return { doc: { ...doc, zoom: undefined }, handled: true }
+    const view = explicit ?? focused(doc)
     if (!view) return { doc, handled: true }
     return { doc: zoomView(doc, view), handled: true }
   }

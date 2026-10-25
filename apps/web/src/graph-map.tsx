@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { Json } from './api'
+import { textValue, type Json } from './api'
+import { typeLabel } from './chips'
 import { graphSize, neighbor, placeNodes } from './graph-layout'
-import { copy } from './i18n'
+import { copy, uiLanguage } from './i18n'
 
 type Node = {
   id: string
@@ -14,10 +15,10 @@ type Node = {
   y: number
 }
 
-export function GraphMap({ data, onOpen }: { data: Json; onOpen: (id: string) => void }) {
+export function GraphMap({ data, defs, onOpen }: { data: Json; defs?: Json; onOpen: (id: string) => void }) {
   const [full, setFull] = useState(false)
   const [selected, setSelected] = useState('self')
-  const placed = useMemo(() => layout(data), [data])
+  const placed = useMemo(() => layout(data, defs), [data, defs])
   const order = placed.map((node) => node.id)
   const size = graphSize(placed)
   useEffect(() => {
@@ -89,10 +90,10 @@ export function GraphMap({ data, onOpen }: { data: Json; onOpen: (id: string) =>
         const inherited = Boolean(source.inherited)
         const origin = source.class
           ? `${inherited ? copy.inherited : copy.own}: ${String(source.class)} / ${String(source.structure ?? '')}`
-          : `${copy.origin}: ${String(source.from ?? 'type')}`
+          : `${copy.origin}: ${copy.type}`
         return (
           <p key={String(attribute.key)}>
-            <b>{String(attribute.label ?? attribute.key)}</b> {origin}
+            <b>{attributeTitle(defs, attribute)}</b> {origin}
           </p>
         )
       })}
@@ -111,14 +112,20 @@ export function GraphMap({ data, onOpen }: { data: Json; onOpen: (id: string) =>
   )
 }
 
-function layout(data: Json): Node[] {
+function attributeTitle(defs: Json | undefined, attribute: Json) {
+  const key = String(attribute.key ?? '')
+  const known = ((defs?.attributes as Json[]) ?? []).find((item) => String(item.key) === key || String(item.id) === key)
+  return textValue(known?.labels, uiLanguage) || key
+}
+
+function layout(data: Json, defs?: Json): Node[] {
   const relations = (data.relations as Json[]) ?? []
   const attributes = (data.attributes as Json[]) ?? []
   const sources = new Map<string, { label: string; hint: string }>()
   for (const attribute of attributes) {
     const source = ((attribute.sources as Json[]) ?? [])[0] ?? {}
-    const label = source.class ? String(source.class) : String(source.from ?? 'type')
-    const hint = source.inherited ? 'inherited' : source.structure ? String(source.structure) : 'type'
+    const label = source.class ? String(source.class) : copy.type
+    const hint = source.inherited ? 'inherited' : source.structure ? String(source.structure) : copy.type
     sources.set(label, { label, hint })
   }
   const ranked = [
@@ -129,7 +136,7 @@ function layout(data: Json): Node[] {
       tone: 'source' as const,
       rank: 0,
     })),
-    { id: 'self', label: String(data.key ?? ''), hint: String(data.type ?? 'object'), tone: 'object' as const, rank: 1 },
+    { id: 'self', label: String(data.key ?? ''), hint: typeLabel(defs, String(data.type ?? ''), uiLanguage) || copy.type, tone: 'object' as const, rank: 1 },
     ...relations.map((relation) => ({
       id: `rel-${String(relation.object_id ?? relation.key)}`,
       label: String(relation.key),
