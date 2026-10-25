@@ -100,3 +100,17 @@ Regler:
 - Ser skärmen ut som en syster till P360 Client v4 i både mörkt och ljust läge?
 - Går allt att göra med tangentbordet?
 - Används bara tokens, inga hårdkodade färger eller radier?
+
+## Ctrl+K – en yta, ingen chatt
+
+Förebild: `src/ui/cmdk.rs` och `src/ai.rs` i P360 Client v4. Agenten är aldrig ett eget fönster eller en chatt.
+
+- **En panel** överst i mitten (640 px, `--r-xl`, `--raised`, skugga) för fyra saker: *På objektet*, *Gå till*, *Gör*, *Fråga AI*. Ctrl+K öppnar, Ctrl+J öppnar direkt i AI-läge.
+- **Grupperad lista**: Senaste, Bästa träff, På markerat objekt, Vyer/arbetsytor, Objekt från sök. Fast radhöjd 44 px (inget hoppar), ikon, titel med träffmarkering, grå undertext som säger vad som händer, kortkommando som `kbd` till höger.
+- **Sista raden är alltid** *Fråga AI: "texten"* i accentfärg. Tab går dit. Matchar inget hamnar markeringen där – panelen ligger kvar.
+- **AI-läge i samma panel**: lila kant och AI-bricka. Ovanför listan: tidigare repliker (klick = redigera och kör om), en löpande progressrad, steg i klartext ("Öppnar en lista med artiklar…", "Filtrerar på 'tält'…") med bock när klara, och svaret i en mening. Stäng-knapp synlig; Esc/stäng avslutar samtalet.
+- **Agenten styr gränssnittet**: samma operationsregister som UI och MCP, inklusive UI-operationer (öppna vy/mall/arbetsyta, placera vänster/höger/ovan/under/ny flik, länka vyer, filtrera, gruppera, sortera, markera, visa/dölj/flytta kolumner, byta tema, exportera). Stegen strömmas via SSE.
+- **Inget sparas av agenten**: ändringar blir förslag som förhandsgranskas *i panelen* (antal, första raderna, fel) med Avbryt / Bekräfta. Strukturändringar visar konsekvensvyn.
+- **Tangentbord**: ↑↓, PageUp/Down, Home/End. Enter kör. Ctrl+Enter eller Ctrl+. visar radens sekundära åtgärder (t.ex. öppna i delning till höger, kopiera id). → på en objektträff visar dess åtgärder. Backspace på tom rad eller Esc backar ett steg i nästlade val (brödsmula-chip).
+- **Lär ut genvägar**: efter att en rad körts visas toast "Nästa gång: Ctrl+…". Frecency styr ordningen.
+- Fotrad 30 px: vad Enter gör just nu, samt "↵ kör · Ctrl+↵ åtgärder · Tab fråga AI · Esc stäng".
