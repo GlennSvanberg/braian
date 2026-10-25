@@ -1,11 +1,12 @@
 //! Builds the search index from change events.
 //!
-//! Interactive events are drained before bulk events. Duplicate ids in one batch
-//! collapse to the highest sequence, and the document is the current Postgres
-//! row, so a duplicate or a late event writes the same document. Objects are
-//! loaded with one query per batch, then imported to Typesense in parallel chunks.
+//! Interactive and bulk topics flush on separate tasks, so a bulk import does
+//! not hold an interactive edit. Duplicate ids in one batch collapse to the
+//! highest sequence, and the document is the current Postgres row. The search
+//! import refuses an older `seq`, so the two lanes can write at the same time.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use braian_events::{BULK_TOPIC, ChangeEvent, INTERACTIVE_TOPIC, Subscription};
@@ -101,72 +102,47 @@ impl Indexer {
     }
 
     pub async fn run(self, shutdown: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<()> {
-        let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
-        let mut since = Instant::now();
-        let mut checked = Instant::now()
-            .checked_sub(Duration::from_secs(2))
-            .unwrap_or_else(Instant::now);
-        loop {
-            if *shutdown.borrow() {
-                if !pending.is_empty() {
-                    self.flush(&pending).await?;
-                    self.commit_both()?;
-                }
-                return Ok(());
+        let shared = Arc::new(Shared {
+            store: self.store,
+            search: self.search,
+            config: self.config,
+        });
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let mut interactive = tokio::spawn(run_lane(
+            Arc::clone(&shared),
+            self.interactive,
+            shutdown.clone(),
+            stop_rx.clone(),
+            LanePace::interactive(),
+        ));
+        let mut bulk = tokio::spawn(run_lane(
+            shared,
+            self.bulk,
+            shutdown,
+            stop_rx,
+            LanePace::bulk(),
+        ));
+        tokio::select! {
+            result = &mut interactive => {
+                let _ = stop_tx.send(true);
+                let interactive_result = result.map_err(|error| anyhow::anyhow!("interactive lane: {error}"))?;
+                let bulk_result = bulk.await.map_err(|error| anyhow::anyhow!("bulk lane: {error}"))?;
+                interactive_result?;
+                bulk_result?;
             }
-            if checked.elapsed() >= Duration::from_secs(1) {
-                self.rebuild_if_requested().await?;
-                checked = Instant::now();
-            }
-            let mut interactive_drained = false;
-            while pending.len() < self.config.batch_size {
-                let wait = if interactive_drained {
-                    Duration::ZERO
-                } else {
-                    Duration::from_millis(5)
-                };
-                let Some(event) = poll(&self.interactive, wait).await? else {
-                    break;
-                };
-                remember(&mut pending, event);
-                interactive_drained = true;
-            }
-            if read_bulk_this_turn(pending.len(), self.config.batch_size, interactive_drained) {
-                let mut first = true;
-                while pending.len() < self.config.batch_size {
-                    let wait = if first && pending.is_empty() {
-                        Duration::from_millis(40)
-                    } else if first {
-                        Duration::from_millis(5)
-                    } else {
-                        Duration::ZERO
-                    };
-                    first = false;
-                    let Some(event) = poll(&self.bulk, wait).await? else {
-                        break;
-                    };
-                    remember(&mut pending, event);
-                }
-            }
-            let due = !pending.is_empty()
-                && (pending.len() >= self.config.batch_size || since.elapsed() >= WINDOW);
-            if due {
-                self.flush(&pending).await?;
-                self.commit_both()?;
-                pending.clear();
-                since = Instant::now();
-            } else if pending.is_empty() {
-                since = Instant::now();
+            result = &mut bulk => {
+                let _ = stop_tx.send(true);
+                let bulk_result = result.map_err(|error| anyhow::anyhow!("bulk lane: {error}"))?;
+                let interactive_result = interactive.await.map_err(|error| anyhow::anyhow!("interactive lane: {error}"))?;
+                bulk_result?;
+                interactive_result?;
             }
         }
-    }
-
-    fn commit_both(&self) -> anyhow::Result<()> {
-        self.interactive.commit()?;
-        self.bulk.commit()?;
         Ok(())
     }
+}
 
+impl Shared {
     async fn rebuild_if_requested(&self) -> anyhow::Result<()> {
         if !self.store.take_reindex_request().await? {
             return Ok(());
@@ -210,9 +186,110 @@ impl Indexer {
     }
 }
 
-/// Bulk is read only when this turn did not already take an interactive event.
-fn read_bulk_this_turn(pending: usize, batch: usize, interactive_drained: bool) -> bool {
-    !interactive_drained && pending < batch
+/// A lane flushes on its own batch and clock. The other lane flushing does not
+/// delay it; the Typesense seq guard keeps an older import from winning.
+pub(crate) fn lane_due(
+    pending: usize,
+    batch: usize,
+    elapsed: Duration,
+    other_lane_flushing: bool,
+) -> bool {
+    let _ = other_lane_flushing;
+    pending > 0 && (pending >= batch || elapsed >= WINDOW)
+}
+
+struct Shared {
+    store: Store,
+    search: Typesense,
+    config: IndexerConfig,
+}
+
+#[derive(Clone, Copy)]
+struct LanePace {
+    idle: Duration,
+    armed: Duration,
+    rebuild: bool,
+}
+
+impl LanePace {
+    fn interactive() -> Self {
+        Self {
+            idle: Duration::from_millis(5),
+            armed: Duration::from_millis(5),
+            rebuild: false,
+        }
+    }
+
+    fn bulk() -> Self {
+        Self {
+            idle: Duration::from_millis(40),
+            armed: Duration::from_millis(5),
+            rebuild: true,
+        }
+    }
+}
+
+async fn run_lane(
+    shared: Arc<Shared>,
+    subscription: Subscription,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+    pace: LanePace,
+) -> anyhow::Result<()> {
+    let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
+    let mut since = Instant::now();
+    let mut checked = Instant::now()
+        .checked_sub(Duration::from_secs(2))
+        .unwrap_or_else(Instant::now);
+    loop {
+        if *shutdown.borrow() || *stop.borrow() {
+            if !pending.is_empty() {
+                shared.flush(&pending).await?;
+                subscription.commit()?;
+            }
+            return Ok(());
+        }
+        if pace.rebuild && checked.elapsed() >= Duration::from_secs(1) {
+            shared.rebuild_if_requested().await?;
+            checked = Instant::now();
+        }
+        let mut first = true;
+        while pending.len() < shared.config.batch_size {
+            let wait = if pending.is_empty() && first {
+                pace.idle
+            } else if first {
+                pace.armed
+            } else {
+                Duration::ZERO
+            };
+            first = false;
+            let Some(event) = poll(&subscription, wait).await? else {
+                break;
+            };
+            remember(&mut pending, event);
+        }
+        if lane_due(
+            pending.len(),
+            shared.config.batch_size,
+            since.elapsed(),
+            false,
+        ) {
+            shared.flush(&pending).await?;
+            subscription.commit()?;
+            pending.clear();
+            since = Instant::now();
+        } else if pending.is_empty() {
+            since = Instant::now();
+        } else {
+            // The other lane is a separate task. This one only waits out its window.
+            let wait = WINDOW.saturating_sub(since.elapsed());
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                result = shutdown.wait_for(|flag| *flag) => { let _ = result; }
+                result = stop.wait_for(|flag| *flag) => { let _ = result; }
+            }
+        }
+    }
 }
 
 fn remember(pending: &mut HashMap<String, ChangeEvent>, event: ChangeEvent) {
@@ -408,6 +485,16 @@ pub async fn index_objects(
     ids: &[ObjectId],
     seq: i64,
 ) -> anyhow::Result<()> {
+    index_objects_in(store, search, ids, seq, true).await
+}
+
+async fn index_objects_in(
+    store: &Store,
+    search: &Typesense,
+    ids: &[ObjectId],
+    seq: i64,
+    advance_seq: bool,
+) -> anyhow::Result<()> {
     let defs = store.definition_set().await?;
     let model = CompiledModel::compile(&defs)
         .map_err(|errors| anyhow::anyhow!("definitions: {}", errors[0].message))?;
@@ -447,8 +534,24 @@ pub async fn index_objects(
         config.import_concurrency,
     )
     .await?;
-    store.set_indexer_seq(seq).await?;
+    if advance_seq {
+        store.set_indexer_seq(seq).await?;
+    }
     Ok(())
+}
+
+/// Indexes without moving the indexer watermark.
+///
+/// Interactive writes use this so a seq that landed ahead of the bulk lane
+/// does not mark every earlier change as indexed. Redpanda still repairs the
+/// document.
+pub async fn index_written(
+    store: &Store,
+    search: &Typesense,
+    ids: &[ObjectId],
+    seq: i64,
+) -> anyhow::Result<()> {
+    index_objects_in(store, search, ids, seq, false).await
 }
 
 /// Used by tests that want the indexed document for one object without Kafka.
@@ -524,10 +627,36 @@ mod tests {
     }
 
     #[test]
-    fn interactive_events_block_bulk_in_the_same_turn() {
-        assert!(read_bulk_this_turn(0, 200, false));
-        assert!(!read_bulk_this_turn(1, 200, true));
-        assert!(!read_bulk_this_turn(0, 200, true));
-        assert!(!read_bulk_this_turn(200, 200, false));
+    fn interactive_lane_flushes_while_bulk_is_flushing() {
+        assert!(lane_due(1, 200, WINDOW, true));
+        assert!(lane_due(200, 200, Duration::ZERO, true));
+        assert!(!lane_due(1, 200, Duration::from_millis(10), true));
+        assert!(!lane_due(0, 200, WINDOW, true));
+    }
+
+    #[tokio::test]
+    async fn the_interactive_task_is_not_queued_behind_bulk() {
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (started, start_rx) = tokio::sync::oneshot::channel();
+        let (release, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let bulk_order = std::sync::Arc::clone(&order);
+        let bulk = tokio::spawn(async move {
+            bulk_order.lock().expect("order").push("bulk-start");
+            let _ = started.send(());
+            let _ = release_rx.await;
+            bulk_order.lock().expect("order").push("bulk-end");
+        });
+        start_rx.await.expect("bulk started");
+        let interactive_order = std::sync::Arc::clone(&order);
+        let interactive = tokio::spawn(async move {
+            interactive_order.lock().expect("order").push("interactive");
+            let _ = release.send(());
+        });
+        interactive.await.expect("interactive");
+        bulk.await.expect("bulk");
+        assert_eq!(
+            order.lock().expect("order").as_slice(),
+            ["bulk-start", "interactive", "bulk-end"]
+        );
     }
 }
