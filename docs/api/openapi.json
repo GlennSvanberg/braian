@@ -1554,7 +1554,7 @@
     "schemas": {
       "Attribute": {
         "type": "object",
-        "description": "One attribute in the global pool.\n\nRules live only here. A class decides that the attribute applies to an\nobject; it does not add or override rules. A value is stored once per\nobject even when several structures make the attribute apply.",
+        "description": "One attribute in the global pool, identified by `key`.\n\nRules live only here. A type or a structure node decides that the attribute\napplies; it does not add a second definition. When the same key arrives from\nseveral places the object still has the attribute once. A different type or\nunit for that key is rejected when the attribute is added.",
         "required": [
           "id",
           "key",
@@ -1838,7 +1838,7 @@
       },
       "Class": {
         "type": "object",
-        "description": "A class adds its attributes to one group, and to every group below it.\n\nThat is applicability, not value inheritance: an object placed in a child\ngroup uses the ancestor class's attributes, but never its values.",
+        "description": "Legacy applicability stored on older models.\n\nA class lists attributes for one group. Those attributes apply to that group\nand, through the group tree, to every group below it. The editor writes\n[`Group::attributes`] instead. Values are never copied from a parent.",
         "required": [
           "id",
           "key",
@@ -2082,6 +2082,13 @@
           "key"
         ],
         "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttributeId"
+            },
+            "description": "Attributes defined on this node. Ancestor nodes apply as well."
+          },
           "id": {
             "$ref": "#/components/schemas/GroupId"
           },
@@ -2373,7 +2380,7 @@
       },
       "Structure": {
         "type": "object",
-        "description": "A hierarchy of groups plus the classes attached to those groups.",
+        "description": "A hierarchy of groups. Nodes are not tied to an object type.\n\n`classes` remains so older revisions still load. New applicability is\n`Group::attributes`; the compiler also honours class lists already stored.",
         "required": [
           "id",
           "key",
