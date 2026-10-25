@@ -19,6 +19,7 @@ import { copy, uiLanguage } from './i18n'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { dispatchUi, onUi } from './ui-bus'
+import { enrichSelection, publishSelection, publishTable } from './ui-context'
 
 export type PanesSession = {
   group: string | null
@@ -193,6 +194,7 @@ export function ObjectTable({
     })),
   })
   const byIndex = new Map<number, ObjRow>()
+  const rowsRef = useRef(byIndex)
   for (const result of windows) {
     const page = Number(result.data?.page ?? 0)
     const hits = (result.data?.hits as Json[] | undefined) ?? []
@@ -217,6 +219,29 @@ export function ObjectTable({
     for (const [index, row] of byIndex) if (row.id === id) return index
     return -1
   }
+
+  rowsRef.current = byIndex
+  const knownStamp = [...byIndex.values()].map((row) => `${row.id}:${row.key}:${row.name}:${row.type}`).join('|')
+  const activeStamp = activeRow ? `${activeRow.id}:${activeRow.key}:${activeRow.name}:${activeRow.type}` : ''
+  useEffect(() => {
+    const known = [...rowsRef.current.values()]
+    const described = (id: string) => {
+      const row = known.find((item) => item.id === id)
+      return row
+        ? { id: row.id, key: row.key, name: row.name, type: row.type }
+        : { id, key: '', name: '', type: '' }
+    }
+    // One active row (arrow or click). Checkbox ranges stay local; the agent sees the active row.
+    const marked = activeRow
+      ? [{ id: activeRow.id, key: activeRow.key, name: activeRow.name, type: activeRow.type }]
+      : selected.length > 0
+        ? selected.map(described)
+        : session.objectId
+          ? [described(session.objectId)]
+          : []
+    publishTable(view.id, [queryText, filterBy].filter(Boolean).join(' '), sort)
+    publishSelection(view.id, marked)
+  }, [activeStamp, selected, session.objectId, queryText, filterBy, sort, view.id, knownStamp])
 
   const ordered = order.filter((id) => columns.some((column) => column.id === id))
   const shown = (ordered.length > 0 ? ordered : columns.map((column) => column.id)).filter((id) => !hidden.includes(id))
@@ -784,6 +809,17 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     setPendingId(null)
     setError('')
   }, [session.objectId])
+  useEffect(() => {
+    if (!session.objectId || !object.data) return
+    const stored = (object.data.values as Json) ?? {}
+    const language = session.language || 'sv'
+    enrichSelection({
+      id: session.objectId,
+      key: textValue(stored.nummer) || String(object.data.key ?? ''),
+      name: textValue(stored.namn, language),
+      type: String(object.data.type ?? ''),
+    })
+  }, [session.objectId, session.language, object.data])
   if (!session.objectId) {
     return (
       <div className="detail-empty" data-testid="detail-empty">
