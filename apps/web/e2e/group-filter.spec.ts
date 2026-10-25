@@ -52,7 +52,7 @@ test('selecting a structure group lists the same articles as its assortment', as
   await expect(count).not.toHaveText(/^0 /)
   const filter = table.getByTestId('quick-filter')
 
-  await page.getByTestId('structure-tree').getByRole('treeitem', { name: 'talt' }).click()
+  await page.getByTestId('structure-tree').getByRole('treeitem', { name: 'Tents' }).click()
   await filter.fill('ART-TALT')
   await expect(table.getByTestId('object-row').first()).toContainText('ART-TALT')
   await expect(table).not.toContainText('no rows')
