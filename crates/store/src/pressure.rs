@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use tokio::sync::Notify;
+
 /// Largest slice a bulk lane starts while an interactive request is still running.
 ///
 /// Idle imports keep the caller's chunk. A multi-hundred-row COPY that starts
@@ -31,42 +33,62 @@ pub(crate) struct YieldLimits {
     pub max_pause: Duration,
 }
 
-/// In-flight interactive reads and writes in this process.
+/// In-flight interactive reads and writes.
 ///
-/// Cloned stores share the counter, including [`crate::Store::on_bulk`].
-#[derive(Clone, Debug)]
+/// `inflight` is this process. `remote` is the sum published by other
+/// processes. Cloned stores share both, including [`crate::Store::on_bulk`].
+#[derive(Clone)]
 pub struct InteractiveLoad {
     inflight: Arc<AtomicUsize>,
+    remote: Arc<AtomicUsize>,
+    poke: Arc<Notify>,
 }
 
 impl InteractiveLoad {
     pub(crate) fn new() -> Self {
         Self {
             inflight: Arc::new(AtomicUsize::new(0)),
+            remote: Arc::new(AtomicUsize::new(0)),
+            poke: Arc::new(Notify::new()),
         }
     }
 
     pub(crate) fn enter(&self) -> InteractiveGuard {
         self.inflight.fetch_add(1, Ordering::AcqRel);
-        InteractiveGuard {
-            inflight: Arc::clone(&self.inflight),
-        }
+        self.poke.notify_one();
+        InteractiveGuard { load: self.clone() }
     }
 
+    /// Requests inside this process.
     pub(crate) fn inflight(&self) -> usize {
         self.inflight.load(Ordering::Acquire)
+    }
+
+    /// This process plus fresh rows from other processes.
+    pub(crate) fn total(&self) -> usize {
+        self.inflight()
+            .saturating_add(self.remote.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn set_remote(&self, others: usize) {
+        self.remote.store(others, Ordering::Release);
+    }
+
+    pub(crate) fn notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.poke.notified()
     }
 }
 
 /// Drops the interactive count, including when the request task is cancelled.
 #[must_use = "the interactive count drops when the guard is dropped"]
 pub struct InteractiveGuard {
-    inflight: Arc<AtomicUsize>,
+    load: InteractiveLoad,
 }
 
 impl Drop for InteractiveGuard {
     fn drop(&mut self) {
-        self.inflight.fetch_sub(1, Ordering::AcqRel);
+        self.load.inflight.fetch_sub(1, Ordering::AcqRel);
+        self.load.poke.notify_one();
     }
 }
 
@@ -109,7 +131,7 @@ pub(crate) async fn pause_for_bulk(load: &InteractiveLoad, limits: YieldLimits) 
     tokio::task::yield_now().await;
     let started = Instant::now();
     loop {
-        let inflight = load.inflight();
+        let inflight = load.total();
         if bulk_wait_done(inflight, started.elapsed(), limits) {
             return;
         }
@@ -194,6 +216,20 @@ mod tests {
         assert!(bulk_wait_done(5, Duration::from_millis(25), limits));
         assert!(bulk_wait_done(0, Duration::from_millis(1), limits));
         assert!(!bulk_wait_done(0, Duration::ZERO, limits));
+    }
+
+    #[test]
+    fn remote_pressure_shrinks_a_bulk_slice_when_this_process_is_idle() {
+        let load = InteractiveLoad::new();
+        assert_eq!(load.total(), 0);
+        load.set_remote(1);
+        assert_eq!(load.inflight(), 0);
+        assert_eq!(load.total(), 1);
+        let pace = bulk_pace(load.total(), 250, limits());
+        assert_eq!(pace.chunk, PRESSURE_CHUNK_CAP);
+        assert_eq!(pace.pause, Duration::from_millis(5));
+        load.set_remote(0);
+        assert_eq!(bulk_pace(load.total(), 250, limits()).chunk, 250);
     }
 
     #[test]

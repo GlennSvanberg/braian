@@ -120,15 +120,23 @@ tar `BRAIAN_POOL_BULK` (standard 8), så att en COPY inte kan ta alla anslutning
 importen ska använda mer av maskinen; det var poolstorleken som återställde
 bulk-takten när fyra anslutningar höll igen den.
 
-Varje pågående interaktiv läsning eller skrivning i API-processen räknas.
+Varje pågående interaktiv läsning eller skrivning räknas.
 Hälsokontroll, OpenAPI, SSE-strömmen och själva `POST /v1/bulk` räknas inte:
-en öppen flik skulle annars pausa importen hela tiden. Innan nästa bulk-slice
-hämtar en anslutning tittar jobbet på räkningen. Är den noll väntar jobbet
-`BRAIAN_BULK_YIELD_MS` (standard 1, `0` yieldar bara). Är den över noll växer
-väntan med `BRAIAN_BULK_YIELD_STEP_MS` per pågående anrop (standard 4) och
-stannar vid `BRAIAN_BULK_YIELD_MAX_MS` (standard 25). Slice:n blir också
-mindre: konfigurerad storlek delat med `1 + pågående anrop`, minst en rad och
-högst 32. Taket gör att en lång klickström saktar bulken men inte parkerar den.
+en öppen flik skulle annars pausa importen hela tiden. Räkningen i
+API-processen är omedelbar för `POST /v1/bulk` i samma process. Den skrivs
+också till tabellen `interactive_pressure`, en rad per process, med
+tidsstämpel. En massinläsning i en annan process, till exempel
+`braian-bench perf-load` som skriver med COPY, läser summan av de färska
+raderna innan nästa slice. En rad som inte uppdaterats på 400 ms räknas
+inte, så en kraschad process inte lämnar importen pausad.
+
+Innan nästa bulk-slice hämtar en anslutning tittar jobbet på den samlade
+räkningen. Är den noll väntar jobbet `BRAIAN_BULK_YIELD_MS` (standard 1,
+`0` yieldar bara). Är den över noll växer väntan med
+`BRAIAN_BULK_YIELD_STEP_MS` per pågående anrop (standard 4) och stannar vid
+`BRAIAN_BULK_YIELD_MAX_MS` (standard 25). Slice:n blir också mindre:
+konfigurerad storlek delat med `1 + pågående anrop`, minst en rad och högst
+32. Taket gör att en lång klickström saktar bulken men inte parkerar den.
 
 Bulk-slice:ar sätter `synchronous_commit = off` inuti transaktionen. Slice:n
 är fortfarande atomär. Jobbets nästa framstegsskrivning är en vanlig commit
@@ -138,9 +146,10 @@ slice som inte hunnit bli durable, inte halva slice:n.
 `BRAIAN_BULK_JOBS` (standard 1) är hur många bulk-jobb som kör, och
 `BRAIAN_BULK_QUEUE` (standard 4) hur många som får vänta. Fler får 429.
 `BRAIAN_BULK_CHUNK` (standard 25) är raderna per transaktion i `POST /v1/bulk`
-när ingen interaktiv trafik pågår. `braian-bench perf-load` använder samma
-standardvärden som koden, inte miljövariablerna, så att en export i skalet
-inte ändrar en mätning av misstag.
+när ingen interaktiv trafik pågår. `braian-bench perf-load` läser
+`BRAIAN_POOL_BULK` när den är satt, samma variabel som `braian`. Övriga
+pool- och yield-värden i bänken stannar på kodens standard, så att en
+export av yield-tiderna i skalet inte ändrar en mätning.
 
 `POST /v1/objects:batchGet` läser upp till 200 id. Utan `values`, `fields`
 eller `parts` kommer bara huvudet och grupperna. `fields` är attributnycklar;
@@ -166,16 +175,25 @@ docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres redpan
 
 Indexern har två spår. Det interaktiva spåret använder
 `BRAIAN_INDEXER_BATCH` (standard 200), `BRAIAN_INDEXER_IMPORT_BATCH`
-(standard 100) och `BRAIAN_INDEXER_IMPORT_CONCURRENCY` (standard 4).
-Bulk-spåret väntar tills det interaktiva topicet är tömt innan det importerar,
-upp till `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` (standard 100). Därefter importerar
-det ändå, så att en jämn ström av ändringar inte svälter massinläsningen. Bulk läser
-`BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000) och importerar dem som
-`BRAIAN_INDEXER_BULK_IMPORT_BATCH` dokument per anrop (standard 500) med
-`BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` anrop igång (standard 4). Det är fyra
-anrop på 500 dokument, i stället för små anrop på 100, och är det som lyfter
-taket mot Typesense. På layouten ovan, sätt bulk-samtidigheten till 2 så den
-följer Typesense-trådarna. Omindexering använder bulk-storlekarna.
+(standard 100) och `BRAIAN_INDEXER_IMPORT_CONCURRENCY` (standard 4). Det
+skriver på en egen HTTP-klient. En bulk-import håller sin anslutning tills
+Typesense är klar med hela anropet, och den interaktiva upserten ska inte
+vänta på den anslutningen.
+
+Bulk-spåret läser `BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000) och
+importerar dem i korta vågor. `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (standard
+100, tak 200) är dokumenten per anrop och
+`BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` (standard 1, tak 2) är anropen i
+en våg. Fyra anrop på 500 dokument höll Typesense så länge att en enstaka
+upsert fick vänta ut importen, och väntan innan flushen hjälpte inte när
+anropet redan pågick. Före varje våg tittar spåret på det interaktiva
+topicet och på `interactive_pressure`. Är något av dem aktivt väntar det
+högst `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` (standard 100) och skickar sedan
+ett anrop på högst 100 dokument. Standard en samtidig import lämnar en
+Typesense-tråd ledig på layouten ovan (`--thread-pool-size=2`). Sätt
+samtidigheten till 2 när värden ska ikapp och den interaktiva latensen
+väger mindre; taket 2 går inte att höja förbi. Omindexering använder
+samma vågor och stannar också för `interactive_pressure`.
 
 På en maskin med färre kärnor, ändra `cpuset` i overlayet innan det startas.
 En kärna som inte finns gör att containern inte startar.

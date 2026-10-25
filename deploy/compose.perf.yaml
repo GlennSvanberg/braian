@@ -6,11 +6,15 @@
 # Cores 0-2 Postgres, 3 Braian (taskset on the host), 4 Redpanda,
 # 5 the load generator, 6-7 Typesense. See docs/dev.md.
 #
-# On this pin Typesense has two threads. Set
-# BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY=2 so bulk imports follow that.
+# On this pin Typesense has two threads. Bulk import concurrency defaults
+# to 1 so one thread stays free for an interactive upsert. Set
+# BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY=2 to use both while catching up;
+# the indexer still drops to one batch of at most 100 documents while
+# interactive events or API requests are in flight. The value is capped at 2.
 # BRAIAN_POOL_BULK defaults to 8. Set 12 when the host should spend the
-# quiet intervals on import throughput. The API still yields bulk slices
-# while interactive requests are in flight (BRAIAN_BULK_YIELD_MAX_MS).
+# quiet intervals on import throughput. perf-load reads that variable.
+# Bulk writers yield while interactive requests are in flight, including
+# requests handled by another process (BRAIAN_BULK_YIELD_MAX_MS).
 
 services:
   postgres:
