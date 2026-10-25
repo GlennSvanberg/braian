@@ -220,37 +220,71 @@ impl Store {
         Ok(Some(stored))
     }
 
-    /// Loads many objects in three queries (`objects`, `object_structures`, `object_values`).
+    /// Loads many objects in three pipelined queries (`objects`, `object_structures`, `object_values`).
     ///
     /// Ids that are missing are omitted. The result follows `ids`, without duplicates.
     pub async fn get_objects(&self, ids: &[ObjectId]) -> Result<Vec<StoredObject>, Error> {
+        self.get_objects_projected(ids, &crate::types::ObjectProjection::full())
+            .await
+    }
+
+    /// Same as [`Self::get_objects`], skipping groups, values, or value parts that
+    /// the caller did not ask for.
+    pub async fn get_objects_projected(
+        &self,
+        ids: &[ObjectId],
+        projection: &crate::types::ObjectProjection,
+    ) -> Result<Vec<StoredObject>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let uuids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
         let client = self.pool().get().await?;
-        let rows = client
-            .query(
-                "SELECT id, type_id, key, version, model_revision, deleted_at
-                 FROM objects WHERE id = ANY($1)",
-                &[&uuids],
-            )
-            .await?;
-        let group_rows = client
-            .query(
-                "SELECT object_id, structure_id, group_id
-                 FROM object_structures WHERE object_id = ANY($1)",
-                &[&uuids],
-            )
-            .await?;
-        let part_rows = client
-            .query(
-                "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
-                 FROM object_values WHERE object_id = ANY($1)
-                 ORDER BY object_id, part, version DESC",
-                &[&uuids],
-            )
-            .await?;
+        let params: [&(dyn ToSql + Sync); 1] = [&uuids];
+        let rows_fut = client.query(
+            "SELECT id, type_id, key, version, model_revision, deleted_at
+             FROM objects WHERE id = ANY($1)",
+            &params,
+        );
+        let groups_fut = async {
+            if !projection.groups {
+                return Ok(Vec::new());
+            }
+            client
+                .query(
+                    "SELECT object_id, structure_id, group_id
+                     FROM object_structures WHERE object_id = ANY($1)",
+                    &[&uuids],
+                )
+                .await
+        };
+        let parts_fut = async {
+            if !projection.values {
+                return Ok(Vec::new());
+            }
+            if let Some(parts) = &projection.parts {
+                client
+                    .query(
+                        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
+                         FROM object_values
+                         WHERE object_id = ANY($1) AND part = ANY($2)
+                         ORDER BY object_id, part, version DESC",
+                        &[&uuids, parts],
+                    )
+                    .await
+            } else {
+                client
+                    .query(
+                        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\"
+                         FROM object_values WHERE object_id = ANY($1)
+                         ORDER BY object_id, part, version DESC",
+                        &[&uuids],
+                    )
+                    .await
+            }
+        };
+        let (rows, group_rows, part_rows) =
+            futures::future::try_join3(rows_fut, groups_fut, parts_fut).await?;
         let mut groups: HashMap<Uuid, Vec<(Uuid, Uuid)>> = HashMap::new();
         for row in &group_rows {
             groups
