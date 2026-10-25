@@ -2385,7 +2385,7 @@ async fn graph(
         });
         attributes.push(json!({
             "key": attribute.key,
-            "label": attribute.labels.values().next().cloned().unwrap_or_else(|| attribute.key.clone()),
+            "label": english_label(&attribute.labels, &attribute.key),
             "sources": sources,
             "changed_at": last.map(|entry| entry.at.to_rfc3339()),
             "changed_by": last.and_then(|entry| entry.actor_handle.clone()),
@@ -2400,6 +2400,15 @@ async fn graph(
         "relations": relations,
         "attributes": attributes,
     })))
+}
+
+fn english_label(labels: &BTreeMap<braian_model::LanguageTag, String>, key: &str) -> String {
+    labels
+        .iter()
+        .find(|(tag, _)| tag.as_str() == "en")
+        .map(|(_, label)| label.clone())
+        .or_else(|| labels.values().next().cloned())
+        .unwrap_or_else(|| key.to_string())
 }
 
 fn attribute_owner(

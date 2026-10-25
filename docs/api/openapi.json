@@ -1790,11 +1790,15 @@
         "type": "object",
         "required": [
           "seq",
+          "at",
           "op",
           "actor"
         ],
         "properties": {
           "actor": {
+            "type": "string"
+          },
+          "at": {
             "type": "string"
           },
           "diff": {
