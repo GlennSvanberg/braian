@@ -519,7 +519,7 @@
         "tags": [
           "platform"
         ],
-        "summary": "List object heads from Postgres",
+        "summary": "List object heads. type and q run in SQL before limit; cursor pages the rest",
         "responses": {}
       },
       "post": {

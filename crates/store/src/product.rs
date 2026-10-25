@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use tokio_postgres::types::ToSql;
 use uuid::Uuid;
 
 use crate::error::Error;
@@ -1299,6 +1300,65 @@ impl Store {
             .map(|row| (row.get(0), row.get(1), row.get(2), row.get::<_, i64>(3)))
             .collect())
     }
+
+    /// One page of active object heads, filtered before `limit`.
+    ///
+    /// `key_contains` is a literal substring, matched case-insensitively.
+    /// `after_id` is the last id of the previous page. Rows are ordered by id.
+    /// The query always checks out the interactive pool, even on a bulk-lane store.
+    pub async fn list_objects_page(
+        &self,
+        type_id: Option<Uuid>,
+        key_contains: Option<&str>,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, String, Uuid, i64)>, Error> {
+        let client = self.interactive_pool().get().await?;
+        let pattern = key_contains.map(like_contains);
+        let mut sql =
+            String::from("SELECT id, key, type_id, version FROM objects WHERE deleted_at IS NULL");
+        let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new();
+        if let Some(type_id) = type_id.as_ref() {
+            push_pred(&mut sql, params.len(), " AND type_id = $");
+            params.push(type_id);
+        }
+        if let Some(pattern) = pattern.as_ref() {
+            push_pred(&mut sql, params.len(), " AND key ILIKE $");
+            // E'\\' is one backslash: the LIKE escape character.
+            sql.push_str(" ESCAPE E'\\\\'");
+            params.push(pattern);
+        }
+        if let Some(after_id) = after_id.as_ref() {
+            push_pred(&mut sql, params.len(), " AND id > $");
+            params.push(after_id);
+        }
+        push_pred(&mut sql, params.len(), " ORDER BY id LIMIT $");
+        params.push(&limit);
+        let rows = client.query(&sql, &params).await?;
+        Ok(rows
+            .iter()
+            .map(|row| (row.get(0), row.get(1), row.get(2), row.get::<_, i64>(3)))
+            .collect())
+    }
+}
+
+fn push_pred(sql: &mut String, params_len: usize, clause: &str) {
+    sql.push_str(clause);
+    sql.push_str(&params_len.saturating_add(1).to_string());
+}
+
+/// A contains-pattern for `ILIKE ... ESCAPE '\'`. `%`, `_` and `\` are literal.
+fn like_contains(text: &str) -> String {
+    let mut pattern = String::with_capacity(text.len().saturating_add(2));
+    pattern.push('%');
+    for ch in text.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
 }
 
 /// One logical replication slot, as `pg_replication_slots` reports it.
@@ -1356,4 +1416,16 @@ fn job_json(row: &tokio_postgres::Row) -> Value {
         "created_at": row.get::<_, DateTime<Utc>>("created_at"),
         "finished_at": row.get::<_, Option<DateTime<Utc>>>("finished_at"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::like_contains;
+
+    #[test]
+    fn key_search_escapes_like_metacharacters() {
+        assert_eq!(like_contains("talt"), "%talt%");
+        assert_eq!(like_contains("100%_"), "%100\\%\\_%");
+        assert_eq!(like_contains("a\\b"), "%a\\\\b%");
+    }
 }

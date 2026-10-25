@@ -250,6 +250,52 @@ function groupNode(structure: string, groupKey: string): SceneNode {
   }
 }
 
+function sourceOrigin(source: Json) {
+  const inherited = Boolean(source.inherited)
+  if (source.class) {
+    return `${inherited ? copy.inherited : copy.fromClass}: ${structureCaption(String(source.class))}`
+  }
+  if (typeof source.group === 'string' && source.group) {
+    return `${inherited ? copy.inherited : copy.fromGroup}: ${structureCaption(source.group)}`
+  }
+  return copy.fromType
+}
+
+function linkSource(
+  nodes: Map<string, SceneNode>,
+  edges: Map<string, SceneEdge>,
+  valueId: string,
+  selfId: string,
+  source: Json,
+) {
+  const inherited = Boolean(source.inherited)
+  const structure = String(source.structure ?? 'sortiment')
+  if (source.class) {
+    const classKey = String(source.class)
+    const classId = `class:${structure}:${classKey}`
+    putNode(nodes, classNode(structure, classKey))
+    putEdge(edges, link(valueId, inherited ? copy.inherited : copy.fromClass, classId))
+    const groupKey = typeof source.group === 'string' ? source.group : ''
+    if (groupKey) {
+      const groupId = `group:${structure}:${groupKey}`
+      putNode(nodes, groupNode(structure, groupKey))
+      putNode(nodes, assortmentNode(structure))
+      putEdge(edges, link(classId, copy.appliesIn, groupId))
+      putEdge(edges, link(groupId, copy.inAssortment, `assortment:${structure}`))
+    }
+    return
+  }
+  if (typeof source.group === 'string' && source.group) {
+    const groupId = `group:${structure}:${source.group}`
+    putNode(nodes, groupNode(structure, source.group))
+    putNode(nodes, assortmentNode(structure))
+    putEdge(edges, link(valueId, inherited ? copy.inherited : copy.fromGroup, groupId))
+    putEdge(edges, link(groupId, copy.inAssortment, `assortment:${structure}`))
+    return
+  }
+  putEdge(edges, link(valueId, copy.fromType, selfId))
+}
+
 function assortmentNode(structure: string): SceneNode {
   const caption = structureCaption(structure)
   return {
@@ -314,13 +360,7 @@ export function buildScene(input: {
     const caption = attributeCaption(input.defs, attribute)
     const shown = formatValue(input.defs, attribute, values[attrKey])
     const sources = (attribute.sources as Json[]) ?? []
-    const origins = sources.map((source) => {
-      if (source.class) {
-        const inherited = Boolean(source.inherited)
-        return `${inherited ? copy.inherited : copy.fromClass}: ${structureCaption(String(source.class))}`
-      }
-      return copy.fromType
-    })
+    const origins = sources.map((source) => sourceOrigin(source))
     const changedBy = attribute.changed_by ? String(attribute.changed_by) : ''
     const changedAt = formatWhen(attribute.changed_at)
     putNode(nodes, {
@@ -338,25 +378,7 @@ export function buildScene(input: {
       ],
     })
     putEdge(edges, link(selfId, copy.hasValue, valueId))
-    for (const source of sources) {
-      if (source.class) {
-        const structure = String(source.structure ?? 'sortiment')
-        const classKey = String(source.class)
-        const classId = `class:${structure}:${classKey}`
-        putNode(nodes, classNode(structure, classKey))
-        putEdge(edges, link(valueId, source.inherited ? copy.inherited : copy.fromClass, classId))
-        const groupKey = typeof source.group === 'string' ? source.group : ''
-        if (groupKey) {
-          const groupId = `group:${structure}:${groupKey}`
-          putNode(nodes, groupNode(structure, groupKey))
-          putNode(nodes, assortmentNode(structure))
-          putEdge(edges, link(classId, copy.appliesIn, groupId))
-          putEdge(edges, link(groupId, copy.inAssortment, `assortment:${structure}`))
-        }
-      } else {
-        putEdge(edges, link(valueId, copy.fromType, selfId))
-      }
-    }
+    for (const source of sources) linkSource(nodes, edges, valueId, selfId, source)
   }
 
   const relations = (input.graph.relations as Json[]) ?? []
