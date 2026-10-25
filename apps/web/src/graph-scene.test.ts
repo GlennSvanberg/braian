@@ -104,6 +104,8 @@ describe('graph scene', () => {
     expect(captions).toContain('Outdoor')
     expect(captions).toContain('Tents')
     expect(captions).toContain('eCom')
+    expect(scene.nodes.some((node) => node.id === 'structure:sortiment' && node.kind === 'structure')).toBe(true)
+    expect(scene.edges.some((edge) => edge.label === 'In structure' && edge.target === 'structure:sortiment')).toBe(true)
     expect(captions.some((caption) => ['farg', 'namn', 'friluft', 'nummer', 'Nummer', 'Farbe', 'Beschreibung'].includes(caption))).toBe(false)
 
     const colour = scene.nodes.find((node) => node.caption === 'Colour')

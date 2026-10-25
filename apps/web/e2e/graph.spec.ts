@@ -48,7 +48,7 @@ test('force-directed graph', async ({ page }) => {
   await login(page)
   await openTent(page)
 
-  for (const kind of ['type-artikel', 'class', 'group', 'value', 'assortment']) {
+  for (const kind of ['type-artikel', 'class', 'group', 'value', 'structure']) {
     await expect(page.getByTestId(`legend-${kind}`)).toBeVisible()
     await expect(page.getByTestId(`legend-${kind}`)).toHaveAttribute('aria-pressed', 'true')
   }

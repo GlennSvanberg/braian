@@ -590,6 +590,51 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   font-variant-numeric: tabular-nums;
 }
 .tree-row.on .tree-count { color: var(--text-2); }
+.tree-icon { flex: none; color: var(--muted); }
+.tree-row.drop { box-shadow: inset 0 -2px 0 var(--accent); }
+.tree-edit {
+  display: block;
+  width: calc(100% - 16px);
+  height: 24px;
+  margin: 2px 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  padding: 0 6px;
+}
+.assortment-list { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 8px; }
+.assortment-save { display: flex; gap: 6px; }
+.assortment-save input { flex: 1; min-width: 0; }
+.assortment-picks { display: flex; flex-direction: column; gap: 2px; }
+.assortment-picks button {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  width: 100%;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--r-md);
+  text-align: left;
+}
+.assortment-picks button.on, .assortment-picks button:hover { background: var(--accent-dim); color: var(--text); }
+.assortment-query { display: flex; flex-wrap: wrap; gap: 4px; }
+.assortment-hits { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.assortment-hits .row {
+  display: flex;
+  gap: 12px;
+  height: 28px;
+  align-items: center;
+  width: 100%;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.assortment-hits .row span:first-child { color: var(--text-2); font-variant-numeric: tabular-nums; }
 .tree-chevron {
   display: inline-flex;
   align-items: center;
@@ -916,7 +961,7 @@ canvas.graph.panning { cursor: grabbing; }
 .dot.class { background: var(--info); }
 .dot.group { background: var(--ok); }
 .dot.value { background: var(--warn); }
-.dot.assortment { background: color-mix(in srgb, var(--info) 45%, var(--ok)); }
+.dot.structure { background: color-mix(in srgb, var(--info) 45%, var(--ok)); }
 .graph-inspector {
   position: absolute;
   top: 8px;
@@ -1056,6 +1101,8 @@ canvas.graph.panning { cursor: grabbing; }
   color: var(--text);
 }
 .menu button:hover, .menu-item:hover, .menu-item[data-highlighted] { background: var(--accent-dim); }
+.menu button.danger { color: var(--danger); }
+.menu-note { margin: 0; padding: 4px 8px; color: var(--text-2); font-size: 12px; }
 .palette, .help, .login, .overlay {
   position: fixed;
   inset: 0;

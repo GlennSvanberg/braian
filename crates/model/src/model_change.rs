@@ -168,6 +168,12 @@ pub enum ModelChange {
         #[serde(default)]
         move_to: Option<String>,
     },
+    /// Copies the group node. Children and classes stay on the original.
+    DuplicateGroup {
+        structure: String,
+        group: String,
+        name: String,
+    },
 }
 
 /// A definition edit that did not apply.
@@ -259,6 +265,21 @@ pub fn interpret(text: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
     }
     if let Some(rest) = strip_prefix_ci(trimmed, "remove attribute ") {
         return remove_attribute_command(rest, defs);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "add group ") {
+        return add_group_command(rest, defs);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename group ") {
+        return rename_group_command(rest, defs);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "move group ") {
+        return move_group_command(rest, defs);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "duplicate group ") {
+        return duplicate_group_command(rest, defs);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "delete group ") {
+        return delete_group_command(rest, defs);
     }
     if let Some(rest) = strip_prefix_ci(trimmed, "move class ") {
         return move_command(rest, defs);
@@ -614,6 +635,11 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             structure::delete_group(defs, structure, group, move_to.as_deref())?;
             Ok(())
         }
+        ModelChange::DuplicateGroup {
+            structure,
+            group,
+            name,
+        } => duplicate_group(defs, structure, group, name),
         ModelChange::CreateClass {
             structure,
             class_key,
@@ -873,6 +899,134 @@ fn add_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelCh
         attribute: key,
     });
     Some(steps)
+}
+
+fn add_group_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
+    let (name, parent) = match split_ci(rest, " under ") {
+        Some((name, parent)) => (name, Some(parent)),
+        None => (rest, None),
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let (structure, parent) = if let Some(parent_key) = parent {
+        let (structure, group) = find_named_group(defs, parent_key)?;
+        (structure.key.clone(), Some(group.key.clone()))
+    } else {
+        (sole_structure(defs)?.to_owned(), None)
+    };
+    Some(vec![ModelChange::CreateGroup {
+        structure,
+        group: name.to_owned(),
+        parent,
+        label: name.to_owned(),
+    }])
+}
+
+fn rename_group_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
+    let (group, name) = split_ci(rest, " to ")?;
+    let (structure, group) = find_named_group(defs, group)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(vec![ModelChange::RenameGroup {
+        structure: structure.key.clone(),
+        group: group.key.clone(),
+        label: name.to_owned(),
+    }])
+}
+
+fn move_group_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
+    let (group, parent) = split_ci(rest, " to ").or_else(|| split_ci(rest, " under "))?;
+    let (structure, group) = find_named_group(defs, group)?;
+    let parent = if parent.eq_ignore_ascii_case("root") {
+        None
+    } else {
+        Some(find_named_group(defs, parent)?.1.key.clone())
+    };
+    Some(vec![ModelChange::MoveGroup {
+        structure: structure.key.clone(),
+        group: group.key.clone(),
+        parent,
+    }])
+}
+
+fn duplicate_group_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
+    let (group, name) = split_ci(rest, " as ")?;
+    let (structure, group) = find_named_group(defs, group)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(vec![ModelChange::DuplicateGroup {
+        structure: structure.key.clone(),
+        group: group.key.clone(),
+        name: name.to_owned(),
+    }])
+}
+
+fn delete_group_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
+    let (structure, group) = find_named_group(defs, rest)?;
+    Some(vec![ModelChange::DeleteGroup {
+        structure: structure.key.clone(),
+        group: group.key.clone(),
+        move_to: None,
+    }])
+}
+
+fn sole_structure(defs: &DefinitionSet) -> Option<&str> {
+    let mut keys = defs.structures.iter().map(|item| item.key.as_str());
+    let first = keys.next()?;
+    if keys.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
+}
+
+fn find_named_group<'a>(defs: &'a DefinitionSet, key: &str) -> Option<(&'a Structure, &'a Group)> {
+    let mut found = None;
+    for structure in &defs.structures {
+        for group in &structure.groups {
+            if eq_key(&group.key, key) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((structure, group));
+            }
+        }
+    }
+    found
+}
+
+fn duplicate_group(
+    defs: &mut DefinitionSet,
+    structure_key: &str,
+    group: &str,
+    name: &str,
+) -> Result<(), ApplyError> {
+    if name.is_empty() {
+        return Err("group key is empty".into());
+    }
+    let labels = label_map(defs, name);
+    let structure = structure_mut(defs, structure_key)?;
+    if structure.groups.iter().any(|item| eq_key(&item.key, name)) {
+        return Err(format!("group {name} already exists in {}", structure.key).into());
+    }
+    let source = structure
+        .groups
+        .iter()
+        .find(|item| eq_key(&item.key, group))
+        .cloned()
+        .ok_or_else(|| format!("unknown group {group} in {}", structure.key))?;
+    let structure_key = structure.key.clone();
+    structure.groups.push(Group {
+        id: GroupId::from_uuid(stable_uuid(&format!("group:{structure_key}:{name}:copy"))),
+        key: name.to_owned(),
+        labels,
+        parent: source.parent,
+        attributes: source.attributes,
+    });
+    Ok(())
 }
 
 fn remove_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
@@ -1399,6 +1553,62 @@ mod tests {
         assert!(impact.lines.iter().any(|line| line.contains("Drill")));
         assert!(impact.lines.iter().any(|line| line.contains("weight")));
         assert!(impact.fields.iter().any(|field| field == "weight"));
+    }
+
+    #[test]
+    fn group_commands_rename_move_duplicate_and_delete() {
+        let defs = base();
+        let renamed = interpret("rename group talt to canopy", &defs).expect("rename");
+        let (after, impact) = preview(&defs, &renamed).expect("preview");
+        assert_eq!(impact.lines, vec!["Rename group talt to canopy".to_owned()]);
+        let tents = after.structures[0]
+            .groups
+            .iter()
+            .find(|group| group.key == "talt")
+            .expect("talt");
+        assert!(tents.labels.values().any(|label| label == "canopy"));
+
+        let moved = interpret("move group sovsack to bygg", &defs);
+        assert!(moved.is_none(), "a class move must not become a group move");
+        let moved = interpret("move group talt to bygg", &defs).expect("move");
+        let (after, impact) = preview(&defs, &moved).expect("preview");
+        assert!(
+            impact
+                .lines
+                .iter()
+                .any(|line| line.contains("Move group talt"))
+        );
+        let talt = after.structures[0]
+            .groups
+            .iter()
+            .find(|group| group.key == "talt")
+            .expect("talt");
+        let bygg = after.structures[0]
+            .groups
+            .iter()
+            .find(|group| group.key == "bygg")
+            .expect("bygg");
+        assert_eq!(talt.parent, Some(bygg.id));
+
+        let copied = interpret("duplicate group talt as spare", &defs).expect("copy");
+        let (after, _) = preview(&defs, &copied).expect("preview");
+        assert!(
+            after.structures[0]
+                .groups
+                .iter()
+                .any(|group| group.key == "spare")
+        );
+
+        let removed = interpret("delete group talt", &defs).expect("delete");
+        let (after, impact) = preview(&defs, &removed).expect("preview");
+        assert_eq!(impact.lines, vec!["Delete group talt".to_owned()]);
+        assert!(
+            !after.structures[0]
+                .groups
+                .iter()
+                .any(|group| group.key == "talt")
+        );
+        assert!(impact.groups.iter().any(|id| id.ends_with("000000000005")));
     }
 
     #[test]

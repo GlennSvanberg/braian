@@ -17,4 +17,13 @@ describe('model commands', () => {
   it('ignores ordinary search text', () => {
     expect(modelCommandTitle('talt')).toBeNull()
   })
+
+  it('hints group commands without stealing a class move', () => {
+    expect(modelCommandTitle('add group canopy under talt')?.title).toBe('Add group canopy under talt')
+    expect(modelCommandTitle('move group talt to bygg')?.title).toBe('Move group talt to bygg')
+    expect(modelCommandTitle('move sovsack to bygg')?.title).toBe('Move sovsack to bygg')
+    const rows = withModelCommand('save assortment Summer tents', [ask])
+    expect(rows[0]?.sourceId).toBe('assortment:save')
+    expect(rows[0]?.title).toBe('Save assortment Summer tents')
+  })
 })

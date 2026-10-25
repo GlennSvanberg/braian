@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  Bookmark,
   Boxes,
   FileText,
   History,
@@ -42,6 +43,7 @@ export function typeLabel(defs: Json | undefined, key: string, language = 'en') 
 export function ViewGlyph({ type }: { type: string }) {
   const props = { size: 14, 'aria-hidden': true as const }
   if (type === 'structure_tree') return <ListTree {...props} />
+  if (type === 'assortment_list') return <Bookmark {...props} />
   if (type === 'object_table') return <Table2 {...props} />
   if (type === 'object_detail') return <FileText {...props} />
   if (type === 'graph') return <Waypoints {...props} />
