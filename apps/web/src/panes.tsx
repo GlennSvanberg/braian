@@ -65,6 +65,10 @@ function savedTable(view: PanesView) {
   }
 }
 
+function objectRowId(id: string) {
+  return `object-row-${id}`
+}
+
 function toRow(doc: Json): ObjRow {
   return {
     id: String(doc.id ?? ''),
@@ -94,11 +98,15 @@ export function ObjectTable({
   const [sizes, setSizes] = useState<Record<string, number>>(initial.sizes)
   const [selected, setSelected] = useState<string[]>([])
   const [hidden, setHidden] = useState<string[]>([])
-  const [cursor, setCursor] = useState(-1)
+  // Single current row. Click and arrows both write this; the detail object follows it.
+  const [active, setActive] = useState(-1)
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [flashId, setFlashId] = useState('')
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
+  const virtualizerRef = useRef<{ scrollToIndex: (index: number) => void }>({ scrollToIndex: () => {} })
+  const locateRef = useRef<(id: string) => number>(() => -1)
+  const selectMode = useRef<{ extend: boolean; anchor: number } | null>(null)
   useEffect(() => onFlash(setFlashId), [])
 
   useEffect(() => {
@@ -198,6 +206,17 @@ export function ObjectTable({
     found: Number(group.found ?? 0),
     hits: ((group.hits as Json[]) ?? []).map((hit) => toRow((hit.document as Json) ?? hit)),
   }))
+  const groupedRows = groups.flatMap((group) => group.hits)
+  const listCount = groupBy ? groupedRows.length : found
+  const rowAt = (index: number) => (groupBy ? groupedRows[index] : byIndex.get(index))
+  const activeRow = active >= 0 ? rowAt(active) : undefined
+  const activeRowId = activeRow?.id
+  virtualizerRef.current = virtualizer
+  locateRef.current = (id: string) => {
+    if (groupBy) return groupedRows.findIndex((row) => row.id === id)
+    for (const [index, row] of byIndex) if (row.id === id) return index
+    return -1
+  }
 
   const ordered = order.filter((id) => columns.some((column) => column.id === id))
   const shown = (ordered.length > 0 ? ordered : columns.map((column) => column.id)).filter((id) => !hidden.includes(id))
@@ -245,8 +264,12 @@ export function ObjectTable({
     if (event.name === 'ui.group') setGroupBy(String(args.group ?? args.by ?? ''))
     if (event.name === 'ui.sort' && args.sort) setSort(String(args.sort))
     if (event.name === 'ui.select' && args.id) {
-      session.setObjectId(String(args.id))
-      setSelected([String(args.id)])
+      const id = String(args.id)
+      selectMode.current = null
+      session.setObjectId(id)
+      setSelected([id])
+      const index = locateRef.current(id)
+      if (index >= 0) setActive(index)
     }
     if (event.name === 'ui.select_rows' && Array.isArray(args.ids)) setSelected(args.ids.map(String))
     if (event.name === 'ui.show_column') {
@@ -268,24 +291,73 @@ export function ObjectTable({
     if (event.name === 'ui.export') exportVisible()
   }), [filterBy, hidden, order, queryText, selected, session, sort])
 
-  const moveCursor = (next: number, extend: boolean) => {
-    const clamped = Math.max(0, Math.min(Math.max(found - 1, 0), next))
-    setCursor(clamped)
-    virtualizer.scrollToIndex(clamped)
-    const row = byIndex.get(clamped)
-    if (!row) return
+  const applySelection = (row: ObjRow, index: number, anchor: number, extend: boolean) => {
     session.setObjectId(row.id)
     if (!extend) {
       setSelected([row.id])
       return
     }
-    const [start, end] = cursor < clamped ? [cursor, clamped] : [clamped, Math.max(cursor, 0)]
+    const [start, end] = anchor < index ? [anchor, index] : [index, Math.max(anchor, 0)]
     const ids: string[] = []
-    for (let index = start; index <= end; index += 1) {
-      const item = byIndex.get(index)
+    for (let cursor = start; cursor <= end; cursor += 1) {
+      const item = rowAt(cursor)
       if (item) ids.push(item.id)
     }
     setSelected(ids.length > 0 ? ids : [row.id])
+  }
+
+  // Arrows and clicks share `active`. A virtualized row may mount a frame later; the detail follows once it is known.
+  useEffect(() => {
+    if (active < 0) return
+    if (groupBy) {
+      const row = rowAt(active)
+      if (row) document.getElementById(objectRowId(row.id))?.scrollIntoView({ block: 'nearest' })
+    } else {
+      virtualizerRef.current.scrollToIndex(active)
+    }
+  }, [active, groupBy])
+
+  useEffect(() => {
+    if (!activeRow || activeRow.id !== activeRowId) return
+    const mode = selectMode.current
+    if (mode) {
+      selectMode.current = null
+      applySelection(activeRow, active, mode.anchor, mode.extend)
+      return
+    }
+    if (session.objectId !== activeRow.id) session.setObjectId(activeRow.id)
+  }, [active, activeRowId])
+
+  const moveActive = (next: number, extend: boolean) => {
+    if (listCount <= 0) return
+    const clamped = Math.max(0, Math.min(listCount - 1, next))
+    selectMode.current = { extend, anchor: active }
+    setActive(clamped)
+    const row = rowAt(clamped)
+    if (!row) return
+    selectMode.current = null
+    applySelection(row, clamped, active, extend)
+  }
+
+  const onRowClick = (index: number, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
+    selectMode.current = null
+    setActive(index)
+    const row = rowAt(index)
+    if (!row) return
+    session.setObjectId(row.id)
+    if (event.shiftKey) setSelected((current) => (current.includes(row.id) ? current : [...current, row.id]))
+    else if (event.metaKey || event.ctrlKey) {
+      setSelected((current) => (current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id]))
+    } else setSelected([row.id])
+  }
+
+  const onRowMenu = (index: number, x: number, y: number) => {
+    selectMode.current = null
+    setActive(index)
+    const row = rowAt(index)
+    if (!row) return
+    session.setObjectId(row.id)
+    setMenu({ x, y, id: row.id })
   }
 
   const onTableKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -297,22 +369,22 @@ export function ObjectTable({
     }
     event.preventDefault()
     if (event.key === 'Enter') {
-      const row = byIndex.get(cursor)
+      const row = rowAt(active)
       if (row) session.setObjectId(row.id)
       return
     }
     const next = event.key === 'ArrowDown'
-      ? cursor + 1
+      ? active + 1
       : event.key === 'ArrowUp'
-        ? cursor - 1
+        ? active - 1
         : event.key === 'PageDown'
-          ? cursor + 10
+          ? active + 10
           : event.key === 'PageUp'
-            ? cursor - 10
+            ? active - 10
             : event.key === 'Home'
               ? 0
-              : found - 1
-    moveCursor(next, event.shiftKey)
+              : listCount - 1
+    moveActive(next, event.shiftKey)
   }
 
   const cell = (row: ObjRow, id: string) => {
@@ -387,7 +459,14 @@ export function ObjectTable({
         <NewObject session={session} />
         <span className="row-count" data-testid="row-count">{found} {copy.rows}</span>
       </div>
-      <div className="grid" ref={parent} tabIndex={0} onKeyDown={onTableKey}>
+      <div
+        className="grid"
+        ref={parent}
+        tabIndex={0}
+        role="grid"
+        aria-activedescendant={activeRow ? objectRowId(activeRow.id) : undefined}
+        onKeyDown={onTableKey}
+      >
         <div className="head">
           {shown.map((id) => {
             const column = columns.find((item) => item.id === id)
@@ -443,14 +522,33 @@ export function ObjectTable({
         </div>
         {groupBy ? (
           <div style={{ flex: 'none' }}>
-            {groups.map((group) => (
-              <div key={group.key}>
-                <strong>{group.key || '—'} ({group.found})</strong>
-                {group.hits.map((row) => (
-                  <Row key={row.id} row={row} index={0} shown={shown} sizes={sizes} session={session} selected={selected} setSelected={setSelected} setMenu={setMenu} cell={cell} flash={flashId === row.id} cursor={cursor} />
-                ))}
-              </div>
-            ))}
+            {(() => {
+              let index = 0
+              return groups.map((group) => (
+                <div key={group.key}>
+                  <strong>{group.key || '—'} ({group.found})</strong>
+                  {group.hits.map((row) => {
+                    const rowIndex = index
+                    index += 1
+                    return (
+                      <Row
+                        key={row.id}
+                        row={row}
+                        index={rowIndex}
+                        shown={shown}
+                        sizes={sizes}
+                        selected={selected}
+                        cell={cell}
+                        flash={flashId === row.id}
+                        active={active === rowIndex}
+                        onActivate={onRowClick}
+                        onMenu={onRowMenu}
+                      />
+                    )
+                  })}
+                </div>
+              ))
+            })()}
           </div>
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative', flex: 'none' }}>
@@ -466,13 +564,12 @@ export function ObjectTable({
                   index={item.index}
                   shown={shown}
                   sizes={sizes}
-                  session={session}
                   selected={selected}
-                  setSelected={setSelected}
-                  setMenu={setMenu}
                   cell={cell}
                   flash={flashId === row.id}
-                  cursor={cursor}
+                  active={active === item.index}
+                  onActivate={onRowClick}
+                  onMenu={onRowMenu}
                   style={{ position: 'absolute', transform: `translateY(${item.start}px)`, width: '100%' }}
                 />
               )
@@ -488,7 +585,7 @@ export function ObjectTable({
       </div>
       {menu ? (
         <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="context-menu" role="menu">
-          <button type="button" onClick={() => { session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
+          <button type="button" onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
           <button type="button" onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
           <button type="button" onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
           <button type="button" onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
@@ -507,46 +604,41 @@ function Row({
   index,
   shown,
   sizes,
-  session,
   selected,
-  setSelected,
-  setMenu,
   cell,
   flash,
-  cursor,
+  active,
+  onActivate,
+  onMenu,
   style,
 }: {
   row: ObjRow
   index: number
   shown: string[]
   sizes: Record<string, number>
-  session: PanesSession
   selected: string[]
-  setSelected: (value: string[] | ((current: string[]) => string[])) => void
-  setMenu: (value: { x: number; y: number; id: string } | null) => void
   cell: (row: ObjRow, id: string) => ReactNode
   flash: boolean
-  cursor: number
+  active: boolean
+  onActivate: (index: number, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => void
+  onMenu: (index: number, x: number, y: number) => void
   style?: CSSProperties
 }) {
-  const marked = session.objectId === row.id || selected.includes(row.id) || cursor === index
+  const marked = active || selected.includes(row.id)
   return (
     <div
+      id={objectRowId(row.id)}
+      role="row"
+      aria-selected={active}
       data-testid="object-row"
       data-index={index}
       tabIndex={-1}
       className={marked ? `row selected${flash ? ' flash' : ''}` : flash ? 'row flash' : 'row'}
       style={style}
-      onClick={(event) => {
-        session.setObjectId(row.id)
-        if (event.shiftKey) setSelected((current) => current.includes(row.id) ? current : [...current, row.id])
-        else if (event.metaKey || event.ctrlKey) setSelected((current) => current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id])
-        else setSelected([row.id])
-      }}
+      onClick={(event) => onActivate(index, event)}
       onContextMenu={(event) => {
         event.preventDefault()
-        session.setObjectId(row.id)
-        setMenu({ x: event.clientX, y: event.clientY, id: row.id })
+        onMenu(index, event.clientX, event.clientY)
       }}
     >
       {shown.map((id) => {
