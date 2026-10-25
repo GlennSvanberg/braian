@@ -5,7 +5,7 @@ Färdiga gränssnitt som ett traditionellt PIM, och samma åtgärder via API och
 
 ## Kör lokalt
 
-Kräver Docker Desktop (Windows eller macOS) eller Docker i devcontainern, Rust, Node 22 och pnpm 10.
+Kräver Docker Desktop (Windows eller macOS) eller Docker i devcontainern, Rust, Node 22, pnpm 10 och [just](https://just.systems/).
 
 ```bash
 cp .env.example .env
