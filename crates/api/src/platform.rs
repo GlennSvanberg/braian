@@ -609,8 +609,12 @@ fn layout_snapshot(workspace: Uuid, document: &Value) -> Value {
 /// be offered it, and keep that name out of both tool lists.
 const AGENT_UI_EXCLUDED: &[&str] = &[];
 
+/// Commit operations. An agent may propose the effect, and a person saves it.
+/// The name stays out of the agent tool list and out of MCP.
+const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal"];
+
 fn exposed_to_agent(op: &Operation) -> bool {
-    !AGENT_UI_EXCLUDED.contains(&op.name)
+    !AGENT_UI_EXCLUDED.contains(&op.name) && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
 }
 
 #[cfg(test)]
@@ -773,8 +777,10 @@ async fn list_operations(
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
     let types = configured_types(&state).await;
+    let agent = identity.kind == braian_store::PrincipalKind::Agent;
     let ops = registry()
         .iter()
+        .filter(|op| !agent || exposed_to_agent(op))
         .map(|op| {
             json!({
                 "name": op.name,
@@ -2388,7 +2394,8 @@ async fn list_proposals(
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
     Ok(Json(json!({
-        "proposals": state.store.list_proposals().await.map_err(store_status)?
+        "proposals": state.store.list_proposals().await.map_err(store_status)?,
+        "pending": state.store.pending_summary().await.map_err(store_status)?,
     })))
 }
 
@@ -2482,10 +2489,11 @@ async fn accept_proposal(
         .cloned()
         .unwrap_or_default();
     let selected = selected_rows(&rows, &body.rows);
+    let patches = body.patches;
     if selected.len() >= LARGE_ACCEPT {
-        return accept_later(state, identity, id, selected).await;
+        return accept_later(state, identity, id, selected, patches).await;
     }
-    let value = apply_selected(&state, &identity, id, selected, None).await?;
+    let value = apply_selected(&state, &identity, id, selected, None, &patches).await?;
     Ok(AcceptReply::Sync(value))
 }
 
@@ -2532,6 +2540,7 @@ async fn accept_later(
     identity: Identity,
     proposal_id: Uuid,
     selected: Vec<Value>,
+    patches: BTreeMap<Uuid, Value>,
 ) -> Result<AcceptReply, Problem> {
     state
         .store
@@ -2555,7 +2564,16 @@ async fn accept_later(
     emit_job(&state, job_id, "running", 0, total);
     let job_state = state.clone();
     tokio::spawn(async move {
-        match apply_selected(&job_state, &identity, proposal_id, selected, Some(job_id)).await {
+        match apply_selected(
+            &job_state,
+            &identity,
+            proposal_id,
+            selected,
+            Some(job_id),
+            &patches,
+        )
+        .await
+        {
             Ok(_) => {
                 let _ = job_state
                     .store
@@ -2589,11 +2607,13 @@ async fn apply_selected(
     proposal_id: Uuid,
     rows: Vec<Value>,
     job_id: Option<Uuid>,
+    patches: &BTreeMap<Uuid, Value>,
 ) -> Result<Value, Problem> {
     let total = i32::try_from(rows.len()).unwrap_or(i32::MAX);
     let mut done = 0i32;
     let mut accepted = Vec::new();
     let mut failed = Vec::new();
+    let mut rejected = 0i32;
     for row in rows {
         let Some(row_id) = row
             .get("id")
@@ -2602,6 +2622,34 @@ async fn apply_selected(
         else {
             continue;
         };
+        let mut row = row;
+        if let Some(replacement) = patches.get(&row_id) {
+            if patch_is_empty(replacement) {
+                state
+                    .store
+                    .set_proposal_rows(proposal_id, &[row_id], "rejected")
+                    .await
+                    .map_err(store_status)?;
+                rejected += 1;
+                done += 1;
+                if let Some(job_id) = job_id {
+                    let _ = state
+                        .store
+                        .update_job_progress(
+                            job_id,
+                            done,
+                            &format!("{done} of {total}"),
+                            &json!([]),
+                        )
+                        .await;
+                    emit_job(state, job_id, "running", done, total);
+                }
+                continue;
+            }
+            if let Some(object) = row.as_object_mut() {
+                object.insert("patch".to_owned(), replacement.clone());
+            }
+        }
         match apply_row(state, identity, &row).await {
             Ok(seq) => {
                 state
@@ -2612,7 +2660,12 @@ async fn apply_selected(
                 accepted.push(json!({ "id": row_id, "seq": seq }));
             }
             Err(problem) => {
-                failed.push(json!({ "id": row_id, "code": problem.code, "detail": problem.detail }))
+                let detail = problem
+                    .errors
+                    .first()
+                    .map(|error| error.message.clone())
+                    .unwrap_or_else(|| problem.detail.clone());
+                failed.push(json!({ "id": row_id, "code": problem.code, "detail": detail }))
             }
         }
         done += 1;
@@ -2625,12 +2678,28 @@ async fn apply_selected(
         }
     }
     if failed.is_empty() {
-        let _ = state
-            .store
-            .set_proposal_status(proposal_id, "accepted")
-            .await;
+        let status = if accepted.is_empty() && rejected > 0 {
+            "discarded"
+        } else {
+            "accepted"
+        };
+        let _ = state.store.set_proposal_status(proposal_id, status).await;
     }
     Ok(json!({ "accepted": accepted, "failed": failed }))
+}
+
+fn patch_is_empty(patch: &Value) -> bool {
+    let values_empty = match patch.get("values") {
+        Some(Value::Object(map)) => map.is_empty(),
+        Some(_) => false,
+        None => true,
+    };
+    let groups_empty = match patch.get("groups") {
+        Some(Value::Object(map)) => map.is_empty(),
+        Some(_) => false,
+        None => true,
+    };
+    values_empty && groups_empty
 }
 
 async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
@@ -3793,7 +3862,10 @@ async fn run_operation(
                     State(state.clone()),
                     Auth(identity.clone()),
                     Path(id),
-                    Json(AcceptBody { rows: Some(rows) }),
+                    Json(AcceptBody {
+                        rows: Some(rows),
+                        patches: BTreeMap::new(),
+                    }),
                 )
                 .await?
                 {
@@ -4120,6 +4192,9 @@ struct ProposalRowBody {
 #[derive(Deserialize)]
 struct AcceptBody {
     rows: Option<Vec<Uuid>>,
+    /// Replacement patches keyed by proposal row. An empty `values` object rejects that row.
+    #[serde(default)]
+    patches: BTreeMap<Uuid, Value>,
 }
 
 #[derive(Deserialize)]
@@ -4474,6 +4549,10 @@ mod tests {
         assert!(tools.contains("list_objects"));
         assert!(tools.contains("ui_get_context"));
         assert!(tools.contains("ui_get_selection"));
+        assert!(
+            !tools.contains("accept_proposal"),
+            "an agent must not be offered the commit operation"
+        );
 
         let registered = registry()
             .iter()

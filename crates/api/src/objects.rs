@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::auth::Auth;
+use crate::auth::{Auth, Identity};
 use crate::headers::{etag, if_match, require_if_match};
 use crate::problem::{ConflictBody, Problem, store_status};
 use crate::state::{AppState, CachedModel};
@@ -36,6 +36,17 @@ pub struct CreateObject {
 
 /// How many ids one batch read accepts.
 pub const BATCH_GET_LIMIT: usize = 200;
+
+fn refuse_agent_commit(identity: &Identity) -> Result<(), Problem> {
+    if identity.kind == PrincipalKind::Agent {
+        return Err(Problem::new(
+            StatusCode::FORBIDDEN,
+            "needs_approval",
+            "an agent proposes; a person saves",
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct BatchGetRequest {
@@ -132,6 +143,7 @@ pub async fn create_object(
     Auth(identity): Auth,
     Json(body): Json<CreateObject>,
 ) -> Result<Response, Problem> {
+    refuse_agent_commit(&identity)?;
     let cached = state.models.get(&state.store).await?;
     let type_id = resolve_type(&cached.model, &body.object_type)?;
     let mut groups = BTreeMap::new();
@@ -282,6 +294,7 @@ pub async fn patch_object(
     headers: HeaderMap,
     Json(body): Json<PatchObject>,
 ) -> Result<Response, Problem> {
+    refuse_agent_commit(&identity)?;
     let base = require_if_match(&headers)?;
     let id = ObjectId::from_uuid(id);
     for _ in 0..3 {
@@ -368,6 +381,7 @@ pub async fn delete_object(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<DeletedResponse>, Problem> {
+    refuse_agent_commit(&identity)?;
     let id = ObjectId::from_uuid(id);
     let base = if_match(&headers)?;
     let receipt = match state

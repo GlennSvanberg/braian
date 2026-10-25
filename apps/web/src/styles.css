@@ -1235,6 +1235,28 @@ canvas.graph.panning { cursor: grabbing; }
 .diff-old { color: var(--danger); text-decoration: line-through; }
 .diff-new { color: var(--ok); }
 .diff-arrow { color: var(--muted); }
+.lang-chip {
+  display: inline-flex;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  background: var(--accent-dim);
+  color: var(--text-2);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.suggestion-card { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid var(--line); }
+.suggestion-card h3 { margin: 0; font-size: 13px; }
+.suggestion-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.suggestion-field .field-diff { flex: 1; margin: 0; }
+.suggestion-field button[aria-pressed='true'] { background: var(--accent-dim); color: var(--text); }
+.suggestion-count {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
 kbd {
   border: 1px solid var(--border);
   background: var(--panel);

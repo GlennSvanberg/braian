@@ -8,6 +8,7 @@ import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
 import { workspaceDisplayName } from './demo-labels'
+import { sourceLabel, suggestedTitle } from './field-diff'
 import { copy, uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
@@ -39,7 +40,16 @@ type SessionLike = {
 
 type Turn = { role: 'user' | 'assistant'; text: string }
 type Step = { id: string; text: string; state: 'run' | 'done' }
-type ProposalPreview = { id: string; title: string; rows: Json[]; lines: string[]; source?: string; error?: string }
+type ProposalPreview = {
+  id: string
+  title: string
+  rows: Json[]
+  lines: string[]
+  source?: string
+  actor_name?: unknown
+  behalf_name?: unknown
+  error?: string
+}
 
 export function CommandPalette({
   session,
@@ -91,11 +101,16 @@ export function CommandPalette({
     staleTime: 30_000,
   })
   const types = useMemo(() => typeNames(defs.data, uiLanguage), [defs.data])
+  const suggestions = useQuery({
+    queryKey: ['proposals'],
+    queryFn: () => api<Json>('/v1/proposals'),
+  })
+  const suggestionTotal = Number(((suggestions.data?.pending as Json | undefined)?.total) ?? 0)
   const selectedKey = String(selectedObject.data?.type ?? '')
   const selectedSingular = singularOf(defs.data, selectedKey, uiLanguage) || (types.length === 1 ? types[0]?.singular ?? '' : '')
   const catalog = useMemo(
-    () => buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey),
-    [workspaces, views, session.objectId, types, selectedSingular, selectedKey],
+    () => buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal),
+    [workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal],
   )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
@@ -187,6 +202,15 @@ export function CommandPalette({
       const objectId = id.startsWith('hit:') ? id.slice(4) : id
       session.setObjectId(objectId)
       dispatchUi('ui.select', { id: objectId })
+      onClose()
+      return
+    }
+    if (id === 'suggestions:review') {
+      const review = workspaces.find((workspace) => workspace.share_token === 'braian-review')
+      if (review) {
+        dispatchUi('ui.open_workspace', { id: review.id })
+        session.openWorkspace(review.id)
+      }
       onClose()
       return
     }
@@ -479,7 +503,7 @@ export function CommandPalette({
             {proposal ? (
               <div data-testid="palette-proposal">
                 <strong>{proposal.title}</strong>
-                {proposal.source ? <span className="chip">{proposal.source}</span> : null}
+                {proposal.source ? <span className="chip" data-testid="source-badge">{sourceLabel(proposal)}</span> : null}
                 <p>{proposal.rows.length} rows</p>
                 {proposal.lines.length > 0 ? (
                   <ul className="proposal-tree">
@@ -493,8 +517,8 @@ export function CommandPalette({
                 ))}
                 {proposal.error ? <p className="error">{proposal.error}</p> : null}
                 <div className="toolbar">
-                  <button type="button" onClick={() => void api(`/v1/proposals/${proposal.id}/discard`, { method: 'POST' }).then(() => setProposal(null))}>Cancel</button>
-                  <button type="button" className="primary" onClick={() => void api(`/v1/proposals/${proposal.id}/accept`, { method: 'POST', body: '{}' }).then(() => { session.setProposalId(proposal.id); setProposal(null); session.push('Confirm') })}>Confirm</button>
+                  <button type="button" onClick={() => void api(`/v1/proposals/${proposal.id}/discard`, { method: 'POST' }).then(() => setProposal(null))}>{copy.discardAll}</button>
+                  <button type="button" className="primary" onClick={() => void api(`/v1/proposals/${proposal.id}/accept`, { method: 'POST', body: '{}' }).then(() => { session.setProposalId(proposal.id); setProposal(null); session.push(copy.saved) })}>{copy.saveAll}</button>
                 </div>
               </div>
             ) : null}
@@ -573,8 +597,18 @@ function buildCatalog(
   types: ReturnType<typeof typeNames>,
   selectedSingular: string,
   openTypeKey: string,
+  suggestions: number,
 ): PaletteItem[] {
   const items: PaletteItem[] = [
+    ...(suggestions > 0
+      ? [{
+          id: 'suggestions:review',
+          group: 'views' as const,
+          title: suggestedTitle(suggestions),
+          subtitle: 'Review agent and import drafts',
+          keywords: ['suggested', 'proposal', 'agent', 'import'],
+        }]
+      : []),
     ...workspaces.map((workspace, index) => ({
       id: `workspace:${workspace.id}`,
       group: 'views' as const,
@@ -700,6 +734,8 @@ async function loadProposal(
     rows,
     lines,
     source: body?.source ? String(body.source) : undefined,
+    actor_name: body?.actor_name,
+    behalf_name: body?.behalf_name,
     error: rows.some((row) => row.conflict) ? 'Conflict' : undefined,
   })
   session.setProposalId(id)

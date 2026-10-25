@@ -7,10 +7,17 @@ export function FieldDiff({ lines }: { lines: DiffLine[] }) {
     <ul className="field-diff" data-testid="field-diff">
       {lines.map((line) => (
         <li key={line.id}>
+          {line.language ? <span className="lang-chip" data-testid="lang-chip">{line.language}</span> : null}
           <span className="diff-label">{line.label}: </span>
-          {line.before ? <span className="diff-old">{line.before}</span> : null}
-          {line.before && line.after ? <span className="diff-arrow">{' -> '}</span> : null}
-          {line.after ? <span className="diff-new">{line.after}</span> : null}
+          {line.change === 'add' ? <span className="diff-new">+ {line.after}</span> : null}
+          {line.change === 'remove' ? <span className="diff-old">{line.before}</span> : null}
+          {line.change ? null : (
+            <>
+              {line.before ? <span className="diff-old">{line.before}</span> : null}
+              {line.before && line.after ? <span className="diff-arrow">{' -> '}</span> : null}
+              {line.after ? <span className="diff-new">{line.after}</span> : null}
+            </>
+          )}
         </li>
       ))}
     </ul>

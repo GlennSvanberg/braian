@@ -5,7 +5,6 @@ import { MoreHorizontal, Search } from 'lucide-react'
 import { ApiError, api, textValue, type Json } from './api'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
-import { Checkbox } from './components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
 import { Slider } from './components/ui/slider'
 import { Kbd } from './components/ui/kbd'
@@ -15,7 +14,7 @@ import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
 import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
 import { exportPayload, runExport, saveWorkbook } from './export'
-import { diffLines, historyTitle, isCreate, relativeTime } from './field-diff'
+import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, sourceLabel, suggestionLines, valuesFromKept } from './field-diff'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import {
@@ -433,9 +432,22 @@ export function ObjectTable({
     moveActive(next, event.shiftKey)
   }
 
+  const suggestions = useQuery({
+    queryKey: ['proposals'],
+    queryFn: () => api<Json>('/v1/proposals'),
+  })
+  const suggestionCounts = suggestionIndex(suggestions.data)
   const cell = (row: ObjRow, id: string) => {
     if (id === 'key') return row.key
-    if (id === 'name') return row.name
+    if (id === 'name') {
+      const count = suggestionCounts.get(row.id) ?? 0
+      return count > 0 ? (
+        <span>
+          {row.name}
+          <span className="suggestion-count" data-testid="suggestion-count">{count} {copy.suggested}</span>
+        </span>
+      ) : row.name
+    }
     if (id === 'type') return <MetaChip>{typeLabel(defs.data, row.type, uiLanguage)}</MetaChip>
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
@@ -865,14 +877,16 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     enabled: Boolean(session.objectId),
   })
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const suggestions = useQuery({
+    queryKey: ['proposals'],
+    queryFn: () => api<Json>('/v1/proposals'),
+  })
   const [draft, setDraft] = useState<Json>({})
   const [error, setError] = useState('')
-  const [pendingId, setPendingId] = useState<string | null>(null)
   const [flashId, setFlashId] = useState('')
   useEffect(() => onFlash(setFlashId), [])
   useEffect(() => {
     setDraft({})
-    setPendingId(null)
     setError('')
   }, [session.objectId])
   useEffect(() => {
@@ -905,43 +919,17 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const lists = (defs.data?.value_lists as Json[] | undefined) ?? []
   const families = (defs.data?.unit_families as Json[] | undefined) ?? []
   const label = textValue((object.data.values as Json)?.nummer) || String(object.data.id ?? '')
+  const suggestionCount = suggestionIndex(suggestions.data).get(session.objectId) ?? 0
   const save = () => {
     if (Object.keys(draft).length === 0) return
-    void api<Json>('/v1/proposals', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: `${copy.save} ${label}`,
-        source: 'user',
-        rows: [
-          {
-            object_id: session.objectId,
-            object_key: label,
-            type_key: String(object.data?.type ?? ''),
-            base_version: Number(object.data?.version ?? 0),
-            patch: { values: draft },
-          },
-        ],
-      }),
+    void api<Json>(`/v1/objects/${session.objectId}`, {
+      method: 'PATCH',
+      headers: { 'If-Match': String(object.data?.version ?? 0) },
+      body: JSON.stringify({ values: draft }),
     })
-      .then((proposal) => {
-        setPendingId(String(proposal.id))
-        setError('')
-      })
-      .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
-  }
-  const confirm = () => {
-    if (!pendingId) return
-    void api<Json>(`/v1/proposals/${pendingId}/accept`, { method: 'POST', body: '{}' })
-      .then((result) => {
-        const failed = (result.failed as Json[] | undefined) ?? []
-        if (failed.length > 0) {
-          setError(String(failed[0]?.detail ?? copy.validation))
-          return
-        }
+      .then(() => {
         setDraft({})
-        setPendingId(null)
         setError('')
-        session.setProposalId(pendingId)
         session.push(`${copy.saved} ${label}`)
         void queryClient.invalidateQueries({ queryKey: ['object', session.objectId] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
@@ -1017,6 +1005,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             <MetaChip>{typeLabel(defs.data, String(object.data.type), uiLanguage)}</MetaChip>
             {status ? <MetaChip tone={statusTone(status)}>{optionLabel(defs.data, 'status', status, uiLanguage)}</MetaChip> : null}
             <MetaChip>{String(object.data.version ?? '')}</MetaChip>
+            {suggestionCount > 0 ? <span className="suggestion-count" data-testid="suggestion-count">{suggestionCount} {copy.suggested}</span> : null}
           </div>
         </header>
         {fieldSections(valueKeys).map((section) => (
@@ -1027,13 +1016,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         ))}
         {error ? <p className="error" data-testid="detail-error">{error}</p> : null}
       </div>
-      {pendingId ? (
-        <div className="save-bar">
-          <span className="hint">{copy.reviewChange}</span>
-          <button type="button" onClick={() => { setPendingId(null); setDraft({}) }}>{copy.cancel}</button>
-          <button type="button" className="primary" data-testid="confirm-proposal" onClick={confirm}>{copy.confirm}</button>
-        </div>
-      ) : dirty ? (
+      {dirty ? (
         <div className="save-bar">
           <button type="button" onClick={() => setDraft({})}>{copy.discard}</button>
           <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
@@ -1571,86 +1554,191 @@ export function JobHistory({ view }: { view: PanesView }) {
 }
 
 export function ProposalView({ session }: { session: PanesSession }) {
+  const queryClient = useQueryClient()
   const list = useQuery({
     queryKey: ['proposals'],
-    queryFn: () => api<{ proposals: Json[] }>('/v1/proposals'),
+    queryFn: () => api<Json>('/v1/proposals'),
   })
   const proposal = useQuery({
     queryKey: ['proposal', session.proposalId],
     queryFn: () => api<Json>(`/v1/proposals/${session.proposalId}`),
     enabled: Boolean(session.proposalId),
   })
-  const [picked, setPicked] = useState<string[]>([])
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const [dropped, setDropped] = useState<string[]>([])
+  useEffect(() => {
+    setDropped([])
+  }, [session.proposalId])
   useEffect(() => {
     if (session.proposalId) return
-    const rows = list.data?.proposals ?? []
+    const rows = (list.data?.proposals as Json[] | undefined) ?? []
     const first = rows.find((row) => row.status === 'open') ?? rows[0]
     if (first) session.setProposalId(String(first.id))
   }, [list.data, session])
-  const accept = useMutation({
-    mutationFn: (rows?: string[]) =>
-      api(`/v1/proposals/${session.proposalId}/accept`, {
-        method: 'POST',
-        body: JSON.stringify(rows && rows.length > 0 ? { rows } : {}),
-      }),
-    onSuccess: () => session.push(copy.acceptAll),
+  const rows = (proposal.data?.rows as Json[]) ?? []
+  const objectRows = rows.filter((row) => row.object_id && row.type_key !== 'model' && row.type_key !== 'assortment')
+  const loaded = useQueries({
+    queries: objectRows.map((row) => ({
+      queryKey: ['object', String(row.object_id)],
+      queryFn: () => api<Json>(`/v1/objects/${String(row.object_id)}`),
+    })),
   })
+  const objects = new Map(objectRows.map((row, index) => [String(row.object_id), loaded[index]?.data]))
+  const loadingObjects = loaded.some((query) => query.isLoading)
+  const accept = useMutation({
+    mutationFn: (body: { rows: string[]; patches: Record<string, Json> }) =>
+      api<Json>(`/v1/proposals/${session.proposalId}/accept`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (result) => {
+      const failed = (result.failed as Json[] | undefined) ?? []
+      session.push(failed.length > 0 ? String(failed[0]?.detail ?? copy.validation) : copy.saved)
+      setDropped([])
+      void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+      void queryClient.invalidateQueries({ queryKey: ['proposal'] })
+      void queryClient.invalidateQueries({ queryKey: ['object'] })
+      void queryClient.invalidateQueries({ queryKey: ['objects'] })
+    },
+  })
+  const discard = useMutation({
+    mutationFn: () => api(`/v1/proposals/${session.proposalId}/discard`, { method: 'POST' }),
+    onSuccess: () => {
+      session.push(copy.discard)
+      session.setProposalId(null)
+      void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+    },
+  })
+  const proposals = (list.data?.proposals as Json[] | undefined) ?? []
   if (!session.proposalId) {
     return (
       <div data-testid="proposal">
-        {(list.data?.proposals ?? []).map((row) => (
+        {proposals.map((row) => (
           <button key={String(row.id)} onClick={() => session.setProposalId(String(row.id))}>
-            {String(row.title)} · <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip> · {String(row.source)}
+            {String(row.title)} · <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip> · {sourceLabel(row)}
           </button>
         ))}
-        {(list.data?.proposals ?? []).length === 0 ? <p>{copy.proposals}</p> : null}
+        {proposals.length === 0 ? <p>{copy.proposals}</p> : null}
       </div>
     )
   }
-  const rows = (proposal.data?.rows as Json[]) ?? []
-  const lines = ((proposal.data?.consequence as Json | undefined)?.lines as unknown[] | undefined)?.map(String) ?? []
+  const consequence = ((proposal.data?.consequence as Json | undefined)?.lines as unknown[] | undefined)?.map(String) ?? []
+  const droppedIds = new Set(dropped)
+  const saveAll = () => {
+    accept.mutate(acceptSelection(rows, objects, defs.data, droppedIds))
+  }
   return (
     <div data-testid="proposal">
       <div className="proposal-switch">
-        {(list.data?.proposals ?? []).map((row) => (
+        {proposals.map((row) => (
           <button key={String(row.id)} type="button" className={String(row.id) === session.proposalId ? 'primary' : ''} onClick={() => session.setProposalId(String(row.id))}>
             {String(row.title)}
           </button>
         ))}
       </div>
       <div className="toolbar">
-        <strong className={proposal.data?.source === 'agent' ? 'draft-agent' : 'draft-user'}>{String(proposal.data?.title ?? '')}</strong>
-        {proposal.data?.source ? <span className="chip">{String(proposal.data.source)}</span> : null}
+        <strong>{String(proposal.data?.title ?? '')}</strong>
+        {proposal.data ? <span className="chip" data-testid="source-badge">{sourceLabel(proposal.data)}</span> : null}
         {proposal.data?.status ? <MetaChip tone={statusTone(String(proposal.data.status))}>{String(proposal.data.status)}</MetaChip> : null}
-        <button data-testid="accept-all" onClick={() => accept.mutate(undefined)}>{copy.acceptAll}</button>
-        <button onClick={() => accept.mutate(picked)}>{copy.acceptSelected}</button>
-        {lines.length > 0 && session.proposalId ? (
+        <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending} onClick={saveAll}>{copy.saveAll}</button>
+        <button type="button" data-testid="discard-all" onClick={() => discard.mutate()}>{copy.discardAll}</button>
+        {consequence.length > 0 && session.proposalId ? (
           <button type="button" onClick={() => publishProposal(session.proposalId ?? '')}>{copy.reviewChange}</button>
         ) : null}
       </div>
-      {lines.length > 0 ? (
+      {consequence.length > 0 ? (
         <ul className="proposal-tree" data-testid="proposal-tree">
-          {lines.map((line) => (
+          {consequence.map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
       ) : null}
       {rows.map((row) => (
-        <label key={String(row.id)} className={row.conflict ? 'check-row error' : row.status === 'pending' ? 'check-row draft-agent' : 'check-row'}>
-          <Checkbox
-            checked={picked.includes(String(row.id))}
-            onCheckedChange={(checked) =>
-              setPicked((current) =>
-                checked === true ? [...current, String(row.id)] : current.filter((id) => id !== String(row.id)),
-              )
-            }
-          />
-          {String(row.type_key) === 'model' ? <MetaChip>{String((row.patch as Json | undefined)?.op ?? 'model')}</MetaChip> : String(row.object_key ?? row.object_id)}
-          {' '}
-          <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip>
-          {row.conflict ? ` · ${copy.conflict}` : ''}
-        </label>
+        <SuggestionCard
+          key={String(row.id)}
+          row={row}
+          current={(objects.get(String(row.object_id))?.values as Json | undefined) ?? {}}
+          defs={defs.data}
+          dropped={droppedIds}
+          onToggle={(lineId) =>
+            setDropped((current) =>
+              current.includes(lineId) ? current.filter((id) => id !== lineId) : [...current, lineId],
+            )
+          }
+        />
       ))}
     </div>
   )
+}
+
+function SuggestionCard({
+  row,
+  current,
+  defs,
+  dropped,
+  onToggle,
+}: {
+  row: Json
+  current: Json
+  defs: Json | undefined
+  dropped: Set<string>
+  onToggle: (lineId: string) => void
+}) {
+  const model = row.type_key === 'model' || row.type_key === 'assortment'
+  const lines = model ? [] : suggestionLines(current, row.patch, defs)
+  const pending = row.status === 'pending'
+  return (
+    <article className="suggestion-card" data-testid="suggestion-card">
+      <h3>
+        {model ? <MetaChip>{String((row.patch as Json | undefined)?.op ?? row.type_key ?? 'model')}</MetaChip> : String(row.object_key ?? row.object_id)}
+        {' '}
+        <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip>
+        {row.conflict ? ` · ${copy.conflict}` : ''}
+      </h3>
+      {lines.map((line) => {
+        const id = `${String(row.id)}:${line.id}`
+        const rejected = dropped.has(id)
+        return (
+          <div key={id} className="suggestion-field" data-testid="suggestion-field" data-line={line.id}>
+            <FieldDiff lines={[line]} />
+            {pending ? (
+              <>
+                <button type="button" data-testid="accept-field" aria-pressed={!rejected} onClick={() => (rejected ? onToggle(id) : undefined)}>{copy.acceptField}</button>
+                <button type="button" data-testid="reject-field" aria-pressed={rejected} onClick={() => (rejected ? undefined : onToggle(id))}>{copy.rejectField}</button>
+              </>
+            ) : null}
+          </div>
+        )
+      })}
+    </article>
+  )
+}
+
+function acceptSelection(
+  rows: Json[],
+  objects: Map<string, Json | undefined>,
+  defs: Json | undefined,
+  dropped: Set<string>,
+): { rows: string[]; patches: Record<string, Json> } {
+  const ids: string[] = []
+  const patches: Record<string, Json> = {}
+  for (const row of rows) {
+    if (row.status !== 'pending') continue
+    const id = String(row.id)
+    ids.push(id)
+    if (row.type_key === 'model' || row.type_key === 'assortment') continue
+    const current = (objects.get(String(row.object_id))?.values as Json | undefined) ?? {}
+    const lines = suggestionLines(current, row.patch, defs)
+    if (lines.length === 0) continue
+    const kept = lines.filter((line) => !dropped.has(`${id}:${line.id}`))
+    if (kept.length === lines.length) continue
+    patches[id] = kept.length === 0 ? { values: {} } : { values: valuesFromKept(current, proposedValues(row.patch), lines, kept) }
+  }
+  return { rows: ids, patches }
+}
+
+function suggestionIndex(body: Json | undefined): Map<string, number> {
+  const pending = (body?.pending as Json | undefined) ?? {}
+  const objects = (pending.objects as Json[] | undefined) ?? []
+  return new Map(objects.map((row) => [String(row.object_id), Number(row.count ?? 0)]))
 }

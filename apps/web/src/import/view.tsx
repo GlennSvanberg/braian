@@ -15,6 +15,7 @@ import {
   hoverColumn,
   redoImport,
   requestCloseImport,
+  discardImport,
   saveImport,
   selectColumn,
   setImportFilter,
@@ -423,6 +424,7 @@ function Preview() {
 
   return (
     <div className="import-preview" data-testid="import-preview">
+      <span className="chip" data-testid="source-badge">{copy.importJob}</span>
       <div className="import-counters">
         {chip('new', copy.importNew, counters.new, 'ok')}
         {chip('changed', copy.importChanged, counters.changed, 'warn')}
@@ -451,7 +453,13 @@ function Preview() {
                   const title = cellTitle(cell)
                   return (
                     <span key={header.index} className={cellClass(cell?.state ?? 'same')} title={title}>
-                      {cell?.value ?? ''}
+                      {cell?.state === 'changed' && cell.before ? (
+                        <>
+                          <span className="diff-old">{cell.before}</span>
+                          <span className="diff-arrow">{' -> '}</span>
+                          <span className="diff-new">{cell.value ?? ''}</span>
+                        </>
+                      ) : cell?.value ?? ''}
                     </span>
                   )
                 })}
@@ -470,21 +478,24 @@ function Preview() {
             Imported {counters.new ?? 0} · Updated {counters.changed ?? 0} · Deleted {counters.delete ?? 0} · Skipped {failed}
           </p>
         ) : (
-          <button
-            type="button"
-            className="primary"
-            data-testid="import-save"
-            disabled={fixture || session.status !== 'previewed'}
-            onClick={() => {
-              if (Number(counters.delete ?? 0) > 0) {
-                const ok = window.confirm(`${copy.importDeleteObjects} ${counters.delete} ${copy.importObjectsWord}`)
-                if (!ok) return
-              }
-              void saveImport().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
-            }}
-          >
-            {saveLabel(failed, changes)}
-          </button>
+          <>
+            <button type="button" data-testid="import-discard" onClick={discardImport}>{copy.discard}</button>
+            <button
+              type="button"
+              className="primary"
+              data-testid="import-save"
+              disabled={fixture || session.status !== 'previewed'}
+              onClick={() => {
+                if (Number(counters.delete ?? 0) > 0) {
+                  const ok = window.confirm(`${copy.importDeleteObjects} ${counters.delete} ${copy.importObjectsWord}`)
+                  if (!ok) return
+                }
+                void saveImport().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
+              }}
+            >
+              {saveLabel(failed, changes)}
+            </button>
+          </>
         )}
       </footer>
     </div>
