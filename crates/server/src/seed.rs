@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use braian_model::{AttributeId, DefinitionSet, Object, ObjectId};
+use braian_model::{AttributeId, Class, ClassId, DefinitionSet, GroupId, Object, ObjectId};
 use braian_rules::CompiledModel;
 use braian_search::Typesense;
 use braian_store::{Actor, BatchKind, Error, ObjectOp, PrincipalId, ProposalRow, Store};
@@ -64,7 +64,12 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         Ok(_) => {}
         Err(error) => return Err(error.into()),
     }
-    let defs = store.definition_set().await?;
+    let mut defs = store.definition_set().await?;
+    if ensure_demo_inheritance(&mut defs) {
+        defs.model_revision = defs.model_revision.saturating_add(1);
+        CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
+        store.put_definitions(&actor, &defs).await?;
+    }
     let model =
         CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
     let rows: Vec<Value> = serde_json::from_str(OBJECTS)?;
@@ -254,9 +259,14 @@ fn layout(workspace: &str) -> Value {
         }),
         "018f2000-0000-7000-8000-000000000002" => json!({
             "direction": "row",
-            "ratio": 0.34,
+            "ratio": 0.28,
             "first": { "tabs": ["018f2000-0000-7000-8000-000000000201"] },
-            "second": { "tabs": ["018f2000-0000-7000-8000-000000000202", "018f2000-0000-7000-8000-000000000203"] }
+            "second": {
+                "direction": "row",
+                "ratio": 0.46,
+                "first": { "tabs": ["018f2000-0000-7000-8000-000000000202"] },
+                "second": { "tabs": ["018f2000-0000-7000-8000-000000000203"] }
+            }
         }),
         "018f2000-0000-7000-8000-000000000004" => json!({
             "direction": "row",
@@ -306,19 +316,19 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000202",
             "018f2000-0000-7000-8000-000000000002",
             "data_model",
-            "Class",
-            "right",
+            "Classes",
+            "center",
             0,
-            json!({"mode": "editor"}),
+            json!({"mode": "classes"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000203",
             "018f2000-0000-7000-8000-000000000002",
             "data_model",
-            "Impact",
+            "Class",
             "right",
-            1,
-            json!({"mode": "impact"}),
+            0,
+            json!({"mode": "card"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000301",
@@ -702,4 +712,84 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
         )
         .await?;
     Ok(())
+}
+
+/// Gives the synthetic catalog a parent class so the data-model screen can show
+/// inherited attributes. Runs only when the known demo groups are present and
+/// the parent class has not been added yet.
+fn ensure_demo_inheritance(defs: &mut DefinitionSet) -> bool {
+    let Some(structure) = defs
+        .structures
+        .iter_mut()
+        .find(|item| item.key == "sortiment")
+    else {
+        return false;
+    };
+    if structure.classes.iter().any(|class| class.key == "friluft") {
+        return false;
+    }
+    let friluft = demo_id("018f0000-0000-7000-8000-000000000310");
+    let talt = demo_id("018f0000-0000-7000-8000-000000000311");
+    let sovsack = demo_id("018f0000-0000-7000-8000-000000000312");
+    let bygg = demo_id("018f0000-0000-7000-8000-000000000313");
+    let virke = demo_id("018f0000-0000-7000-8000-000000000314");
+    let groups = [friluft, talt, sovsack, bygg, virke];
+    if !groups.iter().all(|id| {
+        structure
+            .groups
+            .iter()
+            .any(|group| group.id.as_uuid() == *id)
+    }) {
+        return false;
+    }
+    let vikt = AttributeId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000105"));
+    let langd = AttributeId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000106"));
+    let spann = AttributeId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000107"));
+    let friluft_class = ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000320"));
+    let bygg_class = ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000324"));
+    structure
+        .classes
+        .retain(|class| !matches!(class.key.as_str(), "talt" | "sovsack" | "virke"));
+    structure.classes.extend([
+        Class {
+            id: friluft_class,
+            key: "friluft".into(),
+            group: GroupId::from_uuid(friluft),
+            parent: None,
+            attributes: vec![vikt],
+        },
+        Class {
+            id: ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000321")),
+            key: "talt".into(),
+            group: GroupId::from_uuid(talt),
+            parent: Some(friluft_class),
+            attributes: vec![langd, spann],
+        },
+        Class {
+            id: ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000322")),
+            key: "sovsack".into(),
+            group: GroupId::from_uuid(sovsack),
+            parent: Some(friluft_class),
+            attributes: vec![],
+        },
+        Class {
+            id: bygg_class,
+            key: "bygg".into(),
+            group: GroupId::from_uuid(bygg),
+            parent: None,
+            attributes: vec![langd],
+        },
+        Class {
+            id: ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000323")),
+            key: "virke".into(),
+            group: GroupId::from_uuid(virke),
+            parent: Some(bygg_class),
+            attributes: vec![vikt],
+        },
+    ]);
+    true
+}
+
+fn demo_id(text: &str) -> Uuid {
+    Uuid::parse_str(text).expect("demo id")
 }

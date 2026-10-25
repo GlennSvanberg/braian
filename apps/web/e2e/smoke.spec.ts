@@ -37,6 +37,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   const original = await nummer.inputValue()
   await nummer.fill(`${original}-red`)
   await page.getByTestId('save-object').click()
+  await page.getByTestId('confirm-proposal').click()
   await expect(page.getByTestId('detail-error')).toHaveCount(0)
   await expect(page.getByTestId('activity-log')).toContainText('Saved')
 

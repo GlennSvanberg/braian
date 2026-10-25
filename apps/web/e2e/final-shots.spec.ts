@@ -1,0 +1,116 @@
+import { expect, test, type Page } from '@playwright/test'
+import { mkdirSync } from 'node:fs'
+import { demoCredentials } from './demo'
+
+const shots = '/opt/cursor/artifacts/final'
+mkdirSync(shots, { recursive: true })
+
+async function login(page: Page) {
+  const demo = demoCredentials()
+  await page.goto('/')
+  await page.getByTestId('email').fill(demo.email)
+  await page.getByTestId('password').fill(demo.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByTestId('object-table')).toBeVisible()
+}
+
+test('final data-model and polish shots', async ({ page }) => {
+  test.skip(!process.env.BRAIAN_FINAL, 'set BRAIAN_FINAL=1 against the demo server')
+  test.setTimeout(180_000)
+  await login(page)
+
+  await page.getByRole('button', { name: 'Data model' }).click()
+  const tree = page.getByTestId('data-model').first()
+  await expect(tree.getByTestId('group-sovsack')).toBeVisible()
+  await page.screenshot({ path: `${shots}/data-model-workspace.png` })
+
+  await tree.getByRole('button', { name: 'sovsack', exact: true }).click()
+  await expect(page.getByTestId('class-editor')).toContainText('Inherited')
+  await page.screenshot({ path: `${shots}/class-card.png` })
+
+  const klass = tree.getByRole('button', { name: 'sovsack', exact: true })
+  const box = await klass.boundingBox()
+  if (!box) throw new Error('missing class button')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 140, box.y + 30, { steps: 12 })
+  await page.screenshot({ path: `${shots}/drag-in-progress.png` })
+  await page.mouse.up()
+  const dropped = page.getByTestId('consequence')
+  await page.waitForTimeout(500)
+  if (await dropped.isVisible()) {
+    await dropped.getByRole('button', { name: 'Cancel' }).click()
+    await expect(dropped).toHaveCount(0)
+  }
+
+  await tree.getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-bygg'))
+  await expect(page.getByTestId('consequence')).toBeVisible()
+  await expect(page.getByTestId('model-diff')).toContainText('Move class sovsack')
+  await page.screenshot({ path: `${shots}/consequence-model-diff.png` })
+  await page.getByTestId('confirm-model').click()
+  await expect(tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
+  await page.screenshot({ path: `${shots}/class-moved.png` })
+  await tree.getByTestId('group-bygg').getByRole('button', { name: 'sovsack', exact: true }).dragTo(tree.getByTestId('group-sovsack'))
+  await page.getByTestId('confirm-model').click()
+  await expect(tree.getByTestId('group-sovsack').getByRole('button', { name: 'sovsack', exact: true })).toBeVisible()
+
+  const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
+    headers: { authorization: 'Bearer dev-agent' },
+    data: { preset: 'power_tools' },
+  })
+  expect(drafted.ok()).toBeTruthy()
+
+  await page.getByRole('button', { name: 'Review' }).click()
+  await page.getByRole('button', { name: 'Power tools', exact: true }).first().click()
+  await expect(page.getByTestId('proposal-tree')).toContainText('Drill')
+  await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
+  await page.getByRole('button', { name: 'Review the change before it is saved.' }).click()
+  await expect(page.getByTestId('consequence')).toContainText('agent')
+  await page.screenshot({ path: `${shots}/agent-consequence.png` })
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await page.getByRole('button', { name: 'Enrich objects' }).click()
+  await page.getByTestId('object-row').first().click()
+  await expect(page.getByTestId('object-detail')).toBeVisible()
+  await page.screenshot({ path: `${shots}/detail-dark.png` })
+  await page.getByRole('button', { name: 'Light' }).click()
+  await page.screenshot({ path: `${shots}/detail-light.png` })
+  await page.getByRole('button', { name: 'Dark' }).click()
+
+  await page.getByRole('button', { name: 'Graph' }).click()
+  await expect(page.locator('svg[data-testid=graph]')).toBeVisible()
+  await page.getByRole('button', { name: 'Open full size' }).click()
+  await expect(page.getByTestId('graph-full')).toBeVisible()
+  await page.screenshot({ path: `${shots}/graph-full.png` })
+  await page.getByRole('button', { name: 'Close full size' }).click()
+
+})
+
+test('agent tree shot', async ({ page }) => {
+  test.skip(!process.env.BRAIAN_FINAL, 'set BRAIAN_FINAL=1 against the demo server')
+  await login(page)
+  const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
+    headers: { authorization: 'Bearer dev-agent' },
+    data: { preset: 'power_tools' },
+  })
+  expect(drafted.ok()).toBeTruthy()
+  await page.getByRole('button', { name: 'Review' }).click()
+  await page.getByRole('button', { name: 'Power tools', exact: true }).first().click()
+  await expect(page.getByTestId('proposal-tree')).toContainText('Add class Drill')
+  await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
+  await page.getByRole('button', { name: 'Review the change before it is saved.' }).click()
+  await expect(page.getByTestId('model-diff')).toContainText('Drill')
+  await page.screenshot({ path: `${shots}/agent-consequence.png` })
+  await page.getByTestId('consequence').getByRole('button', { name: 'Cancel' }).click()
+})
+
+test('ctrl+k shot', async ({ page }) => {
+  test.skip(!process.env.BRAIAN_FINAL, 'set BRAIAN_FINAL=1 against the demo server')
+  await login(page)
+  await page.keyboard.press('Control+k')
+  await expect(page.getByTestId('palette')).toBeVisible()
+  await page.getByTestId('palette-input').fill('add attribute weight (kg) to Drill')
+  await expect(page.locator('.hit', { hasText: 'Proposal · review before it is saved' })).toBeVisible()
+  await page.screenshot({ path: `${shots}/ctrl-k.png` })
+  await page.keyboard.press('Escape')
+})

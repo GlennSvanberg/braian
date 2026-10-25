@@ -82,6 +82,7 @@ pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
             labels: label(&label_language, format!("Attribute {key}")),
             language_dependent,
             multiple,
+            required: false,
             index: flags(index, &kind, multiple),
             kind,
         });
@@ -95,6 +96,7 @@ pub fn definitions(tier: Tier, seed: u64) -> DefinitionSet {
         labels: label(&label_language, "Unused".to_owned()),
         language_dependent: false,
         multiple: false,
+        required: false,
         kind: AttributeKind::Text {
             max_length: Some(32),
             form: TextForm::Short,
@@ -247,6 +249,7 @@ fn class(ids: &mut Ids, key: &str, group: GroupId, attributes: &[AttributeId]) -
         id: ClassId::from_uuid(ids.next()),
         key: key.to_owned(),
         group,
+        parent: None,
         attributes: attributes.to_vec(),
     }
 }

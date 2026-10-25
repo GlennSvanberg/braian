@@ -65,6 +65,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/proposals/{id}", get(get_proposal))
         .route("/v1/proposals/{id}/accept", post(accept_proposal))
         .route("/v1/proposals/{id}/discard", post(discard_proposal))
+        .route("/v1/frecency", get(get_frecency).post(post_frecency))
         .route("/v1/history", get(history))
         .route("/v1/objects/{id}/as-of", get(as_of))
         .route("/v1/objects/{id}/rollback", post(rollback))
@@ -256,6 +257,60 @@ fn registry() -> &'static [Operation] {
             title: "Export visible table",
             permission: Role::Viewer,
             needs_approval: false,
+        },
+        Operation {
+            name: "model.move_class",
+            title: "Move class",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.add_attribute",
+            title: "Add attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.remove_attribute",
+            title: "Remove attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.reorder_attributes",
+            title: "Reorder attributes",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.create_attribute",
+            title: "Create attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.create_class",
+            title: "Create class",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.set_parent",
+            title: "Set class parent",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.draft",
+            title: "Draft data model",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.command",
+            title: "Run a data model command",
+            permission: Role::Editor,
+            needs_approval: true,
         },
     ]
 }
@@ -1477,6 +1532,51 @@ fn create_op(cached: &crate::state::CachedModel, body: &CreateObject) -> Result<
     Ok(ObjectOp::Create(object))
 }
 
+fn person_id(identity: &Identity) -> Uuid {
+    identity
+        .actor
+        .on_behalf_of
+        .unwrap_or(identity.actor.actor)
+        .as_uuid()
+}
+
+async fn get_frecency(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    Ok(Json(json!({
+        "entries": state.store.frecency(person_id(&identity)).await.map_err(store_status)?
+    })))
+}
+
+#[derive(Deserialize)]
+struct FrecencyBody {
+    id: String,
+}
+
+async fn post_frecency(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Json(body): Json<FrecencyBody>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    if body.id.is_empty() || body.id.len() > 200 {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "frecency",
+            "command id is missing",
+        ));
+    }
+    Ok(Json(
+        state
+            .store
+            .touch_frecency(person_id(&identity), &body.id)
+            .await
+            .map_err(store_status)?,
+    ))
+}
+
 async fn list_proposals(
     State(state): State<AppState>,
     Auth(identity): Auth,
@@ -1541,13 +1641,14 @@ async fn get_proposal(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
-    state
+    let mut body = state
         .store
         .proposal(id)
         .await
         .map_err(store_status)?
-        .map(Json)
-        .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal"))
+        .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal"))?;
+    crate::model_proposal::attach(&state, &mut body).await?;
+    Ok(Json(body))
 }
 
 async fn accept_proposal(
@@ -1613,6 +1714,9 @@ async fn accept_proposal(
 }
 
 async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
+    if crate::model_proposal::is_model_row(row) {
+        return crate::model_proposal::apply_row(state, identity, row).await;
+    }
     let cached = state.models.get(&state.store).await?;
     let patch_body = row.get("patch").cloned().unwrap_or(json!({}));
     let values = object_map(patch_body.get("values"));
@@ -1945,27 +2049,34 @@ async fn graph(
             continue;
         };
         let mut sources = Vec::new();
+        let mut seen_classes = BTreeSet::new();
         for structure in &cached.defs.structures {
             for class in &structure.classes {
-                if !class.attributes.contains(&attribute_id) {
-                    continue;
-                }
                 let Some(group_id) = stored.object.groups.get(&structure.id) else {
                     continue;
                 };
-                if covers(structure, class.group, *group_id) {
-                    let group_key = structure
-                        .groups
-                        .iter()
-                        .find(|group| group.id == *group_id)
-                        .map(|group| group.key.clone())
-                        .unwrap_or_default();
-                    sources.push(json!({
-                        "structure": structure.key,
-                        "class": class.key,
-                        "group": group_key,
-                    }));
+                if !covers(structure, class.group, *group_id) {
+                    continue;
                 }
+                let Some((owner_key, inherited)) = attribute_owner(structure, class, attribute_id)
+                else {
+                    continue;
+                };
+                if !seen_classes.insert(owner_key.clone()) {
+                    continue;
+                }
+                let group_key = structure
+                    .groups
+                    .iter()
+                    .find(|group| group.id == *group_id)
+                    .map(|group| group.key.clone())
+                    .unwrap_or_default();
+                sources.push(json!({
+                    "structure": structure.key,
+                    "class": owner_key,
+                    "group": group_key,
+                    "inherited": inherited,
+                }));
             }
         }
         if cached.defs.types.iter().any(|object_type| {
@@ -2005,6 +2116,33 @@ async fn graph(
         "relations": relations,
         "attributes": attributes,
     })))
+}
+
+fn attribute_owner(
+    structure: &braian_model::Structure,
+    class: &braian_model::Class,
+    attribute_id: AttributeId,
+) -> Option<(String, bool)> {
+    let mut current = Some(class);
+    let mut inherited = false;
+    let mut guard = 0;
+    while let Some(item) = current {
+        if item.attributes.contains(&attribute_id) {
+            return Some((item.key.clone(), inherited));
+        }
+        inherited = true;
+        current = item.parent.and_then(|id| {
+            structure
+                .classes
+                .iter()
+                .find(|candidate| candidate.id == id)
+        });
+        guard += 1;
+        if guard > 32 {
+            break;
+        }
+    }
+    None
 }
 
 fn covers(
@@ -2577,6 +2715,9 @@ async fn propose_operation(
             .await?
             .0)
         }
+        name if name.starts_with("model.") => {
+            crate::model_proposal::propose(state, identity, name, args).await
+        }
         "create_object" | "patch_object" | "set_relation" => {
             let id = Uuid::now_v7();
             let object_id = args
@@ -2971,6 +3112,8 @@ mod tests {
         }
         assert!(tools.iter().any(|tool| tool["name"] == "create_object"));
         assert!(tools.iter().any(|tool| tool["name"] == "ui_filter"));
+        assert!(tools.iter().any(|tool| tool["name"] == "model_draft"));
+        assert!(tools.iter().any(|tool| tool["name"] == "model_command"));
     }
 
     #[test]

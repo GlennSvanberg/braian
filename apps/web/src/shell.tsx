@@ -16,6 +16,7 @@ import { viewDisplayTitle, workspaceDisplayName } from './demo-labels'
 import { flashObject } from './flash'
 import { copy } from './i18n'
 import { dockTab, isSplit, type LayoutNode, type Zone } from './layout'
+import { ConsequenceHost } from './consequence'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
 import { onUi } from './ui-bus'
@@ -319,6 +320,7 @@ export function Shell() {
         <span className="grow" />
         <span>{statusLine}</span>
       </footer>
+      <ConsequenceHost session={session} />
       {paletteMode ? (
         <CommandPalette
           key={paletteMode}

@@ -75,10 +75,8 @@ test('final surfaces', async ({ page }) => {
   await page.screenshot({ path: `${shots}/history.png` })
 
   await page.getByRole('button', { name: 'Data model' }).click()
-  await page.locator('.pane-tab', { hasText: 'Impact' }).click()
-  await page.getByTestId('impact-run').click()
-  await expect(page.getByTestId('impact-result')).toContainText('Affected objects')
-  await page.screenshot({ path: `${shots}/data-model-consequence.png` })
+  await expect(page.getByTestId('data-model').first()).toBeVisible()
+  await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
   await page.getByRole('button', { name: 'Light' }).click()
   await page.getByRole('button', { name: 'Enrich objects' }).click()

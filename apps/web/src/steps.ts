@@ -41,6 +41,16 @@ export function stepText(op: string, args: Json = {}): string {
     case 'set_relation':
     case 'rollback':
       return 'Preparing a proposal…'
+    case 'model.command':
+    case 'model.draft':
+    case 'model.move_class':
+    case 'model.add_attribute':
+    case 'model.remove_attribute':
+    case 'model.reorder_attributes':
+    case 'model.create_attribute':
+    case 'model.create_class':
+    case 'model.set_parent':
+      return 'Preparing a data model proposal…'
     default:
       return `Running ${op}…`
   }
