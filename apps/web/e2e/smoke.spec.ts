@@ -94,7 +94,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await expect(page.getByTestId('data-model').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model.png` })
 
-  await page.locator('nav.tabs').getByRole('button', { name: /^Enrich/ }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: /^Products/ }).click()
   await expect(page.getByTestId('activity-log')).toHaveAttribute('data-live', /open|message/, { timeout: 20_000 })
   const before = await page.getByTestId('activity-log').innerText()
   const response = await page.request.post('/v1/objects', {

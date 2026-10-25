@@ -403,9 +403,18 @@ impl Store {
             .execute(
                 "INSERT INTO views (id, workspace_id, type_key, title, pane, position, state)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, pane = EXCLUDED.pane,
-                   position = EXCLUDED.position, state = EXCLUDED.state, type_key = EXCLUDED.type_key",
-                &[&id, &workspace_id, &type_key, &title, &pane, &position, state],
+                 ON CONFLICT (id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id,
+                   title = EXCLUDED.title, pane = EXCLUDED.pane, position = EXCLUDED.position,
+                   state = EXCLUDED.state, type_key = EXCLUDED.type_key",
+                &[
+                    &id,
+                    &workspace_id,
+                    &type_key,
+                    &title,
+                    &pane,
+                    &position,
+                    state,
+                ],
             )
             .await?;
         Ok(())

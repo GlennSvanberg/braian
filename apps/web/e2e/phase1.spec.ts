@@ -23,7 +23,7 @@ test('phase 1 surfaces', async ({ page }) => {
   await signIn(page)
 
   const workspaces = [
-    ['Enrich', 'object-table'],
+    ['Products', 'object-table'],
     ['Set up the system', 'dashboard'],
     ['Data model', 'data-model'],
     ['Review', 'proposal'],
@@ -35,7 +35,7 @@ test('phase 1 surfaces', async ({ page }) => {
   }
 
   await page.getByRole('button', { name: 'Light' }).click()
-  await page.getByRole('button', { name: 'Enrich' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: 'Products' }).click()
   await expect(page.getByTestId('object-table')).toBeVisible()
   await page.screenshot({ path: `${shots}/enrich-objects-light.png` })
   await page.getByRole('button', { name: 'Dark' }).click()

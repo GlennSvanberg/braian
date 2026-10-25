@@ -7,7 +7,6 @@ import {
   defaultPlural,
   displayViewTitle,
   emptyDetail,
-  enrichWorkspaceName,
   migrateSavedWorkspace,
   pluralOf,
   singularOf,
@@ -70,7 +69,7 @@ describe('type labels', () => {
       types,
     )
     expect(first.changed).toBe(true)
-    expect(first.name).toBe('Enrich')
+    expect(first.name).toBeUndefined()
     expect(first.views).toEqual([
       {
         id: 'table',
@@ -91,7 +90,7 @@ describe('type labels', () => {
       [{ id: 'table', type: 'object_table', title: 'Objekt', state: {} }],
       types,
     )
-    expect(legacy.name).toBe('Enrich')
+    expect(legacy.name).toBeUndefined()
     expect(legacy.views[0]?.title).toBe('Products')
 
     const renamed = migrateSavedWorkspace(
@@ -101,12 +100,7 @@ describe('type labels', () => {
     )
     expect(renamed.name).toBeUndefined()
     expect(renamed.views[0]?.state).toMatchObject({ type_key: 'produkt' })
-
-    const only = typeNames({
-      types: [{ id: '200', key: 'produkt', labels: { en: 'Product' } }],
-    }, 'en')
-    expect(enrichWorkspaceName(only)).toBe('Enrich products')
-    expect(migrateSavedWorkspace({ name: 'Enrich objects' }, [], only).name).toBe('Enrich products')
+    expect(migrateSavedWorkspace({ name: 'Enrich objects' }, [], types).name).toBeUndefined()
   })
 
   it('names list and detail views from the open type', () => {

@@ -594,6 +594,8 @@ async fn saving_again_while_a_save_is_running_is_already_saving() {
     assert_eq!(status, StatusCode::CREATED, "{uploaded}");
     let id = uploaded["id"].as_str().unwrap();
     let uuid = uuid::Uuid::parse_str(id).unwrap();
+    // Mapping keeps writing status until it is ready. Set saving only after that.
+    let _ = until(&app, id, &["ready"]).await;
     state
         .store
         .update_import_job(uuid, "saving", None, &json!({}), None)

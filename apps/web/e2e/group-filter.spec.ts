@@ -19,8 +19,8 @@ async function resetEnrich(page: Page) {
   await page.evaluate(() => sessionStorage.setItem('braian.layout.suppressFlush', '1'))
   const listed = await page.request.get('/v1/workspaces')
   const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
-  const enrich = body.workspaces.find((item) => item.name === 'Enrich')
-  if (!enrich) throw new Error('missing workspace Enrich')
+  const enrich = body.workspaces.find((item) => item.name === 'Products')
+  if (!enrich) throw new Error('missing workspace Products')
   const me = await page.request.get('/v1/me')
   const userId = ((await me.json()) as { user_id?: string }).user_id
   if (userId) {
