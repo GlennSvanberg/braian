@@ -10,13 +10,15 @@
 //! writes through its own HTTP client, so a bulk import's connection cannot
 //! hold the upsert.
 //!
-//! The bulk lane reads `BRAIAN_INDEXER_BULK_BATCH` events, then imports them
-//! in waves capped at 200 documents and 2 calls. With nothing interactive in
-//! flight the wave is that full size (default 200×2), so a mass import is not
-//! stuck at one small call. While another process has HTTP requests in flight
-//! but the interactive topic is empty, the wave keeps one Typesense thread
-//! free and pauses only briefly. When the interactive topic has events, the
-//! wave shrinks to one batch of at most 100 and waits up to
+//! The bulk lane reads `BRAIAN_INDEXER_BULK_BATCH` events, builds the
+//! documents, and imports them in waves capped at 200 documents and 2 calls.
+//! The next Redpanda read and document build run while the current import is
+//! in flight, and that next batch's offsets stay uncommitted until its own
+//! import finishes. An idle wave starts at 100×1 and grows only while the
+//! interactive topic stays empty. A second Typesense call is used only when
+//! the previous call finished inside 50 ms, so an upsert is not stuck behind
+//! a long import. When an edit is already queued, the next wave is one batch
+//! of at most 100 and the lane waits up to
 //! `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` before importing anyway. A 4×500 import
 //! held Typesense for the whole batch, and a wait before the flush did
 //! nothing once that import was already in flight.
@@ -26,7 +28,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use braian_events::{BULK_TOPIC, ChangeEvent, INTERACTIVE_TOPIC, Subscription};
+use braian_events::{BULK_TOPIC, ChangeEvent, HeldEvent, INTERACTIVE_TOPIC, Subscription};
 use braian_model::ObjectId;
 use braian_rules::CompiledModel;
 use braian_search::{Typesense, document};
@@ -241,7 +243,6 @@ impl Shared {
         &self,
         pending: &HashMap<String, ChangeEvent>,
         pace: &LanePace,
-        drain: &InteractiveDrain,
     ) -> anyhow::Result<()> {
         let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
         let Some(cached) = self.compiled().await? else {
@@ -251,31 +252,14 @@ impl Shared {
         let ids = object_ids(pending.values().cloned());
         let stored = self.store.get_objects(&ids).await?;
         let docs = documents(&cached.model, &cached.defs, &stored, pending);
-        let plan = WavePlan {
-            batch: pace.import_batch,
-            concurrency: pace.import_concurrency,
-            yield_max: pace.bulk_yield_max,
-        };
-        if pace.kind == LaneKind::Bulk {
-            import_waves(
-                &self.search,
-                &self.store,
-                Some(drain),
-                self.search.alias(),
-                &docs,
-                plan,
-            )
-            .await?;
-        } else {
-            import_batched(
-                &self.search.interactive_writer(),
-                self.search.alias(),
-                &docs,
-                plan.batch,
-                plan.concurrency,
-            )
-            .await?;
-        }
+        import_batched(
+            &self.search.interactive_writer(),
+            self.search.alias(),
+            &docs,
+            pace.import_batch,
+            pace.import_concurrency,
+        )
+        .await?;
         self.store.set_indexer_seq(max_seq).await?;
         Ok(())
     }
@@ -461,6 +445,10 @@ const BUSY_BATCH_CAP: usize = 100;
 /// Long enough for one pressure-gauge tick (15 ms) to publish a commit, short
 /// enough that a click stream does not add 100 ms to every wave.
 const PRESSURE_GAP: Duration = Duration::from_millis(15);
+/// How long one Typesense call may take before a second call would make an
+/// interactive upsert wait. v8's backlog regression was a 200×2 import with
+/// both threads busy; a call inside this budget keeps that wait near 50 ms.
+const IMPORT_BUDGET: Duration = Duration::from_millis(50);
 
 pub(crate) fn cap_bulk_batch(batch: usize) -> usize {
     batch.clamp(1, BULK_BATCH_CAP)
@@ -502,13 +490,88 @@ pub(crate) fn wave_gap(kind: WaveKind, yield_max: Duration) -> Duration {
     gap.min(yield_max)
 }
 
+/// Idle-wave size. Starts at one short call and grows only while the
+/// interactive topic stays empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WaveTune {
+    batch: usize,
+    concurrency: usize,
+}
+
+impl WaveTune {
+    pub(crate) fn new() -> Self {
+        Self {
+            batch: BUSY_BATCH_CAP,
+            concurrency: 1,
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Records one finished wave.
+    ///
+    /// A partial tail does not retune: a 17-document remainder is fast for the
+    /// wrong reason. An edit resets the tune, so the following idle wave is
+    /// 100×1 again. Pressure keeps the configured 200×1 and does not grow a
+    /// second call. Idle grows the batch while one Typesense thread stays
+    /// free, and adds the second call only after a full wave finished inside
+    /// [`IMPORT_BUDGET`].
+    pub(crate) fn observe(&mut self, kind: WaveKind, docs: usize, elapsed: Duration) {
+        if kind == WaveKind::Events {
+            self.reset();
+            return;
+        }
+        if kind != WaveKind::Idle || docs == 0 {
+            return;
+        }
+        let planned = self.batch.saturating_mul(self.concurrency).max(1);
+        if docs < planned {
+            return;
+        }
+        let over_budget = elapsed > IMPORT_BUDGET;
+        if self.concurrency > 1 && over_budget {
+            let per_call = docs.div_ceil(self.concurrency);
+            self.concurrency = 1;
+            self.batch = fit_docs(per_call, elapsed, IMPORT_BUDGET).clamp(1, BUSY_BATCH_CAP);
+            return;
+        }
+        if self.batch < BULK_BATCH_CAP {
+            self.batch = grow_batch(self.batch).min(BULK_BATCH_CAP);
+            return;
+        }
+        if !over_budget && self.concurrency < BULK_CONCURRENCY_CAP {
+            self.concurrency += 1;
+        }
+    }
+}
+
+fn grow_batch(batch: usize) -> usize {
+    batch.saturating_add(batch / 2).max(batch.saturating_add(1))
+}
+
+/// Documents that would fill `budget` at the rate of `docs` per `elapsed`.
+fn fit_docs(docs: usize, elapsed: Duration, budget: Duration) -> usize {
+    if elapsed.is_zero() {
+        return docs.max(1);
+    }
+    let fit = (docs as u128).saturating_mul(budget.as_nanos()) / elapsed.as_nanos().max(1);
+    usize::try_from(fit).unwrap_or(docs).max(1)
+}
+
 /// The next bulk wave.
 ///
-/// Idle waves use the configured size inside the caps, which is what drains a
-/// backlog. Pressure keeps a single call so one Typesense thread stays free
-/// for the write-through upsert. Events shrink further, to one short batch,
-/// because that edit is about to import.
-pub(crate) fn bulk_import_wave(batch: usize, concurrency: usize, kind: WaveKind) -> ImportWave {
+/// Pressure keeps a single call of the configured size, so one Typesense
+/// thread stays free while a bulk COPY is in flight. Events shrink to one
+/// short batch, because that edit is about to import. Idle uses `tune`, which
+/// starts at 100×1.
+pub(crate) fn bulk_import_wave(
+    batch: usize,
+    concurrency: usize,
+    kind: WaveKind,
+    tune: &WaveTune,
+) -> ImportWave {
     let batch = cap_bulk_batch(batch);
     let concurrency = cap_bulk_concurrency(concurrency);
     match kind {
@@ -520,7 +583,10 @@ pub(crate) fn bulk_import_wave(batch: usize, concurrency: usize, kind: WaveKind)
             batch,
             concurrency: 1,
         },
-        WaveKind::Idle => ImportWave { batch, concurrency },
+        WaveKind::Idle => ImportWave {
+            batch: tune.batch.min(batch).max(1),
+            concurrency: tune.concurrency.min(concurrency).max(1),
+        },
     }
 }
 
@@ -566,15 +632,25 @@ async fn import_waves(
     collection: &str,
     docs: &[Value],
     plan: WavePlan,
+    tune: &mut WaveTune,
 ) -> anyhow::Result<()> {
     if docs.is_empty() {
         return Ok(());
     }
     let mut offset = 0;
     while offset < docs.len() {
+        let mut kind = current_kind(drain, store);
+        if kind == WaveKind::Events {
+            tune.reset();
+        }
         wait_for_gap(drain, store, plan.yield_max).await;
-        let wave = bulk_import_wave(plan.batch, plan.concurrency, current_kind(drain, store));
+        kind = current_kind(drain, store);
+        if kind == WaveKind::Events {
+            tune.reset();
+        }
+        let wave = bulk_import_wave(plan.batch, plan.concurrency, kind, tune);
         let end = wave_end(offset, docs.len(), wave);
+        let started = Instant::now();
         import_batched(
             search,
             collection,
@@ -583,6 +659,13 @@ async fn import_waves(
             wave.concurrency,
         )
         .await?;
+        let imported = end - offset;
+        let after = current_kind(drain, store);
+        if kind == WaveKind::Events || after == WaveKind::Events {
+            tune.reset();
+        } else {
+            tune.observe(kind, imported, started.elapsed());
+        }
         offset = end;
     }
     Ok(())
@@ -596,6 +679,9 @@ async fn run_lane(
     pace: LanePace,
     drain: Arc<InteractiveDrain>,
 ) -> anyhow::Result<()> {
+    if pace.kind == LaneKind::Bulk {
+        return run_bulk_lane(shared, subscription, shutdown, stop, pace, drain).await;
+    }
     let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
     let mut since = Instant::now();
     let mut checked = Instant::now()
@@ -645,6 +731,195 @@ async fn run_lane(
     }
 }
 
+struct BuiltBatch {
+    held: Vec<HeldEvent>,
+    docs: Vec<Value>,
+    max_seq: i64,
+}
+
+/// Bulk lane. The next batch is fetched and built while Typesense imports the
+/// current one. Offsets for the next batch stay uncommitted, so a crash
+/// redelivers it instead of skipping it.
+async fn run_bulk_lane(
+    shared: Arc<Shared>,
+    subscription: Subscription,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+    stop: tokio::sync::watch::Receiver<bool>,
+    pace: LanePace,
+    drain: Arc<InteractiveDrain>,
+) -> anyhow::Result<()> {
+    let mut tune = WaveTune::new();
+    let mut prefetched: Option<BuiltBatch> = None;
+    let mut checked = Instant::now()
+        .checked_sub(Duration::from_secs(2))
+        .unwrap_or_else(Instant::now);
+    loop {
+        if *shutdown.borrow() || *stop.borrow() {
+            if let Some(batch) = prefetched.take() {
+                finish_batch(&shared, &subscription, &batch, &drain, &mut tune, &pace).await?;
+            }
+            return Ok(());
+        }
+        if pace.rebuild && checked.elapsed() >= Duration::from_secs(1) {
+            shared.rebuild_if_requested().await?;
+            checked = Instant::now();
+        }
+        let current = if let Some(batch) = prefetched.take() {
+            batch
+        } else {
+            let Some(batch) =
+                build_batch(&shared, &subscription, shutdown.clone(), stop.clone(), pace).await?
+            else {
+                continue;
+            };
+            batch
+        };
+        if *shutdown.borrow() || *stop.borrow() {
+            finish_batch(&shared, &subscription, &current, &drain, &mut tune, &pace).await?;
+            return Ok(());
+        }
+        let imported = import_built(&shared, &current, &drain, &mut tune, &pace);
+        let fetched = build_batch(&shared, &subscription, shutdown.clone(), stop.clone(), pace);
+        let (imported, fetched) = tokio::join!(imported, fetched);
+        imported?;
+        subscription.commit_held(&current.held)?;
+        prefetched = fetched?;
+    }
+}
+
+async fn finish_batch(
+    shared: &Shared,
+    subscription: &Subscription,
+    batch: &BuiltBatch,
+    drain: &InteractiveDrain,
+    tune: &mut WaveTune,
+    pace: &LanePace,
+) -> anyhow::Result<()> {
+    import_built(shared, batch, drain, tune, pace).await?;
+    subscription.commit_held(&batch.held)?;
+    Ok(())
+}
+
+async fn import_built(
+    shared: &Shared,
+    batch: &BuiltBatch,
+    drain: &InteractiveDrain,
+    tune: &mut WaveTune,
+    pace: &LanePace,
+) -> anyhow::Result<()> {
+    if !batch.docs.is_empty() {
+        import_waves(
+            &shared.search,
+            &shared.store,
+            Some(drain),
+            shared.search.alias(),
+            &batch.docs,
+            WavePlan {
+                batch: pace.import_batch,
+                concurrency: pace.import_concurrency,
+                yield_max: pace.bulk_yield_max,
+            },
+            tune,
+        )
+        .await?;
+    }
+    shared.store.set_indexer_seq(batch.max_seq).await?;
+    Ok(())
+}
+
+async fn build_batch(
+    shared: &Shared,
+    subscription: &Subscription,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+    pace: LanePace,
+) -> anyhow::Result<Option<BuiltBatch>> {
+    let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
+    let mut held = Vec::new();
+    let since = Instant::now();
+    loop {
+        if *shutdown.borrow() || *stop.borrow() {
+            break;
+        }
+        let mut first = true;
+        while pending.len() < pace.batch_size {
+            let wait = if pending.is_empty() && first {
+                pace.idle
+            } else if first {
+                pace.armed
+            } else {
+                Duration::ZERO
+            };
+            first = false;
+            let Some(event) = poll_held(subscription, wait, &mut shutdown, &mut stop).await? else {
+                break;
+            };
+            remember(&mut pending, event.event.clone());
+            held.push(event);
+        }
+        if lane_due(pending.len(), pace.batch_size, since.elapsed(), false) {
+            break;
+        }
+        if pending.is_empty() {
+            return Ok(None);
+        }
+        let wait = WINDOW.saturating_sub(since.elapsed());
+        tokio::select! {
+            () = tokio::time::sleep(wait) => {}
+            result = shutdown.wait_for(|flag| *flag) => { let _ = result; }
+            result = stop.wait_for(|flag| *flag) => { let _ = result; }
+        }
+    }
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
+    let Some(cached) = shared.compiled().await? else {
+        return Ok(Some(BuiltBatch {
+            held,
+            docs: Vec::new(),
+            max_seq,
+        }));
+    };
+    let ids = object_ids(pending.values().cloned());
+    let stored = shared.store.get_objects(&ids).await?;
+    let docs = documents(&cached.model, &cached.defs, &stored, &pending);
+    Ok(Some(BuiltBatch {
+        held,
+        docs,
+        max_seq,
+    }))
+}
+
+async fn poll_held(
+    subscription: &Subscription,
+    wait: Duration,
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    stop: &mut tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<Option<HeldEvent>> {
+    if *shutdown.borrow() || *stop.borrow() {
+        return Ok(None);
+    }
+    tokio::select! {
+        biased;
+        result = tokio::time::timeout(wait, subscription.next_held()) => {
+            match result {
+                Ok(Ok(event)) => Ok(Some(event)),
+                Ok(Err(error)) => Err(error.into()),
+                Err(_) => Ok(None),
+            }
+        }
+        result = shutdown.wait_for(|flag| *flag) => {
+            let _ = result;
+            Ok(None)
+        }
+        result = stop.wait_for(|flag| *flag) => {
+            let _ = result;
+            Ok(None)
+        }
+    }
+}
+
 async fn commit_pending(
     shared: &Shared,
     subscription: &Subscription,
@@ -663,7 +938,7 @@ async fn commit_pending(
         drain.set_pending(pending.len());
         drain.set_flushing(true);
     }
-    shared.flush(pending, pace, drain).await?;
+    shared.flush(pending, pace).await?;
     subscription.commit()?;
     pending.clear();
     if pace.kind == LaneKind::Interactive {
@@ -818,6 +1093,7 @@ async fn reindex_with(
     let mut after: Option<Uuid> = None;
     let max_seq = store.max_change_seq().await?;
     let page = i64::try_from(config.bulk_import_batch.max(1).saturating_mul(2)).unwrap_or(1_000);
+    let mut tune = WaveTune::new();
     loop {
         let ids = store.object_ids_after(after, page).await?;
         if ids.is_empty() {
@@ -857,6 +1133,7 @@ async fn reindex_with(
                 concurrency: config.bulk_import_concurrency,
                 yield_max: config.bulk_yield_max,
             },
+            &mut tune,
         )
         .await?;
         after = ids.last().map(|id| id.as_uuid());
@@ -1082,6 +1359,7 @@ mod tests {
     #[test]
     fn bulk_import_defaults_are_short_waves_inside_a_larger_read() {
         let config = IndexerConfig::default();
+        let tune = WaveTune::new();
         assert!(config.bulk_batch_size > config.batch_size);
         assert_eq!(config.bulk_import_batch, 200);
         assert_eq!(config.bulk_import_concurrency, 2);
@@ -1091,18 +1369,20 @@ mod tests {
             bulk_import_wave(
                 config.bulk_import_batch,
                 config.bulk_import_concurrency,
-                WaveKind::Idle
+                WaveKind::Idle,
+                &tune
             ),
             ImportWave {
-                batch: 200,
-                concurrency: 2
+                batch: 100,
+                concurrency: 1
             }
         );
         assert_eq!(
             bulk_import_wave(
                 config.bulk_import_batch,
                 config.bulk_import_concurrency,
-                WaveKind::Pressure
+                WaveKind::Pressure,
+                &tune
             ),
             ImportWave {
                 batch: 200,
@@ -1113,7 +1393,8 @@ mod tests {
             bulk_import_wave(
                 config.bulk_import_batch,
                 config.bulk_import_concurrency,
-                WaveKind::Events
+                WaveKind::Events,
+                &tune
             ),
             ImportWave {
                 batch: 100,
@@ -1124,41 +1405,107 @@ mod tests {
 
     #[test]
     fn a_configured_4_by_500_import_is_capped_and_shrinks_when_interactive_is_pending() {
+        let tune = WaveTune::new();
         assert_eq!(cap_bulk_batch(500), 200);
         assert_eq!(cap_bulk_concurrency(4), 2);
         assert_eq!(
-            bulk_import_wave(500, 4, WaveKind::Idle),
-            ImportWave {
-                batch: 200,
-                concurrency: 2
-            }
-        );
-        assert_eq!(
-            bulk_import_wave(500, 4, WaveKind::Pressure),
-            ImportWave {
-                batch: 200,
-                concurrency: 1
-            }
-        );
-        assert_eq!(
-            bulk_import_wave(500, 4, WaveKind::Events),
+            bulk_import_wave(500, 4, WaveKind::Idle, &tune),
             ImportWave {
                 batch: 100,
                 concurrency: 1
             }
         );
         assert_eq!(
-            bulk_import_wave(150, 1, WaveKind::Idle),
+            bulk_import_wave(500, 4, WaveKind::Pressure, &tune),
             ImportWave {
-                batch: 150,
+                batch: 200,
+                concurrency: 1
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(500, 4, WaveKind::Events, &tune),
+            ImportWave {
+                batch: 100,
+                concurrency: 1
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(150, 1, WaveKind::Idle, &tune),
+            ImportWave {
+                batch: 100,
                 concurrency: 1
             }
         );
     }
 
     #[test]
+    fn an_idle_wave_grows_and_an_edit_drops_it_to_one_short_call() {
+        let mut tune = WaveTune::new();
+        let slow = Duration::from_millis(180);
+        let fast = Duration::from_millis(40);
+        tune.observe(WaveKind::Idle, 100, slow);
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Idle, &tune),
+            ImportWave {
+                batch: 150,
+                concurrency: 1
+            }
+        );
+        tune.observe(WaveKind::Idle, 150, slow);
+        assert_eq!(bulk_import_wave(200, 2, WaveKind::Idle, &tune).batch, 200);
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Idle, &tune).concurrency,
+            1,
+            "a slow call must not take the second Typesense thread"
+        );
+        tune.observe(WaveKind::Idle, 200, fast);
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Idle, &tune),
+            ImportWave {
+                batch: 200,
+                concurrency: 2
+            }
+        );
+        tune.observe(WaveKind::Idle, 400, Duration::from_millis(80));
+        let shrunk = bulk_import_wave(200, 2, WaveKind::Idle, &tune);
+        assert_eq!(shrunk.concurrency, 1);
+        assert_eq!(shrunk.batch, 100);
+        tune.observe(WaveKind::Events, 100, fast);
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Idle, &tune),
+            ImportWave {
+                batch: 100,
+                concurrency: 1
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Events, &tune),
+            ImportWave {
+                batch: 100,
+                concurrency: 1
+            }
+        );
+        tune.observe(WaveKind::Idle, 100, slow);
+        tune.observe(WaveKind::Pressure, 200, slow);
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Idle, &tune).batch,
+            150,
+            "pressure does not reset a wave that already grew"
+        );
+        tune.observe(WaveKind::Idle, 17, fast);
+        assert_eq!(
+            bulk_import_wave(200, 2, WaveKind::Idle, &tune).batch,
+            150,
+            "a short tail does not retune"
+        );
+    }
+
+    #[test]
     fn bulk_docs_are_split_so_the_next_wave_can_wait() {
-        let wave = bulk_import_wave(150, 1, WaveKind::Idle);
+        let wave = ImportWave {
+            batch: 150,
+            concurrency: 1,
+        };
         let total = 1_000;
         let mut offset = 0;
         let mut waves = 0;

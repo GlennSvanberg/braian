@@ -181,15 +181,21 @@ skriver på en egen HTTP-klient. En bulk-import håller sin anslutning tills
 Typesense är klar med hela anropet, och den interaktiva upserten ska inte
 vänta på den anslutningen.
 
-Bulk-spåret läser `BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000) och
-importerar dem i vågor. `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (standard 200,
-tak 200) är dokumenten per anrop och `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY`
-(standard 2, tak 2) är anropen i en våg när ingen interaktiv trafik pågår.
-Fyra anrop på 500 dokument höll Typesense så länge att en enstaka upsert
-fick vänta ut importen. Före varje våg tittar spåret på det interaktiva
-topicet och på `interactive_pressure`:
+Bulk-spåret läser `BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000),
+bygger dokumenten och importerar dem i vågor. Nästa läsning från Redpanda
+och nästa dokumentbygge körs medan den pågående importen är i Typesense.
+Offset för den följande batchen committas först när dess egen import är
+klar, så en krasch inte hoppar över den.
 
-- Tomt topic och ingen pressure: den konfigurerade vågen, standard 200 × 2.
+`BRAIAN_INDEXER_BULK_IMPORT_BATCH` (standard 200, tak 200) och
+`BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` (standard 2, tak 2) är taket, inte
+den våg som alltid skickas. Fyra anrop på 500 dokument höll Typesense så
+länge att en enstaka upsert fick vänta ut importen. Före varje våg tittar
+spåret på det interaktiva topicet och på `interactive_pressure`:
+
+- Tomt topic och ingen pressure: vågen börjar på 100 × 1 och växer medan
+  topicet förblir tomt. Ett andra anrop används bara om det förra anropet
+  blev klart inom 50 ms. En köad redigering nollställer vågen till 100 × 1.
 - Pressure men tomt topic: ett anrop på den konfigurerade batchen (en
   Typesense-tråd ledig) och högst 15 ms väntan.
 - Händelser i topicet, eller en flush som pågår: ett anrop på högst 100
@@ -197,8 +203,8 @@ topicet och på `interactive_pressure`:
   (standard 100). Sedan importerar det ändå.
 
 `0` stänger av väntan. Omindexering använder samma vågor. På layouten ovan
-följer standardens 2 anrop Typesense-trådarna (`--thread-pool-size=2`);
-under pressure lämnas en tråd ledig.
+har Typesense två trådar (`--thread-pool-size=2`); under pressure och under
+en långsam idle-våg lämnas en tråd ledig.
 
 På en maskin med färre kärnor, ändra `cpuset` i overlayet innan det startas.
 En kärna som inte finns gör att containern inte startar.

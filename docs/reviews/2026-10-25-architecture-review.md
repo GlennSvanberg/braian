@@ -176,3 +176,9 @@ The v7 pinned column is the latency target (edit→searchable p95 140 ms) and th
 ## What changed in this branch
 
 The three implemented proposals above. No landing-page numbers. No new 50k run. The claim this review will stand behind after a VPS run is: indexer throughput moves back toward 600 docs/s, and edit→searchable p95 stays in the v7 band (about 140 ms pinned, 260–380 ms unpinned) rather than the v6 band (about 900–1250 ms). Until that run exists, the 600 docs/s figure is the blend in proposal 1.
+
+## v8 follow-up
+
+Measured on the same 8-vCPU VPS at `cbb2fa8` (the change above). Indexer throughput was 510 / 552 / 559 docs/s (pool 8 / pool 12 / pinned). The best 2-second windows reached about 940 docs/s, so the idle time between waves — the next Redpanda read and the document build — was most of the gap to the target. Edit→searchable p95 during COPY improved to 233 / 255 / 190 ms (v7: 375 / 258 / 140). During the backlog it got worse everywhere, 230–290 ms against v7’s 150–200 ms. That phase is the idle gear, which sent 200×2 and filled both Typesense threads. Switching the loader yield on or off moved edit→searchable by less than the ±80 ms noise.
+
+The follow-up overlaps the next fetch and document build with the current import, and commits that next batch only after its own import. Idle waves start at 100×1 and grow only while the interactive topic stays empty. A second import call is allowed only after a full wave finished within 50 ms, which is the wait an upsert pays when both threads are busy. A queued edit resets the next wave to 100×1. This is not a new 50k measurement.
