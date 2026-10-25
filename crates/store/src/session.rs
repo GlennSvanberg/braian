@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use tokio_postgres::NoTls;
 
 use crate::error::Error;
+use crate::pressure::{self, InteractiveGuard, InteractiveLoad, YieldLimits};
 use crate::split::StorageForm;
 use crate::types::CachedDefs;
 
@@ -31,18 +32,31 @@ pub enum DbLane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolConfig {
     pub interactive: usize,
+    /// Connections for import, bulk jobs and the indexer.
+    ///
+    /// Eight matches the bench's default loader count without taking the
+    /// interactive pool. `BRAIAN_POOL_BULK=12` is the quiet-host size for an
+    /// import that should use more of the machine; the interactive gauge is
+    /// what keeps that from sitting on a click.
     pub bulk: usize,
-    /// Sleep after each bulk batch, on top of a scheduler yield.
+    /// Sleep after each idle bulk slice, on top of a scheduler yield.
     /// Zero still yields the task.
     pub bulk_yield: Duration,
+    /// Added to the pause for each in-flight interactive request.
+    pub bulk_yield_step: Duration,
+    /// Upper bound on the pause while interactive requests are running.
+    /// The import continues after this, so a click stream cannot park it.
+    pub bulk_yield_max: Duration,
 }
 
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
             interactive: 24,
-            bulk: 4,
+            bulk: 8,
             bulk_yield: Duration::from_millis(1),
+            bulk_yield_step: Duration::from_millis(4),
+            bulk_yield_max: Duration::from_millis(25),
         }
     }
 }
@@ -54,6 +68,16 @@ impl PoolConfig {
             interactive: positive_env("BRAIAN_POOL_INTERACTIVE", defaults.interactive),
             bulk: positive_env("BRAIAN_POOL_BULK", defaults.bulk),
             bulk_yield: duration_env("BRAIAN_BULK_YIELD_MS", defaults.bulk_yield),
+            bulk_yield_step: duration_env("BRAIAN_BULK_YIELD_STEP_MS", defaults.bulk_yield_step),
+            bulk_yield_max: duration_env("BRAIAN_BULK_YIELD_MAX_MS", defaults.bulk_yield_max),
+        }
+    }
+
+    fn yield_limits(self) -> YieldLimits {
+        YieldLimits {
+            base: self.bulk_yield,
+            step: self.bulk_yield_step,
+            max_pause: self.bulk_yield_max,
         }
     }
 }
@@ -81,7 +105,8 @@ pub struct Store {
     interactive: Pool,
     bulk: Pool,
     lane: DbLane,
-    bulk_yield: Duration,
+    yield_limits: YieldLimits,
+    load: InteractiveLoad,
     form: StorageForm,
     definitions: Arc<RwLock<Option<Arc<CachedDefs>>>>,
 }
@@ -137,7 +162,8 @@ impl Store {
             interactive,
             bulk,
             lane: DbLane::Interactive,
-            bulk_yield: pools.bulk_yield,
+            yield_limits: pools.yield_limits(),
+            load: InteractiveLoad::new(),
             form,
             definitions: Arc::new(RwLock::new(None)),
         })
@@ -183,19 +209,43 @@ impl Store {
         })
     }
 
-    /// Gives the scheduler a turn after a bulk batch, then waits
-    /// [`PoolConfig::bulk_yield`] when this store is on the bulk lane.
+    /// Counts one in-flight interactive read or write.
     ///
-    /// Interactive stores return immediately. A bulk COPY that never yields
-    /// keeps the runtime on the import task while a GET sits in the queue.
+    /// The guard is held for the request. [`Self::on_bulk`] sees the same
+    /// counter and pauses the next chunk while it is above zero.
+    pub fn enter_interactive(&self) -> InteractiveGuard {
+        self.load.enter()
+    }
+
+    /// How many interactive reads and writes are inside this process.
+    pub fn interactive_inflight(&self) -> usize {
+        self.load.inflight()
+    }
+
+    /// Rows to take from a remaining bulk slice.
+    ///
+    /// Interactive stores return `remaining`. Bulk stores shrink it while
+    /// [`Self::interactive_inflight`] is above zero.
+    pub(crate) fn bulk_take(&self, remaining: usize) -> usize {
+        if remaining == 0 || self.lane != DbLane::Bulk {
+            return remaining;
+        }
+        pressure::bulk_pace(self.load.inflight(), remaining, self.yield_limits)
+            .chunk
+            .min(remaining)
+            .max(1)
+    }
+
+    /// Gives the scheduler a turn before the next bulk slice, then waits.
+    ///
+    /// Interactive stores return immediately. With interactive requests in
+    /// flight the wait grows and stops at [`PoolConfig::bulk_yield_max`], so
+    /// the import continues. An idle bulk lane waits [`PoolConfig::bulk_yield`].
     pub async fn yield_between_bulk_batches(&self) {
         if self.lane != DbLane::Bulk {
             return;
         }
-        tokio::task::yield_now().await;
-        if !self.bulk_yield.is_zero() {
-            tokio::time::sleep(self.bulk_yield).await;
-        }
+        pressure::pause_for_bulk(&self.load, self.yield_limits).await;
     }
 
     pub fn form(&self) -> StorageForm {

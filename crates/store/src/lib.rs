@@ -8,6 +8,7 @@ mod conflict;
 mod error;
 mod ids;
 mod ops;
+mod pressure;
 mod product;
 mod scan;
 mod session;
@@ -17,6 +18,7 @@ mod types;
 
 pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind};
+pub use pressure::InteractiveGuard;
 pub use product::{HistoryEntry, ProposalRow, RelaySlotStatus, UserRecord};
 pub use scan::{EXPORT_CHUNK, ExportObject, ExportOrder, ExportScan};
 pub use session::{DbLane, HeldConnection, PoolConfig, Store};

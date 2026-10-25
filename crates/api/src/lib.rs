@@ -19,9 +19,10 @@ mod state;
 mod wire;
 
 use axum::Json;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use braian_store::Store;
 use serde::Serialize;
@@ -90,7 +91,35 @@ pub fn into_router(state: AppState) -> axum::Router {
         .route("/v1/objects/{id}/changes", get(objects::object_changes))
         .merge(platform::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            track_interactive,
+        ))
         .with_state(state)
+}
+
+/// Routes that read or write catalog data count as interactive.
+///
+/// Health checks, the OpenAPI document, the long-lived SSE stream and the
+/// bulk submission itself do not. Counting the stream would pause every
+/// import for as long as a browser tab stayed open.
+pub(crate) fn counts_as_interactive(path: &str) -> bool {
+    !matches!(
+        path,
+        "/healthz" | "/v1/openapi.json" | "/v1/stream" | "/v1/bulk"
+    )
+}
+
+async fn track_interactive(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !counts_as_interactive(request.uri().path()) {
+        return next.run(request).await;
+    }
+    let _guard = state.store.enter_interactive();
+    next.run(request).await
 }
 
 pub async fn identities(store: &Store, raw: &str) -> Result<Vec<Identity>, braian_store::Error> {
@@ -150,6 +179,21 @@ async fn openapi_json(State(_state): State<AppState>) -> impl IntoResponse {
 
 pub fn openapi_spec() -> utoipa::openapi::OpenApi {
     crate::openapi::spec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::counts_as_interactive;
+
+    #[test]
+    fn catalog_routes_count_and_long_lived_ones_do_not() {
+        assert!(counts_as_interactive("/v1/objects/abc"));
+        assert!(counts_as_interactive("/v1/search"));
+        assert!(!counts_as_interactive("/healthz"));
+        assert!(!counts_as_interactive("/v1/openapi.json"));
+        assert!(!counts_as_interactive("/v1/stream"));
+        assert!(!counts_as_interactive("/v1/bulk"));
+    }
 }
 
 mod openapi;

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::error::Error;
 use crate::ids::{Actor, BatchId, ChangeOp, PrincipalId, PrincipalKind};
-use crate::session::Store;
+use crate::session::{DbLane, Store};
 use crate::split::{self, diff_from_patch};
 use crate::types::{
     BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectOp, PrincipalRecord, StoredObject,
@@ -139,23 +139,94 @@ impl Store {
 
     /// Writes `ops` into a batch opened with [`Store::open_batch`].
     ///
-    /// One call is one transaction. A bulk job calls this once per chunk.
+    /// The interactive lane commits the slice in one transaction. The bulk
+    /// lane pauses first, and while interactive requests are still running it
+    /// commits several smaller transactions. Each of those is atomic. A later
+    /// slice can fail after an earlier one has committed.
     pub async fn write_ops(
         &self,
         batch: BatchId,
         actor: &Actor,
+        mut ops: Vec<ObjectOp>,
+    ) -> Result<WriteReceipt, Error> {
+        if ops.is_empty() {
+            return Ok(WriteReceipt {
+                batch_id: batch,
+                last_seq: 0,
+                versions: Vec::new(),
+            });
+        }
+        self.yield_between_bulk_batches().await;
+        let defs = self.defs().await?;
+        let mut versions = Vec::with_capacity(ops.len());
+        loop {
+            let take = self.bulk_take(ops.len());
+            let chunk: Vec<_> = ops.drain(..take).collect();
+            let receipt = self.write_ops_tx(batch, actor, &defs, chunk).await?;
+            let last_seq = receipt.last_seq;
+            versions.extend(receipt.versions);
+            if ops.is_empty() {
+                return Ok(WriteReceipt {
+                    batch_id: batch,
+                    last_seq,
+                    versions,
+                });
+            }
+            if self.lane() == DbLane::Bulk {
+                tokio::task::yield_now().await;
+            }
+            self.yield_between_bulk_batches().await;
+        }
+    }
+
+    async fn write_ops_tx(
+        &self,
+        batch: BatchId,
+        actor: &Actor,
+        defs: &CachedDefs,
         ops: Vec<ObjectOp>,
     ) -> Result<WriteReceipt, Error> {
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
-        let defs = self.defs().await?;
-        let receipt = apply_ops(&tx, self.form(), &defs, batch, actor, &ops).await?;
+        if self.lane() == DbLane::Bulk {
+            // The batch is already open. The slice commits or rolls back
+            // together, and it does not wait for its own WAL flush.
+            tx.batch_execute("SET LOCAL synchronous_commit = off")
+                .await?;
+        }
+        let receipt = apply_ops(&tx, self.form(), defs, batch, actor, &ops).await?;
         tx.commit().await?;
-        self.yield_between_bulk_batches().await;
         Ok(receipt)
     }
 
+    /// Imports `objects` into an open batch.
+    ///
+    /// One transaction when the lane is idle. Under interactive load the bulk
+    /// lane pauses, then commits a smaller slice and repeats. A duplicate key
+    /// still fails the call; rows from an earlier slice of that call stay
+    /// committed.
     pub async fn import_chunk(
+        &self,
+        batch: BatchId,
+        actor: &Actor,
+        objects: &[Object],
+    ) -> Result<(), Error> {
+        if objects.is_empty() {
+            return Ok(());
+        }
+        let mut offset = 0;
+        while offset < objects.len() {
+            self.yield_between_bulk_batches().await;
+            let take = self.bulk_take(objects.len() - offset);
+            let end = offset + take;
+            self.import_slice(batch, actor, &objects[offset..end])
+                .await?;
+            offset = end;
+        }
+        Ok(())
+    }
+
+    async fn import_slice(
         &self,
         batch: BatchId,
         actor: &Actor,
@@ -167,15 +238,13 @@ impl Store {
         let defs = self.defs().await?;
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
-        // A chunk belongs to an open batch that the caller can resume, so it
-        // does not need to wait for its own WAL flush. Order and atomicity are
-        // unchanged; a crash can only lose chunks that were never acknowledged
-        // as durable, never half a chunk.
+        // A slice belongs to an open batch that the caller can resume, so it
+        // does not need to wait for its own WAL flush. The slice is atomic.
+        // A crash can lose a slice that was never flushed, not half of one.
         tx.batch_execute("SET LOCAL synchronous_commit = off")
             .await?;
         copy_creates(&tx, self.form(), &defs, batch, actor, objects).await?;
         tx.commit().await?;
-        self.yield_between_bulk_batches().await;
         Ok(())
     }
 
@@ -518,34 +587,32 @@ impl Store {
         written: &mut u64,
         errors: &mut Vec<BulkRowError>,
     ) -> Result<(), Error> {
-        let chunk = std::mem::take(buffer);
-        match self.import_chunk(batch, actor, &chunk).await {
-            Ok(()) => {
-                *written += chunk.len() as u64;
-                Ok(())
-            }
-            Err(error) if error.is_duplicate() && chunk.len() > 1 => {
-                for object in &chunk {
-                    match self
-                        .import_chunk(batch, actor, std::slice::from_ref(object))
-                        .await
-                    {
-                        Ok(()) => *written += 1,
-                        Err(error) if error.is_duplicate() => {
-                            errors.push(row_error(object, &error));
+        while !buffer.is_empty() {
+            self.yield_between_bulk_batches().await;
+            let take = self.bulk_take(buffer.len());
+            let slice: Vec<_> = buffer.drain(..take).collect();
+            match self.import_slice(batch, actor, &slice).await {
+                Ok(()) => *written += slice.len() as u64,
+                Err(error) if error.is_duplicate() && slice.len() > 1 => {
+                    for object in &slice {
+                        match self
+                            .import_slice(batch, actor, std::slice::from_ref(object))
+                            .await
+                        {
+                            Ok(()) => *written += 1,
+                            Err(error) if error.is_duplicate() => {
+                                errors.push(row_error(object, &error));
+                            }
+                            Err(error) => return Err(error),
                         }
-                        Err(error) => return Err(error),
                     }
                 }
-                Ok(())
+                Err(error) if error.is_duplicate() => {
+                    errors.push(row_error(&slice[0], &error));
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) if error.is_duplicate() => {
-                errors.push(row_error(&chunk[0], &error));
-                Ok(())
-            }
-            Err(error) => Err(error),
-        }?;
-        drop(chunk);
+        }
         // Heavy chunks allocate a large JSON tree per object. glibc keeps that
         // high-water mark, so RSS grew by about a chunk on every batch.
         release_heap();
