@@ -1,11 +1,12 @@
 import { api, type Json } from './api'
+import { splitPair, tabGroup, type Node } from './layout'
 
 export type WorkspaceTemplate = {
   id: string
   name: string
   summary: string
   views: Array<{ type: string; title: string; state?: Json }>
-  layout: (ids: string[]) => Json
+  layout: (ids: string[]) => Node
 }
 
 export const workspaceTemplates: WorkspaceTemplate[] = [
@@ -20,17 +21,7 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
       { type: 'graph', title: 'Graph', state: {} },
       { type: 'history', title: 'History', state: {} },
     ],
-    layout: (ids) => ({
-      direction: 'row',
-      ratio: 0.22,
-      first: { tabs: [ids[0]], active: ids[0] },
-      second: {
-        direction: 'row',
-        ratio: 0.62,
-        first: { tabs: [ids[1]], active: ids[1] },
-        second: { tabs: ids.slice(2), active: ids[2] },
-      },
-    }),
+    layout: (ids) => splitPair('horizontal', 0.22, tabGroup([ids[0]]), splitPair('horizontal', 0.62, tabGroup([ids[1]]), tabGroup(ids.slice(2)))),
   },
   {
     id: 'model',
@@ -41,17 +32,7 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
       { type: 'data_model', title: 'Classes', state: { mode: 'classes' } },
       { type: 'data_model', title: 'Class', state: { mode: 'card' } },
     ],
-    layout: (ids) => ({
-      direction: 'row',
-      ratio: 0.28,
-      first: { tabs: [ids[0]], active: ids[0] },
-      second: {
-        direction: 'row',
-        ratio: 0.46,
-        first: { tabs: [ids[1]], active: ids[1] },
-        second: { tabs: [ids[2]], active: ids[2] },
-      },
-    }),
+    layout: (ids) => splitPair('horizontal', 0.28, tabGroup([ids[0]]), splitPair('horizontal', 0.46, tabGroup([ids[1]]), tabGroup([ids[2]]))),
   },
   {
     id: 'review',
@@ -62,12 +43,7 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
       { type: 'batch_log', title: 'Batch log', state: {} },
       { type: 'job_history', title: 'Jobs', state: {} },
     ],
-    layout: (ids) => ({
-      direction: 'row',
-      ratio: 0.62,
-      first: { tabs: [ids[0]], active: ids[0] },
-      second: { tabs: ids.slice(1), active: ids[1] },
-    }),
+    layout: (ids) => splitPair('horizontal', 0.62, tabGroup([ids[0]]), tabGroup(ids.slice(1))),
   },
   {
     id: 'overview',
@@ -77,12 +53,7 @@ export const workspaceTemplates: WorkspaceTemplate[] = [
       { type: 'dashboard', title: 'Overview', state: {} },
       { type: 'data_model', title: 'To do', state: { checklist: ['languages', 'units', 'types', 'import'] } },
     ],
-    layout: (ids) => ({
-      direction: 'row',
-      ratio: 0.5,
-      first: { tabs: [ids[0]], active: ids[0] },
-      second: { tabs: [ids[1]], active: ids[1] },
-    }),
+    layout: (ids) => splitPair('horizontal', 0.5, tabGroup([ids[0]]), tabGroup([ids[1]])),
   },
 ]
 

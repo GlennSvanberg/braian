@@ -19,7 +19,7 @@ Braian ska kännas som ett snabbt, tätt proffsverktyg med värme, inte som en a
 ## Grund
 
 - **shadcn/ui** (Radix + Tailwind) som komponentgrund. Komponenterna kopieras in och stylas med tokens nedan; standardutseendet från shadcn ska inte synas.
-- `cmdk` för Ctrl+K, `react-resizable-panels` för delade paneler, `sonner` för toasts, `lucide-react` för ikoner.
+- `cmdk` för Ctrl+K, `sonner` för toasts, `lucide-react` för ikoner. Arbetsytans delning är egen flex (n-ära förhållanden och en 8 px träffyta). Paketet `react-resizable-panels` finns kvar installerat men används inte av trädet.
 - Inga ad hoc-färger eller -radier i komponenter. Allt går via CSS-variabler.
 
 ## Färg (från P360 Client v4)
@@ -84,6 +84,16 @@ Regler:
 - Pilar flyttar i tabell, träd, listor och formulär. Enter öppnar, Esc går tillbaka.
 - Fokus är alltid synligt: 2 px ring i `--accent` med 2 px offset.
 - Varje kommando visar sitt kortkommando i `kbd`-stil i meny och palett.
+
+## Fönsterlayout
+
+Förebild: P360 Client v4 (`src/layout.rs`, `src/ui/dock.rs`, `src/core.rs`). Trädet är inte binärt. Ett `split` har `dir` (`horizontal` sida vid sida, `vertical` staplat), `ratios` som summerar till 1 och `children`. En `tabs`-nod har `views` och `active` som index. Arbetsytan bär `focus` och `zoom`.
+
+- Paneler flyter med 6 px mellanrum. Avdelaren är 6 px, med en osynlig 8 px träffyta och ett 2 px streck som blir accent vid hover. Minsta andel är 0.04 vid drag och 0.05 vid tangentbordsändring.
+- Flikar är 28 px i en 32 px remsa. Klick fokuserar, mushjulet eller krysset stänger (`Ctrl+Alt+W`), högerklick öppnar vymenyn. En dragen flik visar en spökbild med titeln.
+- Varje ruta är ett släppmål. Zonen följer pekaren: vänster om 22 %, höger om 78 %, över om 25 %, under om 75 %, annars flik. Förhandsvisningen ligger inuti rutan med 4 px marginal, accentkant och texten `Dock left`, `Dock right`, `Dock top`, `Dock bottom` eller `Add as tab`. Släpp på flikraden sätter index. En tunn kant runt arbetsytan dockar mot kanten med andel 0.3. Esc avbryter draget.
+- `Ctrl+Alt`+pilar flyttar vyn (`move_view_left/right/up/down`). `Alt`+pilar fokuserar grannen. `Ctrl+Alt+Shift`+pilar ändrar storlek med 0.05. `Ctrl+Alt+Z` maximerar rutan (`zoom`). Samma namn finns i menyn, Ctrl+K och operationsregistret. Agentens `open_view` utan zon hamnar till höger. `ui.link` byter inte trädet.
+- Layouten sparas per person och miljö (`default`) som ett dokument. Webben ritar localStorage först och hämtar sedan servern. En låst eller delad arbetsyta skrivs inte över: ändringen blir personens kopia. Återställning tar den kanoniska layouten. Live-strömmen rör inte trädet. Ett gammalt binärt träd (`direction`/`ratio`/`first`/`second`) migreras vid läsning.
 
 ## Logga
 
