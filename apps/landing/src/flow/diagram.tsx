@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { arrowHead, roundedPolyline, sketchRect, sketchRoute, type Pt } from '@/flow/sketch'
+import { arrowHead, roundedPolyline, roundRectPath, type Pt } from '@/flow/sketch'
 
 type Box = {
   id: string
@@ -55,13 +55,17 @@ function BoxNode({ box }: { box: Box }) {
   const cy = box.y + box.h / 2
   return (
     <g>
-      <rect className="flow-fill" x={box.x} y={box.y} width={box.w} height={box.h} rx={8} />
-      <path className="flow-ink" data-draw d={sketchRect(box.x, box.y, box.w, box.h, box.seed)} style={drawStyle(box.order)} />
-      <text x={cx} y={box.sub ? cy - 9 : cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={18}>
+      <path
+        className="flow-node"
+        data-draw
+        d={roundRectPath(box.x, box.y, box.w, box.h, 14)}
+        style={drawStyle(box.order)}
+      />
+      <text x={cx} y={box.sub ? cy - 8 : cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={16}>
         {box.title}
       </text>
       {box.sub ? (
-        <text className="flow-sub" x={cx} y={cy + 13} textAnchor="middle" dominantBaseline="middle" fontSize={13}>
+        <text className="flow-sub" x={cx} y={cy + 12} textAnchor="middle" dominantBaseline="middle" fontSize={12}>
           {box.sub}
         </text>
       ) : null}
@@ -73,7 +77,7 @@ function WirePath({ wire }: { wire: Wire }) {
   const pts = wire.points
   const end = pts[pts.length - 1]
   const prev = pts[pts.length - 2]
-  const d = `${sketchRoute(pts, wire.seed, wire.radius ?? 12, wire.rough ?? 1.05)} ${arrowHead(prev.x, prev.y, end.x, end.y, wire.seed + 9)}`
+  const d = `${roundedPolyline(pts, wire.radius ?? 14)} ${arrowHead(prev.x, prev.y, end.x, end.y)}`
   return (
     <g>
       <path className={toneClass[wire.tone ?? 'ink']} data-draw d={d} style={drawStyle(wire.order)} />
@@ -240,9 +244,9 @@ const desktop: Layout = {
         { x: 442, y: 358 },
         { x: 442, y: 392 },
         { x: 442, y: 444 },
-        { x: 442, y: 512 },
-        { x: 592, y: 498 },
+        { x: 442, y: 498 },
         { x: 760, y: 498 },
+        { x: 835, y: 498 },
         { x: 835, y: 506 },
         { x: 910, y: 506 },
         { x: 1038, y: 506 },
@@ -265,11 +269,9 @@ const desktop: Layout = {
         { x: 442, y: 358 },
         { x: 442, y: 392 },
         { x: 442, y: 444 },
-        { x: 442, y: 530 },
-        { x: 592, y: 534 },
+        { x: 442, y: 534 },
         { x: 760, y: 534 },
-        { x: 835, y: 520 },
-        { x: 1038, y: 520 },
+        { x: 1038, y: 534 },
         { x: 1038, y: 454 },
         { x: 1038, y: 32 },
         { x: 214, y: 32 },
@@ -353,10 +355,32 @@ const mobile: Layout = {
     { id: 'op-pg', points: [{ x: 236, y: 164 }, { x: 236, y: 188 }], order: 9, seed: 211 },
     { id: 'pg-relay', points: [{ x: 236, y: 254 }, { x: 236, y: 274 }], order: 11, seed: 213 },
     { id: 'relay-panda', points: [{ x: 236, y: 322 }, { x: 236, y: 342 }], order: 13, seed: 217 },
-    { id: 'panda-fast', points: [{ x: 160, y: 396 }, { x: 134, y: 422 }], order: 15, seed: 219, tone: 'accent' },
-    { id: 'panda-bulk', points: [{ x: 312, y: 396 }, { x: 322, y: 422 }], order: 15, seed: 223, tone: 'heavy', rough: 1.35 },
-    { id: 'fast-idx', points: [{ x: 134, y: 468 }, { x: 180, y: 494 }], order: 18, seed: 227, tone: 'accent' },
-    { id: 'bulk-idx', points: [{ x: 322, y: 468 }, { x: 292, y: 494 }], order: 18, seed: 229, tone: 'heavy' },
+    { id: 'panda-fast', points: [{ x: 134, y: 396 }, { x: 134, y: 422 }], order: 15, seed: 219, tone: 'accent' },
+    { id: 'panda-bulk', points: [{ x: 322, y: 396 }, { x: 322, y: 422 }], order: 15, seed: 223, tone: 'heavy' },
+    {
+      id: 'fast-idx',
+      points: [
+        { x: 134, y: 468 },
+        { x: 134, y: 481 },
+        { x: 200, y: 481 },
+        { x: 200, y: 494 },
+      ],
+      order: 18,
+      seed: 227,
+      tone: 'accent',
+    },
+    {
+      id: 'bulk-idx',
+      points: [
+        { x: 322, y: 468 },
+        { x: 322, y: 481 },
+        { x: 272, y: 481 },
+        { x: 272, y: 494 },
+      ],
+      order: 18,
+      seed: 229,
+      tone: 'heavy',
+    },
     { id: 'idx-ts', points: [{ x: 236, y: 540 }, { x: 236, y: 560 }], order: 20, seed: 233 },
     {
       id: 'sub',
@@ -414,10 +438,13 @@ const mobile: Layout = {
         { x: 236, y: 254 },
         { x: 236, y: 274 },
         { x: 236, y: 322 },
-        { x: 236, y: 369 },
+        { x: 236, y: 396 },
+        { x: 134, y: 396 },
         { x: 134, y: 422 },
         { x: 134, y: 468 },
-        { x: 180, y: 494 },
+        { x: 134, y: 481 },
+        { x: 200, y: 481 },
+        { x: 200, y: 494 },
         { x: 236, y: 517 },
         { x: 236, y: 540 },
         { x: 236, y: 589 },
@@ -441,9 +468,13 @@ const mobile: Layout = {
         { x: 236, y: 254 },
         { x: 236, y: 322 },
         { x: 236, y: 396 },
+        { x: 322, y: 396 },
         { x: 322, y: 422 },
         { x: 322, y: 468 },
-        { x: 292, y: 494 },
+        { x: 322, y: 481 },
+        { x: 272, y: 481 },
+        { x: 272, y: 494 },
+        { x: 236, y: 517 },
         { x: 236, y: 540 },
         { x: 236, y: 618 },
       ],

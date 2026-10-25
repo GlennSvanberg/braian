@@ -1,15 +1,6 @@
 /* Tokens, type, and component chrome come from the web app. Do not copy hex values. */
 @import "../../web/src/styles.css";
 
-@font-face {
-  font-family: Excalifont;
-  src: url("./fonts/Excalifont-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-  unicode-range: U+0020-007E, U+00A0-00FF, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026;
-}
-
 @source ".";
 @source "../index.html";
 
@@ -25,6 +16,11 @@
 html {
   font-size: 16px;
   scroll-behavior: smooth;
+  --panel-r: calc(var(--r-xl) * 1.85);
+  --panel-r-lg: calc(var(--r-xl) * 2.35);
+  --control-r: calc(var(--r-xl) * 1.15);
+  --control-r-lg: calc(var(--r-xl) * 1.5);
+  --chip-r: var(--r-xl);
 }
 
 html,
@@ -55,7 +51,7 @@ a { color: inherit; }
   background: var(--panel);
   color: var(--text);
   padding: 6px 10px;
-  border-radius: var(--r-md);
+  border-radius: var(--chip-r);
   z-index: 5;
   box-shadow: var(--shadow-md);
   text-decoration: none;
@@ -73,11 +69,11 @@ a { color: inherit; }
 
 .sheet {
   background: var(--panel);
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-r);
   box-shadow: var(--inset);
 }
 
-.sheet-xl { border-radius: var(--r-xl); }
+.sheet-xl { border-radius: var(--panel-r-lg); }
 
 .topbar {
   display: flex;
@@ -86,7 +82,7 @@ a { color: inherit; }
   min-height: 40px;
   padding: 4px 6px 4px 10px;
   background: var(--panel);
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-r);
   box-shadow: var(--inset);
 }
 
@@ -108,7 +104,7 @@ a { color: inherit; }
   display: inline-flex;
   align-items: center;
   padding: 0 8px;
-  border-radius: var(--r-md);
+  border-radius: var(--chip-r);
 }
 
 .nav-link:hover { background: var(--hover); color: var(--text); }
@@ -122,7 +118,7 @@ button.btn {
   height: 28px;
   padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--control-r);
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
@@ -136,6 +132,7 @@ a.btn-lg,
 button.btn-lg {
   height: 36px;
   padding: 0 14px;
+  border-radius: var(--control-r-lg);
 }
 
 a.btn-primary,
@@ -293,7 +290,7 @@ h3 {
   text-align: center;
   padding: 28px 20px;
   background: var(--raised);
-  border-radius: var(--r-lg);
+  border-radius: calc(var(--panel-r-lg) - 10px);
   box-shadow: var(--inset);
 }
 
@@ -416,7 +413,7 @@ h3 {
   align-items: baseline;
   padding: 6px 8px;
   background: var(--raised);
-  border-radius: var(--r-md);
+  border-radius: var(--chip-r);
   box-shadow: var(--inset);
   font-size: 13px;
 }
@@ -431,8 +428,8 @@ h3 {
   place-items: center;
   min-width: 108px;
   color: var(--text-2);
-  border: 1.5px dashed var(--border);
-  box-shadow: none;
+  background: var(--raised);
+  border: none;
 }
 
 .tiles,
@@ -475,7 +472,6 @@ h3 {
   padding: 8px 8px 12px;
 }
 
-.flow-sketch,
 [data-flow] { min-width: 0; }
 
 .flow-wide,
@@ -488,18 +484,18 @@ h3 {
 
 .flow-narrow { display: none; }
 
-.flow-sketch text,
 [data-flow] text {
-  font-family: Excalifont, "Segoe Print", cursive;
+  font-family: var(--font-sans);
+  font-weight: 500;
   fill: var(--text);
 }
 
 .flow-sub,
-.flow-tag { fill: var(--text-2); }
+.flow-tag {
+  fill: var(--text-2);
+  font-weight: 400;
+}
 
-.flow-fill { fill: var(--raised); }
-
-.flow-sketch path[data-draw],
 [data-flow] path[data-draw] {
   fill: none;
   stroke-linecap: round;
@@ -507,21 +503,28 @@ h3 {
   vector-effect: non-scaling-stroke;
 }
 
+[data-flow] path.flow-node {
+  fill: var(--raised);
+  stroke: var(--border);
+  stroke-width: 1.25;
+  stroke-opacity: 1;
+}
+
 .flow-ink {
   stroke: var(--text);
-  stroke-opacity: 0.78;
-  stroke-width: 1.7;
+  stroke-opacity: 0.55;
+  stroke-width: 1.5;
 }
 
 .flow-accent {
   stroke: var(--accent);
-  stroke-width: 1.8;
+  stroke-width: 1.6;
 }
 
 .flow-heavy {
   stroke: var(--text);
-  stroke-opacity: 0.95;
-  stroke-width: 2.8;
+  stroke-opacity: 0.85;
+  stroke-width: 2.15;
 }
 
 .flow-dot { opacity: 0; }
