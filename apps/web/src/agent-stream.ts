@@ -1,4 +1,5 @@
 import type { Json } from './api'
+import { readUiContext, type UiContextSnapshot } from './ui-context'
 
 export type AgentEvent = {
   type: 'step' | 'tool' | 'proposal' | 'answer' | 'error'
@@ -13,6 +14,13 @@ export type AgentEvent = {
   available?: boolean
 }
 
+export function agentRequestBody(
+  messages: Array<{ role: string; content: string }>,
+  context: UiContextSnapshot = readUiContext(),
+) {
+  return { messages, stream: true, context }
+}
+
 export async function streamAgent(
   messages: Array<{ role: string; content: string }>,
   onEvent: (event: AgentEvent) => void,
@@ -22,7 +30,7 @@ export async function streamAgent(
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-    body: JSON.stringify({ messages, stream: true }),
+    body: JSON.stringify(agentRequestBody(messages)),
     signal,
   })
   const type = response.headers.get('content-type') ?? ''

@@ -269,6 +269,18 @@ fn registry() -> &'static [Operation] {
             needs_approval: false,
         },
         Operation {
+            name: "ui.get_context",
+            title: "Read workspace, panes, focus, selection, filters and language",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.get_selection",
+            title: "Read the selected objects",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
             name: "open_view",
             title: "Open view",
             permission: Role::Viewer,
@@ -531,6 +543,21 @@ fn layout_snapshot(workspace: Uuid, document: &Value) -> Value {
     })
 }
 
+/// UI operations withheld from the agent and from MCP.
+/// Empty on purpose: every registered UI operation is exposed. Add a name
+/// here only when the browser must keep the operation and the agent must not
+/// be offered it, and keep that name out of both tool lists.
+const AGENT_UI_EXCLUDED: &[&str] = &[];
+
+fn exposed_to_agent(op: &Operation) -> bool {
+    !AGENT_UI_EXCLUDED.contains(&op.name)
+}
+
+#[cfg(test)]
+fn is_ui_operation(name: &str) -> bool {
+    name.starts_with("ui.") || is_layout_command(name) || name == "get_layout"
+}
+
 fn find_op(name: &str) -> Option<&'static Operation> {
     registry()
         .iter()
@@ -713,7 +740,7 @@ async fn mcp(
             "serverInfo": { "name": "braian", "version": "0.0.0" }
         }),
         "tools/list" => json!({
-            "tools": registry().iter().map(|op| json!({
+            "tools": registry().iter().filter(|op| exposed_to_agent(op)).map(|op| json!({
                 "name": tool_name(op.name),
                 "description": op.title,
                 "inputSchema": { "type": "object" }
@@ -760,8 +787,9 @@ async fn agent(
         let state = state.clone();
         let identity = identity.clone();
         let messages = body.messages;
+        let context = body.context;
         tokio::spawn(async move {
-            drive_agent(&state, &identity, messages, &tx).await;
+            drive_agent(&state, &identity, messages, context, &tx).await;
         });
         let frames = stream::unfold(rx, |mut rx| async move {
             let event = rx.recv().await?;
@@ -776,7 +804,7 @@ async fn agent(
             .body(Body::from_stream(frames))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()));
     }
-    drive_agent(&state, &identity, body.messages, &tx).await;
+    drive_agent(&state, &identity, body.messages, body.context, &tx).await;
     drop(tx);
     let mut reply = String::new();
     let mut available = true;
@@ -822,8 +850,15 @@ async fn drive_agent(
     state: &AppState,
     identity: &Identity,
     incoming: Vec<Value>,
+    context: Value,
     tx: &tokio::sync::mpsc::UnboundedSender<Value>,
 ) {
+    // A question about the marked row is answered from the snapshot. That
+    // skips the model, so it cannot open a list or claim the screen is invisible.
+    if let Some(text) = selection_reply(&incoming, &context) {
+        let _ = tx.send(json!({ "type": "answer", "text": text, "available": true }));
+        return;
+    }
     let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
     let model = std::env::var("BRAIAN_AGENT_MODEL").unwrap_or_else(|_| "gpt-6-luna".into());
     let unavailable =
@@ -836,9 +871,10 @@ async fn drive_agent(
         }));
         return;
     }
+    let latest = latest_user_text(&incoming);
     let mut messages = vec![json!({
         "role": "system",
-        "content": "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. Reply in English. The one-sentence answer and every explanation the person reads must be English."
+        "content": agent_system_prompt(&context, &latest)
     })];
     messages.extend(incoming);
     let client = reqwest::Client::new();
@@ -867,9 +903,13 @@ async fn drive_agent(
             "args": args,
             "state": "run"
         }));
-        let result = run_operation(state, identity, operation, &args, true)
-            .await
-            .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }));
+        let result = if let Some(value) = context_tool_result(operation, &args, Some(&context)) {
+            value
+        } else {
+            run_operation(state, identity, operation, &args, true)
+                .await
+                .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }))
+        };
         let _ = tx.send(json!({ "type": "tool", "name": operation, "result": result }));
         let proposed = result.get("proposal_id").is_some()
             || result.get("needs_approval").and_then(Value::as_bool) == Some(true)
@@ -937,6 +977,7 @@ fn openai_responses_url() -> String {
 fn responses_body(model: &str, messages: &[Value]) -> Value {
     let tools = registry()
         .iter()
+        .filter(|op| exposed_to_agent(op))
         .map(|op| {
             json!({
                 "type": "function",
@@ -1083,6 +1124,303 @@ fn clip(text: &str, max: usize) -> String {
         clipped.push(character);
     }
     clipped
+}
+
+fn empty_ui_context() -> Value {
+    json!({
+        "workspace": null,
+        "panes": [],
+        "focused": null,
+        "selection": [],
+        "filter": "",
+        "sort": "",
+        "language": ""
+    })
+}
+
+fn field_text(value: &Value, key: &str, max: usize) -> String {
+    clip(
+        value.get(key).and_then(Value::as_str).unwrap_or("").trim(),
+        max,
+    )
+}
+
+fn compact_pane(value: &Value) -> Value {
+    json!({
+        "id": field_text(value, "id", 80),
+        "type": field_text(value, "type", 80),
+        "title": field_text(value, "title", 120),
+        "focused": value.get("focused").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+fn compact_selected(value: &Value) -> Option<Value> {
+    let id = field_text(value, "id", 80);
+    let key = field_text(value, "key", 80);
+    let name = field_text(value, "name", 200);
+    let kind = field_text(value, "type", 80);
+    if id.is_empty() && key.is_empty() && name.is_empty() {
+        return None;
+    }
+    Some(json!({ "id": id, "key": key, "name": name, "type": kind }))
+}
+
+/// The screen the browser sent, reduced to the fields the agent is allowed to trust.
+fn compact_ui_context(context: &Value) -> Value {
+    if !context.is_object() {
+        return empty_ui_context();
+    }
+    let workspace = match context.get("workspace") {
+        Some(value) if value.is_object() => json!({
+            "id": field_text(value, "id", 80),
+            "name": field_text(value, "name", 120),
+        }),
+        _ => Value::Null,
+    };
+    let panes = context
+        .get("panes")
+        .and_then(Value::as_array)
+        .map(|panes| panes.iter().take(24).map(compact_pane).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let focused = context
+        .get("focused")
+        .and_then(Value::as_str)
+        .map(|value| clip(value.trim(), 80));
+    let selection = context
+        .get("selection")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(24)
+                .filter_map(compact_selected)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "workspace": workspace,
+        "panes": panes,
+        "focused": focused,
+        "selection": selection,
+        "filter": field_text(context, "filter", 200),
+        "sort": field_text(context, "sort", 120),
+        "language": field_text(context, "language", 16),
+    })
+}
+
+fn latest_user_text(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find_map(|message| {
+            if message.get("role").and_then(Value::as_str) != Some("user") {
+                return None;
+            }
+            message
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+fn reply_language(text: &str) -> &'static str {
+    let lower = text.to_lowercase();
+    if lower.contains('å')
+        || lower.contains('ä')
+        || lower.contains('ö')
+        || lower.contains("vilken")
+        || lower.contains("vilket")
+        || lower.contains("vilka")
+        || lower.contains("markerad")
+        || lower.contains("markerat")
+    {
+        return "sv";
+    }
+    if lower.contains("welche")
+        || lower.contains("welches")
+        || lower.contains("markiert")
+        || lower.contains("ausgewählt")
+        || lower.contains("ausgewahlt")
+    {
+        return "de";
+    }
+    "en"
+}
+
+fn agent_system_prompt(context: &Value, latest: &str) -> String {
+    let language = match reply_language(latest) {
+        "sv" => "Swedish",
+        "de" => "German",
+        _ => "English",
+    };
+    let snapshot =
+        serde_json::to_string(&compact_ui_context(context)).unwrap_or_else(|_| "{}".to_owned());
+    format!(
+        "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. \
+Answer in {language}, the language of the person's latest message. \
+The UI snapshot is the current screen: workspace, open panes with their types, focused pane, selected objects (id, key, name, type), active filter and sort, and the data language. \
+Answer questions about the selection, the open views, or the workspace from that snapshot. Do not call search or list_objects for those questions, and do not ask for a screenshot. \
+Call get_object when a field value is missing from the snapshot. Call ui_get_context or ui_get_selection to read the snapshot again. \
+UI snapshot: {snapshot}"
+    )
+}
+
+fn asks_which_is_selected(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    const PHRASES: &[&str] = &[
+        "vilken produkt",
+        "vilket objekt",
+        "vilken artikel",
+        "vilka produkter",
+        "vilka objekt",
+        "vilken rad",
+        "vilken är markerad",
+        "vad är markerat",
+        "vad är valt",
+        "which product",
+        "which object",
+        "which article",
+        "which item",
+        "which row",
+        "what is selected",
+        "what's selected",
+        "what is marked",
+        "what's marked",
+        "welche produkt",
+        "welches objekt",
+        "welches produkt",
+        "was ist markiert",
+        "was ist ausgewählt",
+        "was ist ausgewahlt",
+    ];
+    if PHRASES.iter().any(|phrase| lower.contains(phrase)) {
+        return !asks_for_field(&lower);
+    }
+    let about = lower.contains("markerad")
+        || lower.contains("markerat")
+        || lower.contains("is selected")
+        || lower.contains("are selected")
+        || lower.contains("is marked")
+        || lower.contains("ist markiert");
+    let identity = lower.contains("vilken")
+        || lower.contains("vilket")
+        || lower.contains("vilka")
+        || lower.contains("which")
+        || lower.contains("vad är")
+        || lower.contains("what is")
+        || lower.contains("what's")
+        || lower.contains("welche")
+        || lower.contains("was ist");
+    about && identity && !asks_for_field(&lower)
+}
+
+fn asks_for_field(text: &str) -> bool {
+    [
+        "status",
+        "vikt",
+        "weight",
+        "pris",
+        "price",
+        "beskrivning",
+        "description",
+        "fält",
+        "field",
+        "värde",
+        "value",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn selection_items(context: &Value) -> Vec<Value> {
+    context
+        .get("selection")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn object_label(item: &Value) -> String {
+    let key = field_text(item, "key", 80);
+    let name = field_text(item, "name", 200);
+    let kind = field_text(item, "type", 80);
+    let id = field_text(item, "id", 80);
+    let head = match (key.is_empty(), name.is_empty()) {
+        (false, false) => format!("{key} {name}"),
+        (false, true) => key,
+        (true, false) => name,
+        (true, true) => id,
+    };
+    if kind.is_empty() {
+        head
+    } else {
+        format!("{head} ({kind})")
+    }
+}
+
+fn format_selection(question: &str, items: &[Value]) -> String {
+    let language = reply_language(question);
+    if items.is_empty() {
+        return match language {
+            "sv" => "Ingenting är markerat.".to_owned(),
+            "de" => "Nichts ist markiert.".to_owned(),
+            _ => "Nothing is selected.".to_owned(),
+        };
+    }
+    let labels = items
+        .iter()
+        .map(object_label)
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    let joined = labels.join(", ");
+    if items.len() == 1 {
+        return match language {
+            "sv" => format!("{joined} är markerad."),
+            "de" => format!("{joined} ist markiert."),
+            _ => format!("{joined} is selected."),
+        };
+    }
+    match language {
+        "sv" => format!("Markerade: {joined}."),
+        "de" => format!("Markiert: {joined}."),
+        _ => format!("Selected: {joined}."),
+    }
+}
+
+/// Direct answer when the person asks which object is marked and the snapshot says.
+fn selection_reply(messages: &[Value], context: &Value) -> Option<String> {
+    if !context.is_object() {
+        return None;
+    }
+    let question = latest_user_text(messages);
+    if !asks_which_is_selected(&question) {
+        return None;
+    }
+    let snapshot = compact_ui_context(context);
+    Some(format_selection(&question, &selection_items(&snapshot)))
+}
+
+fn context_tool_result(name: &str, args: &Value, injected: Option<&Value>) -> Option<Value> {
+    let op = find_op(name)?;
+    if op.name != "ui.get_context" && op.name != "ui.get_selection" {
+        return None;
+    }
+    let snapshot = match injected {
+        Some(value) if value.is_object() => compact_ui_context(value),
+        _ if args.get("workspace").is_some()
+            || args.get("selection").is_some()
+            || args.get("panes").is_some() =>
+        {
+            compact_ui_context(args)
+        }
+        _ => compact_ui_context(args.get("context").unwrap_or(&Value::Null)),
+    };
+    Some(if op.name == "ui.get_selection" {
+        json!({ "selection": snapshot.get("selection").cloned().unwrap_or_else(|| json!([])) })
+    } else {
+        snapshot
+    })
 }
 
 async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<Response, Problem> {
@@ -3017,6 +3355,9 @@ async fn run_operation(
         ));
     };
     require(identity, op.permission)?;
+    if let Some(value) = context_tool_result(op.name, args, None) {
+        return Ok(value);
+    }
     if op.name.starts_with("ui.") || is_layout_command(op.name) {
         return Ok(ui_command(op.name, args));
     }
@@ -3493,6 +3834,10 @@ struct AgentBody {
     messages: Vec<Value>,
     #[serde(default)]
     stream: bool,
+    /// Compact screen snapshot from the browser. Included in the system
+    /// prompt on every turn and returned by `ui.get_context`.
+    #[serde(default)]
+    context: Value,
 }
 
 #[derive(Deserialize)]
@@ -3843,6 +4188,143 @@ mod tests {
         assert_eq!(value["name"], "ui.filter");
         assert_eq!(value["args"]["q"], "tält");
         assert_eq!(value["applied"], false);
+    }
+
+    /// Names the browser lists in `apps/web/src/ui-bus.ts` (`uiOperations`).
+    /// A name added on only one side fails this test or the web registry test.
+    const CLIENT_UI_OPERATIONS: &[&str] = &[
+        "ui.open_view",
+        "ui.open_template",
+        "ui.open_workspace",
+        "ui.place",
+        "ui.link",
+        "ui.filter",
+        "ui.group",
+        "ui.sort",
+        "ui.select",
+        "ui.select_rows",
+        "ui.show_column",
+        "ui.hide_column",
+        "ui.move_column",
+        "ui.set_theme",
+        "ui.export",
+        "ui.get_context",
+        "ui.get_selection",
+        "open_view",
+        "move_view",
+        "split",
+        "resize",
+        "swap",
+        "focus",
+        "move_view_left",
+        "move_view_right",
+        "move_view_up",
+        "move_view_down",
+        "zoom",
+        "close_view",
+        "get_layout",
+        "reset_layout",
+    ];
+
+    fn marked_product() -> Value {
+        json!({
+            "workspace": { "id": "018f2000-0000-7000-8000-000000000003", "name": "Enrich objects" },
+            "panes": [
+                { "id": "table", "type": "object_table", "title": "Objects", "focused": true },
+                { "id": "detail", "type": "object_detail", "title": "Detail", "focused": false },
+                { "id": "graph", "type": "graph", "title": "Graph", "focused": false }
+            ],
+            "focused": "table",
+            "selection": [{
+                "id": "018f1000-0000-7000-8000-000000000011",
+                "key": "SYN-000001",
+                "name": "Insulation 2",
+                "type": "artikel"
+            }],
+            "filter": "",
+            "sort": "a_nummer:asc",
+            "language": "sv"
+        })
+    }
+
+    #[test]
+    fn selection_question_resolves_to_the_marked_object() {
+        let context = marked_product();
+        let messages = vec![json!({ "role": "user", "content": "Vilken produkt är markerad?" })];
+        let reply = selection_reply(&messages, &context).expect("answer");
+        assert!(reply.contains("SYN-000001"), "{reply}");
+        assert!(reply.contains("Insulation 2"), "{reply}");
+        assert!(reply.contains("markerad"), "{reply}");
+        assert!(selection_reply(&messages, &Value::Null).is_none());
+
+        let prompt = agent_system_prompt(&context, "Vilken produkt är markerad?");
+        assert!(prompt.contains("SYN-000001"), "{prompt}");
+        assert!(prompt.contains("Insulation 2"), "{prompt}");
+        assert!(prompt.contains("Swedish"), "{prompt}");
+        assert!(prompt.contains("object_detail"), "{prompt}");
+        assert!(prompt.contains("get_object"), "{prompt}");
+
+        let english = selection_reply(
+            &[json!({ "role": "user", "content": "Which product is selected?" })],
+            &context,
+        )
+        .expect("english");
+        assert!(english.contains("SYN-000001"), "{english}");
+        assert!(english.contains("Insulation 2"), "{english}");
+        assert!(english.contains("selected"), "{english}");
+
+        let read =
+            context_tool_result("ui_get_selection", &json!({}), Some(&context)).expect("tool");
+        assert_eq!(read["selection"][0]["key"], "SYN-000001");
+        assert_eq!(read["selection"][0]["name"], "Insulation 2");
+    }
+
+    #[test]
+    fn every_registered_ui_operation_is_exposed_to_the_agent_or_excluded() {
+        let body = responses_body("gpt-6-luna", &[]);
+        let tools = body["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("name").to_owned())
+            .collect::<BTreeSet<_>>();
+        let mcp = registry()
+            .iter()
+            .filter(|op| exposed_to_agent(op))
+            .map(|op| tool_name(op.name))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(tools, mcp, "the agent and MCP must expose the same tools");
+        assert!(tools.contains("get_object"));
+        assert!(tools.contains("search"));
+        assert!(tools.contains("list_objects"));
+        assert!(tools.contains("ui_get_context"));
+        assert!(tools.contains("ui_get_selection"));
+
+        let registered = registry()
+            .iter()
+            .filter(|op| is_ui_operation(op.name))
+            .map(|op| op.name)
+            .collect::<BTreeSet<_>>();
+        let client = CLIENT_UI_OPERATIONS
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            registered, client,
+            "the operation registry and the web UI operation list diverged"
+        );
+        for name in &registered {
+            let wire = tool_name(name);
+            let excluded = AGENT_UI_EXCLUDED.contains(name);
+            let exposed = tools.contains(&wire);
+            assert!(
+                excluded != exposed,
+                "{name} must be exposed to the agent or listed in AGENT_UI_EXCLUDED"
+            );
+            if exposed {
+                assert_eq!(operation_for_tool(&wire), Some(*name));
+            }
+        }
     }
 
     #[test]

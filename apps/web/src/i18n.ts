@@ -12,7 +12,7 @@ export const copy = {
   loginHint: 'The demo account comes from BRAIAN_DEMO_EMAIL and BRAIAN_DEMO_PASSWORD in .env.',
   search: 'Search',
   searchPlaceholder: 'search (= exact, Enter)',
-  commandPlaceholder: 'Search objects, open views, or ask the agent',
+  commandPlaceholder: 'Search, open views, or ask AI',
   shortcuts: 'Shortcuts',
   close: 'Close',
   save: 'Save',

@@ -16,11 +16,12 @@ import { workspaceDisplayName } from './demo-labels'
 import { WorkspaceDock } from './dock'
 import { flashObject } from './flash'
 import { copy } from './i18n'
-import { applyLayoutCommand, migrateLayout, zoneFromKey, type LayoutDoc, type Place } from './layout'
+import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
 import { onUi } from './ui-bus'
+import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
 import {
   LAYOUT_ENVIRONMENT,
   canonicalDoc,
@@ -346,6 +347,25 @@ export function Shell() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [workspaces.data])
+
+  useEffect(() => {
+    publishMarked(objectId)
+  }, [objectId])
+
+  useEffect(() => {
+    const surface = workspace.data
+    if (!doc || !surface || surface.id !== workspaceId) return
+    const openIds = doc.zoom ? [doc.zoom] : layoutViews(doc.layout)
+    const focused = doc.focus && openIds.includes(doc.focus) ? doc.focus : openIds[0] ?? null
+    const detail = surface.views.find((view) => view.type === 'object_detail')
+    const language = typeof detail?.state.language === 'string' ? detail.state.language : 'sv'
+    publishFrame({
+      workspace: { id: surface.id, name: workspaceDisplayName(surface.name, surface.share_token) },
+      panes: panesFromCatalog(openIds, focused, surface.views),
+      focused,
+      language,
+    })
+  }, [doc, workspace.data, workspaceId])
 
   useEffect(() => {
     return onUi((event) => {

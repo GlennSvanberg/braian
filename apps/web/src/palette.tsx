@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Check, CornerDownLeft, Sparkles } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { MetaChip, optionLabel, statusTone, typeLabel, type ChipTone } from './chips'
 import { toast } from 'sonner'
 import { ApiError, api, textValue, type Json } from './api'
@@ -8,7 +8,7 @@ import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
 import { workspaceDisplayName, viewDisplayTitle } from './demo-labels'
-import { uiLanguage } from './i18n'
+import { copy, uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
@@ -364,6 +364,8 @@ export function CommandPalette({
 
   const groups = groupBlocks(rows.filter((row) => row.group !== 'ask'))
   const askRow = rows.find((row) => row.group === 'ask')
+  const userTurns = turns.filter((turn) => turn.role === 'user')
+  const question = userTurns.at(-1)?.text ?? ''
   const nothingElse = rows.length === 1 && rows[0]?.group === 'ask'
   const selected = nothingElse ? 0 : active
 
@@ -378,39 +380,43 @@ export function CommandPalette({
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDownCapture={onKeyDown}
       >
-        <CommandInput
-          data-testid="palette-input"
-          autoFocus
-          value={query}
-          placeholder={mode === 'ai' ? 'Ask AI' : 'Search objects, open views, or ask the agent'}
-          onValueChange={(value) => {
-            setQuery(value)
-            setActive(null)
-          }}
-        />
-        {mode === 'ai' ? (
-          <div className="toolbar">
-            <span className="chip"><Sparkles aria-hidden="true" size={12} /> AI</span>
-            <span className="spacer" />
-            <button type="button" className="icon-btn" onClick={onClose}>Close</button>
-          </div>
-        ) : null}
+        <div className="palette-query">
+          {mode === 'ai' ? <span className="ai-badge" data-testid="ai-badge">AI</span> : null}
+          <CommandInput
+            data-testid="palette-input"
+            autoFocus
+            value={query}
+            placeholder={mode === 'ai' ? 'Ask AI' : copy.commandPlaceholder}
+            onValueChange={(value) => {
+              setQuery(value)
+              setActive(null)
+            }}
+          />
+          {mode === 'ai' ? (
+            <button type="button" className="icon-btn palette-close" onClick={onClose}>{copy.close}</button>
+          ) : null}
+        </div>
         {stack.length > 0 ? <div className="crumb">{stack.map((crumb) => crumb.label).join(' / ')}</div> : null}
         {mode === 'ai' ? (
-          <div className="palette-list" data-testid="ai-log">
-            {turns.map((turn, index) => (
-              <button key={`${turn.role}-${index}`} type="button" className="ai-turn" onClick={() => { setQuery(turn.text); setEditing(index) }}>
+          <div className="ai-log" data-testid="ai-log">
+            {userTurns.slice(0, -1).map((turn, index) => (
+              <button key={`earlier-${index}`} type="button" className="ai-earlier" onClick={() => { setQuery(turn.text); setEditing(index) }}>
                 {turn.text}
               </button>
             ))}
+            {question ? <h2 className="ai-question" data-testid="ai-question">{question}</h2> : null}
             {running ? <div className="progress" data-testid="ai-progress"><div className="progress-bar" /></div> : null}
-            {steps.map((step) => (
-              <div key={step.id} className={step.state === 'done' ? 'ai-step done' : 'ai-step'} data-testid="ai-step">
-                {step.state === 'done' ? <Check size={14} /> : <span className="chip">…</span>}
-                {step.text}
-              </div>
-            ))}
-            {answer ? <p className="ai-turn" data-testid="ai-answer">{answer}</p> : null}
+            {steps.length > 0 ? (
+              <ol className="ai-steps">
+                {steps.map((step) => (
+                  <li key={step.id} className={step.state === 'done' ? 'ai-step done' : 'ai-step'} data-testid="ai-step">
+                    {step.state === 'done' ? <Check size={14} /> : <span className="ai-step-mark" aria-hidden="true">…</span>}
+                    <span>{step.text}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {answer ? <p className="ai-answer" data-testid="ai-answer">{answer}</p> : null}
             {proposal ? (
               <div data-testid="palette-proposal">
                 <strong>{proposal.title}</strong>
@@ -451,7 +457,7 @@ export function CommandPalette({
                       >
                         <span className="hit-copy">
                           <span className="hit-title">{highlight(row.title, query)}</span>
-                          <small>{row.subtitle}</small>
+                          {row.subtitle ? <small>{row.subtitle}</small> : null}
                         </span>
                         {row.chips && row.chips.length > 0 ? (
                           <span className="hit-chips">
@@ -477,14 +483,17 @@ export function CommandPalette({
           >
             <span className="hit-copy">
               <span className="hit-title">{highlight(askRow.title, query)}</span>
-              <small>{askRow.subtitle}</small>
+              {askRow.subtitle ? <small>{askRow.subtitle}</small> : null}
             </span>
             {askRow.kbd ? <Kbd>{askRow.kbd}</Kbd> : null}
           </CommandItem>
         ) : null}
-        <div className="palette-foot">
-          <span data-testid="palette-active">{activeRow ? activeRow.subtitle : '↵ run'}</span>
-          <span><CornerDownLeft size={12} aria-hidden="true" /> run · Ctrl+↵ actions · Tab ask AI · Esc close</span>
+        <div className="palette-foot" data-testid="palette-foot">
+          <span data-testid="palette-active">{activeRow?.subtitle ?? ''}</span>
+          <span><Kbd>Enter</Kbd> run</span>
+          <span><Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd> actions</span>
+          <span><Kbd>Tab</Kbd> ask AI</span>
+          <span><Kbd>Esc</Kbd> close</span>
         </div>
       </Command>
     </div>
@@ -584,9 +593,11 @@ function applyEvent(
   if (event.type === 'tool' && event.result) {
     const result = event.result
     if (result.ui === true) applyUiResult(result)
-    else if (event.name) {
+    else     if (event.name) {
       const op = uiOperations.find((name) => name.replaceAll('.', '_') === event.name) ?? event.name
-      if (op.startsWith('ui.')) dispatchUi(op, (result.args as Json) ?? {})
+      if (op.startsWith('ui.') && op !== 'ui.get_context' && op !== 'ui.get_selection') {
+        dispatchUi(op, (result.args as Json) ?? {})
+      }
     }
     const proposalId = String(result.proposal_id ?? (result.needs_approval ? result.id ?? '' : ''))
     if (proposalId) void loadProposal(proposalId, setProposal, session)

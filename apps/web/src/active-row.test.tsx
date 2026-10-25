@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from './palette'
 import { ObjectTable, type PanesSession } from './panes'
 import { StructureTree } from './shell'
+import { readUiContext, resetUiContext } from './ui-context'
 
 const { scrollToIndex } = vi.hoisted(() => ({ scrollToIndex: vi.fn() }))
 
@@ -114,6 +115,7 @@ function PaletteHarness() {
 }
 
 beforeEach(() => {
+  resetUiContext()
   scrollToIndex.mockClear()
   vi.stubGlobal(
     'ResizeObserver',
@@ -207,6 +209,7 @@ describe('active row', () => {
     expect(screen.getByTestId('detail').textContent).toBe('id-4')
     expect(rows()[0]?.getAttribute('aria-selected')).toBe('false')
     expect(scrollToIndex).toHaveBeenLastCalledWith(4)
+    expect(readUiContext().selection).toEqual([{ id: 'id-4', key: 'ART-4', name: 'Four', type: 'artikel' }])
   })
 
   it('moves the tree selection with the same active row arrows start from', async () => {

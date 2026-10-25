@@ -56,7 +56,7 @@ export function visibleRows(
       id: 'ask',
       group: 'ask',
       title: askTitle(query),
-      subtitle: 'Stays in this panel',
+      subtitle: '',
       kbd: 'Tab',
     },
   ]

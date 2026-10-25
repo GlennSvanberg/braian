@@ -42,6 +42,8 @@ export const uiOperations = [
   'ui.move_column',
   'ui.set_theme',
   'ui.export',
+  'ui.get_context',
+  'ui.get_selection',
   'open_view',
   'move_view',
   'split',
