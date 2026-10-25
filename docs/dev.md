@@ -115,12 +115,32 @@ inte med sig någon annan installation.
 
 API:t har två Postgres-pooler. Interaktiva läsningar och skrivningar tar
 `BRAIAN_POOL_INTERACTIVE` (standard 24). Massinläsning, bulk-jobb och indexern
-tar `BRAIAN_POOL_BULK` (standard 4), så att en COPY inte kan ta alla anslutningar.
-Mellan bulk-batcher ger körningen tillbaka tråden och väntar
-`BRAIAN_BULK_YIELD_MS` millisekunder (standard 1, `0` väntar inte men yieldar
-ändå). `BRAIAN_BULK_JOBS` (standard 1) är hur många bulk-jobb som kör, och
+tar `BRAIAN_POOL_BULK` (standard 8), så att en COPY inte kan ta alla anslutningar.
+Åtta räcker till benchens standard på åtta loaders. Sätt `12` på en värd där
+importen ska använda mer av maskinen; det var poolstorleken som återställde
+bulk-takten när fyra anslutningar höll igen den.
+
+Varje pågående interaktiv läsning eller skrivning i API-processen räknas.
+Hälsokontroll, OpenAPI, SSE-strömmen och själva `POST /v1/bulk` räknas inte:
+en öppen flik skulle annars pausa importen hela tiden. Innan nästa bulk-slice
+hämtar en anslutning tittar jobbet på räkningen. Är den noll väntar jobbet
+`BRAIAN_BULK_YIELD_MS` (standard 1, `0` yieldar bara). Är den över noll växer
+väntan med `BRAIAN_BULK_YIELD_STEP_MS` per pågående anrop (standard 4) och
+stannar vid `BRAIAN_BULK_YIELD_MAX_MS` (standard 25). Slice:n blir också
+mindre: konfigurerad storlek delat med `1 + pågående anrop`, minst en rad och
+högst 32. Taket gör att en lång klickström saktar bulken men inte parkerar den.
+
+Bulk-slice:ar sätter `synchronous_commit = off` inuti transaktionen. Slice:n
+är fortfarande atomär. Jobbets nästa framstegsskrivning är en vanlig commit
+och spolar då även den föregående slice:ns WAL. En krasch kan tappa den sista
+slice som inte hunnit bli durable, inte halva slice:n.
+
+`BRAIAN_BULK_JOBS` (standard 1) är hur många bulk-jobb som kör, och
 `BRAIAN_BULK_QUEUE` (standard 4) hur många som får vänta. Fler får 429.
-`BRAIAN_BULK_CHUNK` (standard 25) är raderna per transaktion i `POST /v1/bulk`.
+`BRAIAN_BULK_CHUNK` (standard 25) är raderna per transaktion i `POST /v1/bulk`
+när ingen interaktiv trafik pågår. `braian-bench perf-load` använder samma
+standardvärden som koden, inte miljövariablerna, så att en export i skalet
+inte ändrar en mätning av misstag.
 
 `POST /v1/objects:batchGet` läser upp till 200 id. Utan `values`, `fields`
 eller `parts` kommer bara huvudet och grupperna. `fields` är attributnycklar;
@@ -144,12 +164,18 @@ docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres redpan
 | 5 | lastgeneratorn (`perf`-profilen, eller `taskset -c 5`) |
 | 6–7 | Typesense, `--thread-pool-size=2` |
 
-Indexern importerar redan parallellt. `BRAIAN_INDEXER_IMPORT_CONCURRENCY`
-(standard 4) är hur många `documents/import`-anrop som pågår samtidigt, och
-`BRAIAN_INDEXER_IMPORT_BATCH` (standard 100) är dokumenten per anrop. På
-layouten ovan, sätt samtidigheten till 2 så den följer Typesense-trådarna,
-och lämna batchen på 100. `BRAIAN_INDEXER_BATCH` (standard 200) är hur många
-händelser som läses från Postgres innan en import.
+Indexern har två spår. Det interaktiva spåret använder
+`BRAIAN_INDEXER_BATCH` (standard 200), `BRAIAN_INDEXER_IMPORT_BATCH`
+(standard 100) och `BRAIAN_INDEXER_IMPORT_CONCURRENCY` (standard 4).
+Bulk-spåret väntar tills det interaktiva topicet är tömt innan det importerar,
+upp till `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` (standard 100). Därefter importerar
+det ändå, så att en jämn ström av ändringar inte svälter massinläsningen. Bulk läser
+`BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000) och importerar dem som
+`BRAIAN_INDEXER_BULK_IMPORT_BATCH` dokument per anrop (standard 500) med
+`BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` anrop igång (standard 4). Det är fyra
+anrop på 500 dokument, i stället för små anrop på 100, och är det som lyfter
+taket mot Typesense. På layouten ovan, sätt bulk-samtidigheten till 2 så den
+följer Typesense-trådarna. Omindexering använder bulk-storlekarna.
 
 På en maskin med färre kärnor, ändra `cpuset` i overlayet innan det startas.
 En kärna som inte finns gör att containern inte startar.
