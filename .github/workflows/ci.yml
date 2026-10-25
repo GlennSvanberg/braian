@@ -13,17 +13,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Heavy steps stay in this job so a required check named rust still completes
-      # green when the diff is docs, markdown, or the landing page.
-      - uses: dorny/paths-filter@v3
+      # Heavy steps stay in this job so a required check still completes green
+      # when every file is docs/**, markdown, or the landing page.
+      - name: Detect code changes
         id: changes
-        with:
-          filters: |
-            code:
-              - '**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!apps/landing/**'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|apps/landing/*) ;;
+              *) code=true; break ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
       - run: rustup show
         if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
@@ -70,15 +75,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - name: Detect code changes
         id: changes
-        with:
-          filters: |
-            code:
-              - '**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!apps/landing/**'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|apps/landing/*) ;;
+              *) code=true; break ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
       - run: rustup show
         if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
@@ -104,15 +114,20 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - name: Detect code changes
         id: changes
-        with:
-          filters: |
-            code:
-              - '**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!apps/landing/**'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|apps/landing/*) ;;
+              *) code=true; break ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
       - run: rustup show
         if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
