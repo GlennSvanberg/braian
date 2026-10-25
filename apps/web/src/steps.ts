@@ -20,7 +20,30 @@ export function stepText(op: string, args: Json = {}): string {
       return 'Opening the workspace…'
     case 'ui.open_view':
     case 'ui.place':
+    case 'open_view':
       return 'Opening the view…'
+    case 'move_view':
+    case 'move_view_left':
+    case 'move_view_right':
+    case 'move_view_up':
+    case 'move_view_down':
+      return 'Moving the view…'
+    case 'split':
+      return 'Splitting the pane…'
+    case 'resize':
+      return 'Resizing the pane…'
+    case 'swap':
+      return 'Swapping the views…'
+    case 'focus':
+      return 'Focusing the pane…'
+    case 'zoom':
+      return 'Maximizing the pane…'
+    case 'close_view':
+      return 'Closing the view…'
+    case 'reset_layout':
+      return 'Resetting the layout…'
+    case 'get_layout':
+      return 'Reading the layout…'
     case 'ui.select':
     case 'get_object':
       return 'Opening the object…'

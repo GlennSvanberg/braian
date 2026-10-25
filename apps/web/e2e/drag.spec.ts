@@ -28,17 +28,18 @@ async function workspaceByName(request: APIRequestContext, name: string) {
   return (await full.json()) as Workspace
 }
 
-async function saveWorkspace(request: APIRequestContext, workspace: Workspace) {
-  const response = await request.post('/v1/workspaces', {
-    data: {
-      id: workspace.id,
-      name: workspace.name,
-      locked: workspace.locked,
-      share_token: workspace.share_token,
-      layout: workspace.layout,
-    },
-  })
-  expect(response.ok()).toBeTruthy()
+async function clearPersonalLayout(page: Page, workspaceId: string) {
+  await page.evaluate(() => sessionStorage.setItem('braian.layout.suppressFlush', '1'))
+  const me = await page.request.get('/v1/me')
+  const userId = ((await me.json()) as { user_id?: string }).user_id
+  if (userId) {
+    await page.evaluate((key) => localStorage.removeItem(key), `braian.layout.${userId}.default.${workspaceId}`)
+  }
+  const deleted = await page.request.delete(`/v1/workspaces/${workspaceId}/state?environment=default`)
+  expect(deleted.ok() || deleted.status() === 204).toBeTruthy()
+  await page.reload()
+  await expect(page.getByTestId('dock')).toBeVisible()
+  await page.evaluate(() => sessionStorage.removeItem('braian.layout.suppressFlush'))
 }
 
 test('column width is restored after reload', async ({ page }) => {
@@ -78,24 +79,22 @@ test('column width is restored after reload', async ({ page }) => {
 test('dragging a pane tab docks it and can be restored', async ({ page }) => {
   await login(page)
   const before = await workspaceByName(page.request, 'Enrich objects')
+  await clearPersonalLayout(page, before.id)
   const dividers = await page.getByTestId('split-divider').count()
   try {
     const tab = page.locator('.pane-tab', { hasText: 'Graph' })
-    const box = await tab.boundingBox()
-    if (!box) throw new Error('missing graf tab')
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    const pane = page.locator('section.pane').filter({ has: tab })
+    const tabBox = await tab.boundingBox()
+    const paneBox = await pane.boundingBox()
+    if (!tabBox || !paneBox) throw new Error('missing graf tab')
+    await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2, box.y + 90, { steps: 12 })
-    await expect(page.getByTestId('drop-overlay').first()).toBeVisible()
-    const zone = page.getByTestId('drop-right').last()
-    const zoneBox = await zone.boundingBox()
-    if (!zoneBox) throw new Error('missing drop zone')
-    await page.mouse.move(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2, { steps: 8 })
+    await page.mouse.move(paneBox.x + paneBox.width * 0.9, paneBox.y + paneBox.height * 0.5, { steps: 12 })
+    await expect(page.getByTestId('drop-right')).toBeVisible()
     await page.mouse.up()
     await expect(page.getByTestId('split-divider')).toHaveCount(dividers + 1)
   } finally {
-    await saveWorkspace(page.request, before)
-    await page.reload()
+    await clearPersonalLayout(page, before.id)
     await expect(page.getByTestId('split-divider')).toHaveCount(dividers)
   }
 })

@@ -331,6 +331,61 @@ impl Store {
         Ok(row.get(0))
     }
 
+    pub async fn workspace_state(
+        &self,
+        user_id: Uuid,
+        environment: &str,
+        workspace_id: Uuid,
+    ) -> Result<Option<(Value, DateTime<Utc>)>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT document, updated_at FROM workspace_states
+                 WHERE user_id = $1 AND environment = $2 AND workspace_id = $3",
+                &[&user_id, &environment, &workspace_id],
+            )
+            .await?;
+        Ok(row.map(|row| (row.get(0), row.get(1))))
+    }
+
+    pub async fn put_workspace_state(
+        &self,
+        user_id: Uuid,
+        environment: &str,
+        workspace_id: Uuid,
+        document: &Value,
+    ) -> Result<DateTime<Utc>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "INSERT INTO workspace_states (user_id, environment, workspace_id, document, updated_at)
+                 VALUES ($1, $2, $3, $4, now())
+                 ON CONFLICT (user_id, environment, workspace_id)
+                 DO UPDATE SET document = EXCLUDED.document, updated_at = now()
+                 RETURNING updated_at",
+                &[&user_id, &environment, &workspace_id, document],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    pub async fn delete_workspace_state(
+        &self,
+        user_id: Uuid,
+        environment: &str,
+        workspace_id: Uuid,
+    ) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "DELETE FROM workspace_states
+                 WHERE user_id = $1 AND environment = $2 AND workspace_id = $3",
+                &[&user_id, &environment, &workspace_id],
+            )
+            .await?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn save_view(
         &self,

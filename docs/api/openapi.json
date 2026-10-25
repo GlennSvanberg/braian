@@ -1516,6 +1516,29 @@
         "summary": "Assign a workspace to a person",
         "responses": {}
       }
+    },
+    "/v1/workspaces/{id}/state": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Personal workspace layout for the signed-in person and environment",
+        "responses": {}
+      },
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save the personal workspace layout",
+        "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Delete the personal workspace layout",
+        "responses": {}
+      }
     }
   },
   "components": {

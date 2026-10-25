@@ -81,3 +81,7 @@ demo-4:
 # Fas 5: dubbletter och en sen händelse ger samma index, och reindex byter alias.
 demo-5:
     cargo test -p braian-indexer --test converge -- --test-threads=1 --nocapture
+
+# Statisk sida för braian.io. Resultatet ligger i apps/landing/dist.
+landing:
+    pnpm --dir apps/landing build
