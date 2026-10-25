@@ -614,7 +614,11 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   return <p>{view.title}</p>
 }
 
-function StructureTree({ session, view }: { session: Session; view: View }) {
+function treeRowDomId(structureKey: string, key: string) {
+  return `tree-row-${structureKey}-${key}`
+}
+
+export function StructureTree({ session, view }: { session: Session; view: View }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const counts = useQuery({
     queryKey: ['group-counts'],
@@ -630,79 +634,104 @@ function StructureTree({ session, view }: { session: Session; view: View }) {
   const toggle = (key: string) => {
     setOpenKeys((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
   }
+  const entries: { structureKey: string; key: string; id: string; depth: number; kids: boolean; open: boolean; count: number }[] = []
+  for (const structure of structures) {
+    const groups = (structure.groups as Json[]) ?? []
+    const structureKey = String(structure.key)
+    const walk = (parent: string | undefined, depth: number) => {
+      for (const group of groups) {
+        const child = parent ? String(group.parent ?? '') === parent : !group.parent
+        if (!child) continue
+        const key = String(group.key)
+        const id = String(group.id)
+        const kids = groups.some((item) => String(item.parent ?? '') === id)
+        const open = openKeys.includes(key)
+        entries.push({ structureKey, key, id, depth, kids, open, count: countOf(structureKey, key) })
+        if (kids && open) walk(id, depth + 1)
+      }
+    }
+    walk(undefined, 0)
+  }
+  const activeIndex = entries.findIndex((row) => session.group === `${row.structureKey}:${row.key}`)
+  const activeRow = activeIndex >= 0 ? entries[activeIndex] : undefined
+  useEffect(() => {
+    if (!activeRow) return
+    document.getElementById(treeRowDomId(activeRow.structureKey, activeRow.key))?.scrollIntoView({ block: 'nearest' })
+  }, [session.group, entries.length])
+  const choose = (index: number) => {
+    const row = entries[index]
+    if (!row) return
+    session.setGroup(`${row.structureKey}:${row.key}`)
+  }
   return (
     <div
       className="tree"
       data-testid="structure-tree"
+      role="tree"
       tabIndex={0}
+      aria-activedescendant={activeRow ? treeRowDomId(activeRow.structureKey, activeRow.key) : undefined}
       onKeyDown={(event) => {
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) return
-        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.tree-row')]
-        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
-        if (event.key === 'Enter') {
-          if (index >= 0) buttons[index]?.click()
-          return
-        }
         event.preventDefault()
+        event.stopPropagation()
+        if (entries.length === 0) return
         const next = event.key === 'ArrowDown'
-          ? Math.min(buttons.length - 1, index + 1)
+          ? Math.min(entries.length - 1, activeIndex + 1)
           : event.key === 'ArrowUp'
-            ? Math.max(0, index < 0 ? buttons.length - 1 : index - 1)
+            ? Math.max(0, activeIndex < 0 ? entries.length - 1 : activeIndex - 1)
             : event.key === 'Home'
               ? 0
-              : buttons.length - 1
-        buttons[next]?.focus()
+              : event.key === 'End'
+                ? entries.length - 1
+                : Math.max(0, activeIndex)
+        choose(next)
       }}
     >
       {structures.map((structure) => {
-        const groups = (structure.groups as Json[]) ?? []
         const structureKey = String(structure.key)
-        const renderGroup = (parent: string | undefined, depth: number) =>
-          groups
-            .filter((group) => (parent ? String(group.parent ?? '') === parent : !group.parent))
-            .map((group) => {
-              const key = String(group.key)
-              const id = String(group.id)
-              const kids = groups.some((item) => String(item.parent ?? '') === id)
-              const open = openKeys.includes(key)
-              const count = countOf(structureKey, key)
-              const selected = session.group === `${structureKey}:${key}`
+        const rows = entries.filter((row) => row.structureKey === structureKey)
+        return (
+          <div key={structureKey}>
+            <strong>{structureKey}</strong>
+            {rows.map((row) => {
+              const selected = session.group === `${structureKey}:${row.key}`
               return (
-                <div key={id} className="tree-branch">
+                <div key={row.id} className="tree-branch">
                   <button
                     type="button"
+                    id={treeRowDomId(structureKey, row.key)}
+                    role="treeitem"
+                    aria-selected={selected}
+                    aria-expanded={row.kids ? row.open : undefined}
+                    tabIndex={-1}
                     className={selected ? 'tree-row on' : 'tree-row'}
-                    style={{ paddingLeft: 8 + depth * 16 }}
-                    onClick={() => session.setGroup(`${structureKey}:${key}`)}
+                    style={{ paddingLeft: 8 + row.depth * 16 }}
+                    onClick={() => session.setGroup(`${structureKey}:${row.key}`)}
                   >
-                    {Array.from({ length: depth }, (_, level) => (
+                    {Array.from({ length: row.depth }, (_, level) => (
                       <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />
                     ))}
-                    {kids ? (
+                    {row.kids ? (
                       <span
                         className="tree-chevron"
                         aria-hidden="true"
                         onClick={(event) => {
+                          event.preventDefault()
                           event.stopPropagation()
-                          toggle(key)
+                          toggle(row.key)
                         }}
                       >
-                        {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+                        {row.open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
                       </span>
                     ) : (
                       <span className="tree-chevron" aria-hidden="true" />
                     )}
-                    <span className="tree-label">{key}</span>
-                    {count > 0 ? <span className="tree-count">{count}</span> : null}
+                    <span className="tree-label">{row.key}</span>
+                    {row.count > 0 ? <span className="tree-count">{row.count}</span> : null}
                   </button>
-                  {kids && open ? renderGroup(id, depth + 1) : null}
                 </div>
               )
-            })
-        return (
-          <div key={structureKey}>
-            <strong>{structureKey}</strong>
-            {renderGroup(undefined, 0)}
+            })}
           </div>
         )
       })}
