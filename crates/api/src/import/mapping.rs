@@ -1642,10 +1642,9 @@ mod tests {
             .iter_mut()
             .find(|item| item.key == "item")
             .unwrap();
-        object_type.labels.insert(
-            LanguageTag::parse("de").unwrap(),
-            "Variante".into(),
-        );
+        object_type
+            .labels
+            .insert(LanguageTag::parse("de").unwrap(), "Variante".into());
         object_type
             .singular
             .insert(LanguageTag::parse("de").unwrap(), "Variante".into());
@@ -1662,7 +1661,11 @@ mod tests {
             .unwrap()["label"]
             .as_str();
         assert_eq!(label, Some("Variant"));
-        assert_eq!(targets_for(&defs, "item")[0].source, "Variant");
+        assert!(
+            targets_for(&defs, "item")
+                .iter()
+                .any(|target| target.id.starts_with("type:") && target.source == "Variant")
+        );
     }
 
     #[test]
