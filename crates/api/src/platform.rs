@@ -17,7 +17,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use braian_model::{AttributeId, AttributeKind, DefinitionSet, Object, ObjectId};
 use braian_search::SearchQuery;
-use braian_store::{Actor, BatchKind, HistoryEntry, ObjectOp, ProposalRow, Store};
+use braian_store::{
+    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalRow, Store,
+};
 use futures::stream;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -1705,6 +1707,13 @@ async fn bulk(
             "an agent files a proposal instead of a bulk write",
         ));
     }
+    let Some(reservation) = state.bulk.try_reserve() else {
+        return Err(Problem::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "bulk_busy",
+            "too many bulk jobs are already queued",
+        ));
+    };
     state
         .store
         .register_job_type("bulk.write", "Bulk write", &[], None)
@@ -1727,8 +1736,11 @@ async fn bulk(
     let objects = body.objects;
     let actor = identity.actor.clone();
     let job_state = state.clone();
+    let chunk = state.bulk.chunk();
     tokio::spawn(async move {
-        run_bulk(job_state, id, actor, objects).await;
+        reservation
+            .finish(run_bulk(job_state, id, actor, objects, chunk))
+            .await;
     });
     Ok((
         StatusCode::ACCEPTED,
@@ -1746,7 +1758,14 @@ fn emit_job(state: &AppState, id: Uuid, status: &str, done: i32, total: i32) {
     }));
 }
 
-async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateObject>) {
+async fn run_bulk(
+    state: AppState,
+    id: Uuid,
+    actor: Actor,
+    objects: Vec<CreateObject>,
+    chunk_size: usize,
+) {
+    let store = state.store.on_bulk();
     let total = i32::try_from(objects.len()).unwrap_or(i32::MAX);
     emit_job(&state, id, "running", 0, total);
     let mut errors = Vec::new();
@@ -1754,20 +1773,19 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
     let mut actor = actor;
     actor.kind = BatchKind::Bulk;
     actor.source = "bulk".into();
-    let batch = match state.store.open_batch(&actor).await {
+    let batch = match store.open_batch(&actor).await {
         Ok(batch) => batch,
         Err(error) => {
-            let _ = state
-                .store
+            let _ = store
                 .finish_job_run(id, "failed", 0, &error.to_string(), &json!([]))
                 .await;
             emit_job(&state, id, "failed", 0, total);
             return;
         }
     };
-    for chunk in objects.chunks(25) {
+    for chunk in objects.chunks(chunk_size.max(1)) {
         let mut ops = Vec::new();
-        let cached = match state.models.get(&state.store).await {
+        let cached = match state.models.get(&store).await {
             Ok(cached) => cached,
             Err(problem) => {
                 errors.push(json!({ "message": problem.detail }));
@@ -1785,7 +1803,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
             }
         }
         if !ops.is_empty() {
-            match state.store.write_ops(batch, &actor, ops).await {
+            match store.write_ops(batch, &actor, ops).await {
                 Ok(receipt) => {
                     state.emit(json!({
                         "seq": receipt.last_seq,
@@ -1797,10 +1815,11 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
                 }
                 Err(error) => errors.push(json!({ "message": error.to_string() })),
             }
+        } else {
+            store.yield_between_bulk_batches().await;
         }
         done += i32::try_from(chunk.len()).unwrap_or(0);
-        let _ = state
-            .store
+        let _ = store
             .update_job_progress(
                 id,
                 done,
@@ -1815,8 +1834,7 @@ async fn run_bulk(state: AppState, id: Uuid, actor: Actor, objects: Vec<CreateOb
     } else {
         "failed"
     };
-    let _ = state
-        .store
+    let _ = store
         .finish_job_run(
             id,
             status,
@@ -2495,7 +2513,32 @@ async fn object_names(
         .model
         .attribute_by_key("namn")
         .map(|attribute| attribute.id);
-    let stored = state.store.get_objects(&ids).await.map_err(store_status)?;
+    // The graph asks for names in batches. Load only the `namn` parts; the
+    // object key and type come from the object row.
+    let projection = match name_id {
+        Some(id) => {
+            let parts = state
+                .store
+                .parts_for_attributes(&[id], None)
+                .await
+                .map_err(store_status)?;
+            ObjectProjection {
+                groups: false,
+                values: true,
+                parts: Some(parts),
+            }
+        }
+        None => ObjectProjection {
+            groups: false,
+            values: false,
+            parts: None,
+        },
+    };
+    let stored = state
+        .store
+        .get_objects_projected(&ids, &projection)
+        .await
+        .map_err(store_status)?;
     let mut objects = Vec::with_capacity(stored.len());
     for item in stored {
         if item.deleted_at.is_some() {
@@ -2954,12 +2997,17 @@ fn sign_webhook(secret: &str, payload: &str) -> String {
 }
 
 async fn wait_for_seq(store: &Store, seq: i64) {
+    // Back off. A tight poll while the indexer is importing shares the
+    // database and, once the seq is reached, the following search shares
+    // Typesense with that import.
     let start = std::time::Instant::now();
+    let mut pause = Duration::from_millis(50);
     while start.elapsed() < Duration::from_secs(3) {
         if store.indexer_seq().await.unwrap_or(0) >= seq {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(40)).await;
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(Duration::from_millis(400));
     }
 }
 

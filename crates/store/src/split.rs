@@ -148,6 +148,40 @@ impl SplitContext {
         self.language_dependent.get(&id).copied().unwrap_or(false)
     }
 
+    /// Storage parts that hold `ids`.
+    ///
+    /// `languages` limits a localized attribute to those tags. `None` uses every
+    /// language in the definition set. A language-independent attribute is one
+    /// part either way.
+    pub fn parts_covering(
+        &self,
+        form: StorageForm,
+        ids: &[AttributeId],
+        languages: Option<&[String]>,
+    ) -> Vec<String> {
+        let mut parts = BTreeSet::new();
+        for id in ids {
+            let group = self.group_of(*id);
+            if self.is_localized(*id) && form != StorageForm::Document {
+                match languages {
+                    Some(languages) => {
+                        for language in languages {
+                            parts.insert(self.part_name(form, Some(language), group));
+                        }
+                    }
+                    None => {
+                        for language in &self.languages {
+                            parts.insert(self.part_name(form, Some(language), group));
+                        }
+                    }
+                }
+            } else {
+                parts.insert(self.part_name(form, None, group));
+            }
+        }
+        parts.into_iter().collect()
+    }
+
     pub fn part_name(&self, form: StorageForm, language: Option<&str>, group: usize) -> String {
         match form {
             StorageForm::Document => String::new(),

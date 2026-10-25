@@ -17,7 +17,7 @@ mod types;
 pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind};
 pub use product::{HistoryEntry, ProposalRow, RelaySlotStatus, UserRecord};
-pub use session::Store;
+pub use session::{DbLane, HeldConnection, PoolConfig, Store};
 pub use split::StorageForm;
 
 /// Connections used to create the databases the spike and the tests measure.

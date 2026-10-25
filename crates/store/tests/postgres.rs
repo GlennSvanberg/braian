@@ -6,7 +6,7 @@ use braian_model::{
 };
 use braian_rules::CompiledModel;
 use braian_store::testing::TestDb;
-use braian_store::{Actor, BatchKind, ObjectOp, ObjectProjection, PrincipalKind};
+use braian_store::{Actor, BatchKind, DbLane, ObjectOp, ObjectProjection, PrincipalKind};
 use braian_synth::{EditKind, Tier, definitions, edits, objects, objects_iter};
 
 fn actor(principal: braian_store::PrincipalId, behalf: Option<braian_store::PrincipalId>) -> Actor {
@@ -934,6 +934,112 @@ async fn batch_read_pipelines_and_can_project_parts() {
     );
 }
 
+#[tokio::test]
+async fn latest_value_read_uses_the_current_index_without_sorting() {
+    let (db, defs, who) = setup(Tier::Light, 21).await;
+    let object = objects(&defs, Tier::Light, 21, 1)
+        .into_iter()
+        .next()
+        .unwrap();
+    db.store()
+        .write_batch(&who, vec![ObjectOp::Create(object.clone())])
+        .await
+        .unwrap();
+    let edit = edits(&defs, Tier::Light, 21, EditKind::OneLanguage, 0..1)
+        .next()
+        .unwrap();
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: braian_model::ObjectPatch {
+                    values: edit.patch,
+                    groups: BTreeMap::new(),
+                },
+                base_version: 1,
+                read_version: 1,
+            }],
+        )
+        .await
+        .unwrap();
+    let current = db.store().get_object(object.id).await.unwrap().unwrap();
+    assert_eq!(current.version, 2);
+    assert_ne!(current.object.values, object.values);
+    let seq = db.store().latest_seq(object.id).await.unwrap();
+    assert!(seq > 0);
+
+    let (client, connection) = tokio_postgres::connect(&db.database_url(), tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .batch_execute("SET enable_seqscan = off")
+        .await
+        .unwrap();
+    let counts = client
+        .query_one(
+            "SELECT count(*) FILTER (WHERE is_latest), count(*)
+             FROM object_values WHERE object_id = $1",
+            &[&object.id.as_uuid()],
+        )
+        .await
+        .unwrap();
+    let latest: i64 = counts.get(0);
+    let all: i64 = counts.get(1);
+    assert!(all > latest, "an edit should keep the previous version");
+    assert!(latest > 0);
+    let rows = client
+        .query(
+            "EXPLAIN SELECT part, \"values\" FROM object_values WHERE object_id = $1 AND is_latest",
+            &[&object.id.as_uuid()],
+        )
+        .await
+        .unwrap();
+    let plan = rows
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains("object_values_current"),
+        "latest read did not use the current-row index:\n{plan}"
+    );
+    assert!(
+        !plan.to_lowercase().contains("sort"),
+        "latest read sorted version rows:\n{plan}"
+    );
+}
+
+#[tokio::test]
+async fn a_full_bulk_pool_does_not_block_an_interactive_connection() {
+    let db = TestDb::create().await;
+    let bulk = db.store().on_bulk();
+    assert_eq!(bulk.lane(), DbLane::Bulk);
+    assert_eq!(db.store().lane(), DbLane::Interactive);
+    assert!(bulk.pool_max() < db.store().pool_max());
+    let mut held = Vec::new();
+    for _ in 0..bulk.pool_max() {
+        held.push(bulk.hold_connection().await.unwrap());
+    }
+    assert_eq!(bulk.pool_size(), bulk.pool_max());
+    assert_eq!(bulk.pool_available(), 0);
+    assert_eq!(
+        db.store().pool_size(),
+        0,
+        "filling the bulk pool took interactive connections"
+    );
+    let started = std::time::Instant::now();
+    let live = db.store().hold_connection().await.unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_millis(200));
+    assert_eq!(db.store().pool_size(), 1);
+    assert_eq!(bulk.pool_size(), bulk.pool_max());
+    drop(live);
+    drop(held);
+}
+
 async fn explain_batch_read(url: &str, ids: &[braian_model::Uuid]) -> Vec<String> {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
@@ -941,10 +1047,14 @@ async fn explain_batch_read(url: &str, ids: &[braian_model::Uuid]) -> Vec<String
     tokio::spawn(async move {
         let _ = connection.await;
     });
+    client
+        .batch_execute("SET enable_seqscan = off")
+        .await
+        .unwrap();
     let statements = [
         "SELECT id, type_id, key, version, model_revision, deleted_at FROM objects WHERE id = ANY($1)",
         "SELECT object_id, structure_id, group_id FROM object_structures WHERE object_id = ANY($1)",
-        "SELECT DISTINCT ON (object_id, part) object_id, part, \"values\" FROM object_values WHERE object_id = ANY($1) ORDER BY object_id, part, version DESC",
+        "SELECT object_id, part, \"values\" FROM object_values WHERE object_id = ANY($1) AND is_latest",
     ];
     let mut plans = Vec::new();
     for sql in statements {

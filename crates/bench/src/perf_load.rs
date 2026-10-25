@@ -198,7 +198,8 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
         kind: BatchKind::Bulk,
         source: "perf-load".into(),
     };
-    let batch = store.open_batch(&bulk_actor).await?;
+    let bulk_store = store.on_bulk();
+    let batch = bulk_store.open_batch(&bulk_actor).await?;
     let loaded_ids: Arc<Mutex<Vec<ObjectId>>> = Arc::new(Mutex::new(Vec::new()));
     let loaded = Arc::new(AtomicUsize::new(0));
     let bulk_done = Arc::new(AtomicBool::new(false));
@@ -258,7 +259,7 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
     let started = Instant::now();
     let mut loaders = Vec::with_capacity(args.parallel);
     for _ in 0..args.parallel {
-        let store = store.clone();
+        let store = bulk_store.clone();
         let defs = Arc::clone(&defs);
         let actor = bulk_actor.clone();
         let next_chunk = Arc::clone(&next_chunk);
