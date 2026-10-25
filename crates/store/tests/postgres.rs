@@ -729,6 +729,134 @@ async fn stale_read_base_ahead_key_change_and_language_removal() {
     assert_eq!(value, None);
 }
 
+#[tokio::test]
+async fn a_create_stores_a_marker_and_history_rebuilds_version_one() {
+    let (db, defs, who) = setup(Tier::Light, 21).await;
+    let object = objects(&defs, Tier::Light, 21, 1).pop().unwrap();
+    db.store()
+        .write_batch(&who, vec![ObjectOp::Create(object.clone())])
+        .await
+        .unwrap();
+
+    let stored_rows = db.store().stored_changes(object.id).await.unwrap();
+    let raw = stored_rows
+        .iter()
+        .find(|change| change.op == braian_store::ChangeOp::Create)
+        .unwrap()
+        .diff
+        .as_ref()
+        .unwrap();
+    let raw_keys = raw.as_object().unwrap();
+    assert!(raw_keys.contains_key("$created"), "{raw}");
+    assert!(
+        raw_keys.keys().all(|key| key.starts_with('$')),
+        "create diff stored attribute values: {raw}"
+    );
+
+    assert_create_diff(
+        db.store()
+            .changes_for(object.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|change| change.op == braian_store::ChangeOp::Create)
+            .unwrap()
+            .diff
+            .as_ref()
+            .unwrap(),
+        &object,
+    );
+    let history = db
+        .store()
+        .history(Some(object.id.as_uuid()), None, 10)
+        .await
+        .unwrap();
+    assert_create_diff(
+        history
+            .iter()
+            .find(|entry| entry.op == "create")
+            .unwrap()
+            .diff
+            .as_ref()
+            .unwrap(),
+        &object,
+    );
+
+    let edit = edits(&defs, Tier::Light, 21, EditKind::OneLanguage, 0..1)
+        .next()
+        .unwrap();
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Update {
+                id: object.id,
+                patch: braian_model::ObjectPatch {
+                    values: edit.patch.clone(),
+                    groups: BTreeMap::new(),
+                },
+                base_version: 1,
+                read_version: 1,
+            }],
+        )
+        .await
+        .unwrap();
+
+    let version_one = db.store().values_at_version(object.id, 1).await.unwrap();
+    assert_eq!(version_one, object.values);
+    let current = db.store().get_object(object.id).await.unwrap().unwrap();
+    assert_ne!(current.object.values, object.values);
+    assert_eq!(current.version, 2);
+
+    assert_create_diff(
+        db.store()
+            .changes_for(object.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|change| change.op == braian_store::ChangeOp::Create)
+            .unwrap()
+            .diff
+            .as_ref()
+            .unwrap(),
+        &object,
+    );
+    let stored_again = db.store().stored_changes(object.id).await.unwrap();
+    let raw_again = stored_again
+        .iter()
+        .find(|change| change.op == braian_store::ChangeOp::Create)
+        .unwrap()
+        .diff
+        .as_ref()
+        .unwrap();
+    assert_eq!(raw_again, raw);
+}
+
+fn assert_create_diff(diff: &serde_json::Value, object: &Object) {
+    let map = diff.as_object().expect("create diff");
+    assert!(map.get("$created").is_none(), "{diff}");
+    for (id, value) in &object.values {
+        let entry = map
+            .get(&id.as_uuid().to_string())
+            .unwrap_or_else(|| panic!("missing {id} in {diff}"))
+            .as_object()
+            .unwrap();
+        assert!(entry.get("before").is_none());
+        assert_eq!(entry.get("after"), Some(value));
+    }
+    for key in map.keys() {
+        if key.starts_with('$') {
+            continue;
+        }
+        let id = AttributeId::from_uuid(key.parse().unwrap());
+        assert!(object.values.contains_key(&id), "{key}");
+    }
+    if object.groups.is_empty() {
+        assert!(map.get("$groups").is_none());
+    } else {
+        assert!(map.get("$groups").is_some());
+    }
+}
+
 fn value_update(id: braian_model::ObjectId, values: ValuePatch, base: u64, read: u64) -> ObjectOp {
     ObjectOp::Update {
         id,
