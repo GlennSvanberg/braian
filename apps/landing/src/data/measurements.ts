@@ -38,8 +38,8 @@ export const measuredSets: readonly MeasuredSet[] = [
     figures: [
       {
         value: '0.24 s',
-        label: 'Edit searchable after commit, during bulk load',
-        note: 'Previously 34.5 s. Stated target: under 5 s p95.',
+        label: 'Searchable after commit',
+        note: 'During bulk load. Previously 34.5 s. Stated target: under 5 s p95.',
       },
       {
         value: '9,323 docs/s',
@@ -76,7 +76,8 @@ export const measuredSets: readonly MeasuredSet[] = [
       },
       {
         value: '~1,000 objects/s',
-        label: 'Bulk write of medium objects',
+        label: 'Bulk write',
+        note: 'Medium objects.',
       },
     ],
   },

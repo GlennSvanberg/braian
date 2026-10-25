@@ -1,19 +1,9 @@
+import type { ReactNode } from 'react'
 import { Button, ButtonLink } from '@/components/ui/button'
 import { Mark } from '@/components/mark'
-import {
-  agentPoints,
-  apiPoints,
-  audiences,
-  demoUrl,
-  flowReturns,
-  flowSources,
-  flowSteps,
-  licenseUrl,
-  modelPoints,
-  nav,
-  repoUrl,
-} from '@/content'
+import { agentSteps, apiTiles, audiences, demoUrl, licenseUrl, modelCards, nav, repoUrl } from '@/content'
 import { measuredLabel, measuredSets, measurementsDoc } from '@/data/measurements'
+import { DataFlow } from '@/flow/diagram'
 
 export function App() {
   return (
@@ -91,10 +81,7 @@ function Hero() {
         <h1 id="hero-title">
           Product data, <span className="accent">built for agents.</span>
         </h1>
-        <p className="lede">
-          Braian is an open-source (MIT), self-hosted product data system — what a PIM is usually
-          used for. It is built for speed, and made to work with agents from the start.
-        </p>
+        <p className="lede">A self-hosted product data system, with agents in your session.</p>
         <div className="hero-actions">
           <ButtonLink variant="primary" size="lg" href={demoUrl}>
             Try the demo
@@ -103,7 +90,6 @@ function Hero() {
             View on GitHub
           </ButtonLink>
         </div>
-        <p className="note">You host it. You extend it.</p>
       </div>
       <figure className="sheet sheet-xl video-slot">
         <div className="video-frame">
@@ -122,16 +108,16 @@ function Agent() {
     <section className="section" id="agent" aria-labelledby="agent-title">
       <div className="section-head">
         <h2 id="agent-title">Agent as a first-class citizen</h2>
-        <p className="lede">
-          The agent works in your session, on the records you have open. You remain the person on
-          the record.
-        </p>
+        <p className="lede">It works in your session, on your behalf.</p>
       </div>
-      <ol className="point-grid point-grid-5">
-        {agentPoints.map((point) => (
-          <li key={point.title} className="sheet point">
-            <h3>{point.title}</h3>
-            <p>{point.body}</p>
+      <ol className="steps">
+        {agentSteps.map((step, index) => (
+          <li key={step.title}>
+            <div className="sheet step">
+              <strong>{step.title}</strong>
+              <span>{step.hint}</span>
+            </div>
+            {index < agentSteps.length - 1 ? <span className="step-to" aria-hidden="true" /> : null}
           </li>
         ))}
       </ol>
@@ -144,18 +130,27 @@ function Model() {
     <section className="section" id="model" aria-labelledby="model-title">
       <div className="section-head">
         <h2 id="model-title">A model you define</h2>
-        <p className="lede">
-          Create the entities and attributes the catalog needs. A value can carry more than one
-          language.
-        </p>
+        <p className="lede">Any entity, any attribute, any language.</p>
       </div>
-      <ul className="point-grid point-grid-3">
-        {modelPoints.map((point) => (
-          <li key={point.title} className="sheet point">
-            <h3>{point.title}</h3>
-            <p>{point.body}</p>
+      <ul className="model-row">
+        {modelCards.map((card) => (
+          <li key={card.name} className="sheet model-card">
+            <strong>{card.name}</strong>
+            <ul>
+              {card.attrs.map((attr) => (
+                <li key={attr}>
+                  <span>{attr}</span>
+                  {card.langs.length > 0 && attr === card.attrs[0] ? (
+                    <span className="langs">{card.langs.join(' · ')}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
           </li>
         ))}
+        <li className="sheet model-card model-add" aria-hidden="true">
+          <strong>+ Entity</strong>
+        </li>
       </ul>
     </section>
   )
@@ -166,16 +161,13 @@ function Api() {
     <section className="section" id="api" aria-labelledby="api-title">
       <div className="section-head">
         <h2 id="api-title">An API you can build on</h2>
-        <p className="lede">
-          Braian runs headless. Developers add features against the API and the event stream. It is
-          built for the agentic era, where that kind of change should ship quickly.
-        </p>
+        <p className="lede">Headless, so a feature ships on the API and the event stream.</p>
       </div>
-      <ul className="point-grid point-grid-2">
-        {apiPoints.map((point) => (
-          <li key={point.title} className="sheet point">
-            <h3 className={point.title.startsWith('/') ? 'mono' : undefined}>{point.title}</h3>
-            <p>{point.body}</p>
+      <ul className="tiles">
+        {apiTiles.map((tile) => (
+          <li key={tile.title} className="sheet tile">
+            <TileIcon name={tile.icon} />
+            <span>{tile.title}</span>
           </li>
         ))}
       </ul>
@@ -188,62 +180,18 @@ function Flow() {
     <section className="section" id="flow" aria-labelledby="flow-title">
       <div className="section-head">
         <h2 id="flow-title">How data moves</h2>
-        <p className="lede">
-          A write from the UI, the agent, the API, or MCP follows one path into search. Live
-          updates and events come back out.
-        </p>
+        <p className="lede">One operation in. Search, live updates, and /subscribe branch back out.</p>
       </div>
       <figure className="sheet flow" aria-labelledby="flow-title">
         <p className="sr-only">
-          UI, Agent, API, and MCP write into Postgres. A relay reads logical replication and
-          publishes to Redpanda on an interactive lane and a bulk lane. The indexer reads both
-          lanes and updates Typesense search. SSE sends live updates back to the UI. /subscribe
-          sends events to external consumers.
+          UI, Agent with Ctrl+K and proposals, API, and MCP clients write through one shared
+          operation layer into Postgres, which holds the object model and the change log. Logical
+          replication reaches the relay, then Redpanda, which splits into a fast interactive lane
+          and a heavier bulk lane. Both lanes reach the indexer and Typesense. Search loops back to
+          the UI. The change stream also sends SSE live updates back to open UIs, and /subscribe
+          events to external consumers for headless integrations.
         </p>
-        <ol className="pipe">
-          <li>
-            <div className="node writers">
-              <strong>Writers</strong>
-              <ul>
-                {flowSources.map((name) => (
-                  <li key={name}>{name}</li>
-                ))}
-              </ul>
-            </div>
-            <span className="chev" aria-hidden="true" />
-          </li>
-          {flowSteps.map((step, index) => (
-            <li key={step.name} className={'lanes' in step ? 'wide' : undefined}>
-              <div className="node">
-                <strong>{step.name}</strong>
-                <span>{step.detail}</span>
-                {'lanes' in step ? (
-                  <span className="lanes">
-                    {step.lanes.map((lane) => (
-                      <span key={lane} className="lane">
-                        {lane}
-                      </span>
-                    ))}
-                  </span>
-                ) : null}
-              </div>
-              {index < flowSteps.length - 1 ? (
-                <span className="chev" aria-hidden="true" />
-              ) : (
-                <span className="chev chev-end" aria-hidden="true" />
-              )}
-            </li>
-          ))}
-        </ol>
-        <p className="flow-label">Comes back</p>
-        <ul className="returns">
-          {flowReturns.map((item) => (
-            <li key={item.name}>
-              <strong>{item.name}</strong>
-              <span>{item.detail}</span>
-            </li>
-          ))}
-        </ul>
+        <DataFlow />
         <p className="stack">Rust on the server. TanStack Start in the app.</p>
       </figure>
     </section>
@@ -255,12 +203,12 @@ function UseCases() {
     <section className="section" id="use" aria-labelledby="use-title">
       <div className="section-head">
         <h2 id="use-title">Who it is for</h2>
+        <p className="lede">People who run the catalog, and people who extend it.</p>
       </div>
-      <ul className="point-grid point-grid-2">
-        {audiences.map((audience) => (
-          <li key={audience.title} className="sheet point">
-            <h3>{audience.title}</h3>
-            <p>{audience.body}</p>
+      <ul className="who">
+        {audiences.map((name) => (
+          <li key={name} className="sheet who-card">
+            {name}
           </li>
         ))}
       </ul>
@@ -274,31 +222,27 @@ function Measured() {
       <div className="section-head">
         <h2 id="measured-title">{measuredLabel}</h2>
         <p className="lede">
-          Recorded runs. Hardware and data size are part of each figure.{' '}
+          Recorded runs, with the hardware and the data size.{' '}
           <a className="text-link" href={measurementsDoc.href}>
             {measurementsDoc.label}
           </a>
         </p>
       </div>
-      <div className="measured-grid">
+      <div className="measured-sets">
         {measuredSets.map((set) => (
-          <article key={set.id} className="sheet measured-set" aria-labelledby={`set-${set.id}`}>
-            <header className="set-head">
-              <h3 id={`set-${set.id}`}>{set.name}</h3>
-              <p>
-                {set.hardware}, {set.dataSize}
-              </p>
-              <p>
-                Recorded {set.recordedOn}
-                {set.conditions ? `. ${set.conditions}.` : '.'}
-              </p>
-            </header>
-            <ul className="figures">
+          <article key={set.id} className="measured-set" aria-labelledby={`set-${set.id}`}>
+            <p className="set-note" id={`set-${set.id}`}>
+              <strong>{set.name}</strong>
+              {` · ${set.hardware} · ${set.dataSize}`}
+              {set.conditions ? ` · ${set.conditions}` : ''}
+              {` · ${set.recordedOn}`}
+            </p>
+            <ul className="stat-grid">
               {set.figures.map((figure) => (
-                <li key={`${figure.value}-${figure.label}`}>
-                  <p className="figure-value">{figure.value}</p>
-                  <p className="figure-label">{figure.label}</p>
-                  {figure.note ? <p className="figure-note">{figure.note}</p> : null}
+                <li key={`${set.id}-${figure.value}-${figure.label}`} className="sheet stat">
+                  <p className="stat-value">{figure.value}</p>
+                  <p className="stat-label">{figure.label}</p>
+                  {figure.note ? <p className="stat-note">{figure.note}</p> : null}
                 </li>
               ))}
             </ul>
@@ -307,4 +251,43 @@ function Measured() {
       </div>
     </section>
   )
+}
+
+function TileIcon({ name }: { name: string }) {
+  const common = {
+    viewBox: '0 0 24 24',
+    width: 22,
+    height: 22,
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.6,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  }
+  const paths: Record<string, ReactNode> = {
+    server: (
+      <>
+        <rect x="4" y="4" width="16" height="6" rx="1.5" />
+        <rect x="4" y="14" width="16" height="6" rx="1.5" />
+        <path d="M8 7h.01M8 17h.01" />
+      </>
+    ),
+    nodes: (
+      <>
+        <circle cx="6" cy="12" r="2.2" />
+        <circle cx="18" cy="7" r="2.2" />
+        <circle cx="18" cy="17" r="2.2" />
+        <path d="M8 12h6M14.2 10.2 16 8.6M14.2 13.8 16 15.4" />
+      </>
+    ),
+    pulse: <path d="M3 12h4l2-5 4 10 2-5h6" />,
+    spark: (
+      <>
+        <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+        <circle cx="12" cy="12" r="2.4" />
+      </>
+    ),
+  }
+  return <svg {...common}>{paths[name]}</svg>
 }
