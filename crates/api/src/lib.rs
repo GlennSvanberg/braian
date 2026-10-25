@@ -9,6 +9,7 @@
 mod auth;
 mod bulk_gate;
 mod definitions;
+mod export;
 mod headers;
 mod model_proposal;
 mod objects;

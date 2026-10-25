@@ -57,7 +57,7 @@ export function stepText(op: string, args: Json = {}): string {
       return 'Switching theme…'
     case 'ui.export':
     case 'export':
-      return 'Exporting what is visible…'
+      return 'Exporting…'
     case 'patch_object':
     case 'create_object':
     case 'mass_edit':

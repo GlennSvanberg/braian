@@ -14,6 +14,7 @@ import { Switch } from './components/ui/switch'
 import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
 import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
+import { exportPayload, runExport, saveWorkbook } from './export'
 import { copy, uiLanguage } from './i18n'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
@@ -23,6 +24,7 @@ export type PanesSession = {
   group: string | null
   objectId: string | null
   proposalId: string | null
+  language: string
   setGroup: (value: string | null) => void
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
@@ -200,17 +202,25 @@ export function ObjectTable({
   const ordered = order.filter((id) => columns.some((column) => column.id === id))
   const shown = (ordered.length > 0 ? ordered : columns.map((column) => column.id)).filter((id) => !hidden.includes(id))
   const exportVisible = () => {
-    void api<Blob>('/v1/export', {
-      method: 'POST',
-      body: JSON.stringify({ q: queryText || '*', filter: filterBy, columns: ['key', 'type_key', 'a_namn__sv', 'a_status'] }),
-    }).then((blob) => {
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'braian.xlsx'
-      link.click()
-      URL.revokeObjectURL(url)
+    const body = exportPayload({
+      columns,
+      hidden,
+      order,
+      q: queryText,
+      filter: filterBy,
+      sort,
+      ids: selected,
+      lang: session.language,
     })
+    session.push(copy.exportStarted)
+    void runExport(body)
+      .then((blob) => {
+        saveWorkbook(blob)
+        session.push(copy.exportReady)
+      })
+      .catch((error: unknown) => {
+        session.push(error instanceof Error ? error.message : copy.exportFailed)
+      })
   }
   const mass = useMutation({
     mutationFn: () =>
@@ -256,7 +266,7 @@ export function ObjectTable({
       })
     }
     if (event.name === 'ui.export') exportVisible()
-  }), [filterBy, queryText, session])
+  }), [filterBy, hidden, order, queryText, selected, session, sort])
 
   const moveCursor = (next: number, extend: boolean) => {
     const clamped = Math.max(0, Math.min(Math.max(found - 1, 0), next))
