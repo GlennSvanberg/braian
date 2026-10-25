@@ -24,6 +24,8 @@ pnpm --dir apps/landing build
 
 Output is `apps/landing/dist/`: `index.html`, hashed CSS and a small theme script, `brand/` (favicon and logo), `og.png`, and `robots.txt`. The page is prerendered, so the HTML already contains the copy. The JavaScript that ships is the light/dark toggle.
 
+Performance figures on the page come from `src/data/measurements.ts`. Update that file when a run is remeasured. Each figure stays tied to its hardware and data size.
+
 Regenerate the social image (needs Chrome) with `pnpm --dir apps/landing og`. The build does not require a browser.
 
 ## Deploy
