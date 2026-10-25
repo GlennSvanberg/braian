@@ -22,7 +22,7 @@ use anyhow::Context;
 use braian_model::{AttributeKind, DefinitionSet, Object, ObjectId};
 use braian_search::{SearchQuery, Typesense};
 use braian_store::admin;
-use braian_store::{Actor, BatchKind, Error as StoreError, STORAGE_FORM, Store};
+use braian_store::{Actor, BatchKind, Error as StoreError, PoolConfig, STORAGE_FORM, Store};
 use braian_synth::{IndexBudget, Tier, definitions_with, objects_iter};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -60,6 +60,7 @@ struct Summary {
     count: usize,
     parallel: usize,
     chunk: usize,
+    bulk_pool: usize,
     attributes: usize,
     languages: usize,
     searchable: usize,
@@ -143,7 +144,10 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
         anyhow::bail!("chunk and parallel must be positive");
     }
     let config = admin::parse_config(&args.database_url)?;
-    let store = Store::connect_config(config, STORAGE_FORM).await?;
+    let mut pools = PoolConfig::default();
+    pools.bulk = bulk_pool_size(pools.bulk);
+    let store = Store::connect_with(config, STORAGE_FORM, pools).await?;
+    let bulk_pool = store.on_bulk().pool_max();
     let identities = braian_api::identities(&store, TOKENS).await?;
     let human = identities[0].actor.clone();
 
@@ -164,6 +168,7 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
         count: args.count,
         parallel: args.parallel,
         chunk: args.chunk,
+        bulk_pool,
         attributes: defs.attributes.len(),
         languages: defs.languages.len(),
         searchable: flags(|f| f.searchable),
@@ -172,12 +177,13 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
         ..Summary::default()
     };
     println!(
-        "perf-load: {} attributes, {} languages, {} searchable, {} filterable, {} sortable",
+        "perf-load: {} attributes, {} languages, {} searchable, {} filterable, {} sortable, bulk pool {}",
         summary.attributes,
         summary.languages,
         summary.searchable,
         summary.filterable,
-        summary.sortable
+        summary.sortable,
+        summary.bulk_pool
     );
     if args.define_only {
         println!("definitions written");
@@ -369,6 +375,19 @@ pub async fn run(args: PerfArgs) -> anyhow::Result<()> {
     }
     println!("{text}");
     Ok(())
+}
+
+/// `BRAIAN_POOL_BULK` when it is set, otherwise the code default.
+///
+/// `braian` reads the same variable. Other bench knobs stay on
+/// [`PoolConfig::default`] so a shell export of yield timings does not
+/// change a run.
+fn bulk_pool_size(default: usize) -> usize {
+    std::env::var("BRAIAN_POOL_BULK")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value: &usize| *value > 0)
+        .unwrap_or(default)
 }
 
 fn print_stats(name: &str, stats: &Option<Stats>) {

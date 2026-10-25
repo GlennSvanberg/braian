@@ -160,6 +160,7 @@ fn template_name() -> String {
         include_str!("../migrations/V8__current_values.sql"),
         include_str!("../migrations/V9__object_list.sql"),
         include_str!("../migrations/V10__imports.sql"),
+        include_str!("../migrations/V11__interactive_pressure.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {

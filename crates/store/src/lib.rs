@@ -6,6 +6,7 @@
 
 mod conflict;
 mod error;
+mod gauge;
 mod ids;
 mod imports;
 mod ops;
