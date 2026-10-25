@@ -31,6 +31,7 @@ test('final surfaces', async ({ page }) => {
   for (const [name, testId] of workspaces) {
     await page.getByRole('button', { name }).click()
     await expect(page.getByTestId(testId).first()).toBeVisible()
+    if (name === 'Enrich objects') await expect(page.getByTestId('detail-empty')).toBeVisible()
     await page.screenshot({ path: `${shots}/${name.toLowerCase().replaceAll(' ', '-')}-dark.png` })
   }
 
@@ -43,7 +44,7 @@ test('final surfaces', async ({ page }) => {
 
   await page.keyboard.press('Control+k')
   await expect(page.getByTestId('palette')).toBeVisible()
-  await expect(page.getByText('Fråga AI', { exact: true })).toBeVisible()
+  await expect(page.getByText('Ask AI', { exact: true })).toBeVisible()
   await page.screenshot({ path: `${shots}/command-palette.png` })
   await page.keyboard.press('Escape')
 
@@ -52,7 +53,7 @@ test('final surfaces', async ({ page }) => {
     await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
-      body: 'data: {"type":"step","id":"read","op":"search","args":{"q":"hej"},"state":"run"}\n\ndata: {"type":"answer","text":"Hej. Inga ändringar.","available":true}\n\n',
+      body: 'data: {"type":"step","id":"read","op":"search","args":{"q":"hej"},"state":"run"}\n\ndata: {"type":"answer","text":"Done. No changes.","available":true}\n\n',
     })
   })
   await page.keyboard.press('Control+j')

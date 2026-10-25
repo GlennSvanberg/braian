@@ -42,7 +42,7 @@ Tre Playwright-körningar på den här virtuella maskinen (4 vCPU). Första obje
 
 ## Det som är skrovligt
 
-- Ctrl+K är en panel. Grupperna är Senaste, Bästa träff, På markerat objekt, Vyer/arbetsytor och Objekt från sök. Sista raden är alltid "Fråga AI". Ctrl+J och Agent-knappen öppnar AI-läget i samma panel, med lila kant, tidigare turer, en förloppsrad och stegen på svenska. Förslag förhandsvisas där med Avbryt och Bekräfta. Det finns inget separat chattfönster. Frecency ligger i webbläsarens localStorage. "Nästa gång"-toasten visas när raden har en sparad genväg.
+- Ctrl+K är en panel. Grupperna är Recent, Best match, On selected object, Views & workspaces och Objects. Sista raden är alltid "Ask AI: …". Ctrl+J och Agent-knappen öppnar AI-läget i samma panel, med lila kant, tidigare turer, en förloppsrad och stegen på engelska. Modellen instrueras att svara på engelska. Förslag förhandsvisas där med Cancel och Confirm. Det finns inget separat chattfönster. Frecency ligger i webbläsarens localStorage. "Next time: …"-toasten visas när raden har en sparad genväg. En tom detalj visar en ledtext och kortkommandon i stället för bara ordet Detail.
 - Grafens layout är handplacerad. I den smala detaljrutan blir kartan trång.
 - Konsekvensvyn är texten från `/v1/impact` (berörda objekt, urval, jobb), inte en egen diff av modelländringen innan man bekräftar.
 - Entra/OIDC, Excel-import och Tauri är inte byggda. En vytyp kan bädda in en URL, och vytyper kan registreras via API:t. Det finns inget pluginramverk utöver det.

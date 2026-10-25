@@ -527,7 +527,7 @@ function NewObject({ session }: { session: PanesSession }) {
           .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
       }}
     >
-      <input data-testid="new-nummer" value={nummer} onChange={(event) => setNummer(event.target.value)} placeholder="nummer" />
+      <input data-testid="new-nummer" value={nummer} onChange={(event) => setNummer(event.target.value)} placeholder={copy.numberPlaceholder} />
       <button className="primary" type="submit" data-testid="create-object">{copy.save}</button>
       {error ? <span className="error" data-testid="validation-error">{error}</span> : null}
     </form>
@@ -547,7 +547,18 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const [flashId, setFlashId] = useState('')
   useEffect(() => onFlash(setFlashId), [])
   useEffect(() => setDraft({}), [session.objectId])
-  if (!session.objectId) return <p>{copy.detail}</p>
+  if (!session.objectId) {
+    return (
+      <div className="detail-empty" data-testid="detail-empty">
+        <p>{copy.detailEmpty}</p>
+        <ul>
+          <li><kbd>↑</kbd><kbd>↓</kbd> {copy.detailKeysMove}</li>
+          <li><kbd>Enter</kbd> {copy.detailKeysOpen}</li>
+          <li><kbd>Ctrl</kbd><kbd>K</kbd> {copy.detailKeysPalette}</li>
+        </ul>
+      </div>
+    )
+  }
   if (!object.data) return <p>{copy.loading}</p>
   const values = { ...((object.data.values as Json) ?? {}), ...draft }
   const attributes = (defs.data?.attributes as Json[] | undefined) ?? []

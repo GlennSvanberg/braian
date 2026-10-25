@@ -17,7 +17,7 @@ just dev
 - Webb: http://127.0.0.1:3000
 - API: http://127.0.0.1:8090
 - Demokontot skapas från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env` (se `.env.example`). Lösenordet ligger inte i källkoden.
-- In-app-agenten använder `OPENAI_API_KEY` och modellen `BRAIAN_AGENT_MODEL` (standard `gpt-6-luna`). Utan nyckel svarar chatten på svenska att ingen modell är kopplad. Förslag, massändring och återställning fungerar ändå.
+- In-app-agenten använder `OPENAI_API_KEY` och modellen `BRAIAN_AGENT_MODEL` (standard `gpt-6-luna`). Utan nyckel svarar samma panel på engelska att ingen modell är kopplad. Förslag, massändring och återställning fungerar ändå. All gränssnittstext är engelska; katalogvärden i demot ligger kvar på sv/en/de.
 
 `pnpm install` behövs en gång, innan Vite kan starta. `just dev` kör migrationer, demodata, API, relay, indexer och Vite, och bygger Rust-koden första gången. Avsluta med Ctrl+C. Demokatalogen är syntetisk: hjälteobjekt plus ett par tusen bygg- och friluftsartiklar (`BRAIAN_SEED_COUNT`, standard 3000) på svenska, engelska och tyska. Tester skriver inte i den databasen.
 

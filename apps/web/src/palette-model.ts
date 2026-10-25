@@ -13,16 +13,16 @@ export type PaletteItem = {
 }
 
 export const groupTitle: Record<Exclude<PaletteGroup, 'ask'>, string> = {
-  recent: 'Senaste',
-  best: 'Bästa träff',
-  object: 'På markerat objekt',
-  views: 'Vyer/arbetsytor',
-  search: 'Objekt från sök',
+  recent: 'Recent',
+  best: 'Best match',
+  object: 'On selected object',
+  views: 'Views & workspaces',
+  search: 'Objects',
 }
 
 export function askTitle(query: string) {
   const text = query.trim()
-  return text ? `Fråga AI: "${text}"` : 'Fråga AI'
+  return text ? `Ask AI: "${text}"` : 'Ask AI'
 }
 
 export function visibleRows(
@@ -53,7 +53,7 @@ export function visibleRows(
       id: 'ask',
       group: 'ask',
       title: askTitle(query),
-      subtitle: 'Stannar i den här panelen',
+      subtitle: 'Stays in this panel',
       kbd: 'Tab',
     },
   ]

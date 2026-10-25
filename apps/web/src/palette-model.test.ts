@@ -7,10 +7,10 @@ const catalog: PaletteItem[] = [
 ]
 
 describe('palette rows', () => {
-  it('keeps Fråga AI last and inside the same list', () => {
+  it('keeps Ask AI last and inside the same list', () => {
     const rows = visibleRows('hej', catalog, [], {})
     expect(rows.at(-1)?.id).toBe('ask')
-    expect(rows.at(-1)?.title).toContain('Fråga AI')
+    expect(rows.at(-1)?.title).toContain('Ask AI')
     expect(rows.every((row) => row.group !== 'ask' || row.id === 'ask')).toBe(true)
     expect(askIndex(rows)).toBe(rows.length - 1)
   })

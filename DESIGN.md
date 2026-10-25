@@ -12,6 +12,10 @@ Braian ska kännas som ett snabbt, tätt proffsverktyg med värme, inte som en a
 - *Lugn*: en accentfärg. Statusfärger bara när de betyder något.
 - *Verktygsmässig*: kompakt täthet, dämpade etiketter, starka värden.
 
+## Språk i gränssnittet
+
+**All UI copy is English.** This rule overrides any Swedish example in this document and in the product brief. It covers Ctrl+K groups, the last palette row (`Ask AI: …`), AI mode buttons (Cancel / Confirm), agent step texts and answers (the model is instructed to reply in English), the `Next time: <shortcut>` toast, error messages, activity log sentences, workspace templates, labels, and empty states. Catalog values and attribute labels per language (sv/en/de) stay in the data. Demo seed values are not translated to match the English chrome.
+
 ## Grund
 
 - **shadcn/ui** (Radix + Tailwind) som komponentgrund. Komponenterna kopieras in och stylas med tokens nedan; standardutseendet från shadcn ska inte synas.
@@ -105,12 +109,13 @@ Regler:
 
 Förebild: `src/ui/cmdk.rs` och `src/ai.rs` i P360 Client v4. Agenten är aldrig ett eget fönster eller en chatt.
 
-- **En panel** överst i mitten (640 px, `--r-xl`, `--raised`, skugga) för fyra saker: *På objektet*, *Gå till*, *Gör*, *Fråga AI*. Ctrl+K öppnar, Ctrl+J öppnar direkt i AI-läge.
-- **Grupperad lista**: Senaste, Bästa träff, På markerat objekt, Vyer/arbetsytor, Objekt från sök. Fast radhöjd 44 px (inget hoppar), ikon, titel med träffmarkering, grå undertext som säger vad som händer, kortkommando som `kbd` till höger.
-- **Sista raden är alltid** *Fråga AI: "texten"* i accentfärg. Tab går dit. Matchar inget hamnar markeringen där – panelen ligger kvar.
-- **AI-läge i samma panel**: lila kant och AI-bricka. Ovanför listan: tidigare repliker (klick = redigera och kör om), en löpande progressrad, steg i klartext ("Öppnar en lista med artiklar…", "Filtrerar på 'tält'…") med bock när klara, och svaret i en mening. Stäng-knapp synlig; Esc/stäng avslutar samtalet.
-- **Agenten styr gränssnittet**: samma operationsregister som UI och MCP, inklusive UI-operationer (öppna vy/mall/arbetsyta, placera vänster/höger/ovan/under/ny flik, länka vyer, filtrera, gruppera, sortera, markera, visa/dölj/flytta kolumner, byta tema, exportera). Stegen strömmas via SSE.
-- **Inget sparas av agenten**: ändringar blir förslag som förhandsgranskas *i panelen* (antal, första raderna, fel) med Avbryt / Bekräfta. Strukturändringar visar konsekvensvyn.
+- **En panel** överst i mitten (640 px, `--r-xl`, `--raised`, skugga) för fyra saker: *On this object*, *Go to*, *Do*, *Ask AI*. Ctrl+K öppnar, Ctrl+J öppnar direkt i AI-läge.
+- **Grupperad lista**: Recent, Best match, On selected object, Views & workspaces, Objects. Fast radhöjd 44 px (inget hoppar), ikon, titel med träffmarkering, grå undertext som säger vad som händer, kortkommando som `kbd` till höger.
+- **Sista raden är alltid** *Ask AI: "the text"* i accentfärg. Tab går dit. Matchar inget hamnar markeringen där – panelen ligger kvar.
+- **AI-läge i samma panel**: lila kant och AI-bricka. Ovanför listan: tidigare repliker (klick = redigera och kör om), en löpande progressrad, steg i klartext ("Opening a list of articles…", "Filtering on 'tält'…") med bock när klara, och svaret i en mening på engelska. Stäng-knapp synlig; Esc/stäng avslutar samtalet.
+- **Agenten styr gränssnittet**: samma operationsregister som UI och MCP, inklusive UI-operationer (öppna vy/mall/arbetsyta, placera vänster/höger/ovan/under/ny flik, länka vyer, filtrera, gruppera, sortera, markera, visa/dölj/flytta kolumner, byta tema, exportera). Stegen strömmas via SSE. Modellen instrueras att svara på engelska.
+- **Inget sparas av agenten**: ändringar blir förslag som förhandsgranskas *i panelen* (antal, första raderna, fel) med Cancel / Confirm. Strukturändringar visar konsekvensvyn.
 - **Tangentbord**: ↑↓, PageUp/Down, Home/End. Enter kör. Ctrl+Enter eller Ctrl+. visar radens sekundära åtgärder (t.ex. öppna i delning till höger, kopiera id). → på en objektträff visar dess åtgärder. Backspace på tom rad eller Esc backar ett steg i nästlade val (brödsmula-chip).
-- **Lär ut genvägar**: efter att en rad körts visas toast "Nästa gång: Ctrl+…". Frecency styr ordningen.
-- Fotrad 30 px: vad Enter gör just nu, samt "↵ kör · Ctrl+↵ åtgärder · Tab fråga AI · Esc stäng".
+- **Lär ut genvägar**: efter att en rad körts visas toast "Next time: Ctrl+…". Frecency styr ordningen.
+- Fotrad 30 px: vad Enter gör just nu, samt "↵ run · Ctrl+↵ actions · Tab ask AI · Esc close".
+- **Tom detalj**: när inget objekt är valt visar detaljrutan en kort ledtext och kortkommandon (pilar i tabellen, Enter öppnar, Ctrl+K), inte bara ordet Detail.
