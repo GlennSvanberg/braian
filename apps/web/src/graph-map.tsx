@@ -10,7 +10,8 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { ChevronDown, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 import { api, textValue, type Json } from './api'
 import { MetaChip, typeLabel } from './chips'
 import {
@@ -34,6 +35,21 @@ import {
   type Scene,
   type SceneNode,
 } from './graph-scene'
+import {
+  detailPlacement,
+  fitCamera,
+  graphDensity,
+  inspectorChrome,
+  legendLayout,
+  nodeSummary,
+  propertiesOpen,
+  readGraphFrame,
+  sheetAfterGesture,
+  type Box,
+  type DetailPlacement,
+  type GraphDensity,
+  type SheetMode,
+} from './graph-chrome'
 import { copy, uiLanguage } from './i18n'
 
 type SimNode = SimulationNodeDatum & SceneNode & { degree: number }
@@ -71,6 +87,8 @@ export function GraphMap({
   const [markers, setMarkers] = useState<Record<string, Marker>>({})
   const [pinTick, setPinTick] = useState(0)
   const [busy, setBusy] = useState('')
+  const [sheet, setSheet] = useState<SheetMode>('compact')
+  const [pane, setPane] = useState<{ width: number; height: number } | null>(null)
   const expandedRef = useRef(new Set<string>([focusKey]))
   const inflightRef = useRef(new Set<string>())
   const defsRef = useRef(defs)
@@ -83,6 +101,7 @@ export function GraphMap({
     setSelected(focusKey)
     setHidden(new Set())
     setFull(false)
+    setSheet('compact')
     expandedRef.current = new Set([focusKey])
   }
 
@@ -144,17 +163,25 @@ export function GraphMap({
   }, [placed])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const inspectorRef = useRef<HTMLElement>(null)
+  const legendRef = useRef<HTMLDivElement>(null)
+  const densityRef = useRef<GraphDensity>('wide')
+  const frameKeyRef = useRef('')
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null)
   const drawRef = useRef<(shouldPublish: boolean) => void>(() => {})
   const apiRef = useRef({ fit: () => {}, relayout: () => {}, refocus: () => {} })
   const hiddenRef = useRef(hidden)
   const selectedRef = useRef(selected)
   const expandRef = useRef<(node: SceneNode) => void>(() => {})
-  const selectRef = useRef(setSelected)
+  const selectRef = useRef<(id: string) => void>(() => {})
   const pinRef = useRef(setPinTick)
   hiddenRef.current = hidden
   selectedRef.current = selected
-  selectRef.current = setSelected
+  selectRef.current = (id: string) => {
+    setSelected(id)
+    setSheet((mode) => (mode === 'dismissed' || mode === 'chip' ? 'compact' : mode))
+  }
   pinRef.current = setPinTick
 
   const expand = async (node: SceneNode) => {
@@ -528,16 +555,12 @@ export function GraphMap({
         minY = Math.min(minY, node.y! - radius - 8)
         maxY = Math.max(maxY, node.y! + radius + 32)
       }
-      const boundsW = Math.max(1, maxX - minX)
-      const boundsH = Math.max(1, maxY - minY)
-      const padRight = width >= 720 ? 280 : Math.round(width * 0.42)
-      const viewW = Math.max(140, width - padRight - 28)
-      const viewH = Math.max(140, height - 84)
-      const fitted = Math.min(viewW / boundsW, viewH / boundsH)
-      const k = Math.min(1.25, Math.max(0.35, fitted))
-      transform.k = k
-      transform.x = 20 + viewW / 2 - ((minX + maxX) / 2) * k
-      transform.y = (height - 16) / 2 - ((minY + maxY) / 2) * k
+      const stage = { width, height }
+      const frame = readGraphFrame(stage, measureChromeBoxes(canvas, [inspectorRef.current, legendRef.current]), densityRef.current)
+      const camera = fitCamera({ frame, bounds: { minX, minY, maxX, maxY } })
+      transform.k = camera.k
+      transform.x = camera.x
+      transform.y = camera.y
       draw(true)
     }
 
@@ -813,14 +836,64 @@ export function GraphMap({
     drawRef.current(true)
   }, [selected, hidden])
 
+  useLayoutEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const apply = (width: number, height: number) => {
+      const next = { width: Math.floor(width), height: Math.floor(height) }
+      setPane((prev) => (prev && prev.width === next.width && prev.height === next.height ? prev : next))
+    }
+    apply(stage.clientWidth, stage.clientHeight)
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      apply(rect?.width ?? stage.clientWidth, rect?.height ?? stage.clientHeight)
+    })
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [])
+
   const selectedNode = scene.nodes.find((node) => node.id === selected) ?? null
+  const density: GraphDensity = pane == null ? 'wide' : graphDensity(pane.width)
+  densityRef.current = density
+  const placement = detailPlacement(density, sheet, Boolean(selectedNode))
+  const showProperties = propertiesOpen(density, sheet)
+  const chrome = inspectorChrome(placement, pane?.height ?? 0)
   const pinned = Boolean(
     pinTick >= 0 && simRef.current?.nodes().some((node) => node.id === selected && node.fx != null && node.fy != null),
   )
   const shown = placed.nodes.filter((node) => !hidden.has(node.kind))
 
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    let fitting = false
+    const apply = () => {
+      if (fitting) return
+      const stage = { width: canvas.clientWidth, height: canvas.clientHeight }
+      if (stage.width < 20 || stage.height < 20) return
+      const frame = readGraphFrame(stage, measureChromeBoxes(canvas, [inspectorRef.current, legendRef.current]), densityRef.current)
+      const key = `${Math.round(frame.x)}:${Math.round(frame.y)}:${Math.round(frame.width)}:${Math.round(frame.height)}`
+      if (key === frameKeyRef.current) return
+      frameKeyRef.current = key
+      fitting = true
+      apiRef.current.fit()
+      fitting = false
+    }
+    const observer = new ResizeObserver(() => apply())
+    if (inspectorRef.current) observer.observe(inspectorRef.current)
+    if (legendRef.current) observer.observe(legendRef.current)
+    apply()
+    return () => observer.disconnect()
+  }, [density, sheet, placement, full, selected])
+
+  const revealSheet = () => setSheet((mode) => (mode === 'dismissed' || mode === 'chip' ? 'compact' : mode))
+
   const onKey = (event: ReactKeyboardEvent<HTMLCanvasElement>) => {
     if (event.key === 'Escape') {
+      if (density === 'narrow' && sheet !== 'dismissed' && selected) {
+        setSheet('dismissed')
+        return
+      }
       setSelected('')
       return
     }
@@ -835,6 +908,22 @@ export function GraphMap({
     const direction = event.key === 'ArrowUp' ? 'up' : event.key === 'ArrowDown' ? 'down' : event.key === 'ArrowLeft' ? 'left' : 'right'
     const nodes = simRef.current?.nodes() ?? []
     setSelected((current) => spatialNeighbor(nodes, hidden, current, direction))
+    revealSheet()
+  }
+
+  const onStageKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape' || event.target === canvasRef.current) return
+    if (density !== 'narrow' || sheet === 'dismissed' || !selected) return
+    setSheet('dismissed')
+  }
+
+  const unpin = () => {
+    const node = simRef.current?.nodes().find((item) => item.id === selected)
+    if (!node) return
+    node.fx = null
+    node.fy = null
+    simRef.current?.alpha(0.3).restart()
+    setPinTick((tick) => tick + 1)
   }
 
   return (
@@ -851,93 +940,70 @@ export function GraphMap({
         </button>
         {model.capped ? <span className="hint">{copy.graphCapped}</span> : null}
       </div>
-      <div className="graph-stage">
-        <div className="graph-canvas-wrap">
-          <canvas
-            ref={canvasRef}
-            className="graph"
-            data-testid="graph"
-            role="img"
-            aria-label={copy.graph}
-            tabIndex={0}
-            onKeyDown={onKey}
+      <div
+        className="graph-stage"
+        ref={stageRef}
+        data-testid="graph-stage"
+        data-density={pane ? density : undefined}
+        data-legend={pane ? legendLayout(density) : undefined}
+        onKeyDown={onStageKey}
+      >
+        <div className="graph-frame">
+          <div className="graph-canvas-wrap">
+            <canvas
+              ref={canvasRef}
+              className="graph"
+              data-testid="graph"
+              role="img"
+              aria-label={copy.graph}
+              tabIndex={0}
+              onKeyDown={onKey}
+            />
+          </div>
+          <div className="graph-legend" ref={legendRef} role="group" aria-label={copy.graphLegend}>
+            {NODE_KINDS.map((kind) => {
+              const visible = !hidden.has(kind)
+              const label = kindLabel(kind)
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  className={visible ? 'legend-chip on' : 'legend-chip'}
+                  aria-pressed={visible}
+                  data-testid={`legend-${kind}`}
+                  title={label}
+                  onClick={() =>
+                    setHidden((current) => {
+                      const next = new Set(current)
+                      if (next.has(kind)) next.delete(kind)
+                      else next.add(kind)
+                      return next
+                    })
+                  }
+                >
+                  <i className={`dot ${kind}`} data-swatch={kind} />
+                  <span className="legend-label">{label}</span>
+                  <span className="count">{counts[kind]}</span>
+                </button>
+              )
+            })}
+          </div>
+          <GraphInspector
+            node={selectedNode}
+            placement={placement}
+            showProperties={showProperties}
+            pinned={pinned}
+            busy={busy === selectedNode?.id}
+            maxHeightPx={chrome.maxHeightPx}
+            inspectorRef={inspectorRef}
+            onOpen={onOpen}
+            onDismiss={() => setSheet('dismissed')}
+            onCollapse={() => setSheet('chip')}
+            onReveal={() => setSheet('compact')}
+            onSwipe={(deltaY) => setSheet((mode) => sheetAfterGesture(mode, deltaY))}
+            onUnpin={unpin}
           />
         </div>
-        <div className="graph-legend" role="group" aria-label={copy.graphLegend}>
-          {NODE_KINDS.map((kind) => {
-            const visible = !hidden.has(kind)
-            return (
-              <button
-                key={kind}
-                type="button"
-                className={visible ? 'legend-chip on' : 'legend-chip'}
-                aria-pressed={visible}
-                data-testid={`legend-${kind}`}
-                onClick={() =>
-                  setHidden((current) => {
-                    const next = new Set(current)
-                    if (next.has(kind)) next.delete(kind)
-                    else next.add(kind)
-                    return next
-                  })
-                }
-              >
-                <i className={`dot ${kind}`} data-swatch={kind} />
-                {kindLabel(kind)}
-                <span className="count">{counts[kind]}</span>
-              </button>
-            )
-          })}
-        </div>
-        <aside className="graph-inspector" data-testid="graph-inspector">
-          {selectedNode ? (
-            <>
-              <p className="graph-kicker">
-                <i className={`dot ${selectedNode.kind}`} />
-                {kindLabel(selectedNode.kind)}
-              </p>
-              <h3>{selectedNode.caption}</h3>
-              <p className="hint">{selectedNode.subtitle}</p>
-              <h4>{copy.graphProperties}</h4>
-              <dl>
-                {selectedNode.properties.map((property) => (
-                  <div key={property.label}>
-                    <dt>{property.label}</dt>
-                    <dd>{property.value}</dd>
-                  </div>
-                ))}
-              </dl>
-              {selectedNode.objectId ? (
-                <button type="button" className="primary" onClick={() => onOpen(selectedNode.objectId!)}>
-                  {copy.openObject}
-                </button>
-              ) : null}
-              {pinned ? (
-                <button
-                  type="button"
-                  data-testid="graph-unpin"
-                  onClick={() => {
-                    const node = simRef.current?.nodes().find((item) => item.id === selected)
-                    if (!node) return
-                    node.fx = null
-                    node.fy = null
-                    simRef.current?.alpha(0.3).restart()
-                    setPinTick((tick) => tick + 1)
-                  }}
-                >
-                  {copy.unpin}
-                </button>
-              ) : null}
-              {busy === selectedNode.id ? <p className="hint">{copy.loading}</p> : null}
-            </>
-          ) : (
-            <>
-              <MetaChip>{copy.graph}</MetaChip>
-              <h3>{copy.graphSelect}</h3>
-              <p className="hint">{copy.graphProperties}</p>
-            </>
-          )}
-        </aside>
       </div>
       <div className="graph-a11y" data-testid="graph-nodes">
         {shown.map((node) => (
@@ -947,9 +1013,9 @@ export function GraphMap({
             data-node-id={node.id}
             data-x={markers[node.id] ? String(markers[node.id].x) : undefined}
             data-y={markers[node.id] ? String(markers[node.id].y) : undefined}
-            onClick={() => setSelected(node.id)}
+            onClick={() => selectRef.current(node.id)}
             onDoubleClick={() => {
-              setSelected(node.id)
+              selectRef.current(node.id)
               void expand(node)
             }}
           >
@@ -969,6 +1035,185 @@ export function GraphMap({
       </div>
     </div>
   )
+}
+
+function GraphInspector({
+  node,
+  placement,
+  showProperties,
+  pinned,
+  busy,
+  maxHeightPx,
+  inspectorRef,
+  onOpen,
+  onDismiss,
+  onCollapse,
+  onReveal,
+  onSwipe,
+  onUnpin,
+}: {
+  node: SceneNode | null
+  placement: DetailPlacement
+  showProperties: boolean
+  pinned: boolean
+  busy: boolean
+  maxHeightPx: number
+  inspectorRef: RefObject<HTMLElement | null>
+  onOpen: (id: string) => void
+  onDismiss: () => void
+  onCollapse: () => void
+  onReveal: () => void
+  onSwipe: (deltaY: number) => void
+  onUnpin: () => void
+}) {
+  const drag = useRef({ y: 0, id: -1 })
+  if (placement === 'hidden') return null
+  const style = maxHeightPx > 0 ? { maxHeight: maxHeightPx } : undefined
+  if (!node) {
+    return (
+      <aside ref={inspectorRef} className="graph-inspector" data-testid="graph-inspector" data-placement="side" style={style}>
+        <MetaChip>{copy.graph}</MetaChip>
+        <h3>{copy.graphSelect}</h3>
+        <p className="hint">{copy.graphProperties}</p>
+      </aside>
+    )
+  }
+  const summary = nodeSummary(
+    { caption: node.caption, subtitle: node.subtitle, kindLabel: kindLabel(node.kind), properties: node.properties },
+    { type: copy.type, number: copy.number },
+  )
+  if (placement === 'chip') {
+    return (
+      <aside ref={inspectorRef} className="graph-inspector" data-testid="graph-inspector" data-placement="chip" aria-label={copy.graph} style={style}>
+        <button type="button" className="graph-sheet-chip" data-testid="graph-sheet-chip" onClick={onReveal}>
+          <i className={`dot ${node.kind}`} />
+          <span>{summary.name}</span>
+        </button>
+      </aside>
+    )
+  }
+  const onHandleDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    drag.current = { y: event.clientY, id: event.pointerId }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const onHandleUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerId !== drag.current.id) return
+    const delta = event.clientY - drag.current.y
+    drag.current.id = -1
+    onSwipe(delta)
+  }
+  return (
+    <aside
+      ref={inspectorRef}
+      className="graph-inspector"
+      data-testid="graph-inspector"
+      data-placement={placement}
+      aria-label={copy.graph}
+      style={style}
+    >
+      {placement === 'sheet' ? (
+        <div className="graph-sheet-sticky">
+          <div
+            className="graph-sheet-handle"
+            data-testid="graph-sheet-handle"
+            role="button"
+            tabIndex={0}
+            aria-label={copy.graphProperties}
+            onPointerDown={onHandleDown}
+            onPointerUp={onHandleUp}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              onSwipe(0)
+            }}
+          />
+          <div className="graph-sheet-bar">
+            <p className="graph-kicker">
+              <i className={`dot ${node.kind}`} />
+              <span className="graph-kicker-text">{summary.type}</span>
+            </p>
+            <button type="button" className="icon-btn" data-testid="graph-collapse" aria-label={copy.collapse} onClick={onCollapse}>
+              <ChevronDown size={14} aria-hidden="true" />
+            </button>
+            <button type="button" className="icon-btn" data-testid="graph-dismiss" aria-label={copy.graphDismiss} onClick={onDismiss}>
+              <X size={14} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="graph-kicker">
+          <i className={`dot ${node.kind}`} />
+          {kindLabel(node.kind)}
+        </p>
+      )}
+      <h3>{placement === 'sheet' ? summary.name : node.caption}</h3>
+      {placement === 'sheet' ? (
+        summary.detail ? <p className="graph-number">{summary.detail}</p> : null
+      ) : (
+        <p className="hint">{node.subtitle}</p>
+      )}
+      {placement === 'sheet' && node.objectId ? (
+        <button type="button" className="primary graph-action" onClick={() => onOpen(node.objectId!)}>
+          {copy.openObject}
+        </button>
+      ) : null}
+      {placement === 'sheet' && node.properties.length > 0 ? (
+        <button
+          type="button"
+          className="graph-action"
+          data-testid="graph-properties-toggle"
+          aria-expanded={showProperties}
+          onClick={() => onSwipe(0)}
+        >
+          {copy.graphProperties}
+        </button>
+      ) : null}
+      {showProperties ? (
+        <>
+          {placement === 'side' ? <h4>{copy.graphProperties}</h4> : null}
+          <dl data-testid="graph-properties">
+            {node.properties.map((property) => (
+              <div key={property.label}>
+                <dt>{property.label}</dt>
+                <dd>{property.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      ) : null}
+      {placement === 'side' && node.objectId ? (
+        <button type="button" className="primary graph-action" onClick={() => onOpen(node.objectId!)}>
+          {copy.openObject}
+        </button>
+      ) : null}
+      {pinned ? (
+        <button type="button" className="graph-action" data-testid="graph-unpin" onClick={onUnpin}>
+          {copy.unpin}
+        </button>
+      ) : null}
+      {busy ? <p className="hint">{copy.loading}</p> : null}
+    </aside>
+  )
+}
+
+function measureChromeBoxes(canvas: HTMLCanvasElement, elements: Array<HTMLElement | null>): Box[] {
+  const origin = canvas.getBoundingClientRect()
+  const boxes: Box[] = []
+  for (const element of elements) {
+    if (!element) continue
+    const style = getComputedStyle(element)
+    if (style.display === 'none' || style.visibility === 'hidden') continue
+    const rect = element.getBoundingClientRect()
+    if (rect.width < 1 || rect.height < 1) continue
+    boxes.push({
+      x: rect.left - origin.left,
+      y: rect.top - origin.top,
+      width: rect.width,
+      height: rect.height,
+    })
+  }
+  return boxes
 }
 
 function seed(kind: NodeKind, index: number, total: number) {

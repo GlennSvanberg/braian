@@ -865,6 +865,15 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   border-radius: var(--r-lg);
   overflow: hidden;
 }
+/* Query container matches GRAPH_WIDE_MIN_PX in graph-chrome.ts. Size comes from the pane, not the viewport. */
+.graph-frame {
+  position: absolute;
+  inset: 0;
+  container-type: inline-size;
+  container-name: graph;
+  overflow: hidden;
+  border-radius: inherit;
+}
 .graph-canvas-wrap { position: absolute; inset: 0; }
 canvas.graph {
   width: 100%;
@@ -887,6 +896,7 @@ canvas.graph.panning { cursor: grabbing; }
   max-width: calc(100% - 268px);
 }
 .legend-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -910,9 +920,13 @@ canvas.graph.panning { cursor: grabbing; }
   position: absolute;
   top: 8px;
   right: 8px;
-  bottom: 8px;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   width: 240px;
+  height: auto;
+  max-height: calc(100% - 16px);
   padding: 12px;
   background: var(--raised);
   border: 1px solid var(--border);
@@ -920,14 +934,93 @@ canvas.graph.panning { cursor: grabbing; }
   box-shadow: var(--shadow-md), var(--inset);
   overflow: auto;
 }
-.graph-inspector h3 { margin: 6px 0 2px; font-size: 15px; font-weight: 600; }
-.graph-inspector h4 { margin: 12px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.graph-inspector h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.graph-inspector h4 { margin: 2px 0 0; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
 .graph-inspector dl { display: grid; gap: 6px; margin: 0; }
 .graph-inspector dl > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px; }
 .graph-inspector dt { color: var(--muted); }
 .graph-inspector dd { margin: 0; overflow-wrap: anywhere; }
-.graph-inspector button { width: 100%; margin-top: 8px; }
-.graph-kicker { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-2); font-size: 12px; }
+.graph-inspector .graph-action { width: 100%; }
+.graph-inspector .icon-btn { width: 28px; height: 28px; padding: 0; flex: none; justify-content: center; }
+.graph-kicker { display: flex; align-items: center; gap: 6px; margin: 0; min-width: 0; color: var(--text-2); font-size: 12px; }
+.graph-kicker-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-number { margin: 0; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-sheet-sticky { position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; gap: 6px; background: var(--raised); }
+.graph-sheet-bar { display: flex; align-items: center; gap: 2px; }
+.graph-sheet-bar .graph-kicker { flex: 1; }
+.graph-sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 28%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+.graph-sheet-handle:active { cursor: grabbing; }
+.graph-sheet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 28px;
+  margin: 0;
+}
+.graph-sheet-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Narrow pane: one legend row, details as a bottom card that stays within 35% of the graph. */
+@container graph (width < 720px) {
+  .graph-legend {
+    top: 8px;
+    right: auto;
+    bottom: auto;
+    flex-wrap: nowrap;
+    max-width: calc(100% - 16px);
+    overflow-x: auto;
+  }
+  .legend-chip { flex: none; gap: 4px; padding: 0 6px; }
+  .legend-chip .legend-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .graph-inspector[data-placement='sheet'],
+  .graph-inspector[data-placement='side'] {
+    top: auto;
+    left: auto;
+    right: 8px;
+    bottom: 8px;
+    width: min(280px, calc(100% - 16px));
+    max-height: 35%;
+    z-index: 3;
+  }
+  .graph-inspector[data-placement='sheet'] h3,
+  .graph-inspector[data-placement='side'] h3 {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .graph-inspector[data-placement='chip'] {
+    top: auto;
+    left: auto;
+    right: 8px;
+    bottom: 8px;
+    width: max-content;
+    max-width: min(240px, 70%);
+    height: auto;
+    max-height: 40px;
+    padding: 4px;
+    overflow: hidden;
+    z-index: 3;
+  }
+  .graph-inspector[data-placement='chip'] .graph-sheet-chip { width: auto; }
+  .graph-inspector[data-placement='hidden'] { display: none; }
+}
 .graph-a11y {
   position: absolute;
   left: -10000px;
