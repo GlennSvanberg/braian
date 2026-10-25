@@ -46,6 +46,12 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/stats", get(stats))
         .route("/v1/workspaces", get(list_workspaces).post(save_workspace))
         .route("/v1/workspaces/{id}", get(get_workspace))
+        .route(
+            "/v1/workspaces/{id}/state",
+            get(get_workspace_state)
+                .put(put_workspace_state)
+                .delete(delete_workspace_state),
+        )
         .route("/v1/workspaces/{id}/assign", post(assign_workspace))
         .route("/v1/share/{token}", post(open_share))
         .route("/v1/views", post(save_view))
@@ -259,6 +265,90 @@ fn registry() -> &'static [Operation] {
             needs_approval: false,
         },
         Operation {
+            name: "open_view",
+            title: "Open view",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "move_view",
+            title: "Move view",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "split",
+            title: "Split view",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "resize",
+            title: "Resize pane",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "swap",
+            title: "Swap views",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "focus",
+            title: "Focus pane",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "move_view_left",
+            title: "Move view left",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "move_view_right",
+            title: "Move view right",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "move_view_up",
+            title: "Move view up",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "move_view_down",
+            title: "Move view down",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "zoom",
+            title: "Maximize pane",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "close_view",
+            title: "Close view",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "get_layout",
+            title: "Get layout",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "reset_layout",
+            title: "Reset layout",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
             name: "model.move_class",
             title: "Move class",
             permission: Role::Editor,
@@ -321,6 +411,101 @@ fn ui_command(name: &str, args: &Value) -> Value {
         "name": name,
         "args": args,
         "applied": false,
+    })
+}
+
+/// Layout commands are applied in the browser. `get_layout` is the exception:
+/// it reads the saved document on the server.
+fn is_layout_command(name: &str) -> bool {
+    matches!(
+        name,
+        "open_view"
+            | "move_view"
+            | "split"
+            | "resize"
+            | "swap"
+            | "focus"
+            | "move_view_left"
+            | "move_view_right"
+            | "move_view_up"
+            | "move_view_down"
+            | "zoom"
+            | "close_view"
+            | "reset_layout"
+    )
+}
+
+fn layout_owner(identity: &Identity) -> Result<Uuid, Problem> {
+    identity.user_id.ok_or_else(|| {
+        Problem::new(
+            StatusCode::BAD_REQUEST,
+            "no_user",
+            "sign in to keep a layout",
+        )
+    })
+}
+
+fn layout_environment(raw: Option<&str>) -> String {
+    let raw = raw.filter(|value| !value.is_empty()).unwrap_or("default");
+    let cleaned: String = raw
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '_' || *character == '-'
+        })
+        .take(64)
+        .collect();
+    if cleaned.is_empty() {
+        "default".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+fn collect_layout_views(value: &Value, out: &mut Vec<String>) {
+    let tabs = value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "tabs");
+    if tabs {
+        if let Some(views) = value.get("views").and_then(Value::as_array) {
+            for id in views {
+                if let Some(id) = id.as_str() {
+                    out.push(id.to_owned());
+                }
+            }
+        }
+    } else if let Some(tabs) = value.get("tabs").and_then(Value::as_array) {
+        for id in tabs {
+            if let Some(id) = id.as_str() {
+                out.push(id.to_owned());
+            }
+        }
+    }
+    if let Some(children) = value.get("children").and_then(Value::as_array) {
+        for child in children {
+            collect_layout_views(child, out);
+        }
+    }
+    for key in ["first", "second"] {
+        if let Some(child) = value.get(key) {
+            collect_layout_views(child, out);
+        }
+    }
+}
+
+fn layout_snapshot(workspace: Uuid, document: &Value) -> Value {
+    let layout = document
+        .get("layout")
+        .cloned()
+        .unwrap_or_else(|| document.clone());
+    let mut views = Vec::new();
+    collect_layout_views(&layout, &mut views);
+    json!({
+        "workspace": workspace,
+        "layout": layout,
+        "focus": document.get("focus").cloned().unwrap_or(Value::Null),
+        "zoom": document.get("zoom").cloned().unwrap_or(Value::Null),
+        "views": views,
     })
 }
 
@@ -1190,6 +1375,105 @@ async fn save_workspace(
         .await
         .map_err(store_status)?;
     Ok(Json(json!({ "id": id })))
+}
+
+const LAYOUT_DOCUMENT_LIMIT: usize = 512 * 1024;
+
+async fn require_workspace(state: &AppState, id: Uuid) -> Result<(), Problem> {
+    if state
+        .store
+        .workspace(id)
+        .await
+        .map_err(store_status)?
+        .is_none()
+    {
+        return Err(Problem::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "workspace",
+        ));
+    }
+    Ok(())
+}
+
+async fn get_workspace_state(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+    Query(query): Query<StateQuery>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    require_workspace(&state, id).await?;
+    let environment = layout_environment(query.environment.as_deref());
+    let owner = layout_owner(&identity)?;
+    let stored = state
+        .store
+        .workspace_state(owner, &environment, id)
+        .await
+        .map_err(store_status)?;
+    let (document, updated_at) = match stored {
+        Some((document, updated_at)) => (Some(document), Some(updated_at.to_rfc3339())),
+        None => (None, None),
+    };
+    Ok(Json(json!({
+        "environment": environment,
+        "document": document,
+        "updated_at": updated_at,
+    })))
+}
+
+async fn put_workspace_state(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<StateBody>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Editor)?;
+    require_workspace(&state, id).await?;
+    if !body.document.is_object() {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "document",
+            "the layout document must be an object",
+        ));
+    }
+    let size = serde_json::to_vec(&body.document)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+    if size > LAYOUT_DOCUMENT_LIMIT {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "document",
+            "the layout document is too large",
+        ));
+    }
+    let environment = layout_environment(body.environment.as_deref());
+    let updated = state
+        .store
+        .put_workspace_state(layout_owner(&identity)?, &environment, id, &body.document)
+        .await
+        .map_err(store_status)?;
+    Ok(Json(json!({
+        "environment": environment,
+        "updated_at": updated.to_rfc3339(),
+    })))
+}
+
+async fn delete_workspace_state(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+    Query(query): Query<StateQuery>,
+) -> Result<StatusCode, Problem> {
+    require(&identity, Role::Editor)?;
+    require_workspace(&state, id).await?;
+    let environment = layout_environment(query.environment.as_deref());
+    state
+        .store
+        .delete_workspace_state(layout_owner(&identity)?, &environment, id)
+        .await
+        .map_err(store_status)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn assign_workspace(
@@ -2453,7 +2737,7 @@ async fn run_operation(
         ));
     };
     require(identity, op.permission)?;
-    if op.name.starts_with("ui.") {
+    if op.name.starts_with("ui.") || is_layout_command(op.name) {
         return Ok(ui_command(op.name, args));
     }
     if identity.kind == braian_store::PrincipalKind::Agent && name == "accept_proposal" {
@@ -2608,6 +2892,52 @@ async fn run_operation(
             )
         }
         "export" => Ok(json!({ "hint": "POST /v1/export returns the workbook" })),
+        "get_layout" => {
+            let id = args
+                .get("workspace")
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .ok_or_else(|| {
+                    Problem::new(
+                        StatusCode::BAD_REQUEST,
+                        "workspace",
+                        "workspace id is required",
+                    )
+                })?;
+            let environment = layout_environment(args.get("environment").and_then(Value::as_str));
+            let owner = layout_owner(identity)?;
+            if state
+                .store
+                .workspace(id)
+                .await
+                .map_err(store_status)?
+                .is_none()
+            {
+                return Err(Problem::new(
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    "workspace",
+                ));
+            }
+            if let Some((document, _)) = state
+                .store
+                .workspace_state(owner, &environment, id)
+                .await
+                .map_err(store_status)?
+            {
+                return Ok(layout_snapshot(id, &document));
+            }
+            let workspace = state
+                .store
+                .workspace(id)
+                .await
+                .map_err(store_status)?
+                .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "workspace"))?;
+            Ok(layout_snapshot(
+                id,
+                workspace.get("layout").unwrap_or(&Value::Null),
+            ))
+        }
         "save_workspace" => {
             let body: WorkspaceBody = serde_json::from_value(args.clone()).map_err(|error| {
                 Problem::new(StatusCode::BAD_REQUEST, "invalid_body", error.to_string())
@@ -2912,6 +3242,17 @@ struct WorkspaceBody {
     locked: Option<bool>,
     share_token: Option<String>,
     layout: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct StateQuery {
+    environment: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StateBody {
+    environment: Option<String>,
+    document: Value,
 }
 
 #[derive(Deserialize)]

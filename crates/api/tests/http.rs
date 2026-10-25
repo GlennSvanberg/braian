@@ -685,3 +685,118 @@ async fn frecency_is_stored_for_the_person() {
     assert_eq!(status, StatusCode::OK, "{listed}");
     assert_eq!(listed["entries"]["model.command"]["uses"], 2);
 }
+
+#[tokio::test]
+async fn personal_layout_round_trips_and_layout_commands_are_ui() {
+    let (db, app) = app().await;
+    let hash = braian_api::hash_password("secret-layout").unwrap();
+    let user = db
+        .store()
+        .create_user("layout@braian.local", &hash, "admin", "Layout")
+        .await
+        .unwrap();
+    let id = uuid::Uuid::now_v7();
+    db.store()
+        .save_workspace(
+            id,
+            user.id,
+            "Layout bench",
+            false,
+            None,
+            &json!({ "type": "tabs", "views": ["v1"], "active": 0 }),
+        )
+        .await
+        .unwrap();
+    let (status, headers, logged) = call(
+        &app,
+        "POST",
+        "/v1/login",
+        None,
+        &[("content-type", "application/json")],
+        Some(r#"{"email":"layout@braian.local","password":"secret-layout"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{logged}");
+    let cookie = headers
+        .get("set-cookie")
+        .and_then(|value| value.split(';').next())
+        .unwrap()
+        .to_owned();
+    let (status, _, empty) = call(
+        &app,
+        "GET",
+        &format!("/v1/workspaces/{id}/state?environment=default"),
+        None,
+        &[("cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert!(empty["document"].is_null());
+    let document = json!({
+        "id": id,
+        "title": "Layout bench",
+        "layout": { "type": "tabs", "views": ["v1"], "active": 0 },
+        "focus": "v1"
+    });
+    let (status, _, saved) = call(
+        &app,
+        "PUT",
+        &format!("/v1/workspaces/{id}/state"),
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(
+            &serde_json::to_string(&json!({ "environment": "default", "document": document }))
+                .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (status, _, loaded) = call(
+        &app,
+        "GET",
+        &format!("/v1/workspaces/{id}/state?environment=default"),
+        None,
+        &[("cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{loaded}");
+    assert_eq!(loaded["document"]["focus"], "v1");
+    let (status, _, snapshot) = call(
+        &app,
+        "POST",
+        "/v1/operations/get_layout",
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"workspace":"{id}","environment":"default"}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{snapshot}");
+    assert_eq!(snapshot["focus"], "v1");
+    assert_eq!(snapshot["views"][0], "v1");
+    let (status, _, opened) = call(
+        &app,
+        "POST",
+        "/v1/operations/open_view",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"view":"Detail","zone":"right"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{opened}");
+    assert_eq!(opened["ui"], true);
+    assert_eq!(opened["name"], "open_view");
+    let (status, _, _) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/workspaces/{id}/state?environment=default"),
+        None,
+        &[("cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}

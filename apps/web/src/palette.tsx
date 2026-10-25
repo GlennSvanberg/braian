@@ -136,6 +136,13 @@ export function CommandPalette({
       onClose()
       return
     }
+    if (id.startsWith('layout:')) {
+      const rest = id.slice('layout:'.length)
+      if (rest.startsWith('focus:')) dispatchUi('focus', { direction: rest.slice('focus:'.length) })
+      else dispatchUi(rest, {})
+      onClose()
+      return
+    }
     if (id.startsWith('view:')) {
       dispatchUi('ui.open_view', { id: id.slice(5), zone: 'center' })
       onClose()
@@ -196,13 +203,22 @@ export function CommandPalette({
       ]
     }
     if (id.startsWith('view:') || id.startsWith('workspace:')) {
-      return (['left', 'right', 'top', 'bottom'] as const).map((zone) => ({
-        id: `place:${id}:${zone}`,
-        sourceId: id,
-        group: 'views' as const,
-        title: `Place ${zone}`,
-        subtitle: 'Dock the view in that zone',
-      }))
+      return [
+        ...(['left', 'right', 'top', 'bottom'] as const).map((zone) => ({
+          id: `place:${id}:${zone}`,
+          sourceId: id,
+          group: 'views' as const,
+          title: `Place ${zone}`,
+          subtitle: 'Dock the view in that zone',
+        })),
+        {
+          id: `place:${id}:center`,
+          sourceId: id,
+          group: 'views' as const,
+          title: 'New tab',
+          subtitle: 'Add the view as a tab',
+        },
+      ]
     }
     return []
   }
@@ -482,6 +498,17 @@ function buildCatalog(
     })),
     { id: 'theme:light', group: 'views', title: 'Light', subtitle: 'Switch theme', shortcut: undefined },
     { id: 'theme:dark', group: 'views', title: 'Dark', subtitle: 'Switch theme' },
+    { id: 'layout:move_view_left', group: 'views', title: 'Move view left', subtitle: 'Move the focused view left', kbd: 'Ctrl+Alt+←', shortcut: 'Ctrl+Alt+Left' },
+    { id: 'layout:move_view_right', group: 'views', title: 'Move view right', subtitle: 'Move the focused view right', kbd: 'Ctrl+Alt+→', shortcut: 'Ctrl+Alt+Right' },
+    { id: 'layout:move_view_up', group: 'views', title: 'Move view up', subtitle: 'Move the focused view up', kbd: 'Ctrl+Alt+↑', shortcut: 'Ctrl+Alt+Up' },
+    { id: 'layout:move_view_down', group: 'views', title: 'Move view down', subtitle: 'Move the focused view down', kbd: 'Ctrl+Alt+↓', shortcut: 'Ctrl+Alt+Down' },
+    { id: 'layout:focus:left', group: 'views', title: 'Focus pane left', subtitle: 'Focus the neighbour on the left', kbd: 'Alt+←', shortcut: 'Alt+Left' },
+    { id: 'layout:focus:right', group: 'views', title: 'Focus pane right', subtitle: 'Focus the neighbour on the right', kbd: 'Alt+→', shortcut: 'Alt+Right' },
+    { id: 'layout:focus:up', group: 'views', title: 'Focus pane up', subtitle: 'Focus the neighbour above', kbd: 'Alt+↑', shortcut: 'Alt+Up' },
+    { id: 'layout:focus:down', group: 'views', title: 'Focus pane down', subtitle: 'Focus the neighbour below', kbd: 'Alt+↓', shortcut: 'Alt+Down' },
+    { id: 'layout:zoom', group: 'views', title: 'Maximize pane', subtitle: 'Show only the focused pane', kbd: 'Ctrl+Alt+Z', shortcut: 'Ctrl+Alt+Z' },
+    { id: 'layout:close_view', group: 'views', title: 'Close view', subtitle: 'Close the focused view', kbd: 'Ctrl+Alt+W', shortcut: 'Ctrl+Alt+W' },
+    { id: 'layout:reset_layout', group: 'views', title: 'Reset layout', subtitle: 'Restore the saved workspace layout' },
   ]
   if (objectId) {
     items.push(

@@ -219,6 +219,21 @@ impl utoipa::Modify for PlatformPaths {
                 "/v1/frecency",
                 "Record one use of a command for the signed-in person",
             ),
+            (
+                HttpMethod::Get,
+                "/v1/workspaces/{id}/state",
+                "Personal workspace layout for the signed-in person and environment",
+            ),
+            (
+                HttpMethod::Put,
+                "/v1/workspaces/{id}/state",
+                "Save the personal workspace layout",
+            ),
+            (
+                HttpMethod::Delete,
+                "/v1/workspaces/{id}/state",
+                "Delete the personal workspace layout",
+            ),
         ];
         for (method, path, summary) in routes {
             let operation = OperationBuilder::new()
