@@ -1082,8 +1082,10 @@ async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<R
                 biased;
                 value = live.recv() => match value {
                     Ok(value) => Bytes::from(format!("data: {value}\n\n")),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        Bytes::from(": lag\n\n")
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        Bytes::from(format!(
+                            "data: {{\"op\":\"lagged\",\"skipped\":{skipped}}}\n\n"
+                        ))
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 },
@@ -2666,14 +2668,13 @@ async fn create_webhook(
     Ok(Json(json!({ "id": id, "secret": secret })))
 }
 
-pub async fn deliver_webhooks(state: &AppState, body: &Value) {
-    let Ok(hooks) = state.store.enabled_webhooks().await else {
+pub async fn deliver_webhooks(store: &Store, client: &reqwest::Client, body: &Value) {
+    let Ok(hooks) = store.enabled_webhooks().await else {
         return;
     };
-    let client = reqwest::Client::new();
     let payload = body.to_string();
     for (_id, url, secret, assortment) in hooks {
-        if !assortment_allows(state, assortment, body).await {
+        if !assortment_allows(store, assortment, body).await {
             continue;
         }
         let signature = sign_webhook(&secret, &payload);
@@ -2687,11 +2688,11 @@ pub async fn deliver_webhooks(state: &AppState, body: &Value) {
     }
 }
 
-async fn assortment_allows(state: &AppState, assortment: Option<Uuid>, body: &Value) -> bool {
+async fn assortment_allows(store: &Store, assortment: Option<Uuid>, body: &Value) -> bool {
     let Some(assortment) = assortment else {
         return true;
     };
-    let Ok(Some(saved)) = state.store.assortment(assortment).await else {
+    let Ok(Some(saved)) = store.assortment(assortment).await else {
         return false;
     };
     let Some(query) = saved.get("query") else {

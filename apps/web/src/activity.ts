@@ -11,6 +11,14 @@ export function humanizeLive(raw: string): string {
     if (op === 'create') return `live · Created ${kind || 'object'}${key ? ` ${key}` : ''}`
     if (op === 'update') return `live · Updated ${key || kind || 'an object'}`
     if (op === 'delete') return `live · Removed ${key || 'an object'}`
+    if (op === 'bulk_summary') {
+      const count = typeof event.count === 'number' ? event.count : 0
+      return `live · Bulk update (${count})`
+    }
+    if (op === 'lagged') {
+      const skipped = typeof event.skipped === 'number' ? event.skipped : 0
+      return `live · Skipped ${skipped} events`
+    }
     return `live · ${op}${key ? ` ${key}` : ''}`
   } catch {
     return `live · ${text}`
