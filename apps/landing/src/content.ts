@@ -10,11 +10,12 @@ export const nav = [
   { href: '#measured', label: 'Measured' },
 ] as const
 
-export const agentSteps = [
-  { title: 'Propose', hint: 'Ctrl+K, in place' },
-  { title: 'Accept', hint: 'You decide' },
-  { title: 'Undo', hint: 'Even in bulk' },
-] as const
+export const agentExample = {
+  prompt: 'Translate all descriptions in Spring 2026 to German',
+  progress: 'Translating descriptions',
+  objects: '1,248 objects',
+  changes: '1,248 attribute changes',
+} as const
 
 export const apiTiles = [
   { title: 'Headless server', icon: 'server' },
@@ -23,10 +24,15 @@ export const apiTiles = [
   { title: 'Ship a feature', icon: 'spark' },
 ] as const
 
-export const modelCards = [
-  { name: 'Item', attrs: ['Name', 'Price'], langs: ['sv', 'en', 'de'] },
-  { name: 'Supplier', attrs: ['Country'], langs: [] },
-  { name: 'Asset', attrs: ['Alt text'], langs: [] },
+export const productAttributes = [
+  { name: 'Name', type: 'text', detail: '20 languages' },
+  { name: 'Weight', type: 'number', detail: 'kg' },
+  { name: 'Supplier', type: 'reference', detail: 'Supplier' },
+  { name: 'Variants', type: 'list', detail: '' },
 ] as const
+
+export const moreEntities = ['Supplier', 'Certificate'] as const
+
+export const liveOn = ['API', 'Search', 'UI'] as const
 
 export const audiences = ['Product teams', 'Developers'] as const
