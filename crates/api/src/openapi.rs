@@ -117,6 +117,11 @@ impl utoipa::Modify for PlatformPaths {
             ),
             (
                 HttpMethod::Post,
+                "/v1/objects/names",
+                "Display names for a batch of objects",
+            ),
+            (
+                HttpMethod::Post,
                 "/v1/export",
                 "Export the current search as xlsx",
             ),

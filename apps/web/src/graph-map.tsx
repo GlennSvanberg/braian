@@ -4,6 +4,7 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
+  type Force,
   type ForceLink,
   type Simulation,
   type SimulationLinkDatum,
@@ -14,24 +15,28 @@ import { api, textValue, type Json } from './api'
 import { MetaChip, typeLabel } from './chips'
 import {
   NODE_KINDS,
-  NODE_RADIUS,
   buildScene,
   capScene,
   expandAssortment,
   expandClass,
   groupMembers,
   kindLabel,
+  labelPriority,
   mergeScene,
+  nodeMark,
+  nodeRadius,
   parseTypedId,
   searchDocuments,
+  visibleLabelIds,
   type KnownObject,
+  type LabelBox,
   type NodeKind,
   type Scene,
   type SceneNode,
 } from './graph-scene'
 import { copy, uiLanguage } from './i18n'
 
-type SimNode = SimulationNodeDatum & SceneNode
+type SimNode = SimulationNodeDatum & SceneNode & { degree: number }
 type SimLink = SimulationLinkDatum<SimNode> & { id: string; label: string }
 type Marker = { x: number; y: number }
 type Palette = {
@@ -87,38 +92,56 @@ export function GraphMap({
     return capScene(merged)
   }, [data, values, defs, known, extras])
   const scene = model.scene
+  const placed = useMemo(() => {
+    const nodes = scene.nodes.filter((node) => !(node.kind === 'object' && node.rawCaption))
+    const ids = new Set(nodes.map((node) => node.id))
+    return {
+      nodes,
+      edges: scene.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)),
+    }
+  }, [scene])
+  const pendingNames = useMemo(
+    () =>
+      scene.nodes
+        .filter((node) => node.kind === 'object' && node.rawCaption && node.objectId)
+        .map((node) => node.objectId ?? '')
+        .filter(Boolean)
+        .sort()
+        .join(','),
+    [scene],
+  )
+  const knownRef = useRef(known)
+  knownRef.current = known
+  const fitAfterRef = useRef(true)
 
   useEffect(() => {
-    const relations = (data.relations as Json[]) ?? []
+    const ids = pendingNames.split(',').filter(Boolean)
+    if (!ids.length) return
     let cancel = false
-    void (async () => {
-      const found: Record<string, KnownObject> = {}
-      await Promise.all(
-        relations.map(async (relation) => {
-          const id = String(relation.object_id ?? '')
-          if (!id) return
-          try {
-            const object = await api<Json>(`/v1/objects/${id}`)
-            const name = textValue((object.values as Json | undefined)?.namn, uiLanguage)
-            if (!name) return
-            found[id] = { name, typeKey: String(object.type ?? '') }
-          } catch {
-            // The number stays on the node until the object can be read.
-          }
-        }),
-      )
-      if (!cancel) setKnown(found)
-    })()
+    const settle = (found: Record<string, KnownObject>) => {
+      if (cancel) return
+      setKnown((current) => {
+        const next = { ...current }
+        let changed = false
+        for (const id of ids) {
+          if (next[id]) continue
+          next[id] = found[id] ?? { name: '', typeKey: '' }
+          changed = true
+        }
+        return changed ? next : current
+      })
+    }
+    void lookupNames(ids).then(settle).catch(() => settle({}))
     return () => {
       cancel = true
     }
-  }, [focusId, data.relations])
+  }, [pendingNames])
 
   const counts = useMemo(() => {
     const tally = Object.fromEntries(NODE_KINDS.map((kind) => [kind, 0])) as Record<NodeKind, number>
-    for (const node of scene.nodes) tally[node.kind] += 1
+    for (const node of placed.nodes) tally[node.kind] += 1
     return tally
-  }, [scene])
+  }, [placed])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null)
@@ -150,10 +173,15 @@ export function GraphMap({
           api<Json>(`/v1/objects/${node.objectId}/graph`),
           api<Json>(`/v1/objects/${node.objectId}`),
         ])
+        const relationIds = ((graph.relations as Json[]) ?? []).map((relation) => String(relation.object_id ?? '')).filter(Boolean)
+        const nextKnown = await resolveNames([String(graph.id ?? node.objectId), ...relationIds], knownRef.current)
+        knownRef.current = nextKnown
+        setKnown(nextKnown)
         extra = buildScene({
           graph,
           values: (object.values as Json) ?? {},
           defs: defsRef.current,
+          known: nextKnown,
         })
       } else if (node.kind === 'class' || node.kind === 'group' || node.kind === 'assortment') {
         const parsed = parseTypedId(node.id)
@@ -173,12 +201,25 @@ export function GraphMap({
               key: String(doc.key ?? ''),
               name: english || fallback,
               type: typeLabel(defsRef.current, String(doc.type_key ?? ''), uiLanguage),
-              rawCaption: !english,
+              rawCaption: !(english || fallback),
             }
           })
-          extra = groupMembers(parsed.structure, parsed.key, hits)
+          const nextKnown = await resolveNames(
+            hits.map((hit) => hit.id),
+            knownRef.current,
+          )
+          knownRef.current = nextKnown
+          setKnown(nextKnown)
+          const named = hits.map((hit) => {
+            const record = nextKnown[hit.id]
+            const name = record?.name || hit.name
+            const type = record?.typeKey ? typeLabel(defsRef.current, record.typeKey, uiLanguage) || hit.type : hit.type
+            return { ...hit, name, type, rawCaption: !name }
+          })
+          extra = groupMembers(parsed.structure, parsed.key, named)
         }
       }
+      fitAfterRef.current = true
       if (extra.nodes.length || extra.edges.length) setExtras((current) => [...current, extra])
     } catch {
       expandedRef.current.delete(node.id)
@@ -200,18 +241,24 @@ export function GraphMap({
     const transform = { x: 0, y: 0, k: 1 }
     const hoverRef = { id: '' }
     const movedRef = { current: false }
-    const fitAfterRef = { current: true }
     const paletteRef: { current: Palette | null } = { current: null }
     const markerSerial = { current: '' }
     let alive = true
 
     const sim = forceSimulation<SimNode, SimLink>([])
-      .force('link', forceLink<SimNode, SimLink>([]).id((node) => node.id).distance(148).strength(0.38))
-      .force('charge', forceManyBody<SimNode>().strength(-280).distanceMax(640))
+      .force(
+        'link',
+        forceLink<SimNode, SimLink>([])
+          .id((node) => node.id)
+          .distance((link) => 72 + endRadius(link.source) + endRadius(link.target))
+          .strength(0.25),
+      )
+      .force('charge', forceManyBody<SimNode>().strength(-560).distanceMax(820))
       .force('center', forceCenter(0, 0))
-      .force('collide', forceCollide<SimNode>().radius((node) => NODE_RADIUS[node.kind] + 12).iterations(2))
-      .alphaDecay(reduced ? 0.18 : 0.03)
-      .velocityDecay(0.45)
+      .force('collide', forceCollide<SimNode>().radius((node) => nodeRadius(node.kind, node.degree ?? 0) + 4).iterations(2))
+      .force('labels', labelCollision())
+      .alphaDecay(reduced ? 0.2 : 0.032)
+      .velocityDecay(0.5)
       .stop()
     simRef.current = sim
 
@@ -270,7 +317,7 @@ export function GraphMap({
       for (let index = nodes.length - 1; index >= 0; index -= 1) {
         const node = nodes[index]
         if (!node || hiddenRef.current.has(node.kind) || node.x == null || node.y == null) continue
-        const reach = NODE_RADIUS[node.kind] + slop
+        const reach = nodeRadius(node.kind, node.degree ?? 0) + slop
         if ((node.x - wx) ** 2 + (node.y - wy) ** 2 <= reach ** 2) return node
       }
       return undefined
@@ -355,7 +402,7 @@ export function GraphMap({
         const len = Math.hypot(dx, dy) || 1
         const bend = bendOf(link.id, len)
         const control = { x: (from.x + to.x) / 2 + (-dy / len) * bend, y: (from.y + to.y) / 2 + (dx / len) * bend }
-        const targetR = NODE_RADIUS[target.kind] * transform.k
+        const targetR = nodeRadius(target.kind, target.degree ?? 0) * transform.k
         const tip = pointAtDistance(from, control, to, targetR + 2, true)
         context.save()
         context.globalAlpha = !hover || emphasized ? 0.95 : 0.12
@@ -402,12 +449,11 @@ export function GraphMap({
         }
       }
 
-      const visibleCount = nodes.reduce((count, node) => count + (hiddenNow.has(node.kind) ? 0 : 1), 0)
-      const roomy = visibleCount <= 36 && transform.k >= 0.75
+      const placedNodes: { node: SimNode; point: { x: number; y: number }; radius: number }[] = []
       for (const node of nodes) {
         if (hiddenNow.has(node.kind) || node.x == null || node.y == null) continue
         const point = screenOf(node.x, node.y)
-        const radius = NODE_RADIUS[node.kind] * transform.k
+        const radius = nodeRadius(node.kind, node.degree ?? 0) * transform.k
         const emphasized = !hover || highlight.has(node.id)
         const fill = colors.fill[node.kind]
         context.save()
@@ -419,30 +465,44 @@ export function GraphMap({
         context.lineWidth = node.id === current ? 3 : hover === node.id ? 2 : 2
         context.strokeStyle = node.id === current || hover === node.id ? colors.text : colors.bg
         context.stroke()
-        context.font = `600 ${radius >= 22 ? 12 : 11}px "Inter Variable", Inter, sans-serif`
-        const lines = radius >= 14 ? insideLines(context, node.caption, radius * 1.75) : []
-        const insideFits = lines.length === 1 && lines[0] === node.caption
-        if (lines.length) {
+        const mark = nodeMark(node.caption)
+        if (mark && radius >= 10) {
           context.fillStyle = ink(fill, colors.text, colors.bg)
-          if (lines.length === 1) context.fillText(lines[0] ?? '', point.x, point.y)
-          else {
-            context.fillText(lines[0] ?? '', point.x, point.y - 6)
-            context.fillText(lines[1] ?? '', point.x, point.y + 7)
-          }
+          context.font = `600 ${Math.max(11, Math.min(15, radius * 0.46))}px "Inter Variable", Inter, sans-serif`
+          context.fillText(mark, point.x, point.y)
         }
-        const showCaption = (roomy || captionIds.has(node.id)) && transform.k >= 0.6
-        if (showCaption && !insideFits) {
-          context.globalAlpha = emphasized ? 1 : 0.35
-          context.fillStyle = colors.text
-          context.font = '12px "Inter Variable", Inter, sans-serif'
-          context.fillText(fitText(context, node.caption, roomy ? 112 : 160), point.x, point.y + radius + 13)
+        context.restore()
+        placedNodes.push({ node, point, radius })
+      }
+
+      context.font = '12px "Inter Variable", Inter, sans-serif'
+      const boxes: LabelBox[] = placedNodes.map(({ node, point, radius }) => {
+        const width = context.measureText(node.caption).width
+        const active = node.id === current || highlight.has(node.id)
+        return {
+          id: node.id,
+          priority: labelPriority(node.kind, active),
+          left: point.x - width / 2 - 4,
+          right: point.x + width / 2 + 4,
+          top: point.y + radius + 4,
+          bottom: point.y + radius + 20,
         }
-        if (captionIds.has(node.id) && node.subtitle && transform.k >= 0.6) {
-          context.globalAlpha = emphasized ? 1 : 0.35
-          context.fillStyle = colors.muted
+      })
+      const labels = visibleLabelIds(boxes, transform.k)
+      for (const { node, point, radius } of placedNodes) {
+        if (!labels.has(node.id) || !node.caption) continue
+        const emphasized = !hover || highlight.has(node.id)
+        const active = node.id === current || highlight.has(node.id)
+        context.save()
+        context.globalAlpha = emphasized ? 1 : 0.28
+        haloText(context, node.caption, point.x, point.y + radius + 12, colors.text, colors.bg)
+        if (active && node.subtitle && transform.k >= 0.6) {
           context.font = '10px "Inter Variable", Inter, sans-serif'
-          const under = !insideFits ? radius + 26 : radius + 14
-          context.fillText(fitText(context, node.subtitle, 150), point.x, point.y + under)
+          context.lineWidth = 3
+          context.strokeStyle = colors.bg
+          context.strokeText(node.subtitle, point.x, point.y + radius + 26)
+          context.fillStyle = colors.muted
+          context.fillText(node.subtitle, point.x, point.y + radius + 26)
         }
         context.restore()
       }
@@ -461,11 +521,12 @@ export function GraphMap({
       let maxX = -Infinity
       let maxY = -Infinity
       for (const node of nodes) {
-        const pad = NODE_RADIUS[node.kind] + 36
-        minX = Math.min(minX, node.x! - pad)
-        maxX = Math.max(maxX, node.x! + pad)
-        minY = Math.min(minY, node.y! - pad)
-        maxY = Math.max(maxY, node.y! + pad)
+        const radius = nodeRadius(node.kind, node.degree ?? 0)
+        const half = Math.min(150, Math.max(radius + 12, node.caption.length * 3.6 + 12))
+        minX = Math.min(minX, node.x! - half)
+        maxX = Math.max(maxX, node.x! + half)
+        minY = Math.min(minY, node.y! - radius - 8)
+        maxY = Math.max(maxY, node.y! + radius + 32)
       }
       const boundsW = Math.max(1, maxX - minX)
       const boundsH = Math.max(1, maxY - minY)
@@ -473,22 +534,10 @@ export function GraphMap({
       const viewW = Math.max(140, width - padRight - 28)
       const viewH = Math.max(140, height - 84)
       const fitted = Math.min(viewW / boundsW, viewH / boundsH)
-      const focus = nodes.find((node) => node.id === selectedRef.current) ?? nodes.find((node) => node.kind === 'object') ?? nodes[0]
-      if (fitted >= 0.72 && fitted <= 1.4) {
-        const k = Math.min(1.2, fitted)
-        transform.k = k
-        transform.x = 20 + viewW / 2 - ((minX + maxX) / 2) * k
-        transform.y = (height - 16) / 2 - ((minY + maxY) / 2) * k
-      } else if (focus?.x != null && focus.y != null) {
-        transform.k = 1
-        transform.x = 20 + viewW / 2 - focus.x
-        transform.y = (height - 16) / 2 - focus.y
-      } else {
-        const k = Math.min(1.2, Math.max(0.5, fitted))
-        transform.k = k
-        transform.x = 20 + viewW / 2 - ((minX + maxX) / 2) * k
-        transform.y = (height - 16) / 2 - ((minY + maxY) / 2) * k
-      }
+      const k = Math.min(1.25, Math.max(0.35, fitted))
+      transform.k = k
+      transform.x = 20 + viewW / 2 - ((minX + maxX) / 2) * k
+      transform.y = (height - 16) / 2 - ((minY + maxY) / 2) * k
       draw(true)
     }
 
@@ -716,22 +765,31 @@ export function GraphMap({
     const reuse = layoutFocus.current === focusId
     layoutFocus.current = focusId
     if (!reuse) apiRef.current.refocus()
+    const tally = new Map<string, number>()
+    for (const edge of placed.edges) {
+      tally.set(edge.source, (tally.get(edge.source) ?? 0) + 1)
+      tally.set(edge.target, (tally.get(edge.target) ?? 0) + 1)
+    }
     const previous = reuse ? new Map(sim.nodes().map((node) => [node.id, node])) : new Map<string, SimNode>()
-    const next: SimNode[] = scene.nodes.map((node, index) => {
+    let captionsChanged = false
+    const next: SimNode[] = placed.nodes.map((node, index) => {
+      const degree = tally.get(node.id) ?? 0
       const old = previous.get(node.id)
       if (!old) {
-        const pos = seed(node.kind, index, scene.nodes.length)
-        return { ...node, x: pos.x, y: pos.y, vx: 0, vy: 0 }
+        const pos = seed(node.kind, index, placed.nodes.length)
+        return { ...node, degree, x: pos.x, y: pos.y, vx: 0, vy: 0 }
       }
+      if (old.caption !== node.caption || old.degree !== degree) captionsChanged = true
       old.kind = node.kind
       old.caption = node.caption
       old.subtitle = node.subtitle
       old.rawCaption = node.rawCaption
       old.objectId = node.objectId
       old.properties = node.properties
+      old.degree = degree
       return old
     })
-    const links: SimLink[] = scene.edges.map((edge) => ({
+    const links: SimLink[] = placed.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
@@ -741,13 +799,15 @@ export function GraphMap({
     const sameNodes = reuse && oldNodes.length === next.length && next.every((node, index) => oldNodes[index]?.id === node.id)
     const previousLinks = sim.force<ForceLink<SimNode, SimLink>>('link')?.links() ?? []
     const sameLinks = previousLinks.length === links.length && links.every((link, index) => previousLinks[index]?.id === link.id)
+    if (reuse && next.length > previous.size) fitAfterRef.current = true
     if (!sameNodes) sim.nodes(next)
     if (!sameLinks) sim.force<ForceLink<SimNode, SimLink>>('link')?.links(links)
-    if (!sameNodes || !sameLinks) {
+    if (!sameNodes || !sameLinks || captionsChanged) {
       canvas.dataset.settled = 'false'
-      sim.alpha(previous.size === 0 ? 1 : 0.7).restart()
+      const cold = previous.size === 0
+      sim.alpha(cold ? 1 : captionsChanged && sameNodes && sameLinks ? 0.35 : 0.7).restart()
     } else drawRef.current(true)
-  }, [scene, focusId])
+  }, [placed, focusId])
 
   useEffect(() => {
     drawRef.current(true)
@@ -757,7 +817,7 @@ export function GraphMap({
   const pinned = Boolean(
     pinTick >= 0 && simRef.current?.nodes().some((node) => node.id === selected && node.fx != null && node.fy != null),
   )
-  const shown = scene.nodes.filter((node) => !hidden.has(node.kind))
+  const shown = placed.nodes.filter((node) => !hidden.has(node.kind))
 
   const onKey = (event: ReactKeyboardEvent<HTMLCanvasElement>) => {
     if (event.key === 'Escape') {
@@ -953,6 +1013,93 @@ function endNode(end: SimLink['source']) {
   return typeof end === 'object' ? end : undefined
 }
 
+function endRadius(end: SimLink['source']) {
+  if (typeof end === 'object') return nodeRadius(end.kind, end.degree ?? 0)
+  return 22
+}
+
+function labelBox(node: SimNode) {
+  const radius = nodeRadius(node.kind, node.degree ?? 0)
+  const labelW = Math.min(280, Math.max(radius * 2, node.caption.length * 7.2 + 16))
+  const half = labelW / 2
+  return {
+    left: (node.x ?? 0) - half,
+    right: (node.x ?? 0) + half,
+    top: (node.y ?? 0) - radius - 2,
+    bottom: (node.y ?? 0) + radius + 22,
+  }
+}
+
+function labelCollision(): Force<SimNode, SimLink> {
+  let nodes: SimNode[] = []
+  const force: Force<SimNode, SimLink> = (alpha: number) => {
+    for (let i = 0; i < nodes.length; i += 1) {
+      const a = nodes[i]
+      if (!a || a.x == null || a.y == null) continue
+      const boxA = labelBox(a)
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const b = nodes[j]
+        if (!b || b.x == null || b.y == null) continue
+        const boxB = labelBox(b)
+        const overlapX = Math.min(boxA.right, boxB.right) - Math.max(boxA.left, boxB.left)
+        const overlapY = Math.min(boxA.bottom, boxB.bottom) - Math.max(boxA.top, boxB.top)
+        if (overlapX <= 0 || overlapY <= 0) continue
+        const aPinned = a.fx != null
+        const bPinned = b.fx != null
+        if (aPinned && bPinned) continue
+        const push = alpha * 0.85
+        if (overlapX < overlapY) {
+          const sign = (a.x ?? 0) <= (b.x ?? 0) ? -1 : 1
+          const mag = overlapX * 0.5 * push
+          if (!aPinned) a.vx = (a.vx ?? 0) + sign * mag * (bPinned ? 2 : 1)
+          if (!bPinned) b.vx = (b.vx ?? 0) - sign * mag * (aPinned ? 2 : 1)
+        } else {
+          const sign = (a.y ?? 0) <= (b.y ?? 0) ? -1 : 1
+          const mag = overlapY * 0.5 * push
+          if (!aPinned) a.vy = (a.vy ?? 0) + sign * mag * (bPinned ? 2 : 1)
+          if (!bPinned) b.vy = (b.vy ?? 0) - sign * mag * (aPinned ? 2 : 1)
+        }
+      }
+    }
+  }
+  force.initialize = (next: SimNode[]) => {
+    nodes = next
+  }
+  return force
+}
+
+async function lookupNames(ids: string[]): Promise<Record<string, KnownObject>> {
+  const unique = [...new Set(ids.filter(Boolean))]
+  const found: Record<string, KnownObject> = {}
+  for (let index = 0; index < unique.length; index += 400) {
+    const slice = unique.slice(index, index + 400)
+    const body = await api<Json>('/v1/objects/names', {
+      method: 'POST',
+      body: JSON.stringify({ ids: slice }),
+    })
+    const rows = (body.objects as Json[] | undefined) ?? []
+    for (const row of rows) {
+      const id = String(row.id ?? '')
+      if (!id) continue
+      found[id] = { name: String(row.name ?? '').trim(), typeKey: String(row.type ?? '') }
+    }
+  }
+  return found
+}
+
+async function resolveNames(ids: string[], base: Record<string, KnownObject>) {
+  const missing = [...new Set(ids.filter((id) => id && !base[id]))]
+  if (!missing.length) return base
+  try {
+    const found = await lookupNames(missing)
+    const next = { ...base }
+    for (const id of missing) next[id] = found[id] ?? { name: '', typeKey: '' }
+    return next
+  } catch {
+    return base
+  }
+}
+
 function bendOf(id: string, len: number) {
   let hash = 0
   for (let index = 0; index < id.length; index += 1) hash = (hash * 33 + id.charCodeAt(index)) >>> 0
@@ -1019,25 +1166,19 @@ function roundRect(context: CanvasRenderingContext2D, x: number, y: number, widt
   context.roundRect(x, y, width, height, radius)
 }
 
-function insideLines(context: CanvasRenderingContext2D, text: string, maxWidth: number) {
-  if (!text) return []
-  if (context.measureText(text).width <= maxWidth) return [text]
-  const space = text.indexOf(' ')
-  if (space > 0) {
-    const first = fitText(context, text.slice(0, space), maxWidth)
-    const second = fitText(context, text.slice(space + 1), maxWidth)
-    if (first && second && !first.endsWith('…') && !second.endsWith('…')) return [first, second]
-  }
-  const fitted = fitText(context, text, maxWidth)
-  return fitted ? [fitted] : []
-}
-
-function fitText(context: CanvasRenderingContext2D, text: string, maxWidth: number) {
-  if (!text) return ''
-  if (context.measureText(text).width <= maxWidth) return text
-  let next = text
-  while (next.length > 1 && context.measureText(`${next}…`).width > maxWidth) next = next.slice(0, -1)
-  return next.length < 2 ? '' : `${next}…`
+function haloText(context: CanvasRenderingContext2D, text: string, x: number, y: number, fill: string, plate: string) {
+  context.font = '12px "Inter Variable", Inter, sans-serif'
+  const width = context.measureText(text).width
+  const padX = 5
+  const height = 16
+  context.fillStyle = plate
+  roundRect(context, x - width / 2 - padX, y - height / 2, width + padX * 2, height, 4)
+  context.fill()
+  context.lineWidth = 3
+  context.strokeStyle = plate
+  context.strokeText(text, x, y)
+  context.fillStyle = fill
+  context.fillText(text, x, y)
 }
 
 function luminance(color: string) {
