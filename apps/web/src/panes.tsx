@@ -29,6 +29,7 @@ import {
 } from './type-labels'
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
+import { objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishSelection, publishTable } from './ui-context'
 
@@ -190,7 +191,7 @@ export function ObjectTable({
   useEffect(() => {
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
-  const filterBy = [typeKey ? `type_key:=${typeKey}` : '', session.group ? `groups:=${session.group}` : ''].filter(Boolean).join(' && ')
+  const filterBy = objectTableFilter(typeKey, session.group, assortments.data?.assortments ?? [])
   const probe = useQuery({
     queryKey: ['objects', queryText, filterBy, sort, groupBy, 1],
     queryFn: () => loadPage(queryText, filterBy, sort, groupBy, 1),
