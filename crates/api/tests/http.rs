@@ -8,9 +8,10 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-const TOKENS: &str = "ada:human:token-ada;bot:agent@ada:token-bot";
+const TOKENS: &str = "ada:human:token-ada;bot:agent@ada:token-bot;feed:integration:token-import";
 const HUMAN: &str = "token-ada";
 const AGENT: &str = "token-bot";
+const IMPORT: &str = "token-import";
 
 fn load_env() {
     if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_some() {
@@ -489,15 +490,15 @@ async fn yaml_import_and_compile_errors() {
 }
 
 #[tokio::test]
-async fn agent_writes_are_attributed_and_delete_returns_gone() {
+async fn a_person_save_is_attributed_and_delete_returns_gone() {
     let (_db, app) = app().await;
     let (status, _, created) = call(
         &app,
         "POST",
         "/v1/objects",
-        Some(AGENT),
+        Some(HUMAN),
         &[("content-type", "application/json")],
-        Some(r#"{"type":"item","values":{"sku":"SKU-AGENT"}}"#),
+        Some(r#"{"type":"item","values":{"sku":"SKU-HUMAN","active":true}}"#),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{created}");
@@ -512,10 +513,9 @@ async fn agent_writes_are_attributed_and_delete_returns_gone() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{changes}");
-    assert_eq!(changes[0]["actor"], "bot");
-    assert_eq!(changes[0]["on_behalf_of"], "ada");
-    assert_eq!(changes[0]["via"], "agent");
+    assert_eq!(changes[0]["actor"], "ada");
     assert_eq!(changes[0]["op"], "create");
+    assert!(changes[0].get("via").is_none(), "{changes}");
 
     let (status, _, deleted) = call(
         &app,
@@ -538,6 +538,231 @@ async fn agent_writes_are_attributed_and_delete_returns_gone() {
     .await;
     assert_eq!(status, StatusCode::GONE, "{gone}");
     assert_eq!(gone["code"], "deleted");
+}
+
+#[tokio::test]
+async fn an_agent_or_import_cannot_commit_and_a_person_save_still_does() {
+    let (_db, app) = app().await;
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-GUARD","active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = created["id"].as_str().unwrap();
+    let path = format!("/v1/objects/{id}");
+
+    let (status, _, suggested) = call(
+        &app,
+        "PATCH",
+        &path,
+        Some(AGENT),
+        &[("content-type", "application/json"), ("if-match", "1")],
+        Some(r#"{"values":{"active":false}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{suggested}");
+    assert_eq!(suggested["needs_approval"], true, "{suggested}");
+    assert_eq!(suggested["source"], "agent");
+    let proposal_id = suggested["proposal_id"].as_str().unwrap();
+
+    let (status, _, imported) = call(
+        &app,
+        "PATCH",
+        &path,
+        Some(IMPORT),
+        &[("content-type", "application/json"), ("if-match", "1")],
+        Some(r#"{"values":{"active":false}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{imported}");
+    assert_eq!(imported["source"], "import");
+
+    let (status, _, current) = call(&app, "GET", &path, Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{current}");
+    assert_eq!(current["version"], 1, "{current}");
+    assert_eq!(current["values"]["active"], true, "{current}");
+
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let (status, _, accepted) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        accepted["failed"].as_array().unwrap().is_empty(),
+        "{accepted}"
+    );
+    let (status, _, saved) = call(&app, "GET", &path, Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["values"]["active"], false, "{saved}");
+    assert_eq!(saved["version"], 2, "{saved}");
+
+    let (status, _, human) = call(
+        &app,
+        "PATCH",
+        &path,
+        Some(HUMAN),
+        &[("content-type", "application/json"), ("if-match", "2")],
+        Some(r#"{"values":{"active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{human}");
+    assert_eq!(human["version"], 3, "{human}");
+    assert_eq!(human["values"]["active"], true, "{human}");
+
+    let (status, _, blocked) = call(
+        &app,
+        "DELETE",
+        &path,
+        Some(AGENT),
+        &[("if-match", "3")],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{blocked}");
+    assert_eq!(blocked["code"], "needs_approval");
+    let (status, _, still) = call(&app, "GET", &path, Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    assert_eq!(still["version"], 3);
+
+    let (status, _, drafted) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-ONLY-AGENT","active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{drafted}");
+    let (status, _, listed) = call(
+        &app,
+        "GET",
+        "/v1/objects?q=SKU-ONLY-AGENT",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["objects"].as_array().unwrap().len(), 0, "{listed}");
+
+    let (status, _, op) = call(
+        &app,
+        "POST",
+        "/v1/operations/patch_object",
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"id":"{id}","values":{{"active":false}},"base_version":3}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{op}");
+    assert_eq!(op["needs_approval"], true, "{op}");
+    let (status, _, after_op) = call(&app, "GET", &path, Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after_op}");
+    assert_eq!(after_op["version"], 3, "{after_op}");
+    assert_eq!(after_op["values"]["active"], true, "{after_op}");
+
+    for token in [AGENT, IMPORT] {
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/bulk",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(r#"{"objects":[{"type":"item","values":{"sku":"SKU-BULK","active":true}}]}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {body}");
+        assert_eq!(body["code"], "needs_approval");
+        let (status, _, body) = call(
+            &app,
+            "PUT",
+            "/v1/languages",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(r#"["sv","en"]"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {body}");
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/assortments",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(r#"{"name":"Unattended","query":{"type":"item"}}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {body}");
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/imports/018f1000-0000-7000-8000-000000000099/save",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(r#"{"skip_failed":true}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {body}");
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/structures:create",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(r#"{"key":"unattended","label":"Unattended"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {body}");
+    }
+
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    assert!(
+        !defs["structures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["key"] == "unattended"),
+        "{defs}"
+    );
+    let (status, _, assortments) =
+        call(&app, "GET", "/v1/assortments", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{assortments}");
+    assert_eq!(assortments["assortments"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

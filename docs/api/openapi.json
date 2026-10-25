@@ -645,6 +645,16 @@
               }
             }
           },
+          "202": {
+            "description": "Filed as a suggestion. An agent or import does not save.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suggestion"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Duplicate key",
             "content": {
@@ -789,6 +799,16 @@
               }
             }
           },
+          "403": {
+            "description": "An agent or import cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
             "content": {
@@ -861,6 +881,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ObjectResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Filed as a suggestion. An agent or import does not save.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suggestion"
                 }
               }
             }
@@ -2587,11 +2617,11 @@
             "minimum": 0
           },
           "via": {
-            "description": "`agent` when the actor wrote for a person, `import` for an integration.",
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "`agent` when the actor wrote for a person, `import` for an integration."
           }
         }
       },
@@ -3362,6 +3392,27 @@
             "propertyNames": {
               "type": "string"
             }
+          }
+        }
+      },
+      "Suggestion": {
+        "type": "object",
+        "description": "A write that was filed for a person to accept. Nothing was saved.",
+        "required": [
+          "proposal_id",
+          "needs_approval",
+          "source"
+        ],
+        "properties": {
+          "needs_approval": {
+            "type": "boolean"
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source": {
+            "type": "string"
           }
         }
       },

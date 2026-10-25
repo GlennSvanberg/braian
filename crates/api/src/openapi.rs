@@ -61,6 +61,7 @@ use utoipa::OpenApi;
         crate::objects::PatchObject,
         crate::objects::ObjectResponse,
         crate::objects::DeletedResponse,
+        crate::objects::Suggestion,
         crate::objects::ChangeResponse,
         crate::definitions::DefinitionWrite,
         crate::structures::StructureCreate,

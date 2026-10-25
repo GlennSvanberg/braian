@@ -93,6 +93,7 @@ pub async fn put_definitions(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, Problem> {
+    crate::auth::require_commit(&identity)?;
     let mut defs: DefinitionSet = if content_is_yaml(&headers) {
         serde_norway::from_slice(&body).map_err(|error| bad_body(error.to_string()))?
     } else {
@@ -643,6 +644,7 @@ pub(crate) async fn commit(
     actor: &Actor,
     edit: impl Fn(&mut DefinitionSet) -> Result<(), Problem>,
 ) -> Result<(DefinitionSet, WriteReceipt), Problem> {
+    ensure_person(state, actor).await?;
     for attempt in 0..2 {
         let mut defs = match state.store.definition_set().await {
             Ok(defs) => defs,
@@ -675,6 +677,23 @@ pub(crate) async fn commit(
         "revision_conflict",
         "definition revision changed",
     ))
+}
+
+async fn ensure_person(state: &AppState, actor: &Actor) -> Result<(), Problem> {
+    let human = match state
+        .store
+        .principal(actor.actor)
+        .await
+        .map_err(store_status)?
+    {
+        Some(record) => record.kind == braian_store::PrincipalKind::Human,
+        None => false,
+    };
+    if human {
+        Ok(())
+    } else {
+        Err(crate::auth::commit_forbidden())
+    }
 }
 
 fn write_response(revision: u64, receipt: WriteReceipt) -> Response {

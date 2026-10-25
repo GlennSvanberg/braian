@@ -13,7 +13,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
 use axum::routing::get;
-use braian_store::PrincipalKind;
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -404,13 +403,7 @@ async fn save_import(
     Json(body): Json<SaveBody>,
 ) -> Result<(StatusCode, Json<Value>), Problem> {
     require(&identity, Role::Editor)?;
-    if identity.kind == PrincipalKind::Agent {
-        return Err(Problem::new(
-            StatusCode::FORBIDDEN,
-            "needs_approval",
-            "An agent files a proposal instead of saving an import.",
-        ));
-    }
+    crate::auth::require_commit(&identity)?;
     let session = load(&state, &identity, id).await?;
     ensure_revision(&state, &session).await?;
     if let Some((code, detail)) = save_conflict(&session.status) {

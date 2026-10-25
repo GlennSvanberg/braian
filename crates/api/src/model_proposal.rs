@@ -36,10 +36,10 @@ pub async fn propose(
     let (after, impact) = preview(&cached.defs, &changes).map_err(model_status)?;
     CompiledModel::compile(&after).map_err(Problem::definitions)?;
     let title = title_for(name, args, &impact.lines);
-    let source = if identity.kind == braian_store::PrincipalKind::Agent {
-        "agent"
-    } else {
-        "user"
+    let source = match identity.kind {
+        braian_store::PrincipalKind::Agent => "agent",
+        braian_store::PrincipalKind::Integration => "import",
+        braian_store::PrincipalKind::Human => "user",
     };
     let id = Uuid::now_v7();
     let rows = changes

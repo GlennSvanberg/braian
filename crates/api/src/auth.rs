@@ -64,6 +64,37 @@ impl Role {
     }
 }
 
+impl Identity {
+    /// A catalog save is a person's act. Agents and imports file suggestions.
+    pub fn may_commit(&self) -> bool {
+        self.kind == PrincipalKind::Human
+    }
+}
+
+/// `agent` for an agent or for Ctrl+K acting as the person. `import` for an integration.
+pub fn suggestion_source(kind: PrincipalKind) -> &'static str {
+    match kind {
+        PrincipalKind::Integration => "import",
+        PrincipalKind::Agent | PrincipalKind::Human => "agent",
+    }
+}
+
+pub fn commit_forbidden() -> Problem {
+    Problem::new(
+        axum::http::StatusCode::FORBIDDEN,
+        "needs_approval",
+        "An agent or import files a suggestion. Only a person can save.",
+    )
+}
+
+pub fn require_commit(identity: &Identity) -> Result<(), Problem> {
+    if identity.may_commit() {
+        Ok(())
+    } else {
+        Err(commit_forbidden())
+    }
+}
+
 impl fmt::Debug for Identity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
