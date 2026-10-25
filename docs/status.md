@@ -15,7 +15,7 @@ just dev
 
 Öppna http://127.0.0.1:3000. API:t lyssnar på http://127.0.0.1:8090. Demokontot skapas från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env` (se `.env.example`). Inget lösenord ligger i källkoden. Agenten vill ha `OPENAI_API_KEY`. Utan nyckel säger chatten till på svenska och resten av programmet fungerar.
 
-Windows-anteckningarna står i README. En ren klon på Linux ska använda samma tre kommandon.
+En ren klon på Linux följde README: `cp .env.example .env`, `just up`, `pnpm install`, `just dev`. API:t lyssnade på 8090 och webben på 3000. Sökningen svarade 3 013 objekt ur den befintliga volymen, hjälteobjekten först (`ART-REGEL-45` och vidare). `just` behöver vara installerat. Första `just dev` byggde Rust-koden i klonen. En befintlig replikeringsslot återanvänds, med en varning, och strömmen fortsätter. Windows-anteckningarna står i README.
 
 ## Det som fungerar
 
