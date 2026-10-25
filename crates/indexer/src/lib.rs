@@ -6,12 +6,16 @@
 //! import refuses an older `seq`, so the two lanes can write at the same time.
 //!
 //! `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH` and
-//! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the Postgres read and the parallel
-//! Typesense `documents/import` calls. Concurrency above 1 is what uses more
-//! than one Typesense thread.
+//! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the interactive lane. The bulk lane
+//! uses `BRAIAN_INDEXER_BULK_BATCH`, `BRAIAN_INDEXER_BULK_IMPORT_BATCH` and
+//! `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY`, which are larger so a mass import
+//! is not stuck at one small HTTP call per flush. Before a bulk import the
+//! lane waits until the interactive topic is drained, up to
+//! `BRAIAN_INDEXER_BULK_YIELD_MAX_MS`, and then imports anyway.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use braian_events::{BULK_TOPIC, ChangeEvent, INTERACTIVE_TOPIC, Subscription};
@@ -28,12 +32,20 @@ const WINDOW: Duration = Duration::from_millis(100);
 /// How the indexer batches Postgres reads and Typesense imports.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexerConfig {
-    /// Events coalesced before one flush.
+    /// Interactive events coalesced before one flush.
     pub batch_size: usize,
-    /// Documents per Typesense `documents/import` call.
+    /// Documents per interactive Typesense `documents/import` call.
     pub import_batch: usize,
-    /// Import calls in flight.
+    /// Interactive import calls in flight.
     pub import_concurrency: usize,
+    /// Bulk events coalesced before one flush.
+    pub bulk_batch_size: usize,
+    /// Documents per bulk Typesense `documents/import` call.
+    pub bulk_import_batch: usize,
+    /// Bulk import calls in flight.
+    pub bulk_import_concurrency: usize,
+    /// How long the bulk lane waits for the interactive topic to drain.
+    pub bulk_yield_max: Duration,
 }
 
 impl Default for IndexerConfig {
@@ -42,6 +54,10 @@ impl Default for IndexerConfig {
             batch_size: 200,
             import_batch: 100,
             import_concurrency: 4,
+            bulk_batch_size: 2_000,
+            bulk_import_batch: 500,
+            bulk_import_concurrency: 4,
+            bulk_yield_max: Duration::from_millis(100),
         }
     }
 }
@@ -55,6 +71,19 @@ impl IndexerConfig {
             import_concurrency: positive_env(
                 "BRAIAN_INDEXER_IMPORT_CONCURRENCY",
                 defaults.import_concurrency,
+            ),
+            bulk_batch_size: positive_env("BRAIAN_INDEXER_BULK_BATCH", defaults.bulk_batch_size),
+            bulk_import_batch: positive_env(
+                "BRAIAN_INDEXER_BULK_IMPORT_BATCH",
+                defaults.bulk_import_batch,
+            ),
+            bulk_import_concurrency: positive_env(
+                "BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY",
+                defaults.bulk_import_concurrency,
+            ),
+            bulk_yield_max: duration_env(
+                "BRAIAN_INDEXER_BULK_YIELD_MAX_MS",
+                defaults.bulk_yield_max,
             ),
         }
     }
@@ -95,6 +124,11 @@ impl Indexer {
             batch = config.batch_size,
             import_batch = config.import_batch,
             import_concurrency = config.import_concurrency,
+            bulk_batch = config.bulk_batch_size,
+            bulk_import_batch = config.bulk_import_batch,
+            bulk_import_concurrency = config.bulk_import_concurrency,
+            bulk_yield_max_ms =
+                u64::try_from(config.bulk_yield_max.as_millis()).unwrap_or(u64::MAX),
             "indexer batching"
         );
         Ok(Self {
@@ -114,19 +148,22 @@ impl Indexer {
             cache: tokio::sync::Mutex::new(None),
         });
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let drain = Arc::new(InteractiveDrain::new());
         let mut interactive = tokio::spawn(run_lane(
             Arc::clone(&shared),
             self.interactive,
             shutdown.clone(),
             stop_rx.clone(),
-            LanePace::interactive(),
+            LanePace::for_kind(LaneKind::Interactive, self.config),
+            Arc::clone(&drain),
         ));
         let mut bulk = tokio::spawn(run_lane(
             shared,
             self.bulk,
             shutdown,
             stop_rx,
-            LanePace::bulk(),
+            LanePace::for_kind(LaneKind::Bulk, self.config),
+            drain,
         ));
         tokio::select! {
             result = &mut interactive => {
@@ -192,7 +229,12 @@ impl Shared {
         Ok(Some(cached))
     }
 
-    async fn flush(&self, pending: &HashMap<String, ChangeEvent>) -> anyhow::Result<()> {
+    async fn flush(
+        &self,
+        pending: &HashMap<String, ChangeEvent>,
+        import_batch: usize,
+        import_concurrency: usize,
+    ) -> anyhow::Result<()> {
         let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
         let Some(cached) = self.compiled().await? else {
             self.store.set_indexer_seq(max_seq).await?;
@@ -205,8 +247,8 @@ impl Shared {
             &self.search,
             self.search.alias(),
             &docs,
-            self.config.import_batch,
-            self.config.import_concurrency,
+            import_batch,
+            import_concurrency,
         )
         .await?;
         self.store.set_indexer_seq(max_seq).await?;
@@ -245,29 +287,133 @@ pub(crate) fn reuse_revision(cached: Option<u64>, current: u64) -> bool {
     cached == Some(current)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LaneKind {
+    Interactive,
+    Bulk,
+}
+
 #[derive(Clone, Copy)]
 struct LanePace {
     idle: Duration,
     armed: Duration,
     rebuild: bool,
+    kind: LaneKind,
+    batch_size: usize,
+    import_batch: usize,
+    import_concurrency: usize,
+    bulk_yield_max: Duration,
 }
 
 impl LanePace {
-    fn interactive() -> Self {
+    fn for_kind(kind: LaneKind, config: IndexerConfig) -> Self {
+        match kind {
+            LaneKind::Interactive => Self {
+                idle: Duration::from_millis(5),
+                armed: Duration::from_millis(5),
+                rebuild: false,
+                kind,
+                batch_size: config.batch_size,
+                import_batch: config.import_batch,
+                import_concurrency: config.import_concurrency,
+                bulk_yield_max: config.bulk_yield_max,
+            },
+            LaneKind::Bulk => Self {
+                idle: Duration::from_millis(40),
+                armed: Duration::from_millis(5),
+                rebuild: true,
+                kind,
+                batch_size: config.bulk_batch_size,
+                import_batch: config.bulk_import_batch,
+                import_concurrency: config.bulk_import_concurrency,
+                bulk_yield_max: config.bulk_yield_max,
+            },
+        }
+    }
+}
+
+/// Interactive events the bulk lane should let finish before it imports.
+struct InteractiveDrain {
+    pending: AtomicUsize,
+    flushing: AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl InteractiveDrain {
+    fn new() -> Self {
         Self {
-            idle: Duration::from_millis(5),
-            armed: Duration::from_millis(5),
-            rebuild: false,
+            pending: AtomicUsize::new(0),
+            flushing: AtomicBool::new(false),
+            notify: tokio::sync::Notify::new(),
         }
     }
 
-    fn bulk() -> Self {
-        Self {
-            idle: Duration::from_millis(40),
-            armed: Duration::from_millis(5),
-            rebuild: true,
+    fn set_pending(&self, pending: usize) {
+        self.pending.store(pending, Ordering::Release);
+        self.publish();
+    }
+
+    fn set_flushing(&self, flushing: bool) {
+        self.flushing.store(flushing, Ordering::Release);
+        self.publish();
+    }
+
+    fn publish(&self) {
+        if !self.busy() {
+            self.notify.notify_waiters();
         }
     }
+
+    fn busy(&self) -> bool {
+        self.pending.load(Ordering::Acquire) > 0 || self.flushing.load(Ordering::Acquire)
+    }
+
+    async fn wait_for_idle(&self, max_wait: Duration) {
+        let started = Instant::now();
+        loop {
+            if !bulk_import_waits(
+                self.pending.load(Ordering::Acquire),
+                self.flushing.load(Ordering::Acquire),
+                started.elapsed(),
+                max_wait,
+            ) {
+                return;
+            }
+            let left = max_wait.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                return;
+            }
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            if notified.as_mut().enable() {
+                continue;
+            }
+            if !bulk_import_waits(
+                self.pending.load(Ordering::Acquire),
+                self.flushing.load(Ordering::Acquire),
+                started.elapsed(),
+                max_wait,
+            ) {
+                return;
+            }
+            tokio::select! {
+                () = notified => {}
+                () = tokio::time::sleep(left) => return,
+            }
+        }
+    }
+}
+
+/// Bulk import waits while the interactive lane still has events or is flushing,
+/// and only until `max_wait`. After that it imports anyway.
+pub(crate) fn bulk_import_waits(
+    interactive_pending: usize,
+    interactive_flushing: bool,
+    waited: Duration,
+    max_wait: Duration,
+) -> bool {
+    let busy = interactive_pending > 0 || interactive_flushing;
+    busy && waited < max_wait
 }
 
 async fn run_lane(
@@ -276,6 +422,7 @@ async fn run_lane(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     mut stop: tokio::sync::watch::Receiver<bool>,
     pace: LanePace,
+    drain: Arc<InteractiveDrain>,
 ) -> anyhow::Result<()> {
     let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
     let mut since = Instant::now();
@@ -284,10 +431,7 @@ async fn run_lane(
         .unwrap_or_else(Instant::now);
     loop {
         if *shutdown.borrow() || *stop.borrow() {
-            if !pending.is_empty() {
-                shared.flush(&pending).await?;
-                subscription.commit()?;
-            }
+            commit_pending(&shared, &subscription, &mut pending, &pace, &drain).await?;
             return Ok(());
         }
         if pace.rebuild && checked.elapsed() >= Duration::from_secs(1) {
@@ -295,7 +439,7 @@ async fn run_lane(
             checked = Instant::now();
         }
         let mut first = true;
-        while pending.len() < shared.config.batch_size {
+        while pending.len() < pace.batch_size {
             let wait = if pending.is_empty() && first {
                 pace.idle
             } else if first {
@@ -309,15 +453,11 @@ async fn run_lane(
             };
             remember(&mut pending, event);
         }
-        if lane_due(
-            pending.len(),
-            shared.config.batch_size,
-            since.elapsed(),
-            false,
-        ) {
-            shared.flush(&pending).await?;
-            subscription.commit()?;
-            pending.clear();
+        if pace.kind == LaneKind::Interactive {
+            drain.set_pending(pending.len());
+        }
+        if lane_due(pending.len(), pace.batch_size, since.elapsed(), false) {
+            commit_pending(&shared, &subscription, &mut pending, &pace, &drain).await?;
             since = Instant::now();
         } else if pending.is_empty() {
             since = Instant::now();
@@ -331,6 +471,38 @@ async fn run_lane(
             }
         }
     }
+}
+
+async fn commit_pending(
+    shared: &Shared,
+    subscription: &Subscription,
+    pending: &mut HashMap<String, ChangeEvent>,
+    pace: &LanePace,
+    drain: &InteractiveDrain,
+) -> anyhow::Result<()> {
+    if pending.is_empty() {
+        if pace.kind == LaneKind::Interactive {
+            drain.set_pending(0);
+            drain.set_flushing(false);
+        }
+        return Ok(());
+    }
+    if pace.kind == LaneKind::Interactive {
+        drain.set_pending(pending.len());
+        drain.set_flushing(true);
+    } else {
+        drain.wait_for_idle(pace.bulk_yield_max).await;
+    }
+    shared
+        .flush(pending, pace.import_batch, pace.import_concurrency)
+        .await?;
+    subscription.commit()?;
+    pending.clear();
+    if pace.kind == LaneKind::Interactive {
+        drain.set_pending(0);
+        drain.set_flushing(false);
+    }
+    Ok(())
 }
 
 fn remember(pending: &mut HashMap<String, ChangeEvent>, event: ChangeEvent) {
@@ -449,6 +621,16 @@ fn positive_env(name: &str, default: usize) -> usize {
     .unwrap_or(default)
 }
 
+fn duration_env(name: &str, default: Duration) -> Duration {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .unwrap_or(default),
+        Err(_) => default,
+    }
+}
+
 /// Rebuilds a new collection from Postgres and points the alias at it.
 pub async fn reindex(store: &Store, search: &Typesense) -> anyhow::Result<i64> {
     reindex_with(store, search, IndexerConfig::from_env()).await
@@ -467,7 +649,7 @@ async fn reindex_with(
     search.create_collection(&name, &defs).await?;
     let mut after: Option<Uuid> = None;
     let max_seq = store.max_change_seq().await?;
-    let page = i64::try_from(config.import_batch.max(1) * 2).unwrap_or(200);
+    let page = i64::try_from(config.bulk_import_batch.max(1).saturating_mul(2)).unwrap_or(1_000);
     loop {
         let ids = store.object_ids_after(after, page).await?;
         if ids.is_empty() {
@@ -500,8 +682,8 @@ async fn reindex_with(
             search,
             &name,
             &docs,
-            config.import_batch,
-            config.import_concurrency,
+            config.bulk_import_batch,
+            config.bulk_import_concurrency,
         )
         .await?;
         after = ids.last().map(|id| id.as_uuid());
@@ -705,6 +887,63 @@ mod tests {
         assert_eq!(
             order.lock().expect("order").as_slice(),
             ["bulk-start", "interactive", "bulk-end"]
+        );
+    }
+
+    #[test]
+    fn bulk_import_waits_until_the_interactive_lane_is_idle_or_the_cap_hits() {
+        let max = Duration::from_millis(100);
+        assert!(!bulk_import_waits(0, false, Duration::ZERO, max));
+        assert!(bulk_import_waits(1, false, Duration::ZERO, max));
+        assert!(bulk_import_waits(0, true, Duration::from_millis(99), max));
+        assert!(!bulk_import_waits(4, true, max, max));
+        assert!(!bulk_import_waits(4, true, Duration::from_millis(150), max));
+    }
+
+    #[test]
+    fn bulk_import_defaults_are_larger_than_the_interactive_lane() {
+        let config = IndexerConfig::default();
+        assert!(config.bulk_batch_size > config.batch_size);
+        assert!(config.bulk_import_batch > config.import_batch);
+        assert!(config.bulk_import_concurrency >= config.import_concurrency);
+        assert_eq!(
+            config.bulk_batch_size,
+            config.bulk_import_batch * config.bulk_import_concurrency
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_lane_wakes_when_the_interactive_backlog_clears() {
+        let drain = Arc::new(InteractiveDrain::new());
+        drain.set_pending(3);
+        let waiting = Arc::clone(&drain);
+        let task = tokio::spawn(async move {
+            waiting.wait_for_idle(Duration::from_millis(200)).await;
+        });
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        drain.set_pending(0);
+        let started = Instant::now();
+        task.await.expect("wait");
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "bulk import kept waiting after the interactive topic drained"
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_lane_imports_after_the_cap_while_interactive_is_still_busy() {
+        let drain = InteractiveDrain::new();
+        drain.set_flushing(true);
+        let started = Instant::now();
+        drain.wait_for_idle(Duration::from_millis(40)).await;
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(30),
+            "bulk import did not wait for the interactive flush: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "bulk import waited past the cap: {elapsed:?}"
         );
     }
 }
