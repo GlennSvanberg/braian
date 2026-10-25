@@ -47,6 +47,9 @@
   --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   --select: var(--accent-dim);
   --select-text: var(--text);
+  --scrollbar: color-mix(in srgb, var(--muted) 50%, transparent);
+  --scrollbar-hover: color-mix(in srgb, var(--muted) 82%, transparent);
+  --scrollbar-active: color-mix(in srgb, var(--text-2) 92%, transparent);
   --panel-2: var(--surface);
   --line: color-mix(in srgb, var(--border) 55%, transparent);
   --amber-bg: color-mix(in srgb, var(--warn) 22%, transparent);
@@ -82,6 +85,72 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Thin themed scrollbars (~8px), transparent track, rounded muted thumb.
+   Firefox uses scrollbar-width/color. Chromium's native scrollbar-color still
+   paints arrow buttons, so Chromium and Safari take the WebKit rules instead.
+   The thumb brightens when its pane is hovered, and again while dragging. */
+@supports (-moz-appearance: none) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+  }
+  .pane:hover,
+  .select-content:hover,
+  .palette:hover,
+  .palette-list:hover,
+  .agent:hover,
+  .consequence:hover,
+  .menu:hover {
+    scrollbar-color: var(--scrollbar-hover) transparent;
+  }
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.pane:hover ::-webkit-scrollbar-thumb,
+.select-content:hover::-webkit-scrollbar-thumb,
+.palette:hover ::-webkit-scrollbar-thumb,
+.palette-list:hover::-webkit-scrollbar-thumb,
+.agent:hover ::-webkit-scrollbar-thumb,
+.consequence:hover::-webkit-scrollbar-thumb,
+.menu:hover::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active,
+.pane:hover ::-webkit-scrollbar-thumb:hover,
+.pane:hover ::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-active);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-button:single-button,
+::-webkit-scrollbar-button:vertical:start:decrement,
+::-webkit-scrollbar-button:vertical:end:increment,
+::-webkit-scrollbar-button:horizontal:start:decrement,
+::-webkit-scrollbar-button:horizontal:end:increment {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 html, body, #root { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -261,8 +330,19 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  scrollbar-color: transparent transparent;
 }
-.pane-tabs::-webkit-scrollbar { display: none; }
+.pane-tabs::-webkit-scrollbar,
+.pane:hover .pane-tabs::-webkit-scrollbar,
+.pane:hover .pane-tabs::-webkit-scrollbar-thumb,
+.pane-tabs::-webkit-scrollbar-thumb,
+.pane-tabs::-webkit-scrollbar-button,
+.pane-tabs::-webkit-scrollbar-corner {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
 .pane-tab { display: inline-flex; align-items: center; gap: 4px; max-width: 180px; }
 .pane-tab > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane.focused .pane-tab.active { box-shadow: inset 0 2px 0 var(--accent); }
