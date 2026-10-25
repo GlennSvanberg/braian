@@ -2045,6 +2045,7 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
             "version": receipt.versions.first().map(|(_, version)| *version).unwrap_or(0),
             "type": type_key,
         }));
+        state.index_after_commit(id.as_uuid(), receipt.last_seq);
         return Ok(receipt.last_seq);
     }
     let body = CreateObject {
@@ -2063,6 +2064,9 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
         .await
         .map_err(store_status)?;
     state.emit(json!({ "seq": receipt.last_seq, "op": "create", "type": type_key }));
+    if let Some((id, _)) = receipt.versions.first() {
+        state.index_after_commit(id.as_uuid(), receipt.last_seq);
+    }
     Ok(receipt.last_seq)
 }
 
@@ -2875,6 +2879,7 @@ async fn run_operation(
             state.emit(
                 json!({ "seq": receipt.last_seq, "op": "update", "object_id": id.as_uuid() }),
             );
+            state.index_after_commit(id.as_uuid(), receipt.last_seq);
             Ok(json!({ "seq": receipt.last_seq }))
         }
         "history" => Ok(history(

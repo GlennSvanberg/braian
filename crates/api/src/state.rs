@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use braian_model::DefinitionSet;
+use braian_model::{DefinitionSet, ObjectId};
 use braian_rules::CompiledModel;
 use braian_search::Typesense;
 use braian_store::{Error, Store};
 use serde_json::Value;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock, broadcast, mpsc};
+use uuid::Uuid;
 
 use crate::auth::Identity;
 use crate::problem::{Problem, store_status};
@@ -20,12 +21,33 @@ pub struct AppState {
     pub live: broadcast::Sender<Value>,
     pub cookie_secure: bool,
     seen: Arc<Mutex<HashSet<i64>>>,
+    index_tx: Option<mpsc::Sender<IndexJob>>,
+}
+
+struct IndexJob {
+    id: ObjectId,
+    seq: i64,
 }
 
 impl AppState {
     pub fn new(store: Store, identities: Vec<Identity>, search: Option<Typesense>) -> Self {
         let (live, _) = broadcast::channel(1024);
         let cookie_secure = std::env::var("BRAIAN_COOKIE_SECURE").ok().as_deref() == Some("1");
+        let index_tx = search.as_ref().map(|search| {
+            let (tx, mut rx) = mpsc::channel::<IndexJob>(64);
+            let store = store.clone();
+            let search = search.clone();
+            tokio::spawn(async move {
+                while let Some(job) = rx.recv().await {
+                    if let Err(error) =
+                        braian_indexer::index_written(&store, &search, &[job.id], job.seq).await
+                    {
+                        tracing::warn!(%error, "search write-through failed");
+                    }
+                }
+            });
+            tx
+        });
         Self {
             store,
             identities: Arc::new(identities),
@@ -34,6 +56,24 @@ impl AppState {
             live,
             cookie_secure,
             seen: Arc::new(Mutex::new(HashSet::new())),
+            index_tx,
+        }
+    }
+
+    /// Best-effort search update after an interactive commit. A full queue is
+    /// dropped; the Redpanda indexer still writes the document.
+    pub fn index_after_commit(&self, id: Uuid, seq: i64) {
+        let Some(tx) = &self.index_tx else {
+            return;
+        };
+        if tx
+            .try_send(IndexJob {
+                id: ObjectId::from_uuid(id),
+                seq,
+            })
+            .is_err()
+        {
+            tracing::debug!(%id, seq, "search write-through queue is full");
         }
     }
 

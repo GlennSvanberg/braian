@@ -319,6 +319,7 @@ fn note(state: &AppState, op: &str, id: Uuid, version: u64, seq: i64, type_key: 
         "version": version,
         "type": type_key,
     }));
+    state.index_after_commit(id, seq);
 }
 
 #[utoipa::path(
