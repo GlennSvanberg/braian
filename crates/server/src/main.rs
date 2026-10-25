@@ -155,7 +155,15 @@ fn typesense() -> Option<Typesense> {
         std::env::var("TYPESENSE_URL"),
         std::env::var("TYPESENSE_API_KEY"),
     ) {
-        (Ok(url), Ok(key)) if !url.is_empty() => Some(Typesense::new(url, key)),
+        (Ok(url), Ok(key)) if !url.is_empty() => {
+            let client = Typesense::new(url, key);
+            match std::env::var("BRAIAN_SEARCH_ALIAS") {
+                Ok(alias) if !alias.is_empty() && alias != braian_search::ALIAS => {
+                    Some(client.with_alias(alias))
+                }
+                _ => Some(client),
+            }
+        }
         _ => None,
     }
 }

@@ -11,6 +11,8 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
+    # CA bundle shipped by webpki-roots (reqwest rustls, pg_walstream). Permissive data license.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 

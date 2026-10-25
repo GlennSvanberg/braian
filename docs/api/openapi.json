@@ -23,6 +23,40 @@
         }
       }
     },
+    "/mcp": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "MCP endpoint over the operation registry",
+        "responses": {}
+      }
+    },
+    "/v1/agent": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Proxy a chat completion when a model key is set",
+        "responses": {}
+      }
+    },
+    "/v1/assortments": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List saved searches",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save an assortment",
+        "responses": {}
+      }
+    },
     "/v1/attributes": {
       "post": {
         "tags": [
@@ -213,6 +247,15 @@
         ]
       }
     },
+    "/v1/bulk": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Write many objects as one job",
+        "responses": {}
+      }
+    },
     "/v1/definitions": {
       "get": {
         "tags": [
@@ -302,6 +345,67 @@
         ]
       }
     },
+    "/v1/export": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Export the current search as xlsx",
+        "responses": {}
+      }
+    },
+    "/v1/history": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Recent changes across objects",
+        "responses": {}
+      }
+    },
+    "/v1/impact": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Affected objects and jobs for a breaking definition change",
+        "responses": {}
+      }
+    },
+    "/v1/job-types": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List job types",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Register a job type",
+        "responses": {}
+      }
+    },
+    "/v1/job-types/{key}/runs": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Runs for one job type",
+        "responses": {}
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "One job run",
+        "responses": {}
+      }
+    },
     "/v1/languages": {
       "put": {
         "tags": [
@@ -341,6 +445,24 @@
         ]
       }
     },
+    "/v1/login": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Start a cookie session",
+        "responses": {}
+      }
+    },
+    "/v1/logout": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Clear the cookie session",
+        "responses": {}
+      }
+    },
     "/v1/me": {
       "get": {
         "tags": [
@@ -377,6 +499,13 @@
       }
     },
     "/v1/objects": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List object heads from Postgres",
+        "responses": {}
+      },
       "post": {
         "tags": [
           "objects"
@@ -652,6 +781,15 @@
         ]
       }
     },
+    "/v1/objects/{id}/as-of": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Object values as of a sequence",
+        "responses": {}
+      }
+    },
     "/v1/objects/{id}/changes": {
       "get": {
         "tags": [
@@ -692,6 +830,33 @@
         ]
       }
     },
+    "/v1/objects/{id}/graph": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Relations and where each attribute comes from",
+        "responses": {}
+      }
+    },
+    "/v1/objects/{id}/relations": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Set a relation",
+        "responses": {}
+      }
+    },
+    "/v1/objects/{id}/rollback": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Propose a rollback to a sequence",
+        "responses": {}
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "tags": [
@@ -703,6 +868,103 @@
             "description": "This OpenAPI document"
           }
         }
+      }
+    },
+    "/v1/operations": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List operations the caller may run",
+        "responses": {}
+      }
+    },
+    "/v1/operations/{name}": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Run one operation. Agents receive a proposal.",
+        "responses": {}
+      }
+    },
+    "/v1/proposals": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List proposals",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Create a proposal",
+        "responses": {}
+      }
+    },
+    "/v1/proposals/{id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read a proposal",
+        "responses": {}
+      }
+    },
+    "/v1/proposals/{id}/accept": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Accept a proposal in full or by row",
+        "responses": {}
+      }
+    },
+    "/v1/proposals/{id}/discard": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Discard a proposal",
+        "responses": {}
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Search the index. Supports filter, sort, group and page",
+        "responses": {}
+      }
+    },
+    "/v1/share/{token}": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Open a workspace by share token",
+        "responses": {}
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Object counts by type",
+        "responses": {}
+      }
+    },
+    "/v1/stream": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Server-sent events for committed changes",
+        "responses": {}
       }
     },
     "/v1/structures": {
@@ -853,6 +1115,15 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/v1/tokens": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Create an API token for a person",
+        "responses": {}
       }
     },
     "/v1/types": {
@@ -1153,6 +1424,81 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/v1/view-types": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List view types",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Register a view type",
+        "responses": {}
+      }
+    },
+    "/v1/views": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Create or update a view, including table state",
+        "responses": {}
+      }
+    },
+    "/v1/webhooks": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List webhooks",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Create a webhook",
+        "responses": {}
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List workspaces",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Create or update a workspace layout",
+        "responses": {}
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Workspace with views and layout",
+        "responses": {}
+      }
+    },
+    "/v1/workspaces/{id}/assign": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Assign a workspace to a person",
+        "responses": {}
       }
     }
   },
@@ -2156,6 +2502,10 @@
     {
       "name": "objects",
       "description": "Object values. Addresses accept a key or an id; responses use keys."
+    },
+    {
+      "name": "platform",
+      "description": "Auth, search, workspaces, proposals, jobs and the live stream"
     }
   ]
 }

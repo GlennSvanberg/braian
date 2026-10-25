@@ -7,11 +7,12 @@ use utoipa::OpenApi;
         version = "0.0.0",
         description = "Write and read definitions and objects."
     ),
-    modifiers(&SecurityAddon),
+    modifiers(&SecurityAddon, &PlatformPaths),
     tags(
         (name = "meta", description = "Process and caller"),
         (name = "definitions", description = "Versioned model. One request is one revision."),
-        (name = "objects", description = "Object values. Addresses accept a key or an id; responses use keys.")
+        (name = "objects", description = "Object values. Addresses accept a key or an id; responses use keys."),
+        (name = "platform", description = "Auth, search, workspaces, proposals, jobs and the live stream")
     ),
     paths(
         crate::health,
@@ -64,6 +65,161 @@ struct ApiDoc;
 
 pub fn spec() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
+}
+
+struct PlatformPaths;
+
+impl utoipa::Modify for PlatformPaths {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::path::{HttpMethod, OperationBuilder};
+        let routes = [
+            (HttpMethod::Post, "/v1/login", "Start a cookie session"),
+            (HttpMethod::Post, "/v1/logout", "Clear the cookie session"),
+            (
+                HttpMethod::Post,
+                "/v1/tokens",
+                "Create an API token for a person",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/operations",
+                "List operations the caller may run",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/operations/{name}",
+                "Run one operation. Agents receive a proposal.",
+            ),
+            (
+                HttpMethod::Post,
+                "/mcp",
+                "MCP endpoint over the operation registry",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/agent",
+                "Proxy a chat completion when a model key is set",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/stream",
+                "Server-sent events for committed changes",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/search",
+                "Search the index. Supports filter, sort, group and page",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/objects",
+                "List object heads from Postgres",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/export",
+                "Export the current search as xlsx",
+            ),
+            (HttpMethod::Get, "/v1/stats", "Object counts by type"),
+            (HttpMethod::Get, "/v1/workspaces", "List workspaces"),
+            (
+                HttpMethod::Post,
+                "/v1/workspaces",
+                "Create or update a workspace layout",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/workspaces/{id}",
+                "Workspace with views and layout",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/workspaces/{id}/assign",
+                "Assign a workspace to a person",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/share/{token}",
+                "Open a workspace by share token",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/views",
+                "Create or update a view, including table state",
+            ),
+            (HttpMethod::Get, "/v1/view-types", "List view types"),
+            (HttpMethod::Post, "/v1/view-types", "Register a view type"),
+            (HttpMethod::Get, "/v1/assortments", "List saved searches"),
+            (HttpMethod::Post, "/v1/assortments", "Save an assortment"),
+            (HttpMethod::Get, "/v1/job-types", "List job types"),
+            (HttpMethod::Post, "/v1/job-types", "Register a job type"),
+            (
+                HttpMethod::Get,
+                "/v1/job-types/{key}/runs",
+                "Runs for one job type",
+            ),
+            (HttpMethod::Get, "/v1/jobs/{id}", "One job run"),
+            (
+                HttpMethod::Post,
+                "/v1/bulk",
+                "Write many objects as one job",
+            ),
+            (HttpMethod::Get, "/v1/proposals", "List proposals"),
+            (HttpMethod::Post, "/v1/proposals", "Create a proposal"),
+            (HttpMethod::Get, "/v1/proposals/{id}", "Read a proposal"),
+            (
+                HttpMethod::Post,
+                "/v1/proposals/{id}/accept",
+                "Accept a proposal in full or by row",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/proposals/{id}/discard",
+                "Discard a proposal",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/history",
+                "Recent changes across objects",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/objects/{id}/as-of",
+                "Object values as of a sequence",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/objects/{id}/rollback",
+                "Propose a rollback to a sequence",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/objects/{id}/graph",
+                "Relations and where each attribute comes from",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/objects/{id}/relations",
+                "Set a relation",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/impact",
+                "Affected objects and jobs for a breaking definition change",
+            ),
+            (HttpMethod::Get, "/v1/webhooks", "List webhooks"),
+            (HttpMethod::Post, "/v1/webhooks", "Create a webhook"),
+        ];
+        for (method, path, summary) in routes {
+            let operation = OperationBuilder::new()
+                .summary(Some(summary))
+                .tags(Some(["platform"]))
+                .build();
+            openapi
+                .paths
+                .add_path_operation(path, vec![method], operation);
+        }
+    }
 }
 
 struct SecurityAddon;

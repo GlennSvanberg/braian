@@ -67,10 +67,10 @@ textarea { min-height: 64px; width: 100%; resize: vertical; }
 .split > div:not(.divider) > .split { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .pane { min-width: 0; min-height: 0; flex: 1 1 auto; display: grid; grid-template-rows: 28px minmax(0, 1fr); background: var(--panel); border-right: 1px solid var(--line); position: relative; }
 .pane-tabs { display: flex; align-items: end; gap: 2px; padding: 0 4px; background: var(--panel-2); border-bottom: 1px solid var(--line); overflow: auto; }
-.pane-body { min-height: 0; overflow: auto; padding: 6px; }
+.pane-body { position: relative; min-height: 0; overflow: auto; padding: 6px; }
 .divider { flex: 0 0 5px; background: var(--line); cursor: col-resize; }
 .split.column > .divider { cursor: row-resize; }
-.drop { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1.4fr 1fr; grid-template-rows: 1fr 1.4fr 1fr; pointer-events: none; }
+.drop { position: absolute; inset: 0; z-index: 4; display: grid; grid-template-columns: 1fr 1.4fr 1fr; grid-template-rows: 1fr 1.4fr 1fr; pointer-events: none; }
 .drop i { pointer-events: auto; background: rgba(47, 111, 237, 0.18); border: 1px dashed var(--accent); }
 .drop i[data-zone='center'] { grid-area: 2 / 2; }
 .drop i[data-zone='left'] { grid-area: 1 / 1 / 4 / 2; }
@@ -94,9 +94,35 @@ textarea { min-height: 64px; width: 100%; resize: vertical; }
 
 .tree button { display: block; width: 100%; text-align: left; border: none; background: transparent; padding: 2px 4px; }
 .tree button.on { background: var(--select); color: var(--select-text); }
-.form { display: grid; gap: 6px; }
-.field { display: grid; gap: 2px; }
-.field label { color: var(--muted); }
+.form { display: flex; flex-direction: column; gap: 4px; }
+.form > .toolbar { display: flex; gap: 4px; }
+.field { display: grid; grid-template-columns: 108px minmax(0, 1fr); column-gap: 8px; align-items: start; }
+.field > label { color: var(--muted); text-align: right; padding-top: 3px; }
+.control { min-width: 0; }
+.control input:not([type='checkbox']), .control select, .control textarea { width: 100%; }
+.form textarea { min-height: 44px; }
+.langs { display: flex; flex-direction: column; gap: 2px; }
+.lang { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 6px; align-items: center; }
+.lang b, .langs b { font-size: 10px; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
+.measure { display: flex; gap: 4px; align-items: center; }
+.measure input { width: 72px; }
+.choices { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.choices label { display: flex; gap: 4px; align-items: center; }
+.ref { position: relative; }
+.ref-menu { position: absolute; z-index: 5; left: 0; right: 0; background: var(--panel-2); border: 1px solid var(--line); box-shadow: var(--shadow); display: grid; }
+.ref-menu button { text-align: left; border: none; background: transparent; }
+.ref-menu button:hover { background: var(--select); color: var(--select-text); }
+.asof { display: grid; gap: 1px 8px; margin-top: 6px; }
+.asof div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; }
+.asof dt { color: var(--muted); text-align: right; }
+.asof dd { margin: 0; }
+.diff { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.diff th, .diff td { text-align: left; padding: 1px 6px; vertical-align: top; border-bottom: 1px solid var(--line); }
+.diff th { color: var(--muted); font-weight: 550; }
+.graph-wrap { display: grid; gap: 4px; }
+.origin p { margin: 0; padding: 1px 0; }
+.origin b { display: inline-block; min-width: 96px; }
+.graph text { font-size: 11px; }
 .error { color: var(--danger); }
 .menu { position: fixed; z-index: 20; background: var(--panel-2); border: 1px solid var(--line); box-shadow: var(--shadow); min-width: 160px; }
 .menu button { display: block; width: 100%; text-align: left; border: none; background: transparent; }

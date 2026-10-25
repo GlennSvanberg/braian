@@ -61,7 +61,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/job-types/{key}/runs", get(job_runs))
         .route("/v1/jobs/{id}", get(job_run))
         .route("/v1/bulk", post(bulk))
-        .route("/v1/proposals", post(create_proposal))
+        .route("/v1/proposals", get(list_proposals).post(create_proposal))
         .route("/v1/proposals/{id}", get(get_proposal))
         .route("/v1/proposals/{id}/accept", post(accept_proposal))
         .route("/v1/proposals/{id}/discard", post(discard_proposal))
@@ -447,13 +447,19 @@ async fn stream(State(state): State<AppState>, Auth(identity): Auth) -> Result<R
         if frames.send(Bytes::from(": connected\n\n")).await.is_err() {
             return;
         }
+        let mut tick = tokio::time::interval(Duration::from_secs(15));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let frame = match live.recv().await {
-                Ok(value) => Bytes::from(format!("data: {value}\n\n")),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    Bytes::from(": lag\n\n")
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            let frame = tokio::select! {
+                biased;
+                value = live.recv() => match value {
+                    Ok(value) => Bytes::from(format!("data: {value}\n\n")),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        Bytes::from(": lag\n\n")
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+                _ = tick.tick() => Bytes::from(": ping\n\n"),
             };
             if frames.send(frame).await.is_err() {
                 break;
@@ -1083,6 +1089,16 @@ fn create_op(cached: &crate::state::CachedModel, body: &CreateObject) -> Result<
     Ok(ObjectOp::Create(object))
 }
 
+async fn list_proposals(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    Ok(Json(json!({
+        "proposals": state.store.list_proposals().await.map_err(store_status)?
+    })))
+}
+
 async fn create_proposal(
     State(state): State<AppState>,
     Auth(identity): Auth,
@@ -1705,6 +1721,18 @@ async fn impact(
     }
     if let Some(key) = &body.remove_class {
         for structure in &mut defs.structures {
+            if let Some(class) = structure.classes.iter().find(|class| &class.key == key) {
+                for attribute_id in &class.attributes {
+                    attribute_ids.push(*attribute_id);
+                    if let Some(attribute) = defs
+                        .attributes
+                        .iter()
+                        .find(|attribute| attribute.id == *attribute_id)
+                    {
+                        field_keys.push(attribute.key.clone());
+                    }
+                }
+            }
             structure.classes.retain(|class| &class.key != key);
         }
     }
@@ -1726,6 +1754,7 @@ async fn impact(
     let mut affected = 0i64;
     let mut invalid = 0i64;
     let mut sampled = 0i64;
+    let mut samples = Vec::new();
     for attribute_id in &attribute_ids {
         affected += state
             .store
@@ -1743,6 +1772,12 @@ async fn impact(
                 let Some(stored) = state.store.get_object(id).await.map_err(store_status)? else {
                     continue;
                 };
+                if samples.len() < 12 {
+                    samples.push(json!({
+                        "id": stored.object.id.as_uuid(),
+                        "key": stored.key,
+                    }));
+                }
                 let mut object = stored.object;
                 object.model_revision = defs.model_revision;
                 if body.remove_attribute.is_some() {
@@ -1775,6 +1810,7 @@ async fn impact(
     Ok(Json(json!({
         "affected_objects": affected,
         "sampled_objects": sampled,
+        "samples": samples,
         "invalid_objects": invalid,
         "jobs": jobs,
         "definition_errors": definition_errors,

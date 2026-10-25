@@ -78,6 +78,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await page.screenshot({ path: `${shots}/data-model.png` })
 
   await page.getByRole('button', { name: 'Berika objekt' }).click()
+  await expect(page.getByTestId('activity-log')).toHaveAttribute('data-live', /open|message/, { timeout: 20_000 })
   const before = await page.getByTestId('activity-log').innerText()
   const response = await page.request.post('/v1/objects', {
     data: {
