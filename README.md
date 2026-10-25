@@ -3,6 +3,8 @@
 Öppen källkod (MIT), self-hosted datahantering för det PIM brukar användas till.
 Färdiga gränssnitt som ett traditionellt PIM, och samma åtgärder via API och MCP.
 
+Landningssidan för braian.io ligger i `apps/landing`. `just landing` bygger den statiska filen till `apps/landing/dist`.
+
 ## Kör lokalt
 
 Kräver Docker Desktop (Windows eller macOS) eller Docker i devcontainern, Rust, Node 22, pnpm 10 och [just](https://just.systems/).
