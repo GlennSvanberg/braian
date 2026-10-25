@@ -95,7 +95,7 @@ let code = 1
 try {
   await waitFor('http://127.0.0.1:8095/healthz')
   await waitFor('http://127.0.0.1:3010/')
-  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts', 'e2e/drag.spec.ts', 'e2e/layout.spec.ts', 'e2e/graph.spec.ts'], {
+  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts', 'e2e/drag.spec.ts', 'e2e/layout.spec.ts', 'e2e/graph.spec.ts', 'e2e/selection.spec.ts'], {
     cwd: root,
     stdio: 'inherit',
     shell: windows,

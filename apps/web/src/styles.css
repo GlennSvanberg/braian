@@ -471,9 +471,22 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   line-height: 28px;
 }
 .head .cell { border-right: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
-.row.selected { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
 .row:hover { background: color-mix(in srgb, var(--accent-dim) 65%, transparent); }
-.row:focus-visible { outline-offset: -2px; }
+.row.picked {
+  background: color-mix(in srgb, var(--accent-dim) 42%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.row.active {
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.row:focus-visible,
+.tree-row:focus-visible,
+.class-row:focus-visible,
+.timeline article:focus-visible,
+.proposal-switch button:focus-visible {
+  outline: none;
+}
 .draft-user { background: var(--amber-bg); border-radius: var(--r-md); }
 .draft-agent { background: var(--accent-dim); border-radius: var(--r-md); }
 
@@ -492,7 +505,11 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   padding: 0 8px;
   color: var(--text-2);
 }
-.tree button.on, .tree-row.on { background: var(--accent-dim); color: var(--text); }
+.tree button.on, .tree-row.on {
+  background: var(--accent-dim);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 .tree strong { display: block; padding: 6px 8px 2px; font-size: 12px; font-weight: 500; color: var(--muted); }
 .tree-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-count {
@@ -702,7 +719,11 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   font-size: 12px;
 }
 .hit-chips { display: inline-flex; align-items: center; gap: 4px; flex: none; }
-.timeline article.selected { background: var(--accent-dim); }
+.timeline article.selected {
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.timeline:focus-visible { outline: none; }
 .ref { position: relative; }
 .ref-menu {
   position: absolute;
@@ -1082,7 +1103,11 @@ kbd {
   border-radius: var(--r-md);
   box-shadow: none;
 }
-.class-row.on, .tree span.on { background: var(--accent-dim); color: var(--text); }
+.class-row.on, .tree span.on {
+  background: var(--accent-dim);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 .drop-on { outline: 1px dashed var(--accent); background: var(--accent-dim); border-radius: var(--r-md); }
 .proposal-tree { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .proposal-tree li {

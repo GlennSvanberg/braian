@@ -51,6 +51,21 @@ const columns = [
 
 const pageSize = 100
 
+function sameIds(left: string[], right: string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
+function stepIndex(current: number, key: string, total: number) {
+  if (total <= 0) return -1
+  if (key === 'Home') return 0
+  if (key === 'End') return total - 1
+  if (key === 'PageDown') return Math.min(total - 1, (current < 0 ? 0 : current) + 10)
+  if (key === 'PageUp') return Math.max(0, (current < 0 ? 0 : current) - 10)
+  if (key === 'ArrowDown') return Math.min(total - 1, (current < 0 ? -1 : current) + 1)
+  if (key === 'ArrowUp') return Math.max(0, current < 0 ? total - 1 : current - 1)
+  return current
+}
+
 function savedTable(view: PanesView) {
   const table = (view.state.table as Json | undefined) ?? {}
   return {
@@ -92,6 +107,10 @@ export function ObjectTable({
   const [selected, setSelected] = useState<string[]>([])
   const [hidden, setHidden] = useState<string[]>([])
   const [cursor, setCursor] = useState(-1)
+  const anchorRef = useRef(0)
+  const intentRef = useRef<'single' | 'range' | 'toggle'>('single')
+  const objectIdRef = useRef(session.objectId)
+  objectIdRef.current = session.objectId
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [flashId, setFlashId] = useState('')
   const queryClient = useQueryClient()
@@ -195,6 +214,8 @@ export function ObjectTable({
     found: Number(group.found ?? 0),
     hits: ((group.hits as Json[]) ?? []).map((hit) => toRow((hit.document as Json) ?? hit)),
   }))
+  const groupedRows = groups.flatMap((group) => group.hits)
+  const loadedKey = `${probe.dataUpdatedAt ?? 0}:${windows.map((item) => item.dataUpdatedAt ?? 0).join(',')}`
 
   const ordered = order.filter((id) => columns.some((column) => column.id === id))
   const shown = (ordered.length > 0 ? ordered : columns.map((column) => column.id)).filter((id) => !hidden.includes(id))
@@ -234,8 +255,15 @@ export function ObjectTable({
     if (event.name === 'ui.group') setGroupBy(String(args.group ?? args.by ?? ''))
     if (event.name === 'ui.sort' && args.sort) setSort(String(args.sort))
     if (event.name === 'ui.select' && args.id) {
-      session.setObjectId(String(args.id))
-      setSelected([String(args.id)])
+      const id = String(args.id)
+      intentRef.current = 'single'
+      session.setObjectId(id)
+      setSelected([id])
+      const index = [...byIndex.entries()].find(([, row]) => row.id === id)?.[0]
+      if (index != null) {
+        anchorRef.current = index
+        setCursor(index)
+      }
     }
     if (event.name === 'ui.select_rows' && Array.isArray(args.ids)) setSelected(args.ids.map(String))
     if (event.name === 'ui.show_column') {
@@ -257,24 +285,38 @@ export function ObjectTable({
     if (event.name === 'ui.export') exportVisible()
   }), [filterBy, queryText, session])
 
-  const moveCursor = (next: number, extend: boolean) => {
-    const clamped = Math.max(0, Math.min(Math.max(found - 1, 0), next))
+  const rowAt = (index: number) => (groupBy ? groupedRows[index] : byIndex.get(index))
+
+  const activate = (index: number, mode: 'single' | 'range' | 'toggle') => {
+    const total = groupBy ? groupedRows.length : found
+    if (total <= 0) return
+    const clamped = Math.max(0, Math.min(total - 1, index))
+    intentRef.current = mode
+    if (mode !== 'range') anchorRef.current = clamped
     setCursor(clamped)
-    virtualizer.scrollToIndex(clamped)
-    const row = byIndex.get(clamped)
-    if (!row) return
-    session.setObjectId(row.id)
-    if (!extend) {
-      setSelected([row.id])
+    if (!groupBy) virtualizer.scrollToIndex(clamped)
+    const row = rowAt(clamped)
+    if (!row) {
+      if (mode === 'single') setSelected([])
       return
     }
-    const [start, end] = cursor < clamped ? [cursor, clamped] : [clamped, Math.max(cursor, 0)]
-    const ids: string[] = []
-    for (let index = start; index <= end; index += 1) {
-      const item = byIndex.get(index)
-      if (item) ids.push(item.id)
+    if (objectIdRef.current !== row.id) session.setObjectId(row.id)
+    if (mode === 'toggle') {
+      setSelected((current) => (current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id]))
+      return
     }
-    setSelected(ids.length > 0 ? ids : [row.id])
+    if (mode === 'range') {
+      const from = Math.min(anchorRef.current, clamped)
+      const to = Math.max(anchorRef.current, clamped)
+      const ids: string[] = []
+      for (let at = from; at <= to; at += 1) {
+        const item = rowAt(at)
+        if (item) ids.push(item.id)
+      }
+      setSelected(ids.length > 0 ? ids : [row.id])
+      return
+    }
+    setSelected([row.id])
   }
 
   const onTableKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -286,23 +328,33 @@ export function ObjectTable({
     }
     event.preventDefault()
     if (event.key === 'Enter') {
-      const row = byIndex.get(cursor)
+      const row = rowAt(cursor)
       if (row) session.setObjectId(row.id)
       return
     }
-    const next = event.key === 'ArrowDown'
-      ? cursor + 1
-      : event.key === 'ArrowUp'
-        ? cursor - 1
-        : event.key === 'PageDown'
-          ? cursor + 10
-          : event.key === 'PageUp'
-            ? cursor - 10
-            : event.key === 'Home'
-              ? 0
-              : found - 1
-    moveCursor(next, event.shiftKey)
+    activate(stepIndex(cursor, event.key, groupBy ? groupedRows.length : found), event.shiftKey ? 'range' : 'single')
   }
+
+  useEffect(() => {
+    if (cursor < 0) return
+    const row = groupBy ? groupedRows[cursor] : byIndex.get(cursor)
+    if (!row) return
+    if (objectIdRef.current !== row.id) session.setObjectId(row.id)
+    if (intentRef.current === 'toggle') return
+    if (intentRef.current === 'range') {
+      const from = Math.min(anchorRef.current, cursor)
+      const to = Math.max(anchorRef.current, cursor)
+      const ids: string[] = []
+      for (let index = from; index <= to; index += 1) {
+        const item = groupBy ? groupedRows[index] : byIndex.get(index)
+        if (item) ids.push(item.id)
+      }
+      if (ids.length === 0) return
+      setSelected((current) => (sameIds(current, ids) ? current : ids))
+      return
+    }
+    setSelected((current) => (current.length === 1 && current[0] === row.id ? current : [row.id]))
+  }, [cursor, loadedKey, groupBy, groupedRows, session])
 
   const cell = (row: ObjRow, id: string) => {
     if (id === 'key') return row.key
@@ -432,14 +484,34 @@ export function ObjectTable({
         </div>
         {groupBy ? (
           <div style={{ flex: 'none' }}>
-            {groups.map((group) => (
-              <div key={group.key}>
-                <strong>{group.key || '—'} ({group.found})</strong>
-                {group.hits.map((row) => (
-                  <Row key={row.id} row={row} index={0} shown={shown} sizes={sizes} session={session} selected={selected} setSelected={setSelected} setMenu={setMenu} cell={cell} flash={flashId === row.id} cursor={cursor} />
-                ))}
-              </div>
-            ))}
+            {(() => {
+              let flat = 0
+              return groups.map((group) => (
+                <div key={group.key}>
+                  <strong>{group.key || '—'} ({group.found})</strong>
+                  {group.hits.map((row) => {
+                    const index = flat
+                    flat += 1
+                    const active = cursor === index
+                    return (
+                      <Row
+                        key={row.id}
+                        row={row}
+                        index={index}
+                        shown={shown}
+                        sizes={sizes}
+                        active={active}
+                        picked={selected.includes(row.id) && !active}
+                        onActivate={(mode) => activate(index, mode)}
+                        setMenu={setMenu}
+                        cell={cell}
+                        flash={flashId === row.id}
+                      />
+                    )
+                  })}
+                </div>
+              ))
+            })()}
           </div>
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative', flex: 'none' }}>
@@ -448,6 +520,7 @@ export function ObjectTable({
               if (!row) {
                 return <div key={item.index} className="row" style={{ position: 'absolute', transform: `translateY(${item.start}px)`, height: 28, width: '100%' }} />
               }
+              const active = cursor === item.index
               return (
                 <Row
                   key={row.id}
@@ -455,13 +528,12 @@ export function ObjectTable({
                   index={item.index}
                   shown={shown}
                   sizes={sizes}
-                  session={session}
-                  selected={selected}
-                  setSelected={setSelected}
+                  active={active}
+                  picked={selected.includes(row.id) && !active}
+                  onActivate={(mode) => activate(item.index, mode)}
                   setMenu={setMenu}
                   cell={cell}
                   flash={flashId === row.id}
-                  cursor={cursor}
                   style={{ position: 'absolute', transform: `translateY(${item.start}px)`, width: '100%' }}
                 />
               )
@@ -496,45 +568,44 @@ function Row({
   index,
   shown,
   sizes,
-  session,
-  selected,
-  setSelected,
   setMenu,
   cell,
   flash,
-  cursor,
+  active,
+  picked,
+  onActivate,
   style,
 }: {
   row: ObjRow
   index: number
   shown: string[]
   sizes: Record<string, number>
-  session: PanesSession
-  selected: string[]
-  setSelected: (value: string[] | ((current: string[]) => string[])) => void
   setMenu: (value: { x: number; y: number; id: string } | null) => void
   cell: (row: ObjRow, id: string) => ReactNode
   flash: boolean
-  cursor: number
+  active: boolean
+  picked: boolean
+  onActivate: (mode: 'single' | 'range' | 'toggle') => void
   style?: CSSProperties
 }) {
-  const marked = session.objectId === row.id || selected.includes(row.id) || cursor === index
+  const className = `row${active ? ' active' : ''}${picked ? ' picked' : ''}${flash ? ' flash' : ''}`
   return (
     <div
       data-testid="object-row"
       data-index={index}
-      tabIndex={-1}
-      className={marked ? `row selected${flash ? ' flash' : ''}` : flash ? 'row flash' : 'row'}
+      data-active={active ? 'true' : undefined}
+      data-picked={picked ? 'true' : undefined}
+      className={className}
       style={style}
       onClick={(event) => {
-        session.setObjectId(row.id)
-        if (event.shiftKey) setSelected((current) => current.includes(row.id) ? current : [...current, row.id])
-        else if (event.metaKey || event.ctrlKey) setSelected((current) => current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id])
-        else setSelected([row.id])
+        event.currentTarget.closest<HTMLElement>('.grid')?.focus()
+        if (event.shiftKey) onActivate('range')
+        else if (event.metaKey || event.ctrlKey) onActivate('toggle')
+        else onActivate('single')
       }}
       onContextMenu={(event) => {
         event.preventDefault()
-        session.setObjectId(row.id)
+        onActivate('single')
         setMenu({ x: event.clientX, y: event.clientY, id: row.id })
       }}
     >

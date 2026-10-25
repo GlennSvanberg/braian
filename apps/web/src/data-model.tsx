@@ -81,7 +81,6 @@ type FlatNode = {
 }
 
 function StructureTree({ defs }: { defs: Json | undefined }) {
-  const selectedClass = useClassSelection()
   const [message, setMessage] = useState('')
   const [over, setOver] = useState('')
   const [focus, setFocus] = useState(0)
@@ -106,8 +105,10 @@ function StructureTree({ defs }: { defs: Json | undefined }) {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault()
           setFocus((current) => {
-            const next = event.key === 'ArrowDown' ? current + 1 : current - 1
-            return Math.max(0, Math.min(nodes.length - 1, next))
+            const next = Math.max(0, Math.min(nodes.length - 1, event.key === 'ArrowDown' ? current + 1 : current - 1))
+            const node = nodes[next]
+            if (node?.kind === 'class' && node.classKey) chooseClass(node.classKey)
+            return next
           })
           return
         }
@@ -134,7 +135,6 @@ function StructureTree({ defs }: { defs: Json | undefined }) {
         <StructureBranch
           key={String(structure.key)}
           structure={structure}
-          selectedClass={selectedClass}
           focus={focused}
           over={over}
           collapsed={collapsed}
@@ -170,7 +170,6 @@ function StructureTree({ defs }: { defs: Json | undefined }) {
 
 function StructureBranch({
   structure,
-  selectedClass,
   focus,
   over,
   collapsed,
@@ -181,7 +180,6 @@ function StructureBranch({
   onMenu,
 }: {
   structure: Json
-  selectedClass: string
   focus: FlatNode | undefined
   over: string
   collapsed: string[]
@@ -226,8 +224,12 @@ function StructureBranch({
       >
         <div
           className={over === groupId ? 'tree-row drop-on' : focus && sameNode(focus, node) ? 'tree-row on' : 'tree-row'}
+          data-active={focus && sameNode(focus, node) ? 'true' : undefined}
           style={{ paddingLeft: 8 + depth * 16 }}
-          onClick={() => onFocus(node)}
+          onClick={(event) => {
+            event.currentTarget.closest<HTMLElement>('.model-tree')?.focus()
+            onFocus(node)
+          }}
         >
           {Array.from({ length: depth }, (_, level) => (
             <span key={level} className="tree-guide" style={{ left: 15 + level * 16 }} aria-hidden="true" />
@@ -257,7 +259,8 @@ function StructureBranch({
               key={classKey}
               type="button"
               draggable
-              className={selectedClass === classKey || (focus && sameNode(focus, classNode)) ? 'tree-row on' : 'tree-row'}
+              className={focus && sameNode(focus, classNode) ? 'tree-row on' : 'tree-row'}
+              data-active={focus && sameNode(focus, classNode) ? 'true' : undefined}
               style={{ paddingLeft: 8 + (depth + 1) * 16 }}
               onClick={() => {
                 chooseClass(classKey)
@@ -305,7 +308,25 @@ function ClassList({ defs }: { defs: Json | undefined }) {
     )
   }
   return (
-    <div data-testid="data-model" className="class-list">
+    <div
+      data-testid="data-model"
+      className="class-list"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+        event.preventDefault()
+        const index = rows.findIndex((row) => row.key === selected)
+        const next = event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? rows.length - 1
+            : event.key === 'ArrowDown'
+              ? Math.min(rows.length - 1, (index < 0 ? -1 : index) + 1)
+              : Math.max(0, index < 0 ? rows.length - 1 : index - 1)
+        const row = rows[next]
+        if (row) chooseClass(row.key)
+      }}
+    >
       {rows.map((row) => {
         const cards = attributeCards(defs, row.key, uiLanguage)
         const own = cards.filter((card) => !card.inherited).length
@@ -315,8 +336,12 @@ function ClassList({ defs }: { defs: Json | undefined }) {
             key={`${row.structure}:${row.key}`}
             type="button"
             className={selected === row.key ? 'class-row on' : 'class-row'}
+            data-active={selected === row.key ? 'true' : undefined}
             style={{ paddingLeft: 8 + row.depth * 14 }}
-            onClick={() => chooseClass(row.key)}
+            onClick={(event) => {
+              event.currentTarget.closest<HTMLElement>('.class-list')?.focus()
+              chooseClass(row.key)
+            }}
           >
             <span>{row.key}</span>
             {row.parentKey ? <small>{copy.parent} {row.parentKey}</small> : null}

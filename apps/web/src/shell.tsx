@@ -633,20 +633,26 @@ function StructureTree({ session, view }: { session: Session; view: View }) {
       onKeyDown={(event) => {
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) return
         const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.tree-row')]
-        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        if (buttons.length === 0) return
+        const current = buttons.findIndex((button) => button.dataset.active === 'true')
+        const index = current >= 0 ? current : buttons.indexOf(document.activeElement as HTMLButtonElement)
+        event.preventDefault()
         if (event.key === 'Enter') {
-          if (index >= 0) buttons[index]?.click()
+          const group = buttons[index >= 0 ? index : 0]?.dataset.group
+          if (group) session.setGroup(group)
           return
         }
-        event.preventDefault()
         const next = event.key === 'ArrowDown'
-          ? Math.min(buttons.length - 1, index + 1)
+          ? Math.min(buttons.length - 1, (index < 0 ? -1 : index) + 1)
           : event.key === 'ArrowUp'
             ? Math.max(0, index < 0 ? buttons.length - 1 : index - 1)
             : event.key === 'Home'
               ? 0
               : buttons.length - 1
-        buttons[next]?.focus()
+        const button = buttons[next]
+        const group = button?.dataset.group
+        if (group) session.setGroup(group)
+        button?.focus()
       }}
     >
       {structures.map((structure) => {
@@ -667,6 +673,8 @@ function StructureTree({ session, view }: { session: Session; view: View }) {
                   <button
                     type="button"
                     className={selected ? 'tree-row on' : 'tree-row'}
+                    data-active={selected ? 'true' : undefined}
+                    data-group={`${structureKey}:${key}`}
                     style={{ paddingLeft: 8 + depth * 16 }}
                     onClick={() => session.setGroup(`${structureKey}:${key}`)}
                   >
