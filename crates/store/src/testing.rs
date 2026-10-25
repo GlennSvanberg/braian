@@ -155,6 +155,7 @@ fn template_name() -> String {
         include_str!("../migrations/V3__app.sql"),
         include_str!("../migrations/V4__frecency.sql"),
         include_str!("../migrations/V5__workspace_state.sql"),
+        include_str!("../migrations/V6__reindex_request.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {

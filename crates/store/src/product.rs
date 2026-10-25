@@ -1160,19 +1160,90 @@ impl Store {
     }
 
     pub async fn relay_lag_bytes(&self, slot: &str) -> Result<Option<i64>, Error> {
+        Ok(self
+            .relay_slot_status(slot)
+            .await?
+            .and_then(|status| status.lag_bytes))
+    }
+
+    /// Lag, WAL status and invalidation reason for one logical replication slot.
+    ///
+    /// `None` when the slot does not exist. `wal_status = lost`, or any
+    /// `invalidation_reason`, means Postgres has dropped the WAL the slot needs.
+    pub async fn relay_slot_status(&self, slot: &str) -> Result<Option<RelaySlotStatus>, Error> {
         let client = self.pool().get().await?;
         let Some(row) = client
             .query_opt(
-                "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::bigint
-                 FROM pg_replication_slots WHERE slot_name = $1",
+                "SELECT active,
+                        wal_status,
+                        invalidation_reason,
+                        pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::bigint
+                 FROM pg_replication_slots
+                 WHERE slot_name = $1",
                 &[&slot],
             )
             .await?
         else {
             return Ok(None);
         };
-        let lag: Option<i64> = row.get(0);
-        Ok(lag)
+        Ok(Some(RelaySlotStatus {
+            active: row.get(0),
+            wal_status: row.get(1),
+            invalidation_reason: row.get(2),
+            lag_bytes: row.get(3),
+        }))
+    }
+
+    /// Drops a logical slot that was invalidated. A missing slot is not an error.
+    pub async fn drop_replication_slot(&self, slot: &str) -> Result<(), Error> {
+        let slot = crate::ids::plain_name(slot)?;
+        let client = self.pool().get().await?;
+        let _ = client
+            .batch_execute(&format!(
+                "SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots \
+                 WHERE slot_name = '{slot}' AND active_pid IS NOT NULL"
+            ))
+            .await;
+        match client
+            .batch_execute(&format!("SELECT pg_drop_replication_slot('{slot}')"))
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let missing = error.as_db_error().is_some_and(|db| {
+                    db.message().contains("does not exist")
+                        || db.code() == &tokio_postgres::error::SqlState::UNDEFINED_OBJECT
+                });
+                if missing { Ok(()) } else { Err(error.into()) }
+            }
+        }
+    }
+
+    /// Asks the indexer to rebuild the search alias from Postgres.
+    pub async fn request_reindex(&self) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "UPDATE indexer_progress SET reindex_requested = true, updated_at = now() WHERE id = 1",
+                &[],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Clears a pending reindex request. `true` when this caller won the flag.
+    pub async fn take_reindex_request(&self) -> Result<bool, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "UPDATE indexer_progress
+                 SET reindex_requested = false, updated_at = now()
+                 WHERE id = 1 AND reindex_requested
+                 RETURNING id",
+                &[],
+            )
+            .await?;
+        Ok(row.is_some())
     }
 
     pub async fn replication_slot_active(&self, slot: &str) -> Result<Option<bool>, Error> {
@@ -1207,6 +1278,23 @@ impl Store {
             .iter()
             .map(|row| (row.get(0), row.get(1), row.get(2), row.get::<_, i64>(3)))
             .collect())
+    }
+}
+
+/// One logical replication slot, as `pg_replication_slots` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelaySlotStatus {
+    pub active: bool,
+    /// `reserved`, `extended`, `unreserved` or `lost`.
+    pub wal_status: String,
+    pub invalidation_reason: Option<String>,
+    pub lag_bytes: Option<i64>,
+}
+
+impl RelaySlotStatus {
+    /// Postgres has removed WAL this slot still needs.
+    pub fn invalidated(&self) -> bool {
+        self.wal_status == "lost" || self.invalidation_reason.is_some()
     }
 }
 

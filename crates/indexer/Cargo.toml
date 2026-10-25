@@ -14,6 +14,7 @@ braian-search.workspace = true
 braian-store.workspace = true
 
 anyhow.workspace = true
+futures.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["time", "macros", "rt", "sync"] }
 tracing.workspace = true
