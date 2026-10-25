@@ -14,6 +14,8 @@ dist/
 .DS_Store
 Thumbs.db
 
+data/
+
 # Playwright
 apps/web/test-results/
 apps/web/playwright-report/

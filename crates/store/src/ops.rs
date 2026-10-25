@@ -410,6 +410,46 @@ impl Store {
         Ok(Some(stored))
     }
 
+    /// Loads every live object of `type_id` whose key is in `keys`.
+    ///
+    /// One query finds the ids; the objects are loaded with [`Store::get_objects`].
+    /// Keys that are missing are omitted. Duplicate keys in `keys` collapse to one row.
+    pub async fn get_by_keys(
+        &self,
+        type_id: TypeId,
+        keys: &[String],
+    ) -> Result<HashMap<String, StoredObject>, Error> {
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT id, key FROM objects
+                 WHERE type_id = $1 AND key = ANY($2) AND deleted_at IS NULL",
+                &[&type_id.as_uuid(), &keys],
+            )
+            .await?;
+        let mut id_of = HashMap::with_capacity(rows.len());
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let id: Uuid = row.get("id");
+            let key: String = row.get("key");
+            if id_of.insert(id, key).is_none() {
+                ids.push(ObjectId::from_uuid(id));
+            }
+        }
+        drop(client);
+        let stored = self.get_objects(&ids).await?;
+        let mut found = HashMap::with_capacity(stored.len());
+        for object in stored {
+            if let Some(key) = id_of.remove(&object.object.id.as_uuid()) {
+                found.insert(key, object);
+            }
+        }
+        Ok(found)
+    }
+
     /// Raw part documents for one object. A definition change must not move a value between parts.
     pub async fn stored_parts(&self, id: ObjectId) -> Result<BTreeMap<String, Value>, Error> {
         let client = self.pool().get().await?;

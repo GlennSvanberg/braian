@@ -177,6 +177,48 @@ impl utoipa::Modify for PlatformPaths {
                 "/v1/bulk",
                 "Write many objects as one job",
             ),
+            (
+                HttpMethod::Post,
+                "/v1/imports",
+                "Upload a spreadsheet import",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/imports/{id}",
+                "Read an import session",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/imports/{id}/sheet",
+                "Switch the imported sheet",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/imports/{id}/remap",
+                "Re-run column mapping for a type",
+            ),
+            (
+                HttpMethod::Put,
+                "/v1/imports/{id}/mapping",
+                "Save the column mapping",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/imports/{id}/approve",
+                "Build the import preview",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/imports/{id}/rows",
+                "Read preview rows",
+            ),
+            (HttpMethod::Post, "/v1/imports/{id}/save", "Save the import"),
+            (
+                HttpMethod::Get,
+                "/v1/imports/{id}/failed.xlsx",
+                "Download failing rows",
+            ),
+            (HttpMethod::Delete, "/v1/imports/{id}", "Discard an import"),
             (HttpMethod::Get, "/v1/proposals", "List proposals"),
             (HttpMethod::Post, "/v1/proposals", "Create a proposal"),
             (HttpMethod::Get, "/v1/proposals/{id}", "Read a proposal"),
