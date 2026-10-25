@@ -4,7 +4,6 @@ import { barY, defineChart } from '@tanstack/charts'
 import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
-import { Group, Panel, Separator } from 'react-resizable-panels'
 import { Moon, Sun } from 'lucide-react'
 import { api, type Json } from './api'
 import { humanizeLive, objectIdFromLive } from './activity'
@@ -12,15 +11,26 @@ import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
 import { Kbd } from './components/ui/kbd'
 import { Toaster } from './components/ui/sonner'
-import { viewDisplayTitle, workspaceDisplayName } from './demo-labels'
+import { workspaceDisplayName } from './demo-labels'
+import { WorkspaceDock } from './dock'
 import { flashObject } from './flash'
 import { copy } from './i18n'
-import { dockTab, isSplit, type LayoutNode, type Zone } from './layout'
+import { applyLayoutCommand, migrateLayout, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
 import { onUi } from './ui-bus'
-import { onViewRequest, requestView } from './view-focus'
+import {
+  LAYOUT_ENVIRONMENT,
+  canonicalDoc,
+  editsArePersonal,
+  layoutStorageKey,
+  migrateDoc,
+  readLayoutStore,
+  reconcileLayout,
+  writeLayoutStore,
+  type ServerLayout,
+} from './workspace-doc'
 import {
   DataModel,
   GraphView,
@@ -32,8 +42,8 @@ import {
 } from './panes'
 
 type View = { id: string; type: string; title: string; pane?: string; position?: number; state: Json }
-type ListedWorkspace = { id: string; name: string; locked?: boolean; share_token?: string; layout?: LayoutNode }
-type Workspace = { id: string; name: string; locked: boolean; share_token?: string; layout: LayoutNode; views: View[] }
+type ListedWorkspace = { id: string; name: string; locked?: boolean; share_token?: string; layout?: unknown; owner_id?: string }
+type Workspace = { id: string; name: string; locked: boolean; share_token?: string; layout: unknown; owner_id?: string; views: View[] }
 type Me = {
   email?: string
   role: string
@@ -69,6 +79,17 @@ function writeStore(key: string, value: unknown) {
   localStorage.setItem(key, JSON.stringify(value))
 }
 
+const layoutCommands = new Set([
+  'open_view', 'move_view', 'split', 'resize', 'swap', 'focus',
+  'move_view_left', 'move_view_right', 'move_view_up', 'move_view_down',
+  'zoom', 'close_view', 'get_layout', 'reset_layout',
+  'ui.open_view', 'ui.place', 'ui.link',
+])
+
+function layoutCommand(name: string) {
+  return layoutCommands.has(name)
+}
+
 export function Shell() {
   const queryClient = useQueryClient()
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/v1/me'), retry: false })
@@ -85,7 +106,16 @@ export function Shell() {
   const [help, setHelp] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
-  const placeRef = useRef<(name: string, args: Json) => void>(() => {})
+  const [doc, setDoc] = useState<LayoutDoc | null>(null)
+  const docRef = useRef<LayoutDoc | null>(null)
+  const dirtyRef = useRef(false)
+  const saveGen = useRef(0)
+  const canonicalRef = useRef<LayoutDoc['layout'] | undefined>(undefined)
+  const placeOverride = useRef<Place | undefined>(undefined)
+  const loadedFor = useRef('')
+  const applyRef = useRef<(name: string, args: Record<string, unknown>) => void>(() => {})
+  const paletteModeRef = useRef(paletteMode)
+  paletteModeRef.current = paletteMode
 
   useEffect(() => {
     setBooted(true)
@@ -146,45 +176,166 @@ export function Shell() {
     }
   }, [booted, me.isSuccess, queryClient])
 
+  const userId = me.data?.user_id ?? ''
+  const workspaceRef = useRef(workspace.data)
+  workspaceRef.current = workspace.data
+
   useEffect(() => {
-    const protectDrag = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Element && target.closest('.pane-tab, .pane-tabs')) event.stopPropagation()
+    if (workspace.data && workspace.data.id === workspaceId) {
+      canonicalRef.current = migrateLayout(workspace.data.layout)
     }
-    window.addEventListener('pointerdown', protectDrag, true)
-    return () => window.removeEventListener('pointerdown', protectDrag, true)
-  }, [])
+  }, [workspace.data, workspaceId])
+
+  useEffect(() => {
+    const current = workspace.data
+    if (!workspaceId || !userId || !current || current.id !== workspaceId) return
+    const stamp = `${userId}:${workspaceId}`
+    if (loadedFor.current === stamp) return
+    loadedFor.current = stamp
+    const key = layoutStorageKey(userId, workspaceId)
+    const canonical = canonicalDoc(current)
+    canonicalRef.current = canonical.layout
+    const local = readLayoutStore(key)
+    const painted = local ? migrateDoc(local.document) : canonical
+    dirtyRef.current = false
+    docRef.current = painted
+    setDoc(painted)
+    let cancelled = false
+    void api<ServerLayout>(`/v1/workspaces/${workspaceId}/state?environment=${LAYOUT_ENVIRONMENT}`)
+      .then((server) => {
+        if (cancelled || dirtyRef.current || loadedFor.current !== stamp) return
+        const fresh = readLayoutStore(key)
+        const next = reconcileLayout(fresh, server, canonical)
+        const serverAt = server.updated_at ? Date.parse(server.updated_at) : 0
+        const serverDoc = server.document ? migrateDoc(server.document) : null
+        const diverged = Boolean(
+          fresh && fresh.savedAt > serverAt && (!serverDoc || JSON.stringify(next) !== JSON.stringify(serverDoc)),
+        )
+        docRef.current = next
+        dirtyRef.current = diverged
+        if (diverged) saveGen.current += 1
+        setDoc(next)
+        writeLayoutStore(key, next)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, userId, workspace.data?.id])
+
+  useEffect(() => {
+    if (!doc || !dirtyRef.current || !workspaceId || !userId) return
+    const gen = saveGen.current
+    const timer = window.setTimeout(() => {
+      const current = docRef.current
+      const ws = workspaceRef.current
+      if (!current || !ws || ws.id !== workspaceId || saveGen.current !== gen) return
+      const body = JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document: current })
+      void api(`/v1/workspaces/${workspaceId}/state`, { method: 'PUT', body }).then(() => {
+        if (saveGen.current === gen) dirtyRef.current = false
+      })
+      if (!editsArePersonal(ws)) {
+        void api('/v1/workspaces', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: ws.id,
+            name: ws.name,
+            locked: ws.locked,
+            share_token: ws.share_token,
+            layout: current.layout,
+          }),
+        }).then(() => {
+          canonicalRef.current = current.layout
+        })
+      }
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [doc, workspaceId, userId])
+
+  useEffect(() => {
+    const flush = () => {
+      if (sessionStorage.getItem('braian.layout.suppressFlush') === '1') return
+      const current = docRef.current
+      if (!dirtyRef.current || !current || !workspaceId) return
+      void fetch(`/v1/workspaces/${workspaceId}/state`, {
+        method: 'PUT',
+        credentials: 'include',
+        keepalive: true,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document: current }),
+      })
+    }
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('beforeunload', flush)
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [workspaceId])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
-        event.preventDefault()
-        movePaneFocus(event.key)
-        return
-      }
+      const typing = event.target instanceof HTMLElement
+        && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName))
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteMode('list')
+        return
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
         event.preventDefault()
         setPaletteMode('ai')
+        return
       }
       if (event.key === 'Escape') {
         setHelp(false)
         setTabMenu(null)
+        return
       }
       if (event.key === 'F1') {
         event.preventDefault()
         setHelp(true)
+        return
       }
-      if (event.ctrlKey && event.key >= '1' && event.key <= '9') {
+      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key >= '1' && event.key <= '9') {
         const index = Number(event.key) - 1
         const id = workspaces.data?.workspaces[index]?.id
         if (id) {
           event.preventDefault()
           setWorkspaceId(id)
         }
+        return
+      }
+      if (paletteModeRef.current || typing) return
+      const arrow = zoneFromKey(event.key)
+      if ((event.ctrlKey || event.metaKey) && event.altKey && event.shiftKey && arrow) {
+        event.preventDefault()
+        const sign = arrow === 'left' || arrow === 'top' ? -1 : 1
+        applyRef.current('resize', { direction: arrow, delta: sign * 0.05 })
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.altKey && arrow) {
+        event.preventDefault()
+        const name = arrow === 'left' ? 'move_view_left' : arrow === 'right' ? 'move_view_right' : arrow === 'top' ? 'move_view_up' : 'move_view_down'
+        applyRef.current(name, {})
+        return
+      }
+      if (event.altKey && !event.ctrlKey && !event.metaKey && arrow) {
+        event.preventDefault()
+        applyRef.current('focus', { direction: arrow })
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'w') {
+        event.preventDefault()
+        applyRef.current('close_view', {})
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        applyRef.current('zoom', {})
       }
     }
     window.addEventListener('keydown', onKey)
@@ -199,11 +350,7 @@ export function Shell() {
         setWorkspaceId(event.args.id)
         void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
       }
-      if (event.name === 'ui.open_view' || event.name === 'ui.place' || event.name === 'ui.link') {
-        const token = String(event.args.title ?? event.args.id ?? '')
-        if (token) requestView(token)
-      }
-      if (event.name === 'ui.place' || event.name === 'ui.link') placeRef.current(event.name, event.args)
+      if (layoutCommand(event.name)) applyRef.current(event.name, event.args)
     })
   }, [queryClient])
 
@@ -225,27 +372,44 @@ export function Shell() {
   const user = me.data
   const userName = user.display_name || user.handle || user.email || ''
   const userEmail = user.email || user.handle || ''
+  const surface = workspace.data
 
-  const saveLayout = (layout: LayoutNode) => {
-    if (!workspace.data || workspace.data.locked) return
-    void api('/v1/workspaces', {
-      method: 'POST',
-      body: JSON.stringify({
-        id: workspace.data.id,
-        name: workspace.data.name,
-        locked: false,
-        share_token: workspace.data.share_token,
-        layout,
-      }),
-    }).then(() => queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] }))
+  const commitDoc = (next: LayoutDoc) => {
+    if (!workspaceId || !user.user_id) return
+    docRef.current = next
+    dirtyRef.current = true
+    saveGen.current += 1
+    writeLayoutStore(layoutStorageKey(user.user_id, workspaceId), next)
+    setDoc(next)
   }
-  placeRef.current = (_name, args) => {
-    if (!workspace.data) return
-    const token = String(args.id ?? args.title ?? '')
-    const view = workspace.data.views.find((item) => item.id === token || item.title === token || item.type === token)
-    const zone = (String(args.zone ?? 'right') as Zone) || 'right'
-    const active = workspace.data.views.find((item) => item.type === 'object_table') ?? workspace.data.views[0]
-    if (view && active) saveLayout(dockTab(workspace.data.layout, view.id, zone === 'center' ? 'right' : zone, active.id))
+  applyRef.current = (name, args) => {
+    const current = docRef.current
+    if (!current || !workspace.data) return
+    let nextArgs = args
+    if ((name === 'open_view' || name === 'ui.open_view') && typeof args.entity === 'string') {
+      const entity = args.entity
+      const known = workspace.data.views.some((view) => view.id === entity || view.title === entity || view.type === entity)
+      if (!known) {
+        setObjectId(entity)
+        nextArgs = { ...args, title: 'Detail' }
+        delete nextArgs.entity
+        delete nextArgs.view
+        delete nextArgs.id
+      }
+    }
+    const place = name === 'open_view' || name === 'ui.open_view' || name === 'ui.place' ? placeOverride.current : undefined
+    const result = applyLayoutCommand(current, name, nextArgs, {
+      views: workspace.data.views.map((view) => ({ id: view.id, title: view.title, type: view.type })),
+      canonical: canonicalRef.current,
+      place,
+    })
+    if (result.handled && result.doc !== current) commitDoc(result.doc)
+    const focus = result.doc.focus
+    if (focus) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`[data-pane="${CSS.escape(focus)}"]`)?.focus()
+      })
+    }
   }
 
   const toggleLock = (item: ListedWorkspace) => {
@@ -304,9 +468,21 @@ export function Shell() {
           {copy.signOut}
         </button>
       </header>
-      <main className="workspace">
-        {workspace.data ? (
-          <LayoutView node={workspace.data.layout} workspace={workspace.data} session={session} onLayout={saveLayout} />
+      <main className="workspace" data-testid="workspace">
+        {doc && surface ? (
+          <WorkspaceDock
+            doc={doc}
+            views={surface.views}
+            onChange={commitDoc}
+            renderView={(item) => {
+              const full = surface.views.find((view) => view.id === item.id)
+              return full ? <ViewBody view={full} session={session} workspace={surface} /> : <p>{copy.empty}</p>
+            }}
+            onAddView={(target) => {
+              placeOverride.current = { target, zone: 'center' }
+              setPaletteMode('list')
+            }}
+          />
         ) : (
           <p>{copy.loading}</p>
         )}
@@ -328,7 +504,10 @@ export function Shell() {
           session={session}
           workspaces={workspaces.data?.workspaces ?? []}
           views={workspace.data?.views ?? []}
-          onClose={() => setPaletteMode(null)}
+          onClose={() => {
+            placeOverride.current = undefined
+            setPaletteMode(null)
+          }}
         />
       ) : null}
       {tabMenu ? (
@@ -363,6 +542,15 @@ export function Shell() {
             }}
           >
             {copy.newWorkspace}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              applyRef.current('reset_layout', {})
+              setTabMenu(null)
+            }}
+          >
+            {copy.resetLayout}
           </button>
           <button type="button" onClick={() => setTabMenu(null)}>{copy.close}</button>
         </div>
@@ -404,157 +592,6 @@ function Login({ onDone }: { onDone: () => void }) {
         <Button type="submit">{copy.signIn}</Button>
       </form>
     </div>
-  )
-}
-
-function LayoutView({
-  node,
-  workspace,
-  session,
-  onLayout,
-  path = 'p',
-}: {
-  node: LayoutNode
-  workspace: Workspace
-  session: Session
-  onLayout: (layout: LayoutNode) => void
-  path?: string
-}) {
-  if (!isSplit(node)) {
-    return <Pane leaf={node} workspace={workspace} session={session} onLayout={onLayout} root={workspace.layout} />
-  }
-  const left = `${path}a`
-  const right = `${path}b`
-  return (
-    <Group
-      className={`split ${node.direction}`}
-      orientation={node.direction === 'row' ? 'horizontal' : 'vertical'}
-      defaultLayout={{ [left]: node.ratio * 100, [right]: (1 - node.ratio) * 100 }}
-      onLayoutChanged={(layout, meta) => {
-        if (!meta.isUserInteraction || workspace.locked) return
-        const next = (layout[left] ?? node.ratio * 100) / 100
-        onLayout(replaceRatio(workspace.layout, node, Math.min(0.85, Math.max(0.15, next))))
-      }}
-    >
-      <Panel className="pane-slot" id={left} minSize="15" defaultSize={`${node.ratio * 100}`}>
-        <LayoutView path={left} node={node.first} workspace={workspace} session={session} onLayout={onLayout} />
-      </Panel>
-      <Separator className="divider" data-testid="split-divider" disabled={workspace.locked} />
-      <Panel className="pane-slot" id={right} minSize="15" defaultSize={`${(1 - node.ratio) * 100}`}>
-        <LayoutView path={right} node={node.second} workspace={workspace} session={session} onLayout={onLayout} />
-      </Panel>
-    </Group>
-  )
-}
-
-function replaceRatio(root: LayoutNode, target: LayoutNode, ratio: number): LayoutNode {
-  if (root === target && isSplit(root)) return { ...root, ratio }
-  if (!isSplit(root)) return root
-  return { ...root, first: replaceRatio(root.first, target, ratio), second: replaceRatio(root.second, target, ratio) }
-}
-
-let dockDrag: string | null = null
-const dockListeners = new Set<(id: string | null) => void>()
-
-function setDockDrag(id: string | null) {
-  dockDrag = id
-  dockListeners.forEach((listen) => listen(id))
-}
-
-function useDockDrag() {
-  const [id, setId] = useState(dockDrag)
-  useEffect(() => {
-    dockListeners.add(setId)
-    return () => {
-      dockListeners.delete(setId)
-    }
-  }, [])
-  return id
-}
-
-function Pane({
-  leaf,
-  workspace,
-  session,
-  onLayout,
-  root,
-}: {
-  leaf: { tabs: string[]; active?: string }
-  workspace: Workspace
-  session: Session
-  onLayout: (layout: LayoutNode) => void
-  root: LayoutNode
-}) {
-  const [active, setActive] = useState(leaf.active ?? leaf.tabs[0])
-  const dockId = useDockDrag()
-  const view = workspace.views.find((item) => item.id === active) ?? workspace.views.find((item) => item.id === leaf.tabs[0])
-  useEffect(() => {
-    return onViewRequest((token) => {
-      const match = leaf.tabs.find((id) => {
-        const tab = workspace.views.find((item) => item.id === id)
-        return id === token || tab?.title === token || tab?.type === token
-      })
-      if (match) setActive(match)
-    })
-  }, [leaf.tabs, workspace.views])
-  const acceptDock = (zone: Zone) => {
-    const id = dockDrag
-    setDockDrag(null)
-    if (!id || !view || workspace.locked) return
-    onLayout(dockTab(root, id, zone, view.id))
-  }
-  return (
-    <section className="pane" data-pane tabIndex={-1}>
-      <div className="pane-tabs">
-        {leaf.tabs.map((id) => {
-          const tab = workspace.views.find((item) => item.id === id)
-          return (
-            <button
-              key={id}
-              draggable={!workspace.locked}
-              className={id === view?.id ? 'pane-tab active' : 'pane-tab'}
-              onClick={() => setActive(id)}
-              onDragStart={(event) => {
-                event.dataTransfer.setData('text/plain', id)
-                event.dataTransfer.effectAllowed = 'move'
-                setDockDrag(id)
-              }}
-              onDragEnd={() => setDockDrag(null)}
-            >
-              {viewDisplayTitle(tab?.title ?? id)}
-            </button>
-          )
-        })}
-      </div>
-      <div
-        className="pane-body"
-        onDragOver={(event) => {
-          if (workspace.locked || !dockId) return
-          event.preventDefault()
-        }}
-      >
-        {view ? <ViewBody view={view} session={session} workspace={workspace} /> : <p>{copy.empty}</p>}
-        {dockId && !workspace.locked ? (
-          <div className="drop" data-testid="drop-overlay">
-            {(['left', 'right', 'top', 'bottom', 'center'] as Zone[]).map((zone) => (
-              <i
-                key={zone}
-                data-zone={zone}
-                data-testid={`drop-${zone}`}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  const carried = event.dataTransfer.getData('text/plain')
-                  if (carried) dockDrag = carried
-                  acceptDock(zone)
-                }}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </section>
   )
 }
 
@@ -679,28 +716,6 @@ function EmbedView({ session, view }: { session: Session; view: View }) {
 
 
 
-function movePaneFocus(key: string) {
-  const panes = [...document.querySelectorAll<HTMLElement>('[data-pane]')]
-  if (panes.length === 0) return
-  const active = document.activeElement as HTMLElement | null
-  const current = panes.findIndex((pane) => pane === active || pane.contains(active))
-  const origin = (panes[Math.max(0, current)] ?? panes[0]).getBoundingClientRect()
-  const score = (pane: HTMLElement) => {
-    const box = pane.getBoundingClientRect()
-    const dx = box.left + box.width / 2 - (origin.left + origin.width / 2)
-    const dy = box.top + box.height / 2 - (origin.top + origin.height / 2)
-    if (key === 'ArrowRight') return dx > 8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
-    if (key === 'ArrowLeft') return dx < -8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
-    if (key === 'ArrowDown') return dy > 8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
-    return dy < -8 ? dx * dx + dy * dy : Number.POSITIVE_INFINITY
-  }
-  const next = panes
-    .map((pane, index) => ({ pane, index, score: score(pane) }))
-    .filter((item) => item.index !== current && Number.isFinite(item.score))
-    .sort((left, right) => left.score - right.score)[0]
-  const target = next?.pane ?? panes[(Math.max(0, current) + 1) % panes.length]
-  target.focus()
-}
 
 function Help({ onClose }: { onClose: () => void }) {
   return (
@@ -709,7 +724,11 @@ function Help({ onClose }: { onClose: () => void }) {
         <strong>{copy.shortcuts}</strong>
         <p><Kbd>Ctrl</Kbd>+<Kbd>K</Kbd> {copy.commandPlaceholder}</p>
         <p><Kbd>Ctrl</Kbd>+<Kbd>J</Kbd> {copy.agent}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+arrows focus the next pane</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+arrows move the focused view</p>
+        <p><Kbd>Alt</Kbd>+arrows focus the neighbour</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>Shift</Kbd>+arrows resize</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>Z</Kbd> {copy.maximize}</p>
+        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>W</Kbd> {copy.closeView}</p>
         <p><Kbd>Ctrl</Kbd>+<Kbd>1</Kbd>…<Kbd>9</Kbd> workspaces</p>
         <p><Kbd>F1</Kbd> {copy.shortcuts}</p>
         <button onClick={onClose}>{copy.close}</button>
