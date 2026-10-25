@@ -21,7 +21,8 @@ if (!html.includes(placeholder)) {
 if (!markup.includes('Try the demo') || !markup.includes('View on GitHub')) {
   throw new Error('prerendered page is missing a call to action')
 }
-if (/chatbot/i.test(markup)) {
+const describedAsChatbot = markup.replace(/not a chatbot/gi, '')
+if (/chatbot/i.test(describedAsChatbot)) {
   throw new Error('prerendered page describes the agent as a chatbot')
 }
 

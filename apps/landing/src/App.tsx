@@ -1,7 +1,18 @@
 import type { ReactNode } from 'react'
 import { Button, ButtonLink } from '@/components/ui/button'
 import { Mark } from '@/components/mark'
-import { agentSteps, apiTiles, audiences, demoUrl, licenseUrl, modelCards, nav, repoUrl } from '@/content'
+import {
+  agentExample,
+  apiTiles,
+  audiences,
+  demoUrl,
+  licenseUrl,
+  liveOn,
+  moreEntities,
+  nav,
+  productAttributes,
+  repoUrl,
+} from '@/content'
 import { measuredLabel, measuredSets, measurementsDoc } from '@/data/measurements'
 import { DataFlow } from '@/flow/diagram'
 
@@ -107,51 +118,96 @@ function Agent() {
   return (
     <section className="section" id="agent" aria-labelledby="agent-title">
       <div className="section-head">
-        <h2 id="agent-title">Agent as a first-class citizen</h2>
-        <p className="lede">It works in your session, on your behalf.</p>
+        <h2 id="agent-title">An agent that works in your session, not a chatbot</h2>
+        <p className="lede">
+          It acts as you, with your permissions. Every change is a proposal you can undo in one click.
+        </p>
       </div>
-      <ol className="steps">
-        {agentSteps.map((step, index) => (
-          <li key={step.title}>
-            <div className="sheet step">
-              <strong>{step.title}</strong>
-              <span>{step.hint}</span>
-            </div>
-            {index < agentSteps.length - 1 ? <span className="step-to" aria-hidden="true" /> : null}
+      <figure className="session-figure">
+        <ol className="session">
+          <li className="sheet session-ask">
+            <span className="kbd mono">Ctrl+K</span>
+            <p>{agentExample.prompt}</p>
           </li>
-        ))}
-      </ol>
+          <Beat />
+          <li className="sheet session-progress">
+            <span className="eyebrow">In place</span>
+            <p>{agentExample.progress}</p>
+            <span className="bar" aria-hidden="true" />
+          </li>
+          <Beat />
+          <li className="sheet session-proposal">
+            <span className="eyebrow">Example</span>
+            <p className="proposal-count">{agentExample.objects}</p>
+            <p className="proposal-detail">{agentExample.changes}</p>
+            <div className="proposal-actions">
+              <span className="btn btn-primary">Accept</span>
+              <span className="btn btn-raised">Review diff</span>
+            </div>
+          </li>
+          <Beat />
+          <li className="sheet session-undo">
+            <strong>Undo</strong>
+            <span>One click</span>
+          </li>
+        </ol>
+        <figcaption className="note session-caption">Illustrative session.</figcaption>
+      </figure>
     </section>
   )
+}
+
+function Beat() {
+  return <li className="beat-to" aria-hidden="true" />
+}
+
+function attributeDetail(attr: { type: string; detail: string }) {
+  if (!attr.detail) return ''
+  return attr.type === 'reference' ? `→ ${attr.detail}` : attr.detail
 }
 
 function Model() {
   return (
     <section className="section" id="model" aria-labelledby="model-title">
       <div className="section-head">
-        <h2 id="model-title">A model you define</h2>
-        <p className="lede">Any entity, any attribute, any language.</p>
+        <h2 id="model-title">Model anything. No migrations, no developers.</h2>
+        <p className="lede">API, search, and the UI pick up a new entity immediately.</p>
       </div>
-      <ul className="model-row">
-        {modelCards.map((card) => (
-          <li key={card.name} className="sheet model-card">
-            <strong>{card.name}</strong>
-            <ul>
-              {card.attrs.map((attr) => (
-                <li key={attr}>
-                  <span>{attr}</span>
-                  {card.langs.length > 0 && attr === card.attrs[0] ? (
-                    <span className="langs">{card.langs.join(' · ')}</span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
-        <li className="sheet model-card model-add" aria-hidden="true">
-          <strong>+ Entity</strong>
-        </li>
-      </ul>
+      <div className="schema-board">
+        <article className="sheet schema">
+          <header>
+            <h3>Product</h3>
+            <span className="eyebrow">Entity</span>
+          </header>
+          <ul>
+            {productAttributes.map((attr) => (
+              <li key={attr.name} className="attr">
+                <span className="attr-name">{attr.name}</span>
+                <span className="attr-type">{attr.type}</span>
+                <span className="attr-detail">{attributeDetail(attr)}</span>
+              </li>
+            ))}
+          </ul>
+        </article>
+        <div className="schema-side">
+          <p className="note">New entities, the same way</p>
+          <ul className="entity-picks">
+            {moreEntities.map((name) => (
+              <li key={name} className="sheet entity-pick">
+                {name}
+              </li>
+            ))}
+          </ul>
+          <p className="note">Live on</p>
+          <ul className="pickup">
+            {liveOn.map((name) => (
+              <li key={name} className="sheet">
+                {name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </section>
   )
 }
