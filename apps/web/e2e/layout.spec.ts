@@ -19,8 +19,8 @@ async function login(page: Page) {
 async function enrich(page: Page): Promise<Workspace> {
   const listed = await page.request.get('/v1/workspaces')
   const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
-  const row = body.workspaces.find((item) => item.name === 'Enrich')
-  if (!row) throw new Error('missing workspace Enrich')
+  const row = body.workspaces.find((item) => item.name === 'Products')
+  if (!row) throw new Error('missing workspace Products')
   const full = await page.request.get(`/v1/workspaces/${row.id}`)
   return (await full.json()) as Workspace
 }

@@ -26,7 +26,8 @@ import { copy } from './i18n'
 import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
 import { CommandPalette } from './palette'
-import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
+import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
+import { missingTypeWorkspaces, orderWorkspaces, typeShareToken } from './type-workspaces'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
@@ -42,6 +43,7 @@ import {
   type ServerLayout,
 } from './workspace-doc'
 import {
+  ClassAttributes,
   DataModel,
   GraphView,
   HistoryView,
@@ -129,6 +131,7 @@ export function Shell() {
   const applyRef = useRef<(name: string, args: Record<string, unknown>) => void>(() => {})
   const openTypeViewRef = useRef<(typeId: string) => void>(() => {})
   const migratedRef = useRef(new Set<string>())
+  const ensuredTypes = useRef(new Set<string>())
   const paletteModeRef = useRef(paletteMode)
   paletteModeRef.current = paletteMode
 
@@ -199,21 +202,45 @@ export function Shell() {
     queryFn: () => api<{ workspaces: ListedWorkspace[] }>('/v1/workspaces'),
     enabled: booted && me.isSuccess,
   })
-  useEffect(() => {
-    const first = workspaces.data?.workspaces[2]?.id ?? workspaces.data?.workspaces[0]?.id
-    if (!workspaceId && first) setWorkspaceId(first)
-  }, [workspaces.data, workspaceId])
-
-  const workspace = useQuery({
-    queryKey: ['workspace', workspaceId],
-    queryFn: () => api<Workspace>(`/v1/workspaces/${workspaceId}`),
-    enabled: Boolean(workspaceId),
-  })
   const defs = useQuery({
     queryKey: ['definitions'],
     queryFn: () => api<Json>('/v1/definitions'),
     enabled: booted && me.isSuccess,
     staleTime: 60_000,
+  })
+  const orderedWorkspaces = useMemo(
+    () => orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data)),
+    [workspaces.data, defs.data],
+  )
+  useEffect(() => {
+    const preferred = orderedWorkspaces.find((item) => item.share_token?.startsWith('braian-type-'))
+    const first = preferred?.id ?? orderedWorkspaces[2]?.id ?? orderedWorkspaces[0]?.id
+    if (!workspaceId && first) setWorkspaceId(first)
+  }, [orderedWorkspaces, workspaceId])
+
+  useEffect(() => {
+    const rows = workspaces.data?.workspaces
+    const types = typeNames(defs.data)
+    if (!rows || types.length === 0) return
+    const missing = missingTypeWorkspaces(rows, types).filter((type) => !ensuredTypes.current.has(type.key))
+    if (missing.length === 0) return
+    for (const type of missing) ensuredTypes.current.add(type.key)
+    void (async () => {
+      for (const type of missing) {
+        try {
+          await createWorkspaceFromTemplate(typeWorkspaceTemplate(type), { shareToken: typeShareToken(type.key) })
+        } catch {
+          ensuredTypes.current.delete(type.key)
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+    })()
+  }, [workspaces.data, defs.data, queryClient])
+
+  const workspace = useQuery({
+    queryKey: ['workspace', workspaceId],
+    queryFn: () => api<Workspace>(`/v1/workspaces/${workspaceId}`),
+    enabled: Boolean(workspaceId),
   })
   const opened = useQuery({
     queryKey: ['object', objectId],
@@ -382,7 +409,7 @@ export function Shell() {
       }
       if (event.ctrlKey && !event.altKey && !event.metaKey && event.key >= '1' && event.key <= '9') {
         const index = Number(event.key) - 1
-        const id = workspaces.data?.workspaces[index]?.id
+        const id = orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data))[index]?.id
         if (id) {
           event.preventDefault()
           setWorkspaceId(id)
@@ -420,7 +447,7 @@ export function Shell() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [workspaces.data])
+  }, [workspaces.data, defs.data])
 
   useEffect(() => {
     publishMarked(objectId)
@@ -607,7 +634,7 @@ export function Shell() {
           <span>{copy.product}</span>
         </div>
         <nav className="tabs">
-          {workspaces.data?.workspaces.map((item, index) => (
+          {orderedWorkspaces.map((item, index) => (
             <button
               key={item.id}
               className={item.id === workspaceId ? 'tab active' : 'tab'}
@@ -670,7 +697,7 @@ export function Shell() {
           key={paletteMode}
           ai={paletteMode === 'ai'}
           session={session}
-          workspaces={workspaces.data?.workspaces ?? []}
+          workspaces={orderedWorkspaces}
           views={workspace.data?.views ?? []}
           onClose={() => {
             placeOverride.current = undefined
@@ -771,6 +798,7 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'object_detail') return <ObjectDetail session={session} />
   if (view.type === 'graph') return <GraphView session={session} />
   if (view.type === 'history') return <HistoryView session={session} />
+  if (view.type === 'class_attributes') return <ClassAttributes session={session} />
   if (view.type === 'data_model') return <DataModel view={view} />
   if (view.type === 'dashboard') return <Dashboard />
   if (view.type === 'proposal') return <ProposalView session={session} />

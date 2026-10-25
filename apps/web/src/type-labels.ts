@@ -24,7 +24,6 @@ export type WorkspaceMigration = {
 }
 
 const GENERIC_TITLES = new Set(['objects', 'objekt'])
-const GENERIC_ENRICH = new Set(['enrich objects', 'berika objekt'])
 
 /** English-style plural used when a type has no plural label. */
 export function defaultPlural(singular: string) {
@@ -97,17 +96,8 @@ export function isGenericObjectTitle(title: string) {
   return GENERIC_TITLES.has(title.trim().toLowerCase())
 }
 
-export function isGenericEnrichName(name: string) {
-  return GENERIC_ENRICH.has(name.trim().toLowerCase())
-}
-
-export function enrichWorkspaceName(types: TypeName[]) {
-  if (types.length === 1 && types[0]) return `Enrich ${types[0].plural.toLowerCase()}`
-  return 'Enrich'
-}
-
 export function migrateSavedWorkspace(
-  workspace: { name: string },
+  _workspace: { name: string },
   views: SavedView[],
   types: TypeName[],
 ): WorkspaceMigration {
@@ -127,15 +117,7 @@ export function migrateSavedWorkspace(
       nextViews.push({ id: view.id, title: primary.plural, state })
     }
   }
-  let name: string | undefined
-  if (primary && isGenericEnrichName(workspace.name)) {
-    const next = enrichWorkspaceName(types)
-    if (next !== workspace.name) {
-      name = next
-      changed = true
-    }
-  }
-  return { changed, name, views: nextViews }
+  return { changed, name: undefined, views: nextViews }
 }
 
 export function displayViewTitle(
