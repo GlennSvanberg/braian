@@ -150,44 +150,10 @@ impl Typesense {
     }
 
     pub async fn create_collection(&self, name: &str, defs: &DefinitionSet) -> Result<(), Error> {
-        let mut fields = vec![
-            json!({"name": "key", "type": "string"}),
-            json!({"name": "type_key", "type": "string", "facet": true}),
-            json!({"name": "seq", "type": "int64"}),
-            json!({"name": "version", "type": "int64"}),
-            json!({"name": "deleted", "type": "bool", "facet": true}),
-            json!({"name": "groups", "type": "string[]", "facet": true}),
-        ];
-        for language in &defs.languages {
-            fields.push(json!({
-                "name": format!("search_{}", field_language(language.as_str())),
-                "type": "string",
-                "optional": true,
-            }));
-        }
-        for attribute in &defs.attributes {
-            if !indexed(attribute) {
-                continue;
-            }
-            // A searchable-only attribute is matched through `search_{lang}`. Its own
-            // field is kept for display but not indexed, so Typesense does not build
-            // a token index per attribute and language.
-            let own_index = attribute.index.filterable || attribute.index.sortable;
-            for name in field_names(attribute, defs) {
-                fields.push(json!({
-                    "name": name,
-                    "type": field_type(attribute),
-                    "optional": true,
-                    "index": own_index,
-                    "facet": attribute.index.filterable,
-                    "sort": attribute.index.sortable && !attribute.multiple,
-                }));
-            }
-        }
         self.send(
             reqwest::Method::POST,
             "/collections",
-            Some(json!({ "name": name, "fields": fields })),
+            Some(json!({ "name": name, "fields": schema_fields(defs) })),
         )
         .await
         .map(|_| ())
@@ -697,8 +663,46 @@ fn parse_hit(value: &Value) -> Option<SearchHit> {
     Some(SearchHit { id, document })
 }
 
-fn indexed(attribute: &braian_model::Attribute) -> bool {
-    attribute.index.searchable || attribute.index.filterable || attribute.index.sortable
+/// Filter and sort fields are columns. Searchable-only text lives in `search_{lang}`.
+fn stores_own_field(attribute: &braian_model::Attribute) -> bool {
+    attribute.index.filterable || attribute.index.sortable
+}
+
+fn schema_fields(defs: &DefinitionSet) -> Vec<Value> {
+    let mut fields = vec![
+        json!({"name": "key", "type": "string"}),
+        json!({"name": "type_key", "type": "string", "facet": true}),
+        json!({"name": "seq", "type": "int64"}),
+        json!({"name": "version", "type": "int64"}),
+        json!({"name": "deleted", "type": "bool", "facet": true}),
+        json!({"name": "groups", "type": "string[]", "facet": true}),
+    ];
+    for language in &defs.languages {
+        fields.push(json!({
+            "name": format!("search_{}", field_language(language.as_str())),
+            "type": "string",
+            "optional": true,
+        }));
+    }
+    for attribute in &defs.attributes {
+        // Searchable-only text is matched through `search_{lang}`. Storing it
+        // again as its own field duplicates the payload and adds a column
+        // Typesense never queries.
+        if !stores_own_field(attribute) {
+            continue;
+        }
+        for name in field_names(attribute, defs) {
+            fields.push(json!({
+                "name": name,
+                "type": field_type(attribute),
+                "optional": true,
+                "index": true,
+                "facet": attribute.index.filterable,
+                "sort": attribute.index.sortable && !attribute.multiple,
+            }));
+        }
+    }
+    fields
 }
 
 fn field_type(attribute: &braian_model::Attribute) -> &'static str {
@@ -764,7 +768,7 @@ pub fn document(
 
     let mut blobs: BTreeMap<String, String> = BTreeMap::new();
     for attribute in &defs.attributes {
-        if !indexed(attribute) {
+        if !attribute.index.searchable && !stores_own_field(attribute) {
             continue;
         }
         let Some(value) = object.values.get(&attribute.id) else {
@@ -783,7 +787,9 @@ pub fn document(
                     if attribute.index.searchable {
                         push_blob(&mut blobs, field_language(language.as_str()), &indexed);
                     }
-                    doc.insert(field, indexed_to_json(indexed));
+                    if stores_own_field(attribute) {
+                        doc.insert(field, indexed_to_json(indexed));
+                    }
                 }
             }
         } else if let Some(indexed) = index_value(model, attribute, value) {
@@ -795,7 +801,9 @@ pub fn document(
                     push_blob(&mut blobs, "sv".into(), &indexed);
                 }
             }
-            doc.insert(format!("a_{}", attribute.key), indexed_to_json(indexed));
+            if stores_own_field(attribute) {
+                doc.insert(format!("a_{}", attribute.key), indexed_to_json(indexed));
+            }
         }
     }
     for (language, text) in blobs {
@@ -949,5 +957,49 @@ mod tests {
         assert_eq!(kept[0]["seq"], 9);
         assert_eq!(kept[0]["key"], "new");
         assert_eq!(kept[1]["id"], "other");
+    }
+
+    #[test]
+    fn searchable_only_text_is_in_the_blob_and_not_a_second_field() {
+        let defs: DefinitionSet =
+            serde_json::from_str(include_str!("../../../testdata/rules/definitions.json"))
+                .expect("definitions");
+        let model = CompiledModel::compile(&defs).expect("compile");
+        let name = model.attribute_by_key("name").expect("name");
+        let sku = model.attribute_by_key("sku").expect("sku");
+        let active = model.attribute_by_key("active").expect("active");
+        assert!(name.index.searchable && !stores_own_field(name));
+        assert!(stores_own_field(sku));
+        assert!(stores_own_field(active));
+
+        let names: Vec<_> = schema_fields(&defs)
+            .iter()
+            .filter_map(|field| field.get("name").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect();
+        assert!(names.iter().any(|name| name == "search_sv"));
+        assert!(names.iter().any(|name| name == "a_sku"));
+        assert!(names.iter().any(|name| name == "a_active"));
+        assert!(names.iter().all(|name| !name.starts_with("a_name")));
+
+        let mut values = BTreeMap::new();
+        values.insert(name.id, json!({"sv": "Talt", "en-GB": "Tent"}));
+        values.insert(sku.id, json!("SKU-1"));
+        values.insert(active.id, json!(false));
+        let object = Object {
+            id: braian_model::ObjectId::from_uuid(uuid::Uuid::now_v7()),
+            type_id: model.type_id("item").expect("type"),
+            model_revision: defs.model_revision,
+            groups: BTreeMap::new(),
+            values,
+        };
+        let doc = document(&model, &defs, &object, "SKU-1", "item", 1, 4, false);
+        assert!(doc.get("a_name__sv").is_none());
+        assert!(doc.get("a_name__en_GB").is_none());
+        assert_eq!(doc["a_sku"], "SKU-1");
+        assert_eq!(doc["a_active"], "false");
+        let blob = doc["search_sv"].as_str().expect("blob");
+        assert!(blob.contains("Talt"), "{blob}");
+        assert!(blob.contains("SKU-1"), "{blob}");
     }
 }

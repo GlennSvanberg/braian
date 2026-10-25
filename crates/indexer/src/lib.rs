@@ -11,14 +11,15 @@
 //! hold the upsert.
 //!
 //! The bulk lane reads `BRAIAN_INDEXER_BULK_BATCH` events, then imports them
-//! in short waves. `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (default 100, capped at
-//! 200) and `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` (default 1, capped at 2)
-//! size one wave. A 4×500 import held Typesense for the whole batch, and the
-//! wait before the flush did nothing once that import was in flight. Before
-//! each wave the lane waits, up to `BRAIAN_INDEXER_BULK_YIELD_MAX_MS`, while
-//! the interactive topic still has events or another process has interactive
-//! requests in `interactive_pressure`. A busy wave is a single batch of at
-//! most 100 documents.
+//! in waves capped at 200 documents and 2 calls. With nothing interactive in
+//! flight the wave is that full size (default 200×2), so a mass import is not
+//! stuck at one small call. While another process has HTTP requests in flight
+//! but the interactive topic is empty, the wave keeps one Typesense thread
+//! free and pauses only briefly. When the interactive topic has events, the
+//! wave shrinks to one batch of at most 100 and waits up to
+//! `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` before importing anyway. A 4×500 import
+//! held Typesense for the whole batch, and a wait before the flush did
+//! nothing once that import was already in flight.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -62,8 +63,8 @@ impl Default for IndexerConfig {
             import_batch: 100,
             import_concurrency: 4,
             bulk_batch_size: 2_000,
-            bulk_import_batch: 100,
-            bulk_import_concurrency: 1,
+            bulk_import_batch: 200,
+            bulk_import_concurrency: 2,
             bulk_yield_max: Duration::from_millis(100),
         }
     }
@@ -452,8 +453,14 @@ pub(crate) struct ImportWave {
 /// Largest bulk import the indexer will send, even when the env asks for more.
 const BULK_BATCH_CAP: usize = 200;
 const BULK_CONCURRENCY_CAP: usize = 2;
-/// While an interactive edit is waiting, one wave is a single batch of this size.
+/// While an interactive edit is already in the indexer, one wave is a single
+/// batch of this size.
 const BUSY_BATCH_CAP: usize = 100;
+/// Pause while HTTP requests are in flight and the interactive topic is empty.
+///
+/// Long enough for one pressure-gauge tick (15 ms) to publish a commit, short
+/// enough that a click stream does not add 100 ms to every wave.
+const PRESSURE_GAP: Duration = Duration::from_millis(15);
 
 pub(crate) fn cap_bulk_batch(batch: usize) -> usize {
     batch.clamp(1, BULK_BATCH_CAP)
@@ -463,25 +470,57 @@ pub(crate) fn cap_bulk_concurrency(concurrency: usize) -> usize {
     concurrency.clamp(1, BULK_CONCURRENCY_CAP)
 }
 
+/// Why the next bulk wave is this size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WaveKind {
+    /// The interactive topic has events, or that lane is flushing.
+    Events,
+    /// Interactive HTTP is in flight. The topic itself is idle.
+    Pressure,
+    /// Nothing interactive is in flight.
+    Idle,
+}
+
+pub(crate) fn wave_kind(events_pending: bool, pressure: usize) -> WaveKind {
+    if events_pending {
+        WaveKind::Events
+    } else if pressure > 0 {
+        WaveKind::Pressure
+    } else {
+        WaveKind::Idle
+    }
+}
+
+/// How long to pause before the wave. The pause never exceeds `yield_max`,
+/// so `BRAIAN_INDEXER_BULK_YIELD_MAX_MS=0` still imports immediately.
+pub(crate) fn wave_gap(kind: WaveKind, yield_max: Duration) -> Duration {
+    let gap = match kind {
+        WaveKind::Events => yield_max,
+        WaveKind::Pressure => PRESSURE_GAP,
+        WaveKind::Idle => Duration::ZERO,
+    };
+    gap.min(yield_max)
+}
+
 /// The next bulk wave.
 ///
-/// Idle waves stay inside the caps. A busy interactive lane forces one call
-/// of at most [`BUSY_BATCH_CAP`] documents, so the upsert waits out one short
-/// import instead of several large ones already in flight.
-pub(crate) fn bulk_import_wave(
-    batch: usize,
-    concurrency: usize,
-    interactive_busy: bool,
-) -> ImportWave {
+/// Idle waves use the configured size inside the caps, which is what drains a
+/// backlog. Pressure keeps a single call so one Typesense thread stays free
+/// for the write-through upsert. Events shrink further, to one short batch,
+/// because that edit is about to import.
+pub(crate) fn bulk_import_wave(batch: usize, concurrency: usize, kind: WaveKind) -> ImportWave {
     let batch = cap_bulk_batch(batch);
     let concurrency = cap_bulk_concurrency(concurrency);
-    if interactive_busy {
-        ImportWave {
+    match kind {
+        WaveKind::Events => ImportWave {
             batch: batch.min(BUSY_BATCH_CAP),
             concurrency: 1,
-        }
-    } else {
-        ImportWave { batch, concurrency }
+        },
+        WaveKind::Pressure => ImportWave {
+            batch,
+            concurrency: 1,
+        },
+        WaveKind::Idle => ImportWave { batch, concurrency },
     }
 }
 
@@ -490,44 +529,33 @@ pub(crate) fn wave_end(offset: usize, docs: usize, wave: ImportWave) -> usize {
     offset.saturating_add(span).min(docs)
 }
 
-/// A wave waits while interactive events are pending or another process has
-/// interactive requests in flight, and only until `max_wait`.
-pub(crate) fn bulk_wave_waits(
-    events_pending: bool,
-    pressure: usize,
-    waited: Duration,
-    max_wait: Duration,
-) -> bool {
-    (events_pending || pressure > 0) && waited < max_wait
-}
-
 struct WavePlan {
     batch: usize,
     concurrency: usize,
     yield_max: Duration,
 }
 
-fn wave_is_busy(drain: Option<&InteractiveDrain>, store: &Store) -> bool {
-    drain.is_some_and(InteractiveDrain::busy) || store.interactive_pressure() > 0
+fn current_kind(drain: Option<&InteractiveDrain>, store: &Store) -> WaveKind {
+    wave_kind(
+        drain.is_some_and(InteractiveDrain::busy),
+        store.interactive_pressure(),
+    )
 }
 
 async fn wait_for_gap(drain: Option<&InteractiveDrain>, store: &Store, max_wait: Duration) {
     let started = Instant::now();
     loop {
-        let events_pending = drain.is_some_and(InteractiveDrain::busy);
-        if !bulk_wave_waits(
-            events_pending,
-            store.interactive_pressure(),
-            started.elapsed(),
-            max_wait,
-        ) {
+        let gap = wave_gap(current_kind(drain, store), max_wait);
+        if started.elapsed() >= gap {
             return;
         }
-        let left = max_wait.saturating_sub(started.elapsed());
+        let left = gap
+            .saturating_sub(started.elapsed())
+            .min(Duration::from_millis(5));
         if left.is_zero() {
             return;
         }
-        tokio::time::sleep(left.min(Duration::from_millis(5))).await;
+        tokio::time::sleep(left).await;
     }
 }
 
@@ -545,7 +573,7 @@ async fn import_waves(
     let mut offset = 0;
     while offset < docs.len() {
         wait_for_gap(drain, store, plan.yield_max).await;
-        let wave = bulk_import_wave(plan.batch, plan.concurrency, wave_is_busy(drain, store));
+        let wave = bulk_import_wave(plan.batch, plan.concurrency, current_kind(drain, store));
         let end = wave_end(offset, docs.len(), wave);
         import_batched(
             search,
@@ -1055,10 +1083,43 @@ mod tests {
     fn bulk_import_defaults_are_short_waves_inside_a_larger_read() {
         let config = IndexerConfig::default();
         assert!(config.bulk_batch_size > config.batch_size);
-        assert_eq!(config.bulk_import_batch, 100);
-        assert_eq!(config.bulk_import_concurrency, 1);
+        assert_eq!(config.bulk_import_batch, 200);
+        assert_eq!(config.bulk_import_concurrency, 2);
         assert!(config.bulk_batch_size > config.bulk_import_batch);
         assert!((100..=200).contains(&config.bulk_import_batch));
+        assert_eq!(
+            bulk_import_wave(
+                config.bulk_import_batch,
+                config.bulk_import_concurrency,
+                WaveKind::Idle
+            ),
+            ImportWave {
+                batch: 200,
+                concurrency: 2
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(
+                config.bulk_import_batch,
+                config.bulk_import_concurrency,
+                WaveKind::Pressure
+            ),
+            ImportWave {
+                batch: 200,
+                concurrency: 1
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(
+                config.bulk_import_batch,
+                config.bulk_import_concurrency,
+                WaveKind::Events
+            ),
+            ImportWave {
+                batch: 100,
+                concurrency: 1
+            }
+        );
     }
 
     #[test]
@@ -1066,21 +1127,28 @@ mod tests {
         assert_eq!(cap_bulk_batch(500), 200);
         assert_eq!(cap_bulk_concurrency(4), 2);
         assert_eq!(
-            bulk_import_wave(500, 4, false),
+            bulk_import_wave(500, 4, WaveKind::Idle),
             ImportWave {
                 batch: 200,
                 concurrency: 2
             }
         );
         assert_eq!(
-            bulk_import_wave(500, 4, true),
+            bulk_import_wave(500, 4, WaveKind::Pressure),
+            ImportWave {
+                batch: 200,
+                concurrency: 1
+            }
+        );
+        assert_eq!(
+            bulk_import_wave(500, 4, WaveKind::Events),
             ImportWave {
                 batch: 100,
                 concurrency: 1
             }
         );
         assert_eq!(
-            bulk_import_wave(150, 1, false),
+            bulk_import_wave(150, 1, WaveKind::Idle),
             ImportWave {
                 batch: 150,
                 concurrency: 1
@@ -1090,7 +1158,7 @@ mod tests {
 
     #[test]
     fn bulk_docs_are_split_so_the_next_wave_can_wait() {
-        let wave = bulk_import_wave(150, 1, false);
+        let wave = bulk_import_wave(150, 1, WaveKind::Idle);
         let total = 1_000;
         let mut offset = 0;
         let mut waves = 0;
@@ -1106,13 +1174,20 @@ mod tests {
     }
 
     #[test]
-    fn a_wave_waits_for_events_or_for_pressure_from_another_process() {
+    fn pressure_pauses_briefly_and_queued_events_use_the_full_cap() {
         let max = Duration::from_millis(100);
-        assert!(!bulk_wave_waits(false, 0, Duration::ZERO, max));
-        assert!(bulk_wave_waits(true, 0, Duration::ZERO, max));
-        assert!(bulk_wave_waits(false, 2, Duration::from_millis(40), max));
-        assert!(!bulk_wave_waits(true, 4, max, max));
-        assert!(!bulk_wave_waits(false, 4, Duration::from_millis(150), max));
+        assert_eq!(wave_kind(false, 0), WaveKind::Idle);
+        assert_eq!(wave_kind(false, 2), WaveKind::Pressure);
+        assert_eq!(wave_kind(true, 0), WaveKind::Events);
+        assert_eq!(wave_kind(true, 4), WaveKind::Events);
+        assert_eq!(wave_gap(WaveKind::Idle, max), Duration::ZERO);
+        assert_eq!(wave_gap(WaveKind::Pressure, max), Duration::from_millis(15));
+        assert_eq!(wave_gap(WaveKind::Events, max), max);
+        assert_eq!(wave_gap(WaveKind::Pressure, Duration::ZERO), Duration::ZERO);
+        assert_eq!(
+            wave_gap(WaveKind::Events, Duration::from_millis(5)),
+            Duration::from_millis(5)
+        );
     }
 
     #[tokio::test]
