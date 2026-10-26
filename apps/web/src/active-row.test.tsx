@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useMemo, useState } from 'react'
@@ -185,6 +187,34 @@ function grid() {
   return node
 }
 
+function stylesPath() {
+  const candidates = [join(process.cwd(), 'src/styles.css'), join(process.cwd(), 'apps/web/src/styles.css')]
+  const found = candidates.find((path) => existsSync(path))
+  if (!found) throw new Error(`styles.css not found from ${process.cwd()}`)
+  return found
+}
+
+function installRowStyles() {
+  const source = readFileSync(stylesPath(), 'utf8')
+  const start = source.indexOf('.row.selected')
+  const end = source.indexOf('.draft-user')
+  if (start < 0 || end < start) throw new Error('row selection styles missing')
+  const rules = source.slice(start, end)
+  // One rule carries fill and border. Hover is a neutral surface, not that fill.
+  expect(rules).toMatch(/\.row\.selected\s*\{[^}]*background:\s*var\(--accent-dim\)[^}]*outline:\s*2px solid var\(--accent\)/)
+  expect(rules).toMatch(/\.row:hover:not\(\.selected\)\s*\{[^}]*background:\s*var\(--hover\)/)
+  expect(rules).not.toMatch(/\.row:hover[^{]*\{[^}]*accent/)
+  const style = document.createElement('style')
+  style.textContent = rules
+  document.head.appendChild(style)
+}
+
+function selectedLook(row: Element) {
+  const style = getComputedStyle(row)
+  // jsdom keeps these specified values when the color is a custom property.
+  return style.outline.includes('2px solid') && style.boxShadow.includes('inset 2px 0 0')
+}
+
 describe('active row', () => {
   it('continues arrows from the clicked table row and ignores hover', async () => {
     render(<TableHarness />)
@@ -213,6 +243,45 @@ describe('active row', () => {
     expect(rows()[0]?.getAttribute('aria-selected')).toBe('false')
     expect(scrollToIndex).toHaveBeenLastCalledWith(4)
     expect(readUiContext().selection).toEqual([{ id: 'id-4', key: 'ART-4', name: 'Four', type: 'artikel' }])
+  })
+
+  it('keeps one selected style after a click and three ArrowDowns', async () => {
+    installRowStyles()
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+    const rows = () => screen.getAllByTestId('object-row')
+    const selected = () => rows().filter((row) => row.classList.contains('selected'))
+
+    fireEvent.mouseDown(rows()[0]!)
+    fireEvent.click(rows()[0]!)
+    await waitFor(() => expect(screen.getByTestId('detail').textContent).toBe('id-0'))
+    expect(document.activeElement).toBe(grid())
+    expect(rows()[0]?.getAttribute('tabindex')).toBeNull()
+    expect(selected()).toEqual([rows()[0]])
+
+    const focused = document.activeElement
+    if (!(focused instanceof HTMLElement)) throw new Error('grid lost focus')
+    fireEvent.keyDown(focused, { key: 'ArrowDown' })
+    fireEvent.keyDown(focused, { key: 'ArrowDown' })
+    fireEvent.keyDown(focused, { key: 'ArrowDown' })
+
+    await waitFor(() => expect(screen.getByTestId('detail').textContent).toBe('id-3'))
+    expect(selected()).toHaveLength(1)
+    expect(selected()[0]).toBe(rows()[3])
+    expect(rows().filter((row) => selectedLook(row))).toEqual([rows()[3]])
+    expect(rows()[0]?.classList.contains('selected')).toBe(false)
+    expect(rows().filter((row) => row.getAttribute('aria-selected') === 'true')).toEqual([rows()[3]])
+    expect(document.activeElement).toBe(grid())
+    expect(rows().every((row) => row !== document.activeElement)).toBe(true)
+    expect(grid().getAttribute('aria-activedescendant')).toBe('object-row-id-3')
+
+    fireEvent.mouseEnter(rows()[5]!)
+    fireEvent.mouseOver(rows()[5]!)
+    fireEvent.pointerMove(rows()[5]!)
+    expect(selected()).toEqual([rows()[3]])
+    expect(rows()[5]?.classList.contains('selected')).toBe(false)
+    expect(rows()[5]?.classList.contains('picked')).toBe(false)
+    expect(screen.getByTestId('detail').textContent).toBe('id-3')
   })
 
   it('moves the tree selection with the same active row arrows start from', async () => {

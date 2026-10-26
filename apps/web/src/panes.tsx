@@ -385,7 +385,14 @@ export function ObjectTable({
     applySelection(row, clamped, active, extend)
   }
 
+  const focusGrid = () => {
+    const node = parent.current
+    if (!node || document.activeElement === node) return
+    node.focus({ preventScroll: true })
+  }
+
   const onRowClick = (index: number, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
+    focusGrid()
     selectMode.current = null
     setActive(index)
     const row = rowAt(index)
@@ -398,6 +405,7 @@ export function ObjectTable({
   }
 
   const onRowMenu = (index: number, x: number, y: number) => {
+    focusGrid()
     selectMode.current = null
     setActive(index)
     const row = rowAt(index)
@@ -589,6 +597,7 @@ export function ObjectTable({
                         active={active === rowIndex}
                         onActivate={onRowClick}
                         onMenu={onRowMenu}
+                        onFocusGrid={focusGrid}
                       />
                     )
                   })}
@@ -616,6 +625,7 @@ export function ObjectTable({
                   active={active === item.index}
                   onActivate={onRowClick}
                   onMenu={onRowMenu}
+                  onFocusGrid={focusGrid}
                   style={{ position: 'absolute', transform: `translateY(${item.start}px)`, width: '100%' }}
                 />
               )
@@ -656,6 +666,7 @@ function Row({
   active,
   onActivate,
   onMenu,
+  onFocusGrid,
   style,
 }: {
   row: ObjRow
@@ -668,9 +679,12 @@ function Row({
   active: boolean
   onActivate: (index: number, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => void
   onMenu: (index: number, x: number, y: number) => void
+  onFocusGrid: () => void
   style?: CSSProperties
 }) {
-  const marked = active || selected.includes(row.id)
+  // Background and border share this class. Range picks stay quieter so only the active row looks selected.
+  const tone = active ? 'selected' : selected.includes(row.id) ? 'picked' : ''
+  const className = ['row', tone, flash ? 'flash' : ''].filter(Boolean).join(' ')
   return (
     <div
       id={objectRowId(row.id)}
@@ -678,9 +692,14 @@ function Row({
       aria-selected={active}
       data-testid="object-row"
       data-index={index}
-      tabIndex={-1}
-      className={marked ? `row selected${flash ? ' flash' : ''}` : flash ? 'row flash' : 'row'}
+      className={className}
       style={style}
+      onMouseDown={(event) => {
+        // tabindex used to land on the row, so its focus ring stayed put while arrows moved the fill.
+        if (event.button !== 0) return
+        event.preventDefault()
+        onFocusGrid()
+      }}
       onClick={(event) => onActivate(index, event)}
       onContextMenu={(event) => {
         event.preventDefault()

@@ -558,9 +558,24 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   line-height: 28px;
 }
 .head .cell { border-right: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
-.row.selected { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
-.row:hover { background: color-mix(in srgb, var(--accent-dim) 65%, transparent); }
-.row:focus-visible { outline-offset: -2px; }
+/* Active row is one state: fill plus border. DOM focus stays on the grid, so this border moves with the row. */
+.row.selected {
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.row.picked { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+.row:hover:not(.selected) { background: var(--hover); }
+.row:focus,
+.row:focus-visible { outline: none; }
+.row.selected:focus,
+.row.selected:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.grid:focus,
+.grid:focus-visible { outline: none; }
 .draft-user { background: var(--amber-bg); border-radius: var(--r-md); }
 .draft-agent { background: var(--accent-dim); border-radius: var(--r-md); }
 
