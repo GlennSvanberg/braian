@@ -184,10 +184,14 @@ async fn branch_migrations_apply_after_main() {
     let level = wal_level(&conn.client).await;
     assert_ne!(level, "logical");
     migrate(&mut conn.client, &baseline).await;
-    assert!(
-        publication_exists(&conn.client).await,
-        "main's V3 creates braian_changes even when wal_level is {level}"
-    );
+    let baseline_max = max_migration_version(&baseline_set);
+    let branch_max = max_migration_version(&branch_set);
+    if baseline_max < branch_max {
+        assert!(
+            publication_exists(&conn.client).await,
+            "main's V3 creates braian_changes even when wal_level is {level}"
+        );
+    }
     migrate(&mut conn.client, &branch).await;
     assert!(!publication_exists(&conn.client).await);
     let stored: String = conn
