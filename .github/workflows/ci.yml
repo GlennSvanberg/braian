@@ -140,12 +140,15 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
-          curl -fsSL -o /tmp/hurl.deb https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl_8.0.1_amd64.deb
-          sudo apt-get install -y /tmp/hurl.deb
-          # Hurl 8.0.1 links libxml2.so.2; Ubuntu 26.04+ ships libxml2.so.16 only.
+          # Hurl 8.0.1 links libxml2.so.2; Ubuntu 26.04+ provides libxml2.so.16 via libxml2-16.
+          sudo apt-get install -y libxml2-16 || sudo apt-get install -y libxml2
           if [ ! -f /usr/lib/x86_64-linux-gnu/libxml2.so.2 ] && [ -f /usr/lib/x86_64-linux-gnu/libxml2.so.16 ]; then
             sudo ln -sf /usr/lib/x86_64-linux-gnu/libxml2.so.16 /usr/lib/x86_64-linux-gnu/libxml2.so.2
           fi
+          curl -fsSL -o /tmp/hurl.tar.gz https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/hurl.tar.gz -C /tmp
+          sudo find /tmp -type f -name hurl -exec mv {} /usr/local/bin/hurl \;
+          sudo chmod +x /usr/local/bin/hurl
           hurl --version
       - name: Start Postgres and Typesense
         if: steps.changes.outputs.code == 'true'
