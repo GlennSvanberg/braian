@@ -12,8 +12,6 @@ async function login(page: Page) {
   await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByTestId('object-row').first()).toBeVisible()
-  await expect(page.getByTestId('structure-tree')).toBeVisible({ timeout: 45_000 })
-  await expect(page.getByTestId('object-row').first()).toBeVisible()
 }
 
 async function resetEnrich(page: Page) {
@@ -48,6 +46,7 @@ test('selecting a structure group lists the same articles as its assortment', as
   test.setTimeout(120_000)
   await login(page)
   await resetEnrich(page)
+  await expect(page.getByTestId('structure-tree')).toBeVisible()
   const table = page.getByTestId('object-table')
   const count = table.getByTestId('row-count')
   await expect(count).not.toHaveText(/^0 /)
