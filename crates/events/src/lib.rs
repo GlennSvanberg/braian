@@ -1,24 +1,38 @@
-//! Change events published by the relay and consumed by the indexer, the
-//! realtime stream and webhooks.
+//! Change events the indexer, the live stream and webhooks consume.
 //!
-//! A message is "object X changed", not the values. Topics have one partition
-//! so commit order survives a crash. A replay can deliver the same `seq` twice.
+//! A message is "object X changed", not the values. The same `seq` can be
+//! delivered twice after a crash. Consumers re-read the current Postgres row
+//! and ignore an older sequence.
+//!
+//! [`ChangeSource`] is the transport seam. The only implementation reads the
+//! `changes` table by sequence and stores its cursor in Postgres. A different
+//! transport would claim and commit the same way. This crate does not ship one.
 
+use std::future::Future;
 use std::time::Duration;
 
-use futures::future::join_all;
-use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
-use rdkafka::client::DefaultClientContext;
-use rdkafka::config::ClientConfig;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
-use rdkafka::error::KafkaError;
-use rdkafka::message::Message;
-use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const INTERACTIVE_TOPIC: &str = "braian.changes.interactive";
-pub const BULK_TOPIC: &str = "braian.changes.bulk";
+/// Which stream a change belongs to. Interactive work is not queued behind bulk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    Interactive,
+    Bulk,
+}
+
+impl Lane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Bulk => "bulk",
+        }
+    }
+
+    pub fn matches(self, kind: &str) -> bool {
+        kind == self.as_str()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeEvent {
@@ -32,11 +46,11 @@ pub struct ChangeEvent {
 }
 
 impl ChangeEvent {
-    pub fn topic(&self) -> &'static str {
+    pub fn lane(&self) -> Lane {
         if self.kind == "bulk" {
-            BULK_TOPIC
+            Lane::Bulk
         } else {
-            INTERACTIVE_TOPIC
+            Lane::Interactive
         }
     }
 
@@ -47,276 +61,38 @@ impl ChangeEvent {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("kafka: {0}")]
-    Kafka(String),
-    #[error("event json: {0}")]
-    Json(#[from] serde_json::Error),
-}
-
-impl From<KafkaError> for Error {
-    fn from(error: KafkaError) -> Self {
-        Self::Kafka(error.to_string())
-    }
-}
-
-#[derive(Clone)]
-pub struct Bus {
-    producer: FutureProducer,
-    brokers: String,
-}
-
-impl Bus {
-    pub fn connect(brokers: &str) -> Result<Self, Error> {
-        let producer: FutureProducer = ClientConfig::new()
-            .set("bootstrap.servers", brokers)
-            .set("message.timeout.ms", "30000")
-            .set("acks", "all")
-            .set("enable.idempotence", "true")
-            // Batch on the producer. The relay used to wait for each ack, which
-            // capped it around one round trip per event.
-            .set("linger.ms", "5")
-            .set("batch.num.messages", "1000")
-            .set("queue.buffering.max.messages", "200000")
-            .set("queue.buffering.max.kbytes", "131072")
-            .set("compression.codec", "lz4")
-            .create()?;
-        Ok(Self {
-            producer,
-            brokers: brokers.to_owned(),
-        })
-    }
-
-    pub async fn ensure_topics(&self) -> Result<(), Error> {
-        let admin: AdminClient<DefaultClientContext> = ClientConfig::new()
-            .set("bootstrap.servers", &self.brokers)
-            .create()?;
-        let topics = [
-            NewTopic::new(INTERACTIVE_TOPIC, 1, TopicReplication::Fixed(1)),
-            NewTopic::new(BULK_TOPIC, 1, TopicReplication::Fixed(1)),
-        ];
-        let results = admin
-            .create_topics(&topics, &AdminOptions::new())
-            .await
-            .map_err(|error| Error::Kafka(error.to_string()))?;
-        for result in results {
-            match result {
-                Ok(_) => {}
-                Err((_, error)) if error.to_string().contains("already exists") => {}
-                Err((name, error)) => {
-                    return Err(Error::Kafka(format!("create topic {name}: {error}")));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Drops both change topics so a test starts from an empty log.
-    /// Missing topics are not an error. Works against Redpanda and Apache Kafka.
-    pub async fn delete_topics(&self) -> Result<(), Error> {
-        let admin: AdminClient<DefaultClientContext> = ClientConfig::new()
-            .set("bootstrap.servers", &self.brokers)
-            .create()?;
-        let names = [INTERACTIVE_TOPIC, BULK_TOPIC];
-        let results = admin
-            .delete_topics(&names, &AdminOptions::new())
-            .await
-            .map_err(|error| Error::Kafka(error.to_string()))?;
-        for result in results {
-            match result {
-                Ok(_) => {}
-                Err((_, error))
-                    if error.to_string().contains("Unknown")
-                        || error.to_string().contains("does not exist") => {}
-                Err((name, error)) => {
-                    return Err(Error::Kafka(format!("delete topic {name}: {error}")));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn publish(&self, event: &ChangeEvent) -> Result<(), Error> {
-        self.publish_many(std::slice::from_ref(event)).await
-    }
-
-    /// Enqueues every event before waiting, so the broker batches them.
-    ///
-    /// Produce order follows `events`. Callers that need interactive ahead of
-    /// bulk send those on a separate task; this call stays on one task so the
-    /// first poll of each send runs in order.
-    pub async fn publish_many(&self, events: &[ChangeEvent]) -> Result<(), Error> {
-        if events.is_empty() {
-            return Ok(());
-        }
-        let mut owned = Vec::with_capacity(events.len());
-        for event in events {
-            owned.push(Prepared {
-                topic: event.topic(),
-                key: event.key(),
-                payload: serde_json::to_vec(event)?,
-            });
-        }
-        let timeout = Duration::from_secs(30);
-        let sends = owned.iter().map(|item| {
-            let record = FutureRecord::to(item.topic)
-                .key(&item.key)
-                .payload(&item.payload);
-            self.producer.send(record, timeout)
-        });
-        for result in join_all(sends).await {
-            result.map_err(|(error, _)| Error::Kafka(error.to_string()))?;
-        }
-        Ok(())
-    }
-}
-
-struct Prepared {
-    topic: &'static str,
-    key: String,
-    payload: Vec<u8>,
-}
-
-pub struct Subscription {
-    consumer: StreamConsumer,
-}
-
-impl Subscription {
-    pub fn subscribe(brokers: &str, group: &str, topics: &[&str]) -> Result<Self, Error> {
-        let consumer: StreamConsumer = ClientConfig::new()
-            .set("bootstrap.servers", brokers)
-            .set("group.id", group)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("session.timeout.ms", "10000")
-            .create()?;
-        consumer.subscribe(topics)?;
-        Ok(Self { consumer })
-    }
-
-    pub async fn next(&self) -> Result<ChangeEvent, Error> {
-        let held = self.next_held().await?;
-        self.consumer
-            .store_offset(&held.topic, held.partition, held.offset)?;
-        Ok(held.event)
-    }
-
-    /// The next event, without storing its offset.
-    ///
-    /// The bulk indexer reads the following batch while the current import is
-    /// still in flight. Storing that offset here would make the commit of the
-    /// current batch include the following one.
-    pub async fn next_held(&self) -> Result<HeldEvent, Error> {
-        loop {
-            let message = self.consumer.recv().await?;
-            let Some(payload) = message.payload() else {
-                continue;
-            };
-            let event = serde_json::from_slice(payload)?;
-            return Ok(HeldEvent {
-                topic: message.topic().to_owned(),
-                partition: message.partition(),
-                offset: message.offset(),
-                event,
-            });
-        }
-    }
-
-    pub fn commit(&self) -> Result<(), Error> {
-        commit_state(&self.consumer)
-    }
-
-    /// Stores and commits only `held`. An empty slice commits nothing.
-    pub fn commit_held(&self, held: &[HeldEvent]) -> Result<(), Error> {
-        if held.is_empty() {
-            return Ok(());
-        }
-        for (topic, partition, offset) in commit_points(held) {
-            self.consumer.store_offset(&topic, partition, offset)?;
-        }
-        commit_state(&self.consumer)
-    }
-}
-
-/// A consumed event whose offset is still uncommitted.
-#[derive(Debug)]
-pub struct HeldEvent {
-    pub event: ChangeEvent,
-    pub topic: String,
-    pub partition: i32,
-    pub offset: i64,
-}
-
-/// Highest stored offset per topic and partition.
+/// One leased seq range. `from_seq` is exclusive and `through_seq` is inclusive.
 ///
-/// librdkafka's `store_offset_from_message` records the message offset itself,
-/// not the following one. Committing that offset is what `Subscription::next`
-/// does for the interactive lane.
-pub fn commit_points(held: &[HeldEvent]) -> Vec<(String, i32, i64)> {
-    let mut points = Vec::new();
-    for item in held {
-        if let Some((_, _, offset)) = points
-            .iter_mut()
-            .find(|(topic, partition, _)| topic == &item.topic && *partition == item.partition)
-        {
-            if item.offset > *offset {
-                *offset = item.offset;
-            }
-        } else {
-            points.push((item.topic.clone(), item.partition, item.offset));
-        }
-    }
-    points
+/// The range stays uncommitted until [`ChangeSource::commit`]. A crash drops
+/// the lease and the next worker claims the same sequences again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneClaim {
+    pub holder: Uuid,
+    pub from_seq: i64,
+    pub through_seq: i64,
+    pub events: Vec<ChangeEvent>,
 }
 
-fn commit_state(consumer: &StreamConsumer) -> Result<(), Error> {
-    match consumer.commit_consumer_state(CommitMode::Sync) {
-        Ok(()) => Ok(()),
-        // A subscription that saw no records in this window has nothing to commit.
-        // Failing the process there stops indexing after the first interactive batch.
-        Err(error) if error.to_string().contains("NoOffset") => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
+/// Durable, lane-scoped read of the change log.
+///
+/// Claiming a range must not double-assign sequences that another live worker
+/// already holds. Committing is monotonic per lane: a later range does not
+/// hide an earlier one that is still open. `pending` is a cheap read used to
+/// decide whether a claim is worth taking. `wait` returns when new rows may
+/// exist, or when `timeout` elapses.
+pub trait ChangeSource {
+    type Error: std::error::Error + Send + Sync + 'static;
 
-#[cfg(test)]
-mod tests {
-    use super::{ChangeEvent, HeldEvent, commit_points};
-    use uuid::Uuid;
+    fn pending(&self, limit: usize) -> impl Future<Output = Result<usize, Self::Error>> + Send;
 
-    fn held(topic: &str, partition: i32, offset: i64) -> HeldEvent {
-        HeldEvent {
-            event: ChangeEvent {
-                seq: offset,
-                op: "update".into(),
-                object_id: Some(Uuid::nil()),
-                version: None,
-                batch_id: Uuid::nil(),
-                kind: "bulk".into(),
-                at: String::new(),
-            },
-            topic: topic.into(),
-            partition,
-            offset,
-        }
-    }
+    fn claim(
+        &self,
+        limit: usize,
+    ) -> impl Future<Output = Result<Option<LaneClaim>, Self::Error>> + Send;
 
-    #[test]
-    fn commit_points_keep_the_highest_offset_on_each_partition() {
-        let points = commit_points(&[
-            held("braian.changes.bulk", 0, 4),
-            held("braian.changes.bulk", 0, 9),
-            held("braian.changes.bulk", 0, 7),
-            held("braian.changes.interactive", 0, 2),
-        ]);
-        assert_eq!(
-            points,
-            vec![
-                ("braian.changes.bulk".into(), 0, 9),
-                ("braian.changes.interactive".into(), 0, 2),
-            ]
-        );
-    }
+    fn commit(&self, from_seq: i64) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    fn renew(&self, from_seq: i64) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    fn wait(&self, timeout: Duration) -> impl Future<Output = ()> + Send;
 }

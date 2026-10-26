@@ -4,7 +4,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::net::SocketAddr;
 
 use braian_api::AppState;
-use braian_events::{BULK_TOPIC, INTERACTIVE_TOPIC, Subscription};
+use braian_events::ChangeEvent;
 use braian_search::Typesense;
 use braian_store::Store;
 use clap::{Parser, Subcommand};
@@ -24,15 +24,13 @@ struct Cli {
 enum Command {
     /// HTTP API.
     Api,
-    /// Logical replication into Redpanda or Kafka.
-    Relay,
     /// Search indexer.
     Indexer,
     /// Rebuild the search alias from Postgres.
     Reindex,
     /// Demo user, catalog and workspaces. Idempotent.
     Seed,
-    /// API, relay, indexer and seed.
+    /// API, indexer and seed.
     All,
     /// Print the OpenAPI document as JSON.
     Openapi {
@@ -65,13 +63,13 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
+    ignore_removed_broker();
 
     match cli.command {
         Command::Api => {
             let (state, addr) = prepare(false).await?;
             serve(state, addr).await
         }
-        Command::Relay => relay().await,
         Command::Indexer => indexer().await,
         Command::Reindex => {
             let store = connect().await?;
@@ -87,31 +85,15 @@ async fn main() -> anyhow::Result<()> {
         Command::All => {
             let (state, addr) = prepare(true).await?;
             let store = state.store.clone();
-            let brokers = std::env::var("KAFKA_BROKERS").ok();
-            if let Some(brokers) = brokers.clone() {
-                let relay_store = store.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = run_relay(relay_store).await {
-                        tracing::error!(%error, "relay stopped");
-                    }
-                });
+            if typesense().is_some() {
                 let index_store = store.clone();
-                let index_brokers = brokers.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = run_indexer(index_store, &index_brokers).await {
+                    if let Err(error) = run_indexer(index_store).await {
                         tracing::error!(%error, "indexer stopped");
                     }
                 });
-                let live = state.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = run_live(live, &brokers).await {
-                        tracing::error!(%error, "live stream stopped");
-                    }
-                });
             } else {
-                tracing::warn!(
-                    "KAFKA_BROKERS is not set; relay, indexer and the kafka stream are off"
-                );
+                tracing::warn!("TYPESENSE_URL is not set; indexer is off");
             }
             serve(state, addr).await
         }
@@ -132,7 +114,24 @@ async fn prepare(seed_first: bool) -> anyhow::Result<(AppState, SocketAddr)> {
     let addr = std::env::var("BRAIAN_API_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8090".into())
         .parse()?;
-    Ok((AppState::new(store, identities, search), addr))
+    let state = AppState::new(store, identities, search);
+    let live = state.clone();
+    tokio::spawn(async move {
+        if let Err(error) = run_live(live).await {
+            tracing::error!(%error, "live stream stopped");
+        }
+    });
+    Ok((state, addr))
+}
+
+/// `KAFKA_BROKERS` used to start the relay. Existing units may still set it.
+fn ignore_removed_broker() {
+    if std::env::var("KAFKA_BROKERS")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        tracing::warn!("KAFKA_BROKERS is set and ignored; the change log is in Postgres");
+    }
 }
 
 async fn serve(state: AppState, addr: SocketAddr) -> anyhow::Result<()> {
@@ -171,58 +170,49 @@ fn typesense() -> Option<Typesense> {
     }
 }
 
-async fn relay() -> anyhow::Result<()> {
-    run_relay(connect().await?).await
-}
-
-async fn run_relay(store: Store) -> anyhow::Result<()> {
-    let database_url = std::env::var("DATABASE_URL")?;
-    let brokers = std::env::var("KAFKA_BROKERS")?;
-    let listen = std::env::var("BRAIAN_RELAY_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:8091".into())
-        .parse()?;
-    let lag_limit_bytes = std::env::var("BRAIAN_RELAY_LAG_LIMIT_BYTES")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(64 * 1024 * 1024);
-    braian_relay::run(
-        braian_relay::Config {
-            database_url,
-            brokers,
-            slot: std::env::var("BRAIAN_RELAY_SLOT").unwrap_or_else(|_| "braian_relay".into()),
-            listen,
-            lag_limit_bytes,
-            heartbeat_interval: std::env::var("BRAIAN_RELAY_HEARTBEAT_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .map(std::time::Duration::from_millis)
-                .unwrap_or(braian_relay::HEARTBEAT_INTERVAL),
-        },
-        store,
-    )
-    .await
-}
-
 async fn indexer() -> anyhow::Result<()> {
-    let brokers = std::env::var("KAFKA_BROKERS")?;
-    run_indexer(connect().await?, &brokers).await
+    run_indexer(connect().await?).await
 }
 
-async fn run_indexer(store: Store, brokers: &str) -> anyhow::Result<()> {
+async fn run_indexer(store: Store) -> anyhow::Result<()> {
     let search = typesense().ok_or_else(|| anyhow::anyhow!("TYPESENSE_URL is not set"))?;
     // The indexer puts its interactive lane on `BRAIAN_INDEXER_POOL` and bulk
     // reads on the bulk pool. Forcing `on_bulk` here would share one pool.
-    let indexer = braian_indexer::Indexer::new(store, search, brokers, "braian-indexer")?;
+    let indexer = braian_indexer::Indexer::connect(store, search).await?;
     let (_tx, rx) = watch::channel(false);
     indexer.run(rx).await
 }
 
-async fn run_live(state: AppState, brokers: &str) -> anyhow::Result<()> {
-    let subscription =
-        Subscription::subscribe(brokers, "braian-live", &[INTERACTIVE_TOPIC, BULK_TOPIC])?;
+async fn run_live(state: AppState) -> anyhow::Result<()> {
     loop {
-        let event = subscription.next().await?;
-        state.emit(serde_json::to_value(&event)?);
-        subscription.commit()?;
+        if let Err(error) = live_once(&state).await {
+            tracing::warn!(%error, "live tail reconnecting");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+}
+
+async fn live_once(state: &AppState) -> anyhow::Result<()> {
+    let mut cursor = state.store.max_change_seq().await?;
+    let listener = state.store.listen_changes().await?;
+    loop {
+        let rows = state.store.changes_after(cursor, 200).await?;
+        if rows.is_empty() {
+            listener.wait(std::time::Duration::from_millis(250)).await;
+            continue;
+        }
+        for row in rows {
+            cursor = row.seq;
+            let event = ChangeEvent {
+                seq: row.seq,
+                op: row.op,
+                object_id: row.object_id,
+                version: row.version,
+                batch_id: row.batch_id,
+                kind: row.kind,
+                at: row.at.to_rfc3339(),
+            };
+            state.emit(serde_json::to_value(&event)?);
+        }
     }
 }

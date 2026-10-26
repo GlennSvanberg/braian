@@ -1,4 +1,4 @@
-# Loads .env, then starts the API, relay, indexer and Vite.
+# Loads .env, then starts the API, indexer and Vite.
 # Same as `just dev`, for a Windows shell that does not have just yet.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path

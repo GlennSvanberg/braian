@@ -1,10 +1,10 @@
 # CPU pins for a perf or deploy host with 8 vCPUs.
 # Dev `just up` does not load this file.
 #
-#   docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres redpanda typesense
+#   docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres typesense
 #
-# Cores 0-2 Postgres, 3 Braian (taskset on the host), 4 Redpanda,
-# 5 the load generator, 6-7 Typesense. See docs/dev.md.
+# Cores 0-2 Postgres, 3 Braian (taskset on the host), 4 free, 5 the load
+# generator, 6-7 Typesense. See docs/dev.md.
 #
 # On this pin Typesense has two threads. Bulk import concurrency defaults
 # to 1 so one thread stays free for an interactive upsert. Set
@@ -20,10 +20,6 @@ services:
   postgres:
     cpuset: "0,1,2"
     cpus: 3.0
-
-  redpanda:
-    cpuset: "4"
-    cpus: 1.0
 
   typesense:
     cpuset: "6,7"

@@ -1,9 +1,14 @@
-//! Builds the search index from change events.
+//! Builds the search index from the Postgres change log.
 //!
-//! Interactive and bulk topics flush on separate tasks, so a bulk import does
+//! Interactive and bulk lanes flush on separate tasks, so a bulk import does
 //! not hold an interactive edit. Duplicate ids in one batch collapse to the
 //! highest sequence, and the document is the current Postgres row. The search
 //! import refuses an older `seq`, so the two lanes can write at the same time.
+//!
+//! Each lane claims a seq range, imports it, then commits the claim. A crash
+//! before that commit leaves the lease to expire; the next worker claims the
+//! same range. `LISTEN braian_changes` wakes a lane, with the lane's idle
+//! poll as the fallback.
 //!
 //! `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH` and
 //! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the interactive lane. That lane
@@ -15,10 +20,10 @@
 //! and 2 calls. The first reads stay at 200 events until two full batches
 //! have finished, then grow toward the configured size. A cold read of 2 000
 //! events stalled the interactive lane for about 3 s; the warm-up keeps that
-//! first import small. The next Redpanda read and document build run while
-//! the current import is in flight, and that next batch's offsets stay
+//! first import small. The next log read and document build run while
+//! the current import is in flight, and that next batch's claim stays
 //! uncommitted until its own import finishes. An idle wave starts at 100×1
-//! and grows only while the interactive topic stays empty. A second Typesense
+//! and grows only while the interactive lane stays empty. A second Typesense
 //! call is used only when the previous call finished inside 50 ms, so an
 //! upsert is not stuck behind a long import. When an edit is already queued,
 //! the next wave is one batch of at most 100 and the lane waits up to
@@ -29,16 +34,19 @@
 //! Each lane records a tracing span named `indexer` around `fetch`, `build`
 //! and `import`, with `lane`, `events` and `elapsed_ms`.
 
+mod feed;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use braian_events::{BULK_TOPIC, ChangeEvent, HeldEvent, INTERACTIVE_TOPIC, Subscription};
+use braian_events::{ChangeEvent, Lane};
 use braian_model::ObjectId;
 use braian_rules::CompiledModel;
 use braian_search::{Typesense, document};
 use braian_store::{Store, StoredObject};
+use feed::{Inflight, PgSource};
 use futures::stream::{StreamExt, TryStreamExt};
 use serde_json::Value;
 use tracing::Instrument;
@@ -61,7 +69,7 @@ pub struct IndexerConfig {
     pub bulk_import_batch: usize,
     /// Bulk import calls in flight.
     pub bulk_import_concurrency: usize,
-    /// How long the bulk lane waits for the interactive topic to drain.
+    /// How long the bulk lane waits for the interactive lane to drain.
     pub bulk_yield_max: Duration,
 }
 
@@ -109,34 +117,21 @@ impl IndexerConfig {
 pub struct Indexer {
     store: Store,
     search: Typesense,
-    interactive: Subscription,
-    bulk: Subscription,
+    wake: Arc<braian_store::ChangeListener>,
     config: IndexerConfig,
 }
 
 impl Indexer {
-    pub fn new(
-        store: Store,
-        search: Typesense,
-        brokers: &str,
-        group: &str,
-    ) -> anyhow::Result<Self> {
-        Self::with_config(store, search, brokers, group, IndexerConfig::from_env())
+    pub async fn connect(store: Store, search: Typesense) -> anyhow::Result<Self> {
+        Self::with_config(store, search, IndexerConfig::from_env()).await
     }
 
-    pub fn with_config(
+    pub async fn with_config(
         store: Store,
         search: Typesense,
-        brokers: &str,
-        group: &str,
         config: IndexerConfig,
     ) -> anyhow::Result<Self> {
-        let interactive = Subscription::subscribe(
-            brokers,
-            &format!("{group}-interactive"),
-            &[INTERACTIVE_TOPIC],
-        )?;
-        let bulk = Subscription::subscribe(brokers, &format!("{group}-bulk"), &[BULK_TOPIC])?;
+        let wake = Arc::new(store.listen_changes().await?);
         tracing::info!(
             batch = config.batch_size,
             import_batch = config.import_batch,
@@ -154,8 +149,7 @@ impl Indexer {
         Ok(Self {
             store,
             search,
-            interactive,
-            bulk,
+            wake,
             config,
         })
     }
@@ -168,11 +162,17 @@ impl Indexer {
             config: self.config,
             cache: tokio::sync::Mutex::new(None),
         });
+        let interactive_feed = Inflight::new(PgSource::new(
+            self.store.on_indexer(),
+            Lane::Interactive,
+            Arc::clone(&self.wake),
+        ));
+        let bulk_feed = Inflight::new(PgSource::new(self.store.on_bulk(), Lane::Bulk, self.wake));
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let drain = Arc::new(InteractiveDrain::new());
         let mut interactive = tokio::spawn(run_lane(
             Arc::clone(&shared),
-            self.interactive,
+            interactive_feed,
             shutdown.clone(),
             stop_rx.clone(),
             LanePace::for_kind(LaneKind::Interactive, self.config),
@@ -180,7 +180,7 @@ impl Indexer {
         ));
         let mut bulk = tokio::spawn(run_lane(
             shared,
-            self.bulk,
+            bulk_feed,
             shutdown,
             stop_rx,
             LanePace::for_kind(LaneKind::Bulk, self.config),
@@ -211,9 +211,7 @@ impl Shared {
         if !self.bulk.take_reindex_request().await? {
             return Ok(());
         }
-        tracing::warn!(
-            "replication slot recovery requested a reindex; rebuilding the search alias from Postgres"
-        );
+        tracing::warn!("reindex requested; rebuilding the search alias from Postgres");
         if let Err(error) = reindex_with(&self.bulk, &self.search, self.config).await {
             let _ = self.bulk.request_reindex().await;
             return Err(error);
@@ -468,7 +466,7 @@ const BULK_CONCURRENCY_CAP: usize = 2;
 /// While an interactive edit is already in the indexer, one wave is a single
 /// batch of this size.
 const BUSY_BATCH_CAP: usize = 100;
-/// Pause while HTTP requests are in flight and the interactive topic is empty.
+/// Pause while HTTP requests are in flight and the interactive lane is empty.
 ///
 /// Long enough for one pressure-gauge tick (15 ms) to publish a commit, short
 /// enough that a click stream does not add 100 ms to every wave.
@@ -489,9 +487,9 @@ pub(crate) fn cap_bulk_concurrency(concurrency: usize) -> usize {
 /// Why the next bulk wave is this size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WaveKind {
-    /// The interactive topic has events, or that lane is flushing.
+    /// The interactive lane has events, or that lane is flushing.
     Events,
-    /// Interactive HTTP is in flight. The topic itself is idle.
+    /// Interactive HTTP is in flight. The lane itself is idle.
     Pressure,
     /// Nothing interactive is in flight.
     Idle,
@@ -519,7 +517,7 @@ pub(crate) fn wave_gap(kind: WaveKind, yield_max: Duration) -> Duration {
 }
 
 /// Idle-wave size. Starts at one short call and grows only while the
-/// interactive topic stays empty.
+/// interactive lane stays empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WaveTune {
     batch: usize,
@@ -773,14 +771,14 @@ async fn import_waves(
 
 async fn run_lane(
     shared: Arc<Shared>,
-    subscription: Subscription,
+    mut feed: Inflight,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     mut stop: tokio::sync::watch::Receiver<bool>,
     pace: LanePace,
     drain: Arc<InteractiveDrain>,
 ) -> anyhow::Result<()> {
     if pace.kind == LaneKind::Bulk {
-        return run_bulk_lane(shared, subscription, shutdown, stop, pace, drain).await;
+        return run_bulk_lane(shared, feed, shutdown, stop, pace, drain).await;
     }
     let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
     let mut since = Instant::now();
@@ -789,7 +787,8 @@ async fn run_lane(
         .unwrap_or_else(Instant::now);
     loop {
         if *shutdown.borrow() || *stop.borrow() {
-            commit_pending(&shared, &subscription, &mut pending, &pace, &drain).await?;
+            drain_feed(&mut feed, &mut pending);
+            commit_pending(&shared, &mut feed, &mut pending, &pace, &drain).await?;
             return Ok(());
         }
         if pace.rebuild && checked.elapsed() >= Duration::from_secs(1) {
@@ -810,7 +809,8 @@ async fn run_lane(
                     Duration::ZERO
                 };
                 first = false;
-                let Some(event) = poll(&subscription, wait).await? else {
+                let room = pace.batch_size.saturating_sub(pending.len()).max(1);
+                let Some(event) = feed.next(wait, room).await? else {
                     break;
                 };
                 remember(&mut pending, event);
@@ -829,7 +829,7 @@ async fn run_lane(
             drain.set_pending(pending.len());
         }
         if lane_due(pending.len(), pace.batch_size, since.elapsed(), false) {
-            commit_pending(&shared, &subscription, &mut pending, &pace, &drain).await?;
+            commit_pending(&shared, &mut feed, &mut pending, &pace, &drain).await?;
             since = Instant::now();
         } else if pending.is_empty() {
             since = Instant::now();
@@ -846,7 +846,7 @@ async fn run_lane(
 }
 
 struct BuiltBatch {
-    held: Vec<HeldEvent>,
+    claims: Vec<i64>,
     docs: Vec<Value>,
     max_seq: i64,
     /// Coalesced events in this read.
@@ -856,11 +856,11 @@ struct BuiltBatch {
 }
 
 /// Bulk lane. The next batch is fetched and built while Typesense imports the
-/// current one. Offsets for the next batch stay uncommitted, so a crash
+/// current one. The next batch's claim stays uncommitted, so a crash
 /// redelivers it instead of skipping it.
 async fn run_bulk_lane(
     shared: Arc<Shared>,
-    subscription: Subscription,
+    mut feed: Inflight,
     shutdown: tokio::sync::watch::Receiver<bool>,
     stop: tokio::sync::watch::Receiver<bool>,
     pace: LanePace,
@@ -875,7 +875,7 @@ async fn run_bulk_lane(
     loop {
         if *shutdown.borrow() || *stop.borrow() {
             if let Some(batch) = prefetched.take() {
-                finish_batch(&shared, &subscription, &batch, &drain, &mut tune, &pace).await?;
+                finish_batch(&shared, feed.source(), &batch, &drain, &mut tune, &pace).await?;
             }
             return Ok(());
         }
@@ -888,7 +888,7 @@ async fn run_bulk_lane(
         } else {
             let Some(batch) = build_batch(
                 &shared,
-                &subscription,
+                &mut feed,
                 shutdown.clone(),
                 stop.clone(),
                 pace,
@@ -901,13 +901,15 @@ async fn run_bulk_lane(
             batch
         };
         if *shutdown.borrow() || *stop.borrow() {
-            finish_batch(&shared, &subscription, &current, &drain, &mut tune, &pace).await?;
+            finish_batch(&shared, feed.source(), &current, &drain, &mut tune, &pace).await?;
             return Ok(());
         }
+        let source = feed.source().clone();
+        let _lease = source.keep_leased(&current.claims);
         let imported = import_built(&shared, &current, &drain, &mut tune, &pace);
         let fetched = build_batch(
             &shared,
-            &subscription,
+            &mut feed,
             shutdown.clone(),
             stop.clone(),
             pace,
@@ -916,21 +918,22 @@ async fn run_bulk_lane(
         let (imported, fetched) = tokio::join!(imported, fetched);
         imported?;
         ramp.observe(pace.batch_size, current.events, current.offered);
-        subscription.commit_held(&current.held)?;
+        source.commit_many(&current.claims).await?;
         prefetched = fetched?;
     }
 }
 
 async fn finish_batch(
     shared: &Shared,
-    subscription: &Subscription,
+    source: &PgSource,
     batch: &BuiltBatch,
     drain: &InteractiveDrain,
     tune: &mut WaveTune,
     pace: &LanePace,
 ) -> anyhow::Result<()> {
+    let _lease = source.keep_leased(&batch.claims);
     import_built(shared, batch, drain, tune, pace).await?;
-    subscription.commit_held(&batch.held)?;
+    source.commit_many(&batch.claims).await?;
     Ok(())
 }
 
@@ -968,7 +971,7 @@ async fn import_built(
 
 async fn build_batch(
     shared: &Shared,
-    subscription: &Subscription,
+    feed: &mut Inflight,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     mut stop: tokio::sync::watch::Receiver<bool>,
     pace: LanePace,
@@ -976,10 +979,10 @@ async fn build_batch(
 ) -> anyhow::Result<Option<BuiltBatch>> {
     let batch_size = ramp.batch_size(pace.batch_size);
     let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
-    let mut held = Vec::new();
     let since = Instant::now();
     loop {
         if *shutdown.borrow() || *stop.borrow() {
+            drain_feed(feed, &mut pending);
             break;
         }
         let mut fetch = Stage::start(pace.kind, "fetch");
@@ -996,12 +999,11 @@ async fn build_batch(
                     Duration::ZERO
                 };
                 first = false;
-                let Some(event) = poll_held(subscription, wait, &mut shutdown, &mut stop).await?
-                else {
+                let room = batch_size.saturating_sub(pending.len()).max(1);
+                let Some(event) = feed.next(wait, room).await? else {
                     break;
                 };
-                remember(&mut pending, event.event.clone());
-                held.push(event);
+                remember(&mut pending, event);
             }
             Ok::<(), anyhow::Error>(())
         }
@@ -1017,6 +1019,8 @@ async fn build_batch(
             break;
         }
         if pending.is_empty() {
+            let claims = feed.take_claims();
+            feed.source().commit_many(&claims).await?;
             return Ok(None);
         }
         let wait = WINDOW.saturating_sub(since.elapsed());
@@ -1026,14 +1030,18 @@ async fn build_batch(
             result = stop.wait_for(|flag| *flag) => { let _ = result; }
         }
     }
+    drain_feed(feed, &mut pending);
     if pending.is_empty() {
+        let claims = feed.take_claims();
+        feed.source().commit_many(&claims).await?;
         return Ok(None);
     }
+    let claims = feed.take_claims();
     let events = pending.len();
     let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
     let Some(cached) = shared.compiled(&shared.bulk).await? else {
         return Ok(Some(BuiltBatch {
-            held,
+            claims,
             docs: Vec::new(),
             max_seq,
             events,
@@ -1054,7 +1062,7 @@ async fn build_batch(
     build.arm(docs.len());
     drop(build);
     Ok(Some(BuiltBatch {
-        held,
+        claims,
         docs,
         max_seq,
         events,
@@ -1062,43 +1070,17 @@ async fn build_batch(
     }))
 }
 
-async fn poll_held(
-    subscription: &Subscription,
-    wait: Duration,
-    shutdown: &mut tokio::sync::watch::Receiver<bool>,
-    stop: &mut tokio::sync::watch::Receiver<bool>,
-) -> anyhow::Result<Option<HeldEvent>> {
-    if *shutdown.borrow() || *stop.borrow() {
-        return Ok(None);
-    }
-    tokio::select! {
-        biased;
-        result = tokio::time::timeout(wait, subscription.next_held()) => {
-            match result {
-                Ok(Ok(event)) => Ok(Some(event)),
-                Ok(Err(error)) => Err(error.into()),
-                Err(_) => Ok(None),
-            }
-        }
-        result = shutdown.wait_for(|flag| *flag) => {
-            let _ = result;
-            Ok(None)
-        }
-        result = stop.wait_for(|flag| *flag) => {
-            let _ = result;
-            Ok(None)
-        }
-    }
-}
-
 async fn commit_pending(
     shared: &Shared,
-    subscription: &Subscription,
+    feed: &mut Inflight,
     pending: &mut HashMap<String, ChangeEvent>,
     pace: &LanePace,
     drain: &InteractiveDrain,
 ) -> anyhow::Result<()> {
+    drain_feed(feed, pending);
+    let claims = feed.take_claims();
     if pending.is_empty() {
+        feed.source().commit_many(&claims).await?;
         if pace.kind == LaneKind::Interactive {
             drain.set_pending(0);
             drain.set_flushing(false);
@@ -1109,14 +1091,32 @@ async fn commit_pending(
         drain.set_pending(pending.len());
         drain.set_flushing(true);
     }
+    let _lease = feed.source().keep_leased(&claims);
     shared.flush(pending, pace).await?;
-    subscription.commit()?;
+    feed.source().commit_many(&claims).await?;
     pending.clear();
     if pace.kind == LaneKind::Interactive {
         drain.set_pending(0);
         drain.set_flushing(false);
     }
     Ok(())
+}
+
+fn drain_feed(feed: &mut Inflight, pending: &mut HashMap<String, ChangeEvent>) {
+    while let Some(event) = feed.pop_buffered() {
+        remember(pending, event);
+    }
+}
+
+/// Collapses a batch to the highest seq for each object.
+pub fn coalesce_events(
+    events: impl IntoIterator<Item = ChangeEvent>,
+) -> HashMap<String, ChangeEvent> {
+    let mut pending = HashMap::new();
+    for event in events {
+        remember(&mut pending, event);
+    }
+    pending
 }
 
 fn remember(pending: &mut HashMap<String, ChangeEvent>, event: ChangeEvent) {
@@ -1217,14 +1217,6 @@ async fn ensure_alias(
         store.set_indexer_collection(&name).await?;
     }
     Ok(())
-}
-
-async fn poll(subscription: &Subscription, wait: Duration) -> anyhow::Result<Option<ChangeEvent>> {
-    match tokio::time::timeout(wait, subscription.next()).await {
-        Ok(Ok(event)) => Ok(Some(event)),
-        Ok(Err(error)) => Err(error.into()),
-        Err(_) => Ok(None),
-    }
 }
 
 fn lane_label(kind: LaneKind) -> &'static str {
@@ -1385,7 +1377,7 @@ async fn reindex_with(
 
 /// Indexes `ids` in one Postgres read and one Typesense import plan.
 ///
-/// Duplicate ids are read once. Tests use this without Kafka.
+/// Duplicate ids are read once. Tests use this on its own.
 pub async fn index_objects(
     store: &Store,
     search: &Typesense,
@@ -1456,8 +1448,8 @@ async fn index_objects_in(
 /// Indexes without moving the indexer watermark.
 ///
 /// Interactive writes use this so a seq that landed ahead of the bulk lane
-/// does not mark every earlier change as indexed. Redpanda still repairs the
-/// document.
+/// does not mark every earlier change as indexed. The change log still
+/// repairs the document.
 pub async fn index_written(
     store: &Store,
     search: &Typesense,
@@ -1467,7 +1459,7 @@ pub async fn index_written(
     index_objects_in(store, search, ids, seq, false, true).await
 }
 
-/// Used by tests that want the indexed document for one object without Kafka.
+/// Used by tests that want the indexed document for one object.
 pub async fn index_object(
     store: &Store,
     search: &Typesense,
@@ -1958,7 +1950,7 @@ mod tests {
         task.await.expect("wait");
         assert!(
             started.elapsed() < Duration::from_millis(100),
-            "bulk import kept waiting after the interactive topic drained"
+            "bulk import kept waiting after the interactive lane drained"
         );
     }
 

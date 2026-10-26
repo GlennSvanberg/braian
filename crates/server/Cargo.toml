@@ -16,7 +16,6 @@ braian-api.workspace = true
 braian-events.workspace = true
 braian-indexer.workspace = true
 braian-model.workspace = true
-braian-relay.workspace = true
 braian-rules.workspace = true
 braian-search.workspace = true
 braian-store.workspace = true

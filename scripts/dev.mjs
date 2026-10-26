@@ -1,4 +1,4 @@
-// Starts the API (migrations, seed, relay, indexer) and the web app.
+// Starts the API (migrations, seed, indexer) and the web app.
 // `just` loads .env before this process, on Windows and in the devcontainer.
 import { spawn } from 'node:child_process'
 import path from 'node:path'

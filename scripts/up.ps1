@@ -1,4 +1,4 @@
-# Starts Postgres, Redpanda, Redpanda Console and Typesense.
+# Starts Postgres and Typesense.
 # Same as `just up`, for a Windows shell that does not have just yet.
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')

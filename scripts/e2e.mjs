@@ -59,6 +59,7 @@ if (!existsSync(binary)) {
 ensureDatabase()
 
 const apiEnv = { ...process.env }
+// Older checkouts set this. The process ignores it; drop it so the log stays quiet.
 delete apiEnv.KAFKA_BROKERS
 apiEnv.DATABASE_URL = withDatabase(source, 'braian_e2e')
 apiEnv.BRAIAN_SEARCH_ALIAS = 'braian_e2e'

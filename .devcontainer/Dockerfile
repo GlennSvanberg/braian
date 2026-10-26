@@ -2,8 +2,7 @@ FROM mcr.microsoft.com/devcontainers/rust:1-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential cmake pkg-config \
-        libssl-dev libsasl2-dev libcurl4-openssl-dev zlib1g-dev \
+        build-essential pkg-config libssl-dev \
         postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 

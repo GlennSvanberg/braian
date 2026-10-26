@@ -4,21 +4,21 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 default:
     @just --list
 
-# Postgres, Redpanda, Redpanda Console och Typesense
+# Postgres och Typesense
 up:
     docker compose up -d --wait
 
 down:
     docker compose down
 
-# Raderar all lokal data i Postgres, Redpanda och Typesense
+# Raderar all lokal data i Postgres och Typesense
 nuke:
     docker compose down -v
 
 logs *service:
     docker compose logs -f {{service}}
 
-# Migrationer, demodata, API, relay, indexer och webbgränssnittet på http://127.0.0.1:3000
+# Migrationer, demodata, API, indexer och webbgränssnittet på http://127.0.0.1:3000
 dev:
     node scripts/dev.mjs
 
@@ -32,9 +32,6 @@ test:
 
 psql:
     docker compose exec postgres psql -U {{env("POSTGRES_USER")}} -d {{env("POSTGRES_DB")}}
-
-rpk *args:
-    docker compose exec redpanda rpk {{args}}
 
 # Bygger rules till JavaScript via WebAssembly
 wasm:
@@ -74,9 +71,9 @@ openapi:
 api-latency:
     cargo run -p braian-bench --release -- api-latency
 
-# Fas 4: relayn tappar inte och kastar inte om ordningen över en omstart.
+# Fas 4: en krasch spelar upp ocommittat indexarbete, och två arbetare tar inte samma seq.
 demo-4:
-    cargo test -p braian-relay --test order -- --test-threads=1 --nocapture
+    cargo test -p braian-store --test change_log -- --test-threads=1 --nocapture
 
 # Fas 5: dubbletter och en sen händelse ger samma index, och reindex byter alias.
 demo-5:

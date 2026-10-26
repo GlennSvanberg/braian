@@ -1,5 +1,7 @@
 # Architecture review, 2026-10-25
 
+This review describes the broker pipeline as it was on that date. The broker, the relay, and the replication slot were removed afterwards. The current flow is [docs/events.md](../events.md). The findings below are kept as the record of that review.
+
 Reviewed from `main` at `03419039` (naming-only change after the v7 indexer). The numbers below are from the v6 and v7 reports on the same 8-vCPU VPS, plus the Typesense microbench and one local document measurement. This branch does not rerun the 50k pipeline. Throughput after the change is an estimate.
 
 v7 is `486047e` (“Keep interactive search updates ahead of bulk Typesense imports”). v6 is `f90f311`. Both use synth medium: 301 attributes, 10 languages, 10 searchable, 12 loaders, chunk 250, isolated Postgres / Redpanda / Typesense.

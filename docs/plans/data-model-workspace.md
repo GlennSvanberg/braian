@@ -11,7 +11,7 @@ Decisions from Glenn, 2026-10-26:
 
 ## Current state
 
-Definitions are one versioned JSON document, not tables per concept. `definition_revisions.definitions` (`crates/store/migrations/V1__storage.sql`) holds a `DefinitionSet`: languages, `unit_families`, `value_lists`, `attributes`, `types`, `structures` (`crates/model/src/definition.rs`). Each save bumps `model_revision`, writes a batch, and appends `changes.op = 'definitions'` with an entity diff (`crates/store/src/ops.rs`, `definition_diff`). The relay publishes a small `ChangeEvent` (seq, op, no object id) on `braian.changes.interactive`. Postgres stays the source of truth.
+Definitions are one versioned JSON document, not tables per concept. `definition_revisions.definitions` (`crates/store/migrations/V1__storage.sql`) holds a `DefinitionSet`: languages, `unit_families`, `value_lists`, `attributes`, `types`, `structures` (`crates/model/src/definition.rs`). Each save bumps `model_revision`, writes a batch, and appends `changes.op = 'definitions'` with an entity diff (`crates/store/src/ops.rs`, `definition_diff`). The same append is a `ChangeEvent` (seq, op, no object id) on the interactive lane of `changes`. Postgres stays the source of truth. See `docs/events.md`.
 
 What the model already has:
 
@@ -131,7 +131,7 @@ Custom fields describe the attribute, not the object. They stay inside `Definiti
 - `attribute_fields: Vec<AttributeField>` on the set. Each field has id, key, labels, and a kind of text, boolean, number, or value list (a shared list key). No `applies_to`, no unit family, and no per-language value in this cut. Every attribute shows the same fields.
 - `Attribute.meta: BTreeMap<String, Json>`, sparse. A missing key and a blank value both mean unset. Nothing is required. Compile does not fail on a blank.
 
-Edits go through the definition commit that already exists (`model.upsert_attribute_field`, `model.set_attribute_meta`), so they get a batch, a `definitions` diff, and a Redpanda event. `definition_diff` needs a new entity kind `attribute_field`. No new table. No object write.
+Edits go through the definition commit that already exists (`model.upsert_attribute_field`, `model.set_attribute_meta`), so they get a batch, a `definitions` diff, and a row on the interactive lane of `changes`. `definition_diff` needs a new entity kind `attribute_field`. No new table. No object write.
 
 ## What stays on the wire
 

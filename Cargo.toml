@@ -25,15 +25,12 @@ braian-store = { path = "crates/store" }
 braian-events = { path = "crates/events" }
 braian-search = { path = "crates/search" }
 braian-api = { path = "crates/api" }
-braian-relay = { path = "crates/relay" }
 braian-indexer = { path = "crates/indexer" }
 
 anyhow = "1"
 argon2 = "0.5"
 getrandom = "0.3"
 hex = "0.4"
-pg_walstream = "0.9"
-rdkafka = { version = "0.37", features = ["cmake-build"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rust_xlsxwriter = "0.80"
 sha2 = "0.10"

@@ -19,7 +19,7 @@
 
 Braian is an open-source product data system for the work a PIM usually covers. You host it yourself. It has a keyboard-first interface, and the same operations are available over the API and MCP, so an agent acts as a person in the session.
 
-Postgres is the source of truth. A relay publishes each change to Redpanda, and search, live updates, and outbound events follow from that log.
+Postgres is the source of truth and the change log. Search, live updates, and outbound events follow from `changes`. The design is in [docs/events.md](docs/events.md).
 
 ## Features
 
@@ -33,7 +33,7 @@ Postgres is the source of truth. A relay publishes each change to Redpanda, and 
 
 ## Architecture
 
-Writers share one operation layer. Commits land in Postgres. Logical replication feeds the relay, which publishes interactive and bulk lanes on separate Redpanda topics so a fast edit does not wait on a bulk batch. The indexer updates Typesense. Search returns to the UI. The same topics drive SSE back to open UIs and webhooks out to other systems. The routes are `GET /v1/stream` and `/v1/webhooks`.
+Writers share one operation layer. Commits land in Postgres and append to `changes`. Interactive and bulk are separate lanes on that table, so a fast edit is claimed while a bulk range is still open. The indexer updates Typesense. Search returns to the UI. `LISTEN braian_changes` wakes the SSE tail, including commits from another process. The routes are `GET /v1/stream` and `/v1/webhooks`.
 
 ```mermaid
 flowchart LR
@@ -43,8 +43,6 @@ flowchart LR
   MCP[MCP clients]
   OP[Operation layer]
   PG[(Postgres)]
-  Relay[Relay]
-  RP[Redpanda]
   IDX[Indexer]
   TS[(Typesense)]
   EXT[External consumers]
@@ -54,37 +52,33 @@ flowchart LR
   API --> OP
   MCP --> OP
   OP --> PG
-  PG -->|"logical replication"| Relay
-  Relay --> RP
-  RP -->|"braian.changes.interactive"| IDX
-  RP -->|"braian.changes.bulk"| IDX
+  PG -->|"changes by seq"| IDX
   IDX --> TS
   TS -->|search| UI
-  RP -->|"SSE /v1/stream"| UI
-  RP -->|webhooks| EXT
+  PG -->|"LISTEN / SSE"| UI
+  API -->|webhooks| EXT
 ```
 
-One binary, `braian`, runs the server roles. In development, `braian all` migrates, seeds, and runs the API, relay, and indexer together. In production, run each role as its own process.
+One binary, `braian`, runs the server roles. In development, `braian all` migrates, seeds, and runs the API and the indexer together. In production, run each role as its own process.
 
 | Piece | Path |
 | --- | --- |
 | Web app (TanStack Start) | `apps/web` |
 | Landing page for braian.io | `apps/landing` |
-| `braian` binary: `api`, `relay`, `indexer`, `all`, `seed`, `reindex`, `openapi` | `crates/server` |
+| `braian` binary: `api`, `indexer`, `all`, `seed`, `reindex`, `openapi` | `crates/server` |
 | HTTP API, operations, MCP, agent, SSE, webhooks | `crates/api` |
-| Logical replication relay | `crates/relay` |
 | Search indexer | `crates/indexer` |
-| Change topics `braian.changes.interactive` and `braian.changes.bulk` | `crates/events` |
+| Change contract (`ChangeSource`) | `crates/events` |
 | Typesense client | `crates/search` |
 | Postgres store | `crates/store` |
 | Model and validation. No I/O. Rules compile to wasm32 | `crates/model`, `crates/rules`, `crates/rules-wasm` |
 | Rules package used from JavaScript | `packages/rules-wasm` |
 | Synthetic catalogs and benches | `crates/synth`, `crates/bench` |
-| Postgres, Redpanda, Redpanda Console, Typesense | `compose.yaml` |
+| Postgres, Typesense | `compose.yaml` |
 
 ## Quick start
 
-You need Docker, Rust 1.93, Node 22, pnpm 10, and [just](https://just.systems/). The `rdkafka` crate builds with the `cmake-build` feature, so CMake and a C++ compiler must be on the path. CI installs those packages on Ubuntu.
+You need Docker, Rust 1.93, Node 22, pnpm 10, and [just](https://just.systems/). CI uses the free GitHub runners.
 
 ```bash
 cp .env.example .env
@@ -93,15 +87,15 @@ pnpm install
 just dev
 ```
 
-`just up` starts Postgres, Redpanda, Redpanda Console, and Typesense. `pnpm install` is once, before Vite can start. `just dev` runs migrations, synthetic demo data, the API, the relay, the indexer, and the web app. The first run compiles Rust. Stop it with Ctrl+C.
+`just up` starts Postgres and Typesense. `pnpm install` is once, before Vite can start. `just dev` runs migrations, synthetic demo data, the API, the indexer, and the web app. The first run compiles Rust. Stop it with Ctrl+C.
 
 - Web: http://127.0.0.1:3000
 - API: http://127.0.0.1:8090
-- Host ports, from `compose.yaml`: Postgres `5433`, Redpanda `19092`, Typesense `8108`, Redpanda Console `8080`
+- Host ports, from `compose.yaml`: Postgres `5433`, Typesense `8108`
 
 The demo account is created from `BRAIAN_DEMO_EMAIL` and `BRAIAN_DEMO_PASSWORD` in `.env`. See `.env.example`. Those values are not in the source tree. Without `OPENAI_API_KEY`, the Ctrl+K panel says that no model is connected. Proposals, bulk edits, and undo still work. The catalog is synthetic. Its size is `BRAIAN_SEED_COUNT`. Tests do not write that database.
 
-On Windows, install just with `winget install --id Casey.Just` or `scoop install just`. Without it, `.\scripts\up.ps1` and `.\scripts\dev.ps1` do the same work. Visual Studio Build Tools, workload “Desktop development with C++”, supplies CMake and the compiler. A WSL2 checkout on the Linux filesystem is faster than a bind mount from `C:\`. More detail is in [docs/dev.md](docs/dev.md).
+On Windows, install just with `winget install --id Casey.Just` or `scoop install just`. Without it, `.\scripts\up.ps1` and `.\scripts\dev.ps1` do the same work. A WSL2 checkout on the Linux filesystem is faster than a bind mount from `C:\`. More detail is in [docs/dev.md](docs/dev.md).
 
 ### Checks
 
@@ -110,7 +104,7 @@ just check
 just test
 ```
 
-`just demo-4` needs Redpanda. `just demo-5` needs Typesense. Both are part of `just up`. For the web app, `pnpm --dir apps/web typecheck` and `pnpm --dir apps/web test`. `node scripts/e2e.mjs` runs the browser smoke against the database `braian_e2e` and needs Postgres and Typesense from `just up`. `just --list` prints every recipe.
+`just demo-4` runs the change-log tests and needs Postgres. `just demo-5` needs Typesense. Both services come from `just up`. For the web app, `pnpm --dir apps/web typecheck` and `pnpm --dir apps/web test`. `node scripts/e2e.mjs` runs the browser smoke against the database `braian_e2e` and needs Postgres and Typesense from `just up`. `just --list` prints every recipe.
 
 ## Repository
 
@@ -130,15 +124,15 @@ Copy `.env.example` to `.env` and replace the placeholders. `.env` is gitignored
 
 | Group | Variables |
 | --- | --- |
-| Infrastructure | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_READONLY_PASSWORD`, `POSTGRES_HOST_PORT`, `DATABASE_URL`, `DATABASE_URI`, `KAFKA_BROKERS`, `TYPESENSE_URL`, `TYPESENSE_API_KEY` |
-| Processes | `BRAIAN_API_ADDR`, `BRAIAN_RELAY_ADDR`, `BRAIAN_RELAY_SLOT`, `BRAIAN_RELAY_LAG_LIMIT_BYTES`, `BRAIAN_SEARCH_ALIAS`, `BRAIAN_COOKIE_SECURE`, `RUST_LOG` |
+| Infrastructure | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_READONLY_PASSWORD`, `POSTGRES_HOST_PORT`, `DATABASE_URL`, `DATABASE_URI`, `TYPESENSE_URL`, `TYPESENSE_API_KEY` |
+| Processes | `BRAIAN_API_ADDR`, `BRAIAN_SEARCH_ALIAS`, `BRAIAN_COOKIE_SECURE`, `RUST_LOG` |
 | Pools and bulk | `BRAIAN_POOL_INTERACTIVE`, `BRAIAN_POOL_BULK`, `BRAIAN_BULK_YIELD_MS`, `BRAIAN_BULK_YIELD_STEP_MS`, `BRAIAN_BULK_YIELD_MAX_MS`, `BRAIAN_BULK_JOBS`, `BRAIAN_BULK_QUEUE`, `BRAIAN_BULK_CHUNK` |
 | Indexer | `BRAIAN_INDEXER_POOL`, `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH`, `BRAIAN_INDEXER_IMPORT_CONCURRENCY`, `BRAIAN_INDEXER_BULK_BATCH`, `BRAIAN_INDEXER_BULK_IMPORT_BATCH`, `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY`, `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` |
 | Demo and tokens | `BRAIAN_DEV_TOKENS`, `BRAIAN_DEMO_EMAIL`, `BRAIAN_DEMO_PASSWORD`, `BRAIAN_DEMO_TOKEN`, `BRAIAN_SEED_COUNT` |
 | Agent | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `BRAIAN_AGENT_MODEL`, `BRAIAN_AGENT_MOCK` |
 | Tests | `BRAIAN_TEST_DATABASE_URL` |
 
-`BRAIAN_COOKIE_SECURE` belongs on only behind HTTPS. Comments and local placeholders are in `.env.example`. Relay slot behavior for a shared Postgres is in [docs/dev.md](docs/dev.md).
+`BRAIAN_COOKIE_SECURE` belongs on only behind HTTPS. Comments and local placeholders are in `.env.example`. An old `KAFKA_BROKERS` value is ignored. The change log is described in [docs/events.md](docs/events.md).
 
 ## Performance
 
@@ -146,7 +140,8 @@ Measured figures, with hardware, data size, and the command that produced them, 
 
 ## Documentation
 
-- [docs/dev.md](docs/dev.md) — local setup, ports, commands, replication slot
+- [docs/dev.md](docs/dev.md) — local setup, ports, commands
+- [docs/events.md](docs/events.md) — change log, lanes, claims, wakeups
 - [docs/status.md](docs/status.md) — what works in the current cut
 - [docs/plan.md](docs/plan.md) — phase plan for the core
 - [DESIGN.md](DESIGN.md) — visual language for the app
@@ -174,4 +169,4 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 
 Copyright (c) 2026 Glenn Svanberg.
 
-Braian talks over the network to external services with their own licenses (Redpanda BSL 1.1, Typesense GPL-3.0; the kafka profile is a fully Apache-2.0 alternative), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Braian talks over the network to Typesense (GPL-3.0). Postgres uses the PostgreSQL License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
