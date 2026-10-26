@@ -29,7 +29,6 @@ export function missingTypeWorkspaces(rows: Array<{ share_token?: string | null 
 }
 
 function workspaceRank(shareToken: string | null | undefined, types: TypeName[]) {
-  if (shareToken === 'braian-setup') return 0
   if (shareToken === 'braian-model') return 1
   if (shareToken?.startsWith(TYPE_SHARE_PREFIX)) {
     const key = shareToken.slice(TYPE_SHARE_PREFIX.length)

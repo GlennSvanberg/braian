@@ -152,13 +152,11 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
 }
 
 async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> anyhow::Result<()> {
+    // Removed demo workspace: drop it from databases seeded before.
+    store
+        .delete_workspace(Uuid::parse_str("018f2000-0000-7000-8000-000000000001")?)
+        .await?;
     let workspaces = [
-        (
-            "018f2000-0000-7000-8000-000000000001",
-            "Set up the system",
-            true,
-            "braian-setup",
-        ),
         (
             "018f2000-0000-7000-8000-000000000002",
             "Data model",
@@ -332,35 +330,12 @@ fn layout(workspace: &str) -> Value {
                 "018f2000-0000-7000-8000-000000000403",
             ]),
         ),
-        _ => split(
-            "horizontal",
-            0.5,
-            tabs(&["018f2000-0000-7000-8000-000000000101"]),
-            tabs(&["018f2000-0000-7000-8000-000000000102"]),
-        ),
+        _ => tabs(&[]),
     }
 }
 
 async fn save_views(store: &Store) -> anyhow::Result<()> {
     let views = [
-        (
-            "018f2000-0000-7000-8000-000000000101",
-            "018f2000-0000-7000-8000-000000000001",
-            "dashboard",
-            "Overview",
-            "main",
-            0,
-            json!({}),
-        ),
-        (
-            "018f2000-0000-7000-8000-000000000102",
-            "018f2000-0000-7000-8000-000000000001",
-            "data_model",
-            "To do",
-            "main",
-            1,
-            json!({"checklist": ["languages", "units", "types", "import"]}),
-        ),
         (
             "018f2000-0000-7000-8000-000000000201",
             "018f2000-0000-7000-8000-000000000002",

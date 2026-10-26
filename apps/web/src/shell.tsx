@@ -230,7 +230,7 @@ export function Shell() {
   )
   useEffect(() => {
     const preferred = orderedWorkspaces.find((item) => item.share_token?.startsWith('braian-type-'))
-    const first = preferred?.id ?? orderedWorkspaces[2]?.id ?? orderedWorkspaces[0]?.id
+    const first = preferred?.id ?? orderedWorkspaces[1]?.id ?? orderedWorkspaces[0]?.id
     if (!workspaceId && first) setWorkspaceId(first)
   }, [orderedWorkspaces, workspaceId])
 

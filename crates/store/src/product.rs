@@ -247,6 +247,14 @@ impl Store {
         Ok(())
     }
 
+    pub async fn delete_workspace(&self, id: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("DELETE FROM workspaces WHERE id = $1", &[&id])
+            .await?;
+        Ok(())
+    }
+
     pub async fn list_workspaces(&self, user_id: Uuid) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client
