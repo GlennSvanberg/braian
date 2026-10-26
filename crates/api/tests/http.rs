@@ -767,14 +767,15 @@ async fn an_agent_or_import_cannot_commit_and_a_person_save_still_does() {
     for token in [AGENT, IMPORT] {
         let (status, _, ops) = call(&app, "GET", "/v1/operations", Some(token), &[], None).await;
         assert_eq!(status, StatusCode::OK, "{ops}");
-        assert!(
-            !ops["operations"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|op| op["name"] == "accept_proposal"),
-            "{token} {ops}"
-        );
+        let names = ops["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|op| op["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(!names.contains(&"accept_proposal"), "{token} {ops}");
+        assert!(!names.contains(&"discard_proposal"), "{token} {ops}");
+        assert!(names.contains(&"mass_edit"), "{token} {ops}");
         let (status, _, denied) = call(
             &app,
             "POST",
@@ -789,14 +790,14 @@ async fn an_agent_or_import_cannot_commit_and_a_person_save_still_does() {
     }
     let (status, _, human_ops) = call(&app, "GET", "/v1/operations", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{human_ops}");
-    assert!(
-        human_ops["operations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|op| op["name"] == "accept_proposal"),
-        "{human_ops}"
-    );
+    let human_names = human_ops["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|op| op["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(human_names.contains(&"accept_proposal"), "{human_ops}");
+    assert!(human_names.contains(&"discard_proposal"), "{human_ops}");
 }
 
 #[tokio::test]
@@ -2348,6 +2349,116 @@ async fn an_accept_patch_cannot_introduce_a_field_or_value() {
     assert_eq!(object["values"]["name"]["sv"], "Hej", "{object}");
     assert!(object["values"]["name"].get("en-GB").is_none(), "{object}");
     assert_eq!(object["values"]["tags"], json!(["aa"]), "{object}");
+}
+
+#[tokio::test]
+async fn an_agent_cannot_discard_a_proposal_and_a_person_can() {
+    let (_db, app) = app().await;
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-DISCARD","active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = created["id"].as_str().unwrap();
+    let (status, _, blocked) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/objects/{id}"),
+        Some(AGENT),
+        &[("if-match", "1")],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{blocked}");
+    assert_eq!(blocked["code"], "needs_approval");
+    let (status, _, drafted) = call(
+        &app,
+        "POST",
+        "/v1/proposals",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"title":"Discard me","rows":[{{"object_id":"{id}","type_key":"item","base_version":1,"patch":{{"values":{{"active":false}}}}}}]}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{drafted}");
+    let proposal_id = drafted["id"].as_str().unwrap();
+    for token in [AGENT, IMPORT] {
+        let (status, _, denied) = call(
+            &app,
+            "POST",
+            &format!("/v1/proposals/{proposal_id}/discard"),
+            Some(token),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {denied}");
+        assert_eq!(denied["code"], "agent_cannot_discard", "{denied}");
+        let (status, _, accept) = call(
+            &app,
+            "POST",
+            &format!("/v1/proposals/{proposal_id}/accept"),
+            Some(token),
+            &[("content-type", "application/json")],
+            Some("{}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {accept}");
+        assert_eq!(accept["code"], "agent_cannot_accept", "{accept}");
+    }
+    let (status, _, pending) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{proposal_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pending}");
+    assert_eq!(pending["status"], "open", "{pending}");
+    assert_eq!(pending["rows"][0]["status"], "pending", "{pending}");
+    let (status, _, object) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{object}");
+    assert_eq!(object["version"], 1, "{object}");
+    assert_eq!(object["values"]["active"], true, "{object}");
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/discard"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _, discarded) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{proposal_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{discarded}");
+    assert_eq!(discarded["status"], "discarded", "{discarded}");
+    assert_eq!(discarded["rows"][0]["status"], "rejected", "{discarded}");
 }
 
 #[tokio::test]

@@ -375,11 +375,21 @@ async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
     );
     assert!(tail.iter().all(|row| row.seq != low));
     assert_eq!(store.safe_change_seq().await.unwrap(), high);
-    let interactive = store
-        .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
-        .await
-        .unwrap()
-        .expect("interactive");
+    // The pressure gauge writes on its own connection. While that statement
+    // holds an xid, a leading hole looks open and the claim waits. Retry until
+    // the database is quiet again.
+    let mut interactive = None;
+    for _ in 0..20 {
+        interactive = store
+            .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
+            .await
+            .unwrap();
+        if interactive.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let interactive = interactive.expect("interactive");
     assert_eq!(interactive.events[0].seq, high);
     assert!(
         store

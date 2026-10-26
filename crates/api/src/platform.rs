@@ -612,7 +612,7 @@ const AGENT_UI_EXCLUDED: &[&str] = &[];
 
 /// Commit operations. An agent may propose the effect, and a person saves it.
 /// The name stays out of the agent tool list and out of MCP.
-const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal"];
+const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal", "discard_proposal"];
 
 fn exposed_to_agent(op: &Operation) -> bool {
     !AGENT_UI_EXCLUDED.contains(&op.name) && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
@@ -3199,6 +3199,14 @@ async fn finish_row(
         .map_err(proposal_write_error)
 }
 
+fn agent_cannot_discard() -> Problem {
+    Problem::new(
+        StatusCode::FORBIDDEN,
+        "agent_cannot_discard",
+        "an agent or import proposes; a person discards",
+    )
+}
+
 fn proposal_write_error(error: braian_store::Error) -> Problem {
     match error {
         braian_store::Error::Conflict {
@@ -3235,6 +3243,9 @@ async fn discard_proposal(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, Problem> {
     require(&identity, Role::Editor)?;
+    if !identity.may_commit() {
+        return Err(agent_cannot_discard());
+    }
     state
         .store
         .set_proposal_rows(id, &[], "rejected")
@@ -4053,12 +4064,15 @@ async fn run_operation(
     }
     // The in-app agent calls this with the person's identity (`from_agent`).
     // Hiding the tool is not enough: a call still has to stay a proposal.
-    if name == "accept_proposal" && (from_agent || !identity.may_commit()) {
+    if op.name == "accept_proposal" && (from_agent || !identity.may_commit()) {
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
             "agent_cannot_accept",
             "an agent or import proposes; a person accepts",
         ));
+    }
+    if op.name == "discard_proposal" && (from_agent || !identity.may_commit()) {
+        return Err(agent_cannot_discard());
     }
     let agent_write =
         from_agent && matches!(op.name, "create_object" | "patch_object" | "set_relation");
@@ -4826,6 +4840,17 @@ mod tests {
         .expect_err("agent accept");
         assert_eq!(refused.status, StatusCode::FORBIDDEN.as_u16());
         assert_eq!(refused.code, "agent_cannot_accept");
+        let discarded = run_operation(
+            &state,
+            &human,
+            "discard_proposal",
+            &json!({ "id": proposal_id }),
+            true,
+        )
+        .await
+        .expect_err("agent discard");
+        assert_eq!(discarded.status, StatusCode::FORBIDDEN.as_u16());
+        assert_eq!(discarded.code, "agent_cannot_discard");
         let stored = state
             .store
             .proposal(proposal_id)
@@ -5134,6 +5159,14 @@ mod tests {
         assert!(
             !tools.contains("accept_proposal"),
             "an agent must not be offered the commit operation"
+        );
+        assert!(
+            !tools.contains("discard_proposal"),
+            "an agent must not be offered discard"
+        );
+        assert!(
+            tools.contains("mass_edit"),
+            "mass edit stays a proposal the person approves"
         );
 
         let registered = registry()
