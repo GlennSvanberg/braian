@@ -63,13 +63,13 @@ export function App() {
               <Mark />
               Braian
             </div>
-            <p>Open-source product data. Self-hosted. MIT OR Apache-2.0.</p>
+            <p>Open-source product data. Self-hosted. Apache-2.0.</p>
           </div>
           <nav className="footer-links" aria-label="Footer">
             <a href={demoUrl}>Demo</a>
             <a href={repoUrl}>GitHub</a>
             <a href={docsUrl}>Documentation</a>
-            <a href={licenseUrl}>MIT OR Apache-2.0</a>
+            <a href={licenseUrl}>Apache-2.0</a>
           </nav>
         </footer>
       </div>

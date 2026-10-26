@@ -1,7 +1,7 @@
 //! A database that already applied main's migrations must accept this branch.
 //!
 //! refinery 0.8 aborts when an applied migration's checksum changes. CI points
-//! `BRAIAN_BASELINE_MIGRATIONS` at main's `crates/store/migrations` (V1–V14),
+//! `BRAIAN_BASELINE_MIGRATIONS` at main's `crates/store/migrations`,
 //! applies those, then applies the migrations in this checkout.
 
 use std::env;
@@ -82,14 +82,16 @@ fn baseline_migrations() -> PathBuf {
             path.join("V3__app.sql").is_file(),
             "BRAIAN_BASELINE_MIGRATIONS={dir} has no V3__app.sql"
         );
+        let baseline_max = max_migration_version(&load(&path));
+        let branch_max = max_migration_version(&load(&branch_migrations()));
         assert!(
-            !path.join("V15__change_log.sql").exists(),
-            "BRAIAN_BASELINE_MIGRATIONS={dir} already contains V15; it must be main's migrations"
+            baseline_max <= branch_max,
+            "BRAIAN_BASELINE_MIGRATIONS={dir} goes up to V{baseline_max} but this checkout only has V{branch_max}"
         );
         return path;
     }
     panic!(
-        "BRAIAN_BASELINE_MIGRATIONS is not set. Point it at main's crates/store/migrations so this test applies V1–V14 before the branch."
+        "BRAIAN_BASELINE_MIGRATIONS is not set. Point it at main's crates/store/migrations before the branch."
     );
 }
 
@@ -103,6 +105,14 @@ fn v3_checksum(migrations: &[Migration]) -> u64 {
         .find(|migration| migration.version() == 3)
         .unwrap_or_else(|| panic!("V3 is missing"))
         .checksum()
+}
+
+fn max_migration_version(migrations: &[Migration]) -> i32 {
+    migrations
+        .iter()
+        .map(|migration| migration.version() as i32)
+        .max()
+        .expect("at least one migration")
 }
 
 async fn migrate(client: &mut tokio_postgres::Client, dir: &Path) {
@@ -174,10 +184,14 @@ async fn branch_migrations_apply_after_main() {
     let level = wal_level(&conn.client).await;
     assert_ne!(level, "logical");
     migrate(&mut conn.client, &baseline).await;
-    assert!(
-        publication_exists(&conn.client).await,
-        "main's V3 creates braian_changes even when wal_level is {level}"
-    );
+    let baseline_max = max_migration_version(&baseline_set);
+    let branch_max = max_migration_version(&branch_set);
+    if baseline_max < branch_max {
+        assert!(
+            publication_exists(&conn.client).await,
+            "main's V3 creates braian_changes even when wal_level is {level}"
+        );
+    }
     migrate(&mut conn.client, &branch).await;
     assert!(!publication_exists(&conn.client).await);
     let stored: String = conn
@@ -196,5 +210,5 @@ async fn branch_migrations_apply_after_main() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(latest, 15);
+    assert_eq!(latest, max_migration_version(&branch_set));
 }
