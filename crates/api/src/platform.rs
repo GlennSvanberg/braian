@@ -18,7 +18,8 @@ use axum::routing::{get, post};
 use braian_model::{AttributeId, AttributeKind, DefinitionSet, Object, ObjectId};
 use braian_search::SearchQuery;
 use braian_store::{
-    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalRow, Store,
+    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalLock, ProposalRow,
+    ProposalWrite, Store, WriteReceipt,
 };
 use futures::stream;
 use serde::Deserialize;
@@ -611,7 +612,7 @@ const AGENT_UI_EXCLUDED: &[&str] = &[];
 
 /// Commit operations. An agent may propose the effect, and a person saves it.
 /// The name stays out of the agent tool list and out of MCP.
-const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal"];
+const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal", "discard_proposal"];
 
 fn exposed_to_agent(op: &Operation) -> bool {
     !AGENT_UI_EXCLUDED.contains(&op.name) && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
@@ -2083,8 +2084,10 @@ async fn propose_assortment(
 async fn apply_assortment_row(
     state: &AppState,
     identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
     row: &Value,
-) -> Result<i64, Problem> {
+) -> Result<Option<i64>, Problem> {
     let patch = row.get("patch").cloned().unwrap_or(json!({}));
     let name = patch
         .get("name")
@@ -2103,12 +2106,21 @@ async fn apply_assortment_row(
         .and_then(Value::as_str)
         .and_then(|value| Uuid::parse_str(value).ok())
         .unwrap_or_else(Uuid::now_v7);
-    state
-        .store
-        .save_assortment(id, owner, name, &query)
-        .await
-        .map_err(store_status)?;
-    Ok(0)
+    let receipt = finish_row(
+        state,
+        identity,
+        proposal_id,
+        row_id,
+        "accepted",
+        ProposalWrite::Assortment {
+            id,
+            owner,
+            name: name.to_owned(),
+            query,
+        },
+    )
+    .await?;
+    Ok(receipt.map(|receipt| receipt.last_seq))
 }
 
 async fn list_job_types(
@@ -2399,13 +2411,16 @@ async fn create_proposal(
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Editor)?;
     let id = Uuid::now_v7();
-    let rows = proposal_rows(&body.rows);
+    // The caller does not choose `source`. A spoofed body field is ignored.
+    let _client_source = body.source.as_deref();
+    let source = proposal_source(identity.kind);
+    let rows = proposal_rows(&body.rows)?;
     state
         .store
         .create_proposal(
             id,
             &body.title,
-            &body.source.unwrap_or_else(|| "api".into()),
+            source,
             identity.actor.actor,
             identity.actor.on_behalf_of,
             rows.iter().any(|row| row.conflict),
@@ -2423,10 +2438,21 @@ async fn create_proposal(
     ))
 }
 
-fn proposal_rows(rows: &[ProposalRowBody]) -> Vec<ProposalRow> {
-    rows.iter()
-        .enumerate()
-        .map(|(index, row)| ProposalRow {
+fn proposal_source(kind: braian_store::PrincipalKind) -> &'static str {
+    match kind {
+        braian_store::PrincipalKind::Human => "user",
+        braian_store::PrincipalKind::Agent => "agent",
+        braian_store::PrincipalKind::Integration => "import",
+    }
+}
+
+fn proposal_rows(rows: &[ProposalRowBody]) -> Result<Vec<ProposalRow>, Problem> {
+    let mut stored = Vec::with_capacity(rows.len());
+    for (index, row) in rows.iter().enumerate() {
+        if updates_existing_object(row) && row.base_version.is_none() {
+            return Err(base_version_required());
+        }
+        stored.push(ProposalRow {
             id: row.id.unwrap_or_else(Uuid::now_v7),
             object_id: row.object_id,
             object_key: row.object_key.clone(),
@@ -2436,8 +2462,33 @@ fn proposal_rows(rows: &[ProposalRowBody]) -> Vec<ProposalRow> {
             status: "pending".into(),
             conflict: row.conflict.unwrap_or(false),
             position: i32::try_from(index).unwrap_or(0),
-        })
-        .collect()
+        });
+    }
+    Ok(stored)
+}
+
+fn base_version_required() -> Problem {
+    Problem::new(
+        StatusCode::BAD_REQUEST,
+        "base_version_required",
+        "a proposal that changes an existing object needs base_version",
+    )
+}
+
+/// An update of an object the catalog already stores. Creates, relations,
+/// model edits and assortments are not versioned object patches.
+fn updates_existing_object(row: &ProposalRowBody) -> bool {
+    if row.object_id.is_none() {
+        return false;
+    }
+    if matches!(row.type_key.as_deref(), Some("model" | "assortment")) {
+        return false;
+    }
+    !is_relation_patch(&row.patch)
+}
+
+fn is_relation_patch(patch: &Value) -> bool {
+    relation_proposal(&json!({ "patch": patch })).is_some()
 }
 
 async fn get_proposal(
@@ -2482,11 +2533,50 @@ async fn accept_proposal(
         .cloned()
         .unwrap_or_default();
     let selected = selected_rows(&rows, &body.rows);
-    let patches = body.patches;
-    if selected.len() >= LARGE_ACCEPT {
-        return accept_later(state, identity, id, selected, patches).await;
+    validate_accept_patches(&state, &selected, &body.patches).await?;
+    if selected.is_empty() {
+        return Err(Problem::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this proposal is no longer pending",
+        ));
     }
-    let value = apply_selected(&state, &identity, id, selected, None, &patches).await?;
+    let patches = body.patches;
+    // Held until this accept finishes, including the background job, so a second
+    // accept waits and then sees the rows are no longer pending.
+    let lock = state.store.lock_proposal(id).await.map_err(store_status)?;
+    let proposal = match state.store.proposal(id).await {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            lock.release().await.map_err(store_status)?;
+            return Err(Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal"));
+        }
+        Err(error) => {
+            lock.release().await.map_err(store_status)?;
+            return Err(store_status(error));
+        }
+    };
+    let rows = proposal
+        .get("rows")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let selected = selected_rows(&rows, &body.rows);
+    if selected.is_empty() {
+        lock.release().await.map_err(store_status)?;
+        return Err(Problem::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this proposal is no longer pending",
+        ));
+    }
+    if selected.len() >= LARGE_ACCEPT {
+        return accept_later(state, identity, id, selected, patches, lock).await;
+    }
+    let value = apply_selected(&state, &identity, id, selected, None, &patches, lock).await?;
+    if let Some(problem) = refusal_from_accept(&value) {
+        return Err(problem);
+    }
     Ok(AcceptReply::Sync(value))
 }
 
@@ -2534,6 +2624,7 @@ async fn accept_later(
     proposal_id: Uuid,
     selected: Vec<Value>,
     patches: BTreeMap<Uuid, Value>,
+    lock: ProposalLock,
 ) -> Result<AcceptReply, Problem> {
     state
         .store
@@ -2542,7 +2633,7 @@ async fn accept_later(
         .map_err(store_status)?;
     let job_id = Uuid::now_v7();
     let total = i32::try_from(selected.len()).unwrap_or(i32::MAX);
-    state
+    if let Err(error) = state
         .store
         .create_job_run(
             job_id,
@@ -2553,7 +2644,10 @@ async fn accept_later(
             total,
         )
         .await
-        .map_err(store_status)?;
+    {
+        lock.release().await.map_err(store_status)?;
+        return Err(store_status(error));
+    }
     emit_job(&state, job_id, "running", 0, total);
     let job_state = state.clone();
     tokio::spawn(async move {
@@ -2564,6 +2658,7 @@ async fn accept_later(
             selected,
             Some(job_id),
             &patches,
+            lock,
         )
         .await
         {
@@ -2601,29 +2696,68 @@ async fn apply_selected(
     rows: Vec<Value>,
     job_id: Option<Uuid>,
     patches: &BTreeMap<Uuid, Value>,
+    lock: ProposalLock,
 ) -> Result<Value, Problem> {
+    let outcome = apply_selected_locked(state, identity, proposal_id, rows, job_id, patches).await;
+    lock.release().await.map_err(store_status)?;
+    let tally = outcome?;
+    if tally.accepted.is_empty() && tally.failed.is_empty() && tally.rejected == 0 {
+        return Err(Problem::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this proposal is no longer pending",
+        ));
+    }
+    if tally.failed.is_empty() {
+        let status = if tally.accepted.is_empty() && tally.rejected > 0 {
+            "discarded"
+        } else {
+            "accepted"
+        };
+        let _ = state.store.set_proposal_status(proposal_id, status).await;
+    }
+    Ok(json!({ "accepted": tally.accepted, "failed": tally.failed }))
+}
+
+struct AcceptTally {
+    accepted: Vec<Value>,
+    failed: Vec<Value>,
+    rejected: i32,
+}
+
+async fn apply_selected_locked(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    rows: Vec<Value>,
+    job_id: Option<Uuid>,
+    patches: &BTreeMap<Uuid, Value>,
+) -> Result<AcceptTally, Problem> {
     let total = i32::try_from(rows.len()).unwrap_or(i32::MAX);
     let mut done = 0i32;
     let mut accepted = Vec::new();
     let mut failed = Vec::new();
     let mut rejected = 0i32;
     for row in rows {
-        let Some(row_id) = row
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-        else {
+        let Some(row_id) = row_uuid(&row) else {
             continue;
         };
         let mut row = row;
         if let Some(replacement) = patches.get(&row_id) {
             if patch_is_empty(replacement) {
-                state
-                    .store
-                    .set_proposal_rows(proposal_id, &[row_id], "rejected")
-                    .await
-                    .map_err(store_status)?;
-                rejected += 1;
+                if finish_row(
+                    state,
+                    identity,
+                    proposal_id,
+                    row_id,
+                    "rejected",
+                    ProposalWrite::None,
+                )
+                .await?
+                .is_some()
+                {
+                    rejected += 1;
+                }
                 done += 1;
                 if let Some(job_id) = job_id {
                     let _ = state
@@ -2643,22 +2777,23 @@ async fn apply_selected(
                 object.insert("patch".to_owned(), replacement.clone());
             }
         }
-        match apply_row(state, identity, &row).await {
-            Ok(seq) => {
-                state
-                    .store
-                    .set_proposal_rows(proposal_id, &[row_id], "accepted")
-                    .await
-                    .map_err(store_status)?;
-                accepted.push(json!({ "id": row_id, "seq": seq }));
-            }
+        match apply_row(state, identity, proposal_id, row_id, &row).await {
+            Ok(Some(seq)) => accepted.push(json!({ "id": row_id, "seq": seq })),
+            Ok(None) => {}
             Err(problem) => {
                 let detail = problem
                     .errors
                     .first()
                     .map(|error| error.message.clone())
                     .unwrap_or_else(|| problem.detail.clone());
-                failed.push(json!({ "id": row_id, "code": problem.code, "detail": detail }))
+                let mut failure = Map::new();
+                failure.insert("id".to_owned(), json!(row_id));
+                failure.insert("code".to_owned(), json!(problem.code));
+                failure.insert("detail".to_owned(), json!(detail));
+                if let Some(version) = problem.current_version {
+                    failure.insert("current_version".to_owned(), json!(version));
+                }
+                failed.push(Value::Object(failure));
             }
         }
         done += 1;
@@ -2670,15 +2805,223 @@ async fn apply_selected(
             emit_job(state, job_id, "running", done, total);
         }
     }
-    if failed.is_empty() {
-        let status = if accepted.is_empty() && rejected > 0 {
-            "discarded"
-        } else {
-            "accepted"
-        };
-        let _ = state.store.set_proposal_status(proposal_id, status).await;
+    Ok(AcceptTally {
+        accepted,
+        failed,
+        rejected,
+    })
+}
+
+fn row_uuid(row: &Value) -> Option<Uuid> {
+    row.get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+/// A single-row conflict is the accept response itself. A mixed batch still
+/// returns the rows that did apply.
+fn refusal_from_accept(value: &Value) -> Option<Problem> {
+    let accepted = value.get("accepted")?.as_array()?;
+    if !accepted.is_empty() {
+        return None;
     }
-    Ok(json!({ "accepted": accepted, "failed": failed }))
+    let failed = value.get("failed")?.as_array()?;
+    let row = failed.iter().find(|item| {
+        matches!(
+            item.get("code").and_then(Value::as_str),
+            Some("conflict" | "base_ahead" | "base_version_required")
+        )
+    })?;
+    let code = row.get("code").and_then(Value::as_str)?;
+    let detail = row
+        .get("detail")
+        .and_then(Value::as_str)
+        .unwrap_or("conflict");
+    let status = if code == "base_version_required" {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::CONFLICT
+    };
+    let mut problem = Problem::new(status, code, detail);
+    problem.current_version = row.get("current_version").and_then(Value::as_u64);
+    Some(problem)
+}
+
+async fn validate_accept_patches(
+    state: &AppState,
+    rows: &[Value],
+    patches: &BTreeMap<Uuid, Value>,
+) -> Result<(), Problem> {
+    if patches.is_empty() {
+        return Ok(());
+    }
+    for row in rows {
+        let Some(row_id) = row_uuid(row) else {
+            continue;
+        };
+        let Some(replacement) = patches.get(&row_id) else {
+            continue;
+        };
+        if patch_is_empty(replacement) {
+            continue;
+        }
+        let original = row.get("patch").unwrap_or(&Value::Null);
+        let current = current_wire_values(state, row).await?;
+        validate_replacement(original, replacement, current.as_ref())?;
+    }
+    Ok(())
+}
+
+async fn current_wire_values(
+    state: &AppState,
+    row: &Value,
+) -> Result<Option<Map<String, Value>>, Problem> {
+    let Some(text) = row.get("object_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let id =
+        ObjectId::from_uuid(Uuid::parse_str(text).map_err(|error| {
+            Problem::new(StatusCode::BAD_REQUEST, "invalid_id", error.to_string())
+        })?);
+    let Some(stored) = state.store.get_object(id).await.map_err(store_status)? else {
+        return Ok(None);
+    };
+    let cached = state.models.get(&state.store).await?;
+    let applicable_ids = applicable(&cached, &stored.object);
+    let wire = values_to_wire(&cached.model, &applicable_ids, &stored.object.values, false);
+    Ok(Some(wire.into_iter().collect()))
+}
+
+fn patch_not_proposed(detail: impl Into<String>) -> Problem {
+    Problem::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "patch_not_proposed",
+        detail,
+    )
+}
+
+/// A replacement may keep or drop proposed fields and values. Anything that
+/// was not in the proposal is rejected. An empty `values` object is handled
+/// earlier and means the whole row is rejected.
+fn validate_replacement(
+    original: &Value,
+    replacement: &Value,
+    current_values: Option<&Map<String, Value>>,
+) -> Result<(), Problem> {
+    let Some(object) = replacement.as_object() else {
+        return Err(patch_not_proposed("an accept patch must be an object"));
+    };
+    for key in object.keys() {
+        if key != "values" && key != "groups" {
+            return Err(patch_not_proposed(format!("field {key} was not proposed")));
+        }
+    }
+    let proposed_values = original.get("values").and_then(Value::as_object);
+    if let Some(values) = object.get("values") {
+        let Some(values) = values.as_object() else {
+            return Err(patch_not_proposed("values must be an object"));
+        };
+        for (key, value) in values {
+            let Some(proposed) = proposed_values.and_then(|map| map.get(key)) else {
+                return Err(patch_not_proposed(format!("field {key} was not proposed")));
+            };
+            let current = current_values.and_then(|map| map.get(key));
+            ensure_proposed_value(key, proposed, value, current)?;
+        }
+    }
+    let proposed_groups = original.get("groups").and_then(Value::as_object);
+    if let Some(groups) = object.get("groups") {
+        let Some(groups) = groups.as_object() else {
+            return Err(patch_not_proposed("groups must be an object"));
+        };
+        for (key, value) in groups {
+            match proposed_groups.and_then(|map| map.get(key)) {
+                Some(proposed) if proposed == value => {}
+                Some(_) => {
+                    return Err(patch_not_proposed(format!(
+                        "group {key} does not match the proposal"
+                    )));
+                }
+                None => {
+                    return Err(patch_not_proposed(format!("group {key} was not proposed")));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_proposed_value(
+    field: &str,
+    proposed: &Value,
+    replacement: &Value,
+    current: Option<&Value>,
+) -> Result<(), Problem> {
+    if let (Value::Object(proposed_map), Value::Object(replacement_map)) = (proposed, replacement) {
+        for (key, value) in replacement_map {
+            match proposed_map.get(key) {
+                Some(proposed_value) if proposed_value == value => {}
+                Some(_) => {
+                    return Err(patch_not_proposed(format!(
+                        "value for {field}.{key} was not proposed"
+                    )));
+                }
+                None => {
+                    return Err(patch_not_proposed(format!(
+                        "{field}.{key} was not proposed"
+                    )));
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let (Value::Array(proposed_items), Value::Array(replacement_items)) = (proposed, replacement)
+    {
+        let current_items = current.and_then(Value::as_array);
+        if list_keeps_or_rejects(
+            current_items.map(Vec::as_slice).unwrap_or(&[]),
+            proposed_items,
+            replacement_items,
+        ) {
+            return Ok(());
+        }
+        return Err(patch_not_proposed(format!(
+            "a value in {field} was not proposed"
+        )));
+    }
+    if proposed == replacement {
+        return Ok(());
+    }
+    Err(patch_not_proposed(format!(
+        "value for {field} was not proposed"
+    )))
+}
+
+/// Membership edits may only keep or drop items the proposal added or removed.
+/// Items in both the current value and the proposal stay. A new code is rejected.
+fn list_keeps_or_rejects(current: &[Value], proposed: &[Value], replacement: &[Value]) -> bool {
+    let current = value_counts(current);
+    let proposed = value_counts(proposed);
+    let replacement = value_counts(replacement);
+    let mut keys = BTreeSet::new();
+    keys.extend(current.keys().cloned());
+    keys.extend(proposed.keys().cloned());
+    keys.extend(replacement.keys().cloned());
+    keys.iter().all(|key| {
+        let had = current.get(key).copied().unwrap_or(0);
+        let wanted = proposed.get(key).copied().unwrap_or(0);
+        let kept = replacement.get(key).copied().unwrap_or(0);
+        kept >= had.min(wanted) && kept <= had.max(wanted)
+    })
+}
+
+fn value_counts(items: &[Value]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for item in items {
+        let key = serde_json::to_string(item).unwrap_or_default();
+        *counts.entry(key).or_default() += 1;
+    }
+    counts
 }
 
 fn patch_is_empty(patch: &Value) -> bool {
@@ -2719,12 +3062,18 @@ fn relation_proposal(row: &Value) -> Option<(Uuid, String)> {
     Some((to, kind.to_owned()))
 }
 
-async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
+async fn apply_row(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    row: &Value,
+) -> Result<Option<i64>, Problem> {
     if crate::model_proposal::is_model_row(row) {
-        return crate::model_proposal::apply_row(state, identity, row).await;
+        return crate::model_proposal::apply_row(state, identity, proposal_id, row_id, row).await;
     }
     if row.get("type_key").and_then(Value::as_str) == Some("assortment") {
-        return apply_assortment_row(state, identity, row).await;
+        return apply_assortment_row(state, identity, proposal_id, row_id, row).await;
     }
     if let Some((to, kind)) = relation_proposal(row) {
         let from = row
@@ -2732,12 +3081,16 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
             .and_then(Value::as_str)
             .and_then(|id| Uuid::parse_str(id).ok())
             .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "invalid_id", "relation"))?;
-        state
-            .store
-            .set_relation(ObjectId::from_uuid(from), ObjectId::from_uuid(to), &kind)
-            .await
-            .map_err(store_status)?;
-        return Ok(0);
+        let receipt = finish_row(
+            state,
+            identity,
+            proposal_id,
+            row_id,
+            "accepted",
+            ProposalWrite::Relation { from, to, kind },
+        )
+        .await?;
+        return Ok(receipt.map(|receipt| receipt.last_seq));
     }
     let cached = state.models.get(&state.store).await?;
     let patch_body = row.get("patch").cloned().unwrap_or(json!({}));
@@ -2759,23 +3112,34 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
         if !report.errors.is_empty() {
             return Err(Problem::validation(report.errors, report.warnings));
         }
-        let base = row
+        let Some(base) = row
             .get("base_version")
             .and_then(Value::as_i64)
-            .unwrap_or(stored.version as i64) as u64;
-        let receipt = state
-            .store
-            .write_batch(
-                &identity.actor,
-                vec![ObjectOp::Update {
+            .filter(|base| *base >= 0)
+        else {
+            return Err(base_version_required());
+        };
+        let base = base as u64;
+        let Some(receipt) = finish_row(
+            state,
+            identity,
+            proposal_id,
+            row_id,
+            "accepted",
+            ProposalWrite::Objects {
+                ops: vec![ObjectOp::Update {
                     id,
                     patch,
                     base_version: base,
-                    read_version: stored.version,
+                    read_version: base,
                 }],
-            )
-            .await
-            .map_err(store_status)?;
+                expect_version: Some((id, base)),
+            },
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
         state.emit(json!({
             "seq": receipt.last_seq,
             "op": "update",
@@ -2784,7 +3148,7 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
             "type": type_key,
         }));
         state.index_after_commit(id.as_uuid(), receipt.last_seq);
-        return Ok(receipt.last_seq);
+        return Ok(Some(receipt.last_seq));
     }
     let body = CreateObject {
         id: None,
@@ -2796,16 +3160,81 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
         values,
     };
     let op = create_op(&cached, &body)?;
-    let receipt = state
-        .store
-        .write_batch(&identity.actor, vec![op])
-        .await
-        .map_err(store_status)?;
+    let Some(receipt) = finish_row(
+        state,
+        identity,
+        proposal_id,
+        row_id,
+        "accepted",
+        ProposalWrite::Objects {
+            ops: vec![op],
+            expect_version: None,
+        },
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
     state.emit(json!({ "seq": receipt.last_seq, "op": "create", "type": type_key }));
     if let Some((id, _)) = receipt.versions.first() {
         state.index_after_commit(id.as_uuid(), receipt.last_seq);
     }
-    Ok(receipt.last_seq)
+    Ok(Some(receipt.last_seq))
+}
+
+/// `Ok(None)` means another accept already took the row. The status change and the
+/// write commit together, so a failure leaves the row `pending`.
+async fn finish_row(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    status: &str,
+    write: ProposalWrite,
+) -> Result<Option<WriteReceipt>, Problem> {
+    state
+        .store
+        .commit_proposal_row(&identity.actor, proposal_id, row_id, status, write)
+        .await
+        .map_err(proposal_write_error)
+}
+
+fn agent_cannot_discard() -> Problem {
+    Problem::new(
+        StatusCode::FORBIDDEN,
+        "agent_cannot_discard",
+        "an agent or import proposes; a person discards",
+    )
+}
+
+fn proposal_write_error(error: braian_store::Error) -> Problem {
+    match error {
+        braian_store::Error::Conflict {
+            current_version, ..
+        } => {
+            let mut problem = Problem::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                format!(
+                    "proposal base_version is older than the object's version {current_version}; the object was not changed"
+                ),
+            );
+            problem.current_version = Some(current_version);
+            problem
+        }
+        braian_store::Error::BaseAhead { current_version } => {
+            let mut problem = Problem::new(
+                StatusCode::CONFLICT,
+                "base_ahead",
+                format!(
+                    "proposal base_version is ahead of the object's version {current_version}; the object was not changed"
+                ),
+            );
+            problem.current_version = Some(current_version);
+            problem
+        }
+        other => store_status(other),
+    }
 }
 
 async fn discard_proposal(
@@ -2814,6 +3243,9 @@ async fn discard_proposal(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, Problem> {
     require(&identity, Role::Editor)?;
+    if !identity.may_commit() {
+        return Err(agent_cannot_discard());
+    }
     state
         .store
         .set_proposal_rows(id, &[], "rejected")
@@ -3632,12 +4064,15 @@ async fn run_operation(
     }
     // The in-app agent calls this with the person's identity (`from_agent`).
     // Hiding the tool is not enough: a call still has to stay a proposal.
-    if name == "accept_proposal" && (from_agent || !identity.may_commit()) {
+    if op.name == "accept_proposal" && (from_agent || !identity.may_commit()) {
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
             "agent_cannot_accept",
             "an agent or import proposes; a person accepts",
         ));
+    }
+    if op.name == "discard_proposal" && (from_agent || !identity.may_commit()) {
+        return Err(agent_cannot_discard());
     }
     let agent_write =
         from_agent && matches!(op.name, "create_object" | "patch_object" | "set_relation");
@@ -3956,6 +4391,10 @@ async fn propose_operation(
         }
         "assortment.save" => propose_assortment(state, identity, args).await,
         "create_object" | "patch_object" | "set_relation" => {
+            if name == "patch_object" && args.get("base_version").and_then(Value::as_i64).is_none()
+            {
+                return Err(base_version_required());
+            }
             let id = Uuid::now_v7();
             let object_id = args
                 .get("id")
@@ -4205,6 +4644,8 @@ struct BulkBody {
 #[derive(Deserialize)]
 struct ProposalBody {
     title: String,
+    /// Ignored. `source` is taken from the authenticated principal.
+    #[serde(default)]
     source: Option<String>,
     #[serde(default)]
     rows: Vec<ProposalRowBody>,
@@ -4286,6 +4727,140 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn an_accept_patch_can_only_keep_proposed_values() {
+        let proposed = json!({
+            "values": {
+                "active": false,
+                "name": { "sv": "Hej", "en-GB": "Hello" },
+                "tags": ["aa", "bb"]
+            }
+        });
+        let current = json!({ "tags": ["aa"] });
+        let current = current.as_object().expect("current");
+        validate_replacement(
+            &proposed,
+            &json!({ "values": { "active": false, "name": { "sv": "Hej" }, "tags": ["aa"] } }),
+            Some(current),
+        )
+        .expect("subset");
+        let extra_field = validate_replacement(
+            &proposed,
+            &json!({ "values": { "color": "red" } }),
+            Some(current),
+        )
+        .expect_err("field");
+        assert_eq!(extra_field.code, "patch_not_proposed");
+        let extra_language = validate_replacement(
+            &proposed,
+            &json!({ "values": { "name": { "sv": "Hej", "de": "Hi" } } }),
+            Some(current),
+        )
+        .expect_err("language");
+        assert!(extra_language.detail.contains("de"), "{extra_language:?}");
+        let changed = validate_replacement(
+            &proposed,
+            &json!({ "values": { "active": true } }),
+            Some(current),
+        )
+        .expect_err("value");
+        assert!(changed.detail.contains("active"), "{changed:?}");
+        let extra_tag = validate_replacement(
+            &proposed,
+            &json!({ "values": { "tags": ["aa", "zz"] } }),
+            Some(current),
+        )
+        .expect_err("tag");
+        assert!(extra_tag.detail.contains("tags"), "{extra_tag:?}");
+    }
+
+    #[tokio::test]
+    async fn from_agent_cannot_accept_a_proposal() {
+        if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_none()
+            && let Ok(text) = std::fs::read_to_string(".env")
+        {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                if std::env::var_os(key).is_none() {
+                    unsafe { std::env::set_var(key, value.trim_matches('"')) };
+                }
+            }
+        }
+        let db = braian_store::testing::TestDb::create().await;
+        let identities =
+            crate::identities(db.store(), "ada:human:token-ada;bot:agent@ada:token-bot")
+                .await
+                .expect("identities");
+        let human = identities
+            .iter()
+            .find(|identity| identity.handle == "ada")
+            .expect("human")
+            .clone();
+        let state = AppState::new(db.store().clone(), identities, None);
+        let proposal_id = Uuid::now_v7();
+        let row_id = Uuid::now_v7();
+        state
+            .store
+            .create_proposal(
+                proposal_id,
+                "From the agent",
+                "agent",
+                human.actor.actor,
+                human.actor.on_behalf_of,
+                false,
+                &[ProposalRow {
+                    id: row_id,
+                    object_id: None,
+                    object_key: Some("SKU-FROM-AGENT".into()),
+                    type_key: Some("item".into()),
+                    base_version: None,
+                    patch: json!({ "values": { "sku": "SKU-FROM-AGENT", "active": true } }),
+                    status: "pending".into(),
+                    conflict: false,
+                    position: 0,
+                }],
+            )
+            .await
+            .expect("proposal");
+        let refused = run_operation(
+            &state,
+            &human,
+            "accept_proposal",
+            &json!({ "id": proposal_id }),
+            true,
+        )
+        .await
+        .expect_err("agent accept");
+        assert_eq!(refused.status, StatusCode::FORBIDDEN.as_u16());
+        assert_eq!(refused.code, "agent_cannot_accept");
+        let discarded = run_operation(
+            &state,
+            &human,
+            "discard_proposal",
+            &json!({ "id": proposal_id }),
+            true,
+        )
+        .await
+        .expect_err("agent discard");
+        assert_eq!(discarded.status, StatusCode::FORBIDDEN.as_u16());
+        assert_eq!(discarded.code, "agent_cannot_discard");
+        let stored = state
+            .store
+            .proposal(proposal_id)
+            .await
+            .expect("load")
+            .expect("row");
+        assert_eq!(stored["status"], "open");
+        assert_eq!(stored["rows"][0]["status"], "pending");
+        assert_eq!(stored["rows"][0]["id"], json!(row_id));
+    }
 
     #[test]
     fn cursor_round_trips_an_object_id() {
@@ -4584,6 +5159,14 @@ mod tests {
         assert!(
             !tools.contains("accept_proposal"),
             "an agent must not be offered the commit operation"
+        );
+        assert!(
+            !tools.contains("discard_proposal"),
+            "an agent must not be offered discard"
+        );
+        assert!(
+            tools.contains("mass_edit"),
+            "mass edit stays a proposal the person approves"
         );
 
         let registered = registry()

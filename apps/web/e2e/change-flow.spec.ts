@@ -57,7 +57,6 @@ test('a person saves directly and reviews an agent draft field by field', async 
   const created = await page.request.post('/v1/proposals', {
     data: {
       title: 'Agent draft',
-      source: 'agent',
       rows: [
         {
           object_id: objectId,
@@ -76,8 +75,9 @@ test('a person saves directly and reviews an agent draft field by field', async 
   })
   expect(created.ok()).toBeTruthy()
   const proposal = (await created.json()) as { actor_name?: string; behalf_name?: string }
-  const agentName = proposal.behalf_name || proposal.actor_name
-  const badge = agentName ? `Agent ${agentName}` : 'Agent'
+  // The signed-in person files this draft, so the badge is their name.
+  // `source` is the principal, not a field on the request.
+  const badge = proposal.behalf_name || proposal.actor_name || 'user'
 
   const listed = await page.request.get('/v1/proposals')
   expect(listed.ok()).toBeTruthy()

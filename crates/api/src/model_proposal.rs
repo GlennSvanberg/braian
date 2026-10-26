@@ -6,12 +6,11 @@ use braian_model::{
     preview,
 };
 use braian_rules::CompiledModel;
-use braian_store::ProposalRow;
+use braian_store::{Error, ProposalRow, ProposalWrite};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::auth::Identity;
-use crate::definitions;
 use crate::problem::{Problem, store_status};
 use crate::state::AppState;
 
@@ -132,21 +131,64 @@ pub async fn attach(state: &AppState, body: &mut Value) -> Result<(), Problem> {
     Ok(())
 }
 
-pub async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
+pub async fn apply_row(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    row: &Value,
+) -> Result<Option<i64>, Problem> {
     let change: ModelChange =
         serde_json::from_value(row.get("patch").cloned().unwrap_or(json!({})))
             .map_err(|error| Problem::new(StatusCode::BAD_REQUEST, "model", error.to_string()))?;
     crate::structures::guard_model_change(state, &identity.actor, &change, true).await?;
-    let (_defs, receipt) = definitions::commit(state, &identity.actor, |defs| {
-        apply_all(defs, std::slice::from_ref(&change)).map_err(model_status)?;
-        Ok(())
-    })
-    .await?;
-    state.emit(json!({
-        "seq": receipt.last_seq,
-        "op": "model",
-    }));
-    Ok(receipt.last_seq)
+    for attempt in 0..2 {
+        let mut defs = match state.store.definition_set().await {
+            Ok(defs) => defs,
+            Err(Error::NoDefinitions) => braian_model::DefinitionSet {
+                model_revision: 0,
+                languages: Vec::new(),
+                unit_families: Vec::new(),
+                value_lists: Vec::new(),
+                attributes: Vec::new(),
+                types: Vec::new(),
+                structures: Vec::new(),
+            },
+            Err(error) => return Err(store_status(error)),
+        };
+        let current = defs.model_revision;
+        apply_all(&mut defs, std::slice::from_ref(&change)).map_err(model_status)?;
+        defs.model_revision = current + 1;
+        CompiledModel::compile(&defs).map_err(Problem::definitions)?;
+        match state
+            .store
+            .commit_proposal_row(
+                &identity.actor,
+                proposal_id,
+                row_id,
+                "accepted",
+                ProposalWrite::Definitions(defs),
+            )
+            .await
+        {
+            Ok(Some(receipt)) => {
+                state.models.invalidate().await;
+                state.emit(json!({
+                    "seq": receipt.last_seq,
+                    "op": "model",
+                }));
+                return Ok(Some(receipt.last_seq));
+            }
+            Ok(None) => return Ok(None),
+            Err(Error::BadRevision { .. }) if attempt == 0 => continue,
+            Err(error) => return Err(store_status(error)),
+        }
+    }
+    Err(Problem::new(
+        StatusCode::CONFLICT,
+        "revision_conflict",
+        "definition revision changed",
+    ))
 }
 
 pub fn is_model_row(row: &Value) -> bool {

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use braian_model::{DefinitionSet, GroupId, Object, ObjectId, StructureId, TypeId};
+use braian_model::{AttributeId, DefinitionSet, GroupId, Object, ObjectId, StructureId, TypeId};
 use futures::StreamExt;
 use serde_json::{Map, Value};
 use tokio_postgres::Transaction;
@@ -17,6 +17,64 @@ use crate::types::{
     BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectOp, PrincipalRecord, StoredObject,
     WriteReceipt,
 };
+
+/// What an accepted proposal row writes, in the same transaction as its status change.
+pub enum ProposalWrite {
+    /// The row is rejected. Nothing else is written.
+    None,
+    Objects {
+        ops: Vec<ObjectOp>,
+        /// For an update, the object must still be at this version or the transaction rolls back.
+        expect_version: Option<(ObjectId, u64)>,
+    },
+    Relation {
+        from: Uuid,
+        to: Uuid,
+        kind: String,
+    },
+    Assortment {
+        id: Uuid,
+        owner: Uuid,
+        name: String,
+        query: Value,
+    },
+    Definitions(DefinitionSet),
+}
+
+struct CommittedProposalRow {
+    receipt: WriteReceipt,
+    definitions: Option<(DefinitionSet, HashMap<AttributeId, usize>)>,
+}
+
+/// Holds `proposals` so a second accept waits, then sees the rows are no longer pending.
+pub struct ProposalLock {
+    client: Option<deadpool_postgres::Object>,
+}
+
+impl ProposalLock {
+    /// Releases the lock. The row writes have already committed on their own.
+    pub async fn release(mut self) -> Result<(), Error> {
+        let Some(client) = self.client.take() else {
+            return Ok(());
+        };
+        client.batch_execute("ROLLBACK").await?;
+        Ok(())
+    }
+}
+
+impl Drop for ProposalLock {
+    fn drop(&mut self) {
+        let Some(client) = self.client.take() else {
+            return;
+        };
+        // A cancelled accept must not return the pooled connection mid-transaction.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = client.batch_execute("ROLLBACK").await;
+            });
+        }
+    }
+}
 
 impl Store {
     /// Inserts a principal with a stable handle, or updates kind and name when the handle exists.
@@ -67,7 +125,199 @@ impl Store {
     ) -> Result<WriteReceipt, Error> {
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
-        self.ensure_actor(&tx, actor).await?;
+        let (receipt, groups) = self.write_definitions_in(&tx, actor, defs).await?;
+        tx.commit().await?;
+        self.remember(Arc::new(CachedDefs::from_groups(defs.clone(), groups)))
+            .await;
+        Ok(receipt)
+    }
+
+    /// Locks the proposal until [`ProposalLock::release`]. Row writes use their own transactions.
+    pub async fn lock_proposal(&self, id: Uuid) -> Result<ProposalLock, Error> {
+        let client = self.pool().get().await?;
+        client.batch_execute("BEGIN").await?;
+        let locked = client
+            .query_opt("SELECT id FROM proposals WHERE id = $1 FOR UPDATE", &[&id])
+            .await;
+        let locked = match locked {
+            Ok(row) => row,
+            Err(error) => {
+                let _ = client.batch_execute("ROLLBACK").await;
+                return Err(error.into());
+            }
+        };
+        if locked.is_none() {
+            let _ = client.batch_execute("ROLLBACK").await;
+            return Err(Error::Data(format!("proposal {id} was not found")));
+        }
+        Ok(ProposalLock {
+            client: Some(client),
+        })
+    }
+
+    /// Sets the row status and applies `write` in one transaction.
+    ///
+    /// `Ok(None)` means the row was not `pending`: another accept owns it or already finished it.
+    /// A write error rolls the status change back, so a crash or a failed write leaves `pending`
+    /// and does not keep the object change.
+    pub async fn commit_proposal_row(
+        &self,
+        actor: &Actor,
+        proposal_id: Uuid,
+        row_id: Uuid,
+        status: &str,
+        write: ProposalWrite,
+    ) -> Result<Option<WriteReceipt>, Error> {
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let outcome = self
+            .commit_proposal_row_in(&tx, actor, proposal_id, row_id, status, write)
+            .await;
+        match outcome {
+            Ok(value) => {
+                tx.commit().await?;
+                if let Some(committed) = value.as_ref()
+                    && let Some((defs, groups)) = committed.definitions.as_ref()
+                {
+                    self.remember(Arc::new(CachedDefs::from_groups(
+                        defs.clone(),
+                        groups.clone(),
+                    )))
+                    .await;
+                }
+                Ok(value.map(|committed| committed.receipt))
+            }
+            Err(error) => {
+                let _ = tx.rollback().await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn commit_proposal_row_in(
+        &self,
+        tx: &Transaction<'_>,
+        actor: &Actor,
+        proposal_id: Uuid,
+        row_id: Uuid,
+        status: &str,
+        write: ProposalWrite,
+    ) -> Result<Option<CommittedProposalRow>, Error> {
+        let claimed = tx
+            .query_opt(
+                "UPDATE proposal_rows SET status = $3
+                 WHERE proposal_id = $1 AND id = $2 AND status = 'pending'
+                 RETURNING id",
+                &[&proposal_id, &row_id, &status],
+            )
+            .await?;
+        if claimed.is_none() {
+            return Ok(None);
+        }
+        let receipt = match write {
+            ProposalWrite::None => WriteReceipt {
+                batch_id: BatchId::from_uuid(Uuid::nil()),
+                last_seq: 0,
+                versions: Vec::new(),
+            },
+            ProposalWrite::Objects {
+                ops,
+                expect_version,
+            } => {
+                if let Some((id, expected)) = expect_version {
+                    self.ensure_object_version(tx, id, expected).await?;
+                }
+                self.ensure_actor(tx, actor).await?;
+                let batch = insert_batch(tx, actor).await?;
+                let defs = self.defs_for(tx).await?;
+                apply_ops(tx, self.form(), &defs, batch, actor, &ops).await?
+            }
+            ProposalWrite::Relation { from, to, kind } => {
+                tx.execute(
+                    "INSERT INTO relations (from_id, to_id, kind) VALUES ($1, $2, $3)
+                     ON CONFLICT DO NOTHING",
+                    &[&from, &to, &kind],
+                )
+                .await?;
+                WriteReceipt {
+                    batch_id: BatchId::from_uuid(Uuid::nil()),
+                    last_seq: 0,
+                    versions: Vec::new(),
+                }
+            }
+            ProposalWrite::Assortment {
+                id,
+                owner,
+                name,
+                query,
+            } => {
+                tx.execute(
+                    "INSERT INTO assortments (id, owner_id, name, query) VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, query = EXCLUDED.query",
+                    &[&id, &owner, &name, &query],
+                )
+                .await?;
+                WriteReceipt {
+                    batch_id: BatchId::from_uuid(Uuid::nil()),
+                    last_seq: 0,
+                    versions: Vec::new(),
+                }
+            }
+            ProposalWrite::Definitions(defs) => {
+                let (receipt, groups) = self.write_definitions_in(tx, actor, &defs).await?;
+                return Ok(Some(CommittedProposalRow {
+                    receipt,
+                    definitions: Some((defs, groups)),
+                }));
+            }
+        };
+        Ok(Some(CommittedProposalRow {
+            receipt,
+            definitions: None,
+        }))
+    }
+
+    async fn ensure_object_version(
+        &self,
+        tx: &Transaction<'_>,
+        id: ObjectId,
+        expected: u64,
+    ) -> Result<(), Error> {
+        let row = tx
+            .query_opt(
+                "SELECT version, deleted_at FROM objects WHERE id = $1 FOR UPDATE",
+                &[&id.as_uuid()],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Err(Error::NotFound(id));
+        };
+        let deleted_at: Option<chrono::DateTime<chrono::Utc>> = row.get("deleted_at");
+        if deleted_at.is_some() {
+            return Err(Error::Deleted(id));
+        }
+        let version = u64_from_i64(row.get("version"))?;
+        if version > expected {
+            return Err(Error::Conflict {
+                current_version: version,
+                conflicts: Vec::new(),
+            });
+        }
+        if version < expected {
+            return Err(Error::BaseAhead {
+                current_version: version,
+            });
+        }
+        Ok(())
+    }
+
+    async fn write_definitions_in(
+        &self,
+        tx: &Transaction<'_>,
+        actor: &Actor,
+        defs: &DefinitionSet,
+    ) -> Result<(WriteReceipt, HashMap<AttributeId, usize>), Error> {
+        self.ensure_actor(tx, actor).await?;
         let current = tx
             .query_opt(
                 "SELECT model_revision, definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1 FOR UPDATE",
@@ -84,7 +334,7 @@ impl Store {
                 got: defs.model_revision,
             });
         }
-        let batch = insert_batch(&tx, actor).await?;
+        let batch = insert_batch(tx, actor).await?;
         let document =
             serde_json::to_value(defs).map_err(|error| Error::Definitions(error.to_string()))?;
         tx.execute(
@@ -100,17 +350,16 @@ impl Store {
             None => None,
         };
         let diff = definition_diff(previous.as_ref(), defs);
-        let seq =
-            insert_change(&tx, batch, None, None, ChangeOp::Definitions, actor, &diff).await?;
-        let groups = sync_attribute_parts(&tx, defs).await?;
-        tx.commit().await?;
-        self.remember(Arc::new(CachedDefs::from_groups(defs.clone(), groups)))
-            .await;
-        Ok(WriteReceipt {
-            batch_id: batch,
-            last_seq: seq,
-            versions: Vec::new(),
-        })
+        let seq = insert_change(tx, batch, None, None, ChangeOp::Definitions, actor, &diff).await?;
+        let groups = sync_attribute_parts(tx, defs).await?;
+        Ok((
+            WriteReceipt {
+                batch_id: batch,
+                last_seq: seq,
+                versions: Vec::new(),
+            },
+            groups,
+        ))
     }
 
     pub async fn open_batch(&self, actor: &Actor) -> Result<BatchId, Error> {
