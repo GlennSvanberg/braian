@@ -40,7 +40,11 @@ test('a person saves directly and reviews an agent draft field by field', async 
 
   await row.click()
   await page.locator('[data-view-type="object_detail"]').first().click()
-  const numberField = page.locator('[data-testid=object-detail] .field', { hasText: 'Number' }).locator('input')
+  const numberField = page
+    .locator('[data-testid=object-detail] .field')
+    .filter({ has: page.locator('label', { hasText: /^Number$/ }) })
+    .locator('input')
+  await expect(numberField).toHaveValue(/^SYN-/)
   const original = await numberField.inputValue()
   await numberField.fill(`${original}-s`)
   await page.getByTestId('save-object').click()
@@ -53,8 +57,9 @@ test('a person saves directly and reviews an agent draft field by field', async 
     key?: string
     type?: string
     version?: number
-    values?: { name?: Record<string, string>; storage?: string }
+    values?: { number?: string; name?: Record<string, string>; storage?: string }
   }
+  expect(object.values?.number).toBe(`${original}-s`)
   const name = object.values?.name ?? {}
   const storage = STORAGE.find((item) => item.code !== object.values?.storage) ?? STORAGE[0]
   const stamp = Date.now().toString().slice(-5)
@@ -94,10 +99,14 @@ test('a person saves directly and reviews an agent draft field by field', async 
 
   await page.reload()
   await page.locator('nav.tabs').getByRole('button', { name: /^Articles/ }).click()
-  await expect(page.locator('[data-testid=object-table]:visible').first()).toBeVisible()
+  const articles = page.locator('[data-testid=object-table]:visible').first()
+  await expect(articles).toBeVisible()
   const marked = page.locator(`#object-row-${objectId}`)
+  // The suffix is a new search token and the row can fall outside the virtual
+  // window. The original number's tokens still identify this one article.
+  const again = articles.getByTestId('quick-filter')
   await expect.poll(async () => {
-    await filter.fill(`${original}-s`)
+    await again.fill(original)
     return marked.count()
   }, { timeout: 15_000 }).toBe(1)
   await expect(marked.getByTestId('suggestion-count')).toContainText(`${onObject} suggested`)
