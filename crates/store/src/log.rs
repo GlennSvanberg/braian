@@ -12,6 +12,7 @@
 //! trigger gated by a transaction-local flag.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use std::future::poll_fn;
@@ -39,6 +40,20 @@ const MAX_CLAIM: i64 = 5_000;
 /// Postgres 16, even after the other backend has inserted. `backend_xid` is
 /// the signal that matches an open insert. Transactions in other databases
 /// are ignored; they cannot write this log.
+///
+/// `pg_stat_activity` is a snapshot taken on the first read in a transaction.
+/// A later statement sees the same `backend_xid` set until
+/// `pg_stat_clear_snapshot()` runs. Each check clears it in its own statement,
+/// then reads. The check that treats a hole as aborted runs after the page
+/// (or `max(seq)`) has been read. A check before that read is stale: a
+/// transaction can allocate a lower seq in between and still be open.
+///
+/// That window includes the insert itself. The first write of a loader is the
+/// `changes` insert. Identity `nextval` assigns `seq` inside that statement,
+/// and `backend_xid` appears when the statement assigns the transaction id.
+/// A read that finishes before the insert can miss the backend. The remaining
+/// race is that single statement, not the time between the activity read and
+/// the page.
 const OTHERS_OPEN: &str = "SELECT EXISTS (
     SELECT 1
     FROM pg_stat_activity
@@ -147,6 +162,10 @@ impl Store {
         let limit = limit.clamp(1, MAX_CLAIM);
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
+        // The first activity read only opens the window. `visible_page`
+        // decides after the rows are loaded, with a fresh snapshot.
+        let _stale = others_open(&tx).await?;
+        before_page().await;
         let page = load_page(&tx, after, i64::MAX, limit).await?;
         let events = visible_page(&tx, after, i64::MAX, limit, &page).await?;
         tx.commit().await?;
@@ -162,12 +181,13 @@ impl Store {
     pub async fn safe_change_seq(&self) -> Result<i64, Error> {
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
-        if !others_open(&tx).await? {
-            let tip = max_seq(&tx).await?;
-            if !others_open(&tx).await? && max_seq(&tx).await? == tip {
-                tx.commit().await?;
-                return Ok(tip);
-            }
+        // Same window as a claim: the bool from before the tip read is stale.
+        let _stale = others_open(&tx).await?;
+        before_page().await;
+        let tip = max_seq(&tx).await?;
+        if !others_open(&tx).await? && max_seq(&tx).await? == tip {
+            tx.commit().await?;
+            return Ok(tip);
         }
         tx.commit().await?;
         let tx = client
@@ -441,8 +461,9 @@ async fn claim_once(
     }
     let head = next_seq(&tx, cursor, upper).await?;
     let leading_hole = head.is_none_or(|seq| seq != cursor.saturating_add(1));
-    // An open COPY holds lower seqs while higher ones are already visible.
-    // Stop before reading a page; the probe is one index lookup.
+    // An open COPY already holds lower seqs. Stay put without reading a page.
+    // A quiet result here is not permission to skip: the snapshot is stale
+    // the moment it returns, and a transaction can take the next seq after it.
     if leading_hole && others_open(&tx).await? {
         if head.is_some() {
             tracing::debug!(
@@ -455,21 +476,27 @@ async fn claim_once(
         tx.commit().await?;
         return Ok(ClaimStep::CaughtUp);
     }
-    if head.is_none() {
-        let again = next_seq(&tx, cursor, upper).await?;
-        if again.is_none()
-            && !others_open(&tx).await?
-            && let Some(end) = ceiling
-        {
-            close_hole(&tx, lane, holder, cursor, end).await?;
+    before_page().await;
+    // `head` was read before the window. A seq allocated in that window is
+    // only on this page.
+    let mut page = load_page(&tx, cursor, upper, MAX_CLAIM).await?;
+    if page.is_empty() {
+        page = load_page(&tx, cursor, upper, MAX_CLAIM).await?;
+        if page.is_empty() {
+            // Both reads missed every seq up to the ceiling. Close the hole
+            // only when a fresh activity read, after those reads, is quiet.
+            if !others_open(&tx).await?
+                && let Some(end) = ceiling
+            {
+                close_hole(&tx, lane, holder, cursor, end).await?;
+                tx.commit().await?;
+                return Ok(ClaimStep::SkippedHole);
+            }
             tx.commit().await?;
-            return Ok(ClaimStep::SkippedHole);
+            return Ok(ClaimStep::CaughtUp);
         }
-        tx.commit().await?;
-        return Ok(ClaimStep::CaughtUp);
     }
-    let page = load_page(&tx, cursor, upper, MAX_CLAIM).await?;
-    let prefix = if leading_hole || safe_prefix(cursor, &page, true).len() != page.len() {
+    let prefix = if safe_prefix(cursor, &page, true).len() != page.len() {
         visible_page(&tx, cursor, upper, MAX_CLAIM, &page).await?
     } else {
         page
@@ -513,8 +540,101 @@ async fn claim_once(
 }
 
 async fn others_open(tx: &tokio_postgres::Transaction<'_>) -> Result<bool, Error> {
+    // Its own statement. Folding the clear into `OTHERS_OPEN` would still see
+    // the snapshot that statement started with.
+    tx.batch_execute("SELECT pg_stat_clear_snapshot()").await?;
     let row = tx.query_one(OTHERS_OPEN, &[]).await?;
     Ok(row.get(0))
+}
+
+tokio::task_local! {
+    static PAGE_GATE: Arc<PageGate>;
+}
+
+struct PageGate {
+    entered: AtomicBool,
+    released: AtomicBool,
+    entered_wake: Notify,
+    release_wake: Notify,
+}
+
+/// Pauses one change-log read after its first activity check and before the
+/// page, on the task that polls the read.
+///
+/// Integration tests build this crate without `cfg(test)`. The gate is
+/// task-local so a pause in one test does not stop another database's claim.
+pub struct PageGap {
+    gate: Arc<PageGate>,
+}
+
+impl PageGap {
+    pub fn arm() -> Self {
+        Self {
+            gate: Arc::new(PageGate {
+                entered: AtomicBool::new(false),
+                released: AtomicBool::new(false),
+                entered_wake: Notify::new(),
+                release_wake: Notify::new(),
+            }),
+        }
+    }
+
+    /// Polls `read` on a new task with this gate armed.
+    pub fn drive<T: Send + 'static>(
+        &self,
+        read: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> JoinHandle<T> {
+        let gate = Arc::clone(&self.gate);
+        tokio::spawn(async move { PAGE_GATE.scope(gate, read).await })
+    }
+
+    pub async fn wait_entered(&self) {
+        loop {
+            if self.gate.entered.load(Ordering::SeqCst) {
+                return;
+            }
+            let notified = self.gate.entered_wake.notified();
+            tokio::pin!(notified);
+            if self.gate.entered.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub fn release(&self) {
+        self.gate.released.store(true, Ordering::SeqCst);
+        self.gate.release_wake.notify_waiters();
+    }
+}
+
+impl Drop for PageGap {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Test hook between the first activity read and the page. Production calls
+/// return immediately. A gate pauses only the first time it is entered.
+async fn before_page() {
+    let Some(gate) = PAGE_GATE.try_with(Arc::clone).ok() else {
+        return;
+    };
+    if gate.entered.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    gate.entered_wake.notify_waiters();
+    loop {
+        if gate.released.load(Ordering::SeqCst) {
+            return;
+        }
+        let notified = gate.release_wake.notified();
+        tokio::pin!(notified);
+        if gate.released.load(Ordering::SeqCst) {
+            return;
+        }
+        notified.await;
+    }
 }
 
 async fn max_seq(tx: &tokio_postgres::Transaction<'_>) -> Result<i64, Error> {

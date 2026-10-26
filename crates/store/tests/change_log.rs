@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use braian_store::admin;
-use braian_store::testing::{TestDb, append_changes, expire_claims};
+use braian_store::testing::{PageGap, TestDb, append_changes, expire_claims};
 use braian_store::{Actor, BatchKind, PrincipalKind, STORAGE_FORM, Store};
 use uuid::Uuid;
 
@@ -390,4 +390,132 @@ async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
         "aborted bulk seq was claimed as a row"
     );
     assert_eq!(store.lane_committed("bulk").await.unwrap(), high);
+}
+
+/// The blocking transaction starts after the read's first activity check and
+/// before the page. A higher seq then commits. The stale activity snapshot
+/// would call the lower seq aborted.
+async fn during_page_gap<T: Send + 'static>(
+    url: &str,
+    actor: Uuid,
+    read: impl std::future::Future<Output = T> + Send + 'static,
+) -> (T, i64) {
+    let gap = PageGap::arm();
+    let task = gap.drive(read);
+    tokio::time::timeout(Duration::from_secs(5), gap.wait_entered())
+        .await
+        .expect("the read did not reach the page window");
+    let blocker = begin(url).await;
+    let low = insert_row(&blocker, actor, "bulk").await;
+    let other = begin(url).await;
+    let high = insert_row(&other, actor, "interactive").await;
+    other.batch_execute("COMMIT").await.unwrap();
+    assert!(low < high);
+    gap.release();
+    let value = tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("the read stayed in the page window")
+        .expect("read task");
+    blocker.batch_execute("ROLLBACK").await.unwrap();
+    (value, low)
+}
+
+#[tokio::test]
+async fn an_open_seq_that_starts_after_the_activity_check_is_not_skipped() {
+    let db = TestDb::create().await;
+    let store = db.store().clone();
+    let url = db.database_url();
+    let who = principal(&store).await;
+    let actor = who.actor.as_uuid();
+    let cursor = store.safe_change_seq().await.unwrap();
+
+    for lane in ["interactive", "bulk"] {
+        let reading = store.clone();
+        let (claimed, low) = during_page_gap(&url, actor, async move {
+            reading
+                .claim_changes(lane, Uuid::now_v7(), 10, Duration::from_secs(30))
+                .await
+        })
+        .await;
+        assert!(
+            claimed.unwrap().is_none(),
+            "{lane} claimed a seq that was still open"
+        );
+        assert!(low > cursor);
+        assert_eq!(store.lane_committed(lane).await.unwrap(), cursor);
+        assert_eq!(store.lane_committed("interactive").await.unwrap(), cursor);
+        assert_eq!(store.lane_committed("bulk").await.unwrap(), cursor);
+        let claims = connect(&url).await;
+        let open_claims: i64 = claims
+            .query_one("SELECT count(*)::bigint FROM index_claim", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(open_claims, 0, "{lane} filled a hole over an open seq");
+    }
+
+    let reading = store.clone();
+    let (tail, low) = during_page_gap(&url, actor, async move {
+        reading.changes_after(cursor, 10).await
+    })
+    .await;
+    let tail = tail.unwrap();
+    assert!(
+        tail.iter().all(|row| row.seq < low),
+        "live tail returned {tail:?} at or above the open seq {low}"
+    );
+
+    let reading = store.clone();
+    let (safe, low) =
+        during_page_gap(&url, actor, async move { reading.safe_change_seq().await }).await;
+    let safe = safe.unwrap();
+    assert!(safe < low, "safe seq {safe} passed the open seq {low}");
+    assert_eq!(safe, cursor);
+}
+
+#[tokio::test]
+async fn a_hole_is_not_filled_when_a_transaction_opens_during_the_page_read() {
+    let db = TestDb::create().await;
+    let store = db.store().clone();
+    let url = db.database_url();
+    let who = principal(&store).await;
+    let actor = who.actor.as_uuid();
+    let cursor = store.lane_committed("bulk").await.unwrap();
+    let admin = connect(&url).await;
+    admin
+        .query_one(
+            "SELECT setval(pg_get_serial_sequence('changes', 'seq'), 200)",
+            &[],
+        )
+        .await
+        .unwrap();
+    let holder = Uuid::now_v7();
+    admin
+        .execute(
+            "INSERT INTO index_claim (lane, from_seq, through_seq, holder, leased_until, done)
+             VALUES ('bulk', 50, 51, $1, now() + interval '5 minutes', false)",
+            &[&holder],
+        )
+        .await
+        .unwrap();
+
+    let reading = store.clone();
+    let (claimed, low) = during_page_gap(&url, actor, async move {
+        reading
+            .claim_changes("bulk", Uuid::now_v7(), 10, Duration::from_secs(30))
+            .await
+    })
+    .await;
+    assert!(low > 50);
+    assert!(
+        claimed.unwrap().is_none(),
+        "hole fill claimed past an open seq"
+    );
+    assert_eq!(store.lane_committed("bulk").await.unwrap(), cursor);
+    let done: i64 = admin
+        .query_one("SELECT count(*)::bigint FROM index_claim WHERE done", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(done, 0, "hole fill wrote a done claim over an open seq");
 }
