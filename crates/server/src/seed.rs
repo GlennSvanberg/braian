@@ -200,6 +200,11 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
             )
             .await?;
     }
+    // Removed demo views: drop them from databases seeded before. View first, then its type.
+    store
+        .delete_view(Uuid::parse_str("018f2000-0000-7000-8000-000000000404")?)
+        .await?;
+    store.delete_view_type("leverantor").await?;
     save_views(store).await?;
     store
         .save_assortment(
@@ -223,13 +228,6 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
             user.id,
             "Timber",
             &json!({ "type": "artikel", "group": "sortiment:virke" }),
-        )
-        .await?;
-    store
-        .register_view_type(
-            "leverantor",
-            "Supplier",
-            Some("https://example.invalid/embed?object={object}&token={token}"),
         )
         .await?;
     store
@@ -443,15 +441,6 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "right",
             1,
             json!({"type": "bulk.write"}),
-        ),
-        (
-            "018f2000-0000-7000-8000-000000000404",
-            "018f2000-0000-7000-8000-000000000003",
-            "embed",
-            "External",
-            "right",
-            3,
-            json!({"url": "/embed/preview?object={object}&key={key}"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000306",

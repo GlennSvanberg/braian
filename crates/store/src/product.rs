@@ -466,6 +466,27 @@ impl Store {
         Ok(())
     }
 
+    pub async fn delete_view(&self, id: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("DELETE FROM views WHERE id = $1", &[&id])
+            .await?;
+        Ok(())
+    }
+
+    /// Deletes a registered (non-builtin) view type that no view uses.
+    pub async fn delete_view_type(&self, key: &str) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "DELETE FROM view_types WHERE key = $1 AND builtin = false
+                 AND NOT EXISTS (SELECT 1 FROM views WHERE type_key = $1)",
+                &[&key],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn save_assortment(
         &self,
         id: Uuid,
