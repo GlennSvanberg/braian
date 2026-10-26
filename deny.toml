@@ -2,7 +2,7 @@
 all-features = true
 
 [licenses]
-# Braian itself is "MIT OR Apache-2.0" (LICENSE-MIT and LICENSE-APACHE).
+# Braian itself is Apache-2.0 (LICENSE and NOTICE).
 # This list is the licenses accepted for dependencies.
 allow = [
     "MIT",

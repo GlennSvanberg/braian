@@ -63,13 +63,13 @@ export function App() {
               <Mark />
               Braian
             </div>
-            <p>Open-source product data. Self-hosted. MIT OR Apache-2.0.</p>
+            <p>Open-source product data. Self-hosted. Apache-2.0.</p>
           </div>
           <nav className="footer-links" aria-label="Footer">
             <a href={demoUrl}>Demo</a>
             <a href={repoUrl}>GitHub</a>
             <a href={docsUrl}>Documentation</a>
-            <a href={licenseUrl}>MIT OR Apache-2.0</a>
+            <a href={licenseUrl}>Apache-2.0</a>
           </nav>
         </footer>
       </div>
@@ -219,11 +219,10 @@ function Architecture() {
       <figure className="sheet flow" aria-labelledby="architecture-title">
         <p className="sr-only">
           The UI, the agent in Ctrl+K, the API and MCP clients write through one shared operation
-          registry into Postgres, which holds the object model and the change log. Logical
-          replication reaches the relay, then Redpanda, which splits into a fast interactive lane and
-          a heavier bulk lane. Both lanes reach the indexer and Typesense. Search loops back to the
-          UI. The change stream also sends live updates over server-sent events to open UIs, and
-          stream and webhook events to external consumers.
+          registry into Postgres, which holds the object model and the change log. The indexer
+          leases interactive and bulk lanes from that log and imports into Typesense. Search loops
+          back to the UI. LISTEN on braian_changes drives live updates over server-sent events to
+          open UIs, and the same change stream reaches external consumers over webhooks.
         </p>
         <DataFlow />
         <ul className="oss-facts flow-stack" aria-label="Stack">
