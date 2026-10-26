@@ -24,7 +24,6 @@ test('phase 1 surfaces', async ({ page }) => {
 
   const workspaces = [
     ['Products', 'object-table'],
-    ['Set up the system', 'dashboard'],
     ['Data model', 'data-model'],
     ['Review', 'proposal'],
   ] as const

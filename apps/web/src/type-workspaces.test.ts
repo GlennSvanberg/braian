@@ -37,7 +37,6 @@ describe('type workspaces', () => {
       [
         { name: 'Review', share_token: 'braian-review' },
         { name: 'Articles', share_token: 'braian-type-artikel' },
-        { name: 'Set up the system', share_token: 'braian-setup' },
         { name: 'Products', share_token: 'braian-type-produkt' },
         { name: 'Mine', share_token: 'user-1' },
         { name: 'Data model', share_token: 'braian-model' },
@@ -45,7 +44,6 @@ describe('type workspaces', () => {
       types,
     )
     expect(ordered.map((item) => item.name)).toEqual([
-      'Set up the system',
       'Data model',
       'Products',
       'Articles',

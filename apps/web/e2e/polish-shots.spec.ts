@@ -119,10 +119,6 @@ test('polish screenshots', async ({ page }) => {
   await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
   await page.screenshot({ path: `${shots}/class-card-dark.png` })
 
-  await page.getByRole('button', { name: 'Set up the system' }).click()
-  await expect(page.getByTestId('dashboard')).toBeVisible()
-  await page.screenshot({ path: `${shots}/setup-dark.png` })
-
   await page.getByRole('button', { name: 'Review' }).click()
   await expect(page.getByTestId('proposal')).toBeVisible()
   await page.screenshot({ path: `${shots}/review-dark.png` })

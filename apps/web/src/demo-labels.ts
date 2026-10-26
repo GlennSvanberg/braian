@@ -2,7 +2,6 @@ import { copy } from './i18n'
 
 /** Demo workspaces keep Swedish names in older databases until seed runs again. */
 const LEGACY_WORKSPACE_NAMES: Record<string, string> = {
-  'Sätt upp systemet': copy.setup,
   'Datamodell': copy.dataModel,
   'Berika objekt': copy.enrichObjects,
   'Enrich objects': copy.enrichObjects,
@@ -10,7 +9,6 @@ const LEGACY_WORKSPACE_NAMES: Record<string, string> = {
 }
 
 const WORKSPACE_BY_SHARE: Record<string, string> = {
-  'braian-setup': copy.setup,
   'braian-model': copy.dataModel,
   'braian-enrich': copy.enrichObjects,
   'braian-review': copy.reviewWorkspace,

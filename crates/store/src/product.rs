@@ -247,6 +247,14 @@ impl Store {
         Ok(())
     }
 
+    pub async fn delete_workspace(&self, id: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("DELETE FROM workspaces WHERE id = $1", &[&id])
+            .await?;
+        Ok(())
+    }
+
     pub async fn list_workspaces(&self, user_id: Uuid) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client
@@ -453,6 +461,27 @@ impl Store {
                 "INSERT INTO view_types (key, title, builtin, embed_url) VALUES ($1, $2, false, $3)
                  ON CONFLICT (key) DO UPDATE SET title = EXCLUDED.title, embed_url = EXCLUDED.embed_url",
                 &[&key, &title, &embed_url],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_view(&self, id: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("DELETE FROM views WHERE id = $1", &[&id])
+            .await?;
+        Ok(())
+    }
+
+    /// Deletes a registered (non-builtin) view type that no view uses.
+    pub async fn delete_view_type(&self, key: &str) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "DELETE FROM view_types WHERE key = $1 AND builtin = false
+                 AND NOT EXISTS (SELECT 1 FROM views WHERE type_key = $1)",
+                &[&key],
             )
             .await?;
         Ok(())

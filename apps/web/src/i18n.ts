@@ -121,7 +121,6 @@ export const copy = {
   copyShare: 'Copy share link',
   newWorkspace: 'New from template',
   contextMenu: 'Actions',
-  setup: 'Set up the system',
   enrichObjects: 'Enrich',
   classAttributes: 'Classes',
   classAttributesEmpty: 'Select an object to see the attributes on its classes.',
