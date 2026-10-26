@@ -31,11 +31,18 @@ test('a person saves directly and reviews an agent draft field by field', async 
   const filter = table.getByTestId('quick-filter').first()
   // Hero articles sort first by number (ART-). Leave them alone so later
   // specs can open a known product. Synthetic articles are the fixture here.
+  // Wait for the search that the filter starts. The table otherwise still
+  // shows the unfiltered page, and a click lands on a different object.
+  const search = page.waitForResponse(
+    (response) => response.url().includes('/v1/search') && response.url().includes('SYN-') && response.ok(),
+  )
   await filter.fill('SYN-')
-  const row = table.getByTestId('object-row').filter({ hasText: /SYN-/ }).first()
+  await search
+  const row = table.getByTestId('object-row').filter({ hasText: /SYN-\d+/ }).first()
   await expect(row).toBeVisible()
-  const rowId = await row.getAttribute('id')
-  const objectId = rowId?.replace('object-row-', '') ?? ''
+  const shown = ((await row.innerText()).match(/SYN-\d+/) ?? [''])[0]
+  expect(shown).not.toBe('')
+  const objectId = ((await row.getAttribute('id')) ?? '').replace('object-row-', '')
   expect(objectId).not.toBe('')
 
   await row.click()
@@ -44,7 +51,7 @@ test('a person saves directly and reviews an agent draft field by field', async 
     .locator('[data-testid=object-detail] .field')
     .filter({ has: page.locator('label', { hasText: /^Number$/ }) })
     .locator('input')
-  await expect(numberField).toHaveValue(/^SYN-/)
+  await expect(numberField).toHaveValue(shown)
   const original = await numberField.inputValue()
   await numberField.fill(`${original}-s`)
   await page.getByTestId('save-object').click()
