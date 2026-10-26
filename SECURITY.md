@@ -2,7 +2,7 @@
 
 Report a vulnerability through a private GitHub security advisory:
 
-https://github.com/GlennSvanberg/braian/security/advisories/new
+https://github.com/braian-io/braian/security/advisories/new
 
 Please do not open a public GitHub issue for a security report.
 

@@ -1,7 +1,7 @@
 export const demoUrl = 'https://demo.braian.io'
-export const repoUrl = 'https://github.com/GlennSvanberg/braian'
-export const licenseUrl = 'https://github.com/GlennSvanberg/braian/blob/main/README.md#license'
-export const docsUrl = 'https://github.com/GlennSvanberg/braian#readme'
+export const repoUrl = 'https://github.com/braian-io/braian'
+export const licenseUrl = 'https://github.com/braian-io/braian/blob/main/LICENSE'
+export const docsUrl = 'https://github.com/braian-io/braian#readme'
 
 export const nav = [
   { href: '#speed', label: 'Speed' },
@@ -148,7 +148,7 @@ export const openSource = {
   lede: 'Apache-2.0 licensed and self-hosted.',
   facts: ['Apache-2.0', 'Rust and TypeScript', 'Postgres · Typesense', 'Docker Compose for development'],
   code: [
-    'git clone https://github.com/GlennSvanberg/braian',
+    'git clone https://github.com/braian-io/braian',
     'cd braian && cp .env.example .env',
     'just up && pnpm install && just dev',
   ],
