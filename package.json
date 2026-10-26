@@ -1,6 +1,6 @@
 {
   "name": "braian",
   "private": true,
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "packageManager": "pnpm@10.25.0"
 }

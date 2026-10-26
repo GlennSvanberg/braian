@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/GlennSvanberg/braian/actions/workflows/ci.yml"><img src="https://github.com/GlennSvanberg/braian/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue" alt="MIT OR Apache-2.0" /></a>
 </p>
 
 <p align="center">
@@ -163,4 +163,15 @@ Report a vulnerability in private. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Braian contributors.
+Braian is licensed under either of
+
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or https://www.apache.org/licenses/LICENSE-2.0)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+Copyright (c) 2026 Glenn Svanberg.
+
+Braian talks over the network to external services with their own licenses (Redpanda BSL 1.1, Typesense GPL-3.0; the kafka profile is a fully Apache-2.0 alternative), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
