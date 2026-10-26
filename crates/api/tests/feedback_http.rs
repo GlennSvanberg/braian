@@ -33,6 +33,9 @@ async fn call(
     if let Some(token) = token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
     let request = builder
         .body(match body {
             Some(body) => Body::from(body.to_owned()),
