@@ -186,7 +186,10 @@ async fn branch_migrations_apply_after_main() {
     migrate(&mut conn.client, &baseline).await;
     let baseline_max = max_migration_version(&baseline_set);
     let branch_max = max_migration_version(&branch_set);
-    if baseline_max < branch_max {
+    // V3 creates the publication and V15 drops it. The check only applies when
+    // the baseline is still on the V3 side of that drop. A later migration
+    // starts from a database that no longer has `braian_changes`.
+    if baseline_max < 15 {
         assert!(
             publication_exists(&conn.client).await,
             "main's V3 creates braian_changes even when wal_level is {level}"
