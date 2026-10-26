@@ -29,8 +29,10 @@ test('a person saves directly and reviews an agent draft field by field', async 
   await page.locator('nav.tabs').getByRole('button', { name: /^Articles/ }).click()
   const table = page.locator('[data-testid=object-table]:visible').first()
   const filter = table.getByTestId('quick-filter').first()
-  if ((await filter.inputValue()) !== '') await filter.fill('')
-  const row = table.getByTestId('object-row').first()
+  // Hero articles sort first by number (ART-). Leave them alone so later
+  // specs can open a known product. Synthetic articles are the fixture here.
+  await filter.fill('SYN-')
+  const row = table.getByTestId('object-row').filter({ hasText: /SYN-/ }).first()
   await expect(row).toBeVisible()
   const rowId = await row.getAttribute('id')
   const objectId = rowId?.replace('object-row-', '') ?? ''
