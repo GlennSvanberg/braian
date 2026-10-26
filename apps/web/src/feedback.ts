@@ -64,13 +64,12 @@ export function buildFeedbackContext(
 
 export async function captureAppScreenshot(): Promise<string | null> {
   try {
-    const { toPng } = await import('html-to-image')
-    const dataUrl = await toPng(document.body, {
-      cacheBust: true,
-      pixelRatio: 1,
+    const { domToPng } = await import('modern-screenshot')
+    const dataUrl = await domToPng(document.body, {
+      scale: 1,
       filter: (node) => {
         if (!(node instanceof HTMLElement)) return true
-        return !node.dataset.feedbackExclude
+        return node.dataset.feedbackExclude === undefined
       },
     })
     return await downscalePngBase64(dataUrl, SCREENSHOT_MAX_DIM)

@@ -111,6 +111,9 @@ async fn prepare(seed_first: bool) -> anyhow::Result<(AppState, SocketAddr)> {
         Ok(raw) if !raw.trim().is_empty() => braian_api::identities(&store, &raw).await?,
         _ => Vec::new(),
     };
+    if let Err(error) = braian_api::check_feedback_config() {
+        anyhow::bail!("{error}");
+    }
     let addr = std::env::var("BRAIAN_API_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8090".into())
         .parse()?;

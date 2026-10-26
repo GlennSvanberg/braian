@@ -130,10 +130,12 @@ Copy `.env.example` to `.env` and replace the placeholders. `.env` is gitignored
 | Indexer | `BRAIAN_INDEXER_POOL`, `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH`, `BRAIAN_INDEXER_IMPORT_CONCURRENCY`, `BRAIAN_INDEXER_BULK_BATCH`, `BRAIAN_INDEXER_BULK_IMPORT_BATCH`, `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY`, `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` |
 | Demo and tokens | `BRAIAN_DEV_TOKENS`, `BRAIAN_DEMO_EMAIL`, `BRAIAN_DEMO_PASSWORD`, `BRAIAN_DEMO_TOKEN`, `BRAIAN_SEED_COUNT` |
 | Agent | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `BRAIAN_AGENT_MODEL`, `BRAIAN_AGENT_MOCK` |
-| In-app feedback | `BRAIAN_FEEDBACK_WEBHOOK_URL`, `BRAIAN_FEEDBACK_WEBHOOK_HEADER`, `BRAIAN_FEEDBACK_WEBHOOK_SECRET` |
+| In-app feedback | `BRAIAN_FEEDBACK_WEBHOOK_URL`, `BRAIAN_FEEDBACK_WEBHOOK_HEADER`, `BRAIAN_FEEDBACK_WEBHOOK_SECRET`, `BRAIAN_FEEDBACK_DIR` |
 | Tests | `BRAIAN_TEST_DATABASE_URL` |
 
 `BRAIAN_COOKIE_SECURE` belongs on only behind HTTPS. Comments and local placeholders are in `.env.example`. An old `KAFKA_BROKERS` value is ignored. The change log is described in [docs/events.md](docs/events.md).
+
+In-app feedback stays off until `BRAIAN_FEEDBACK_WEBHOOK_URL` is set, and only an admin can send it. `BRAIAN_FEEDBACK_WEBHOOK_HEADER` is either a full header line (`Authorization: Bearer …`), split on the first colon, or only the header name. In the name-only form, `BRAIAN_FEEDBACK_WEBHOOK_SECRET` is the value. An invalid header name or value stops the API at startup, and that error does not include the value. Screenshots and the client log are files under `BRAIAN_FEEDBACK_DIR` (default `./data/feedback`). The webhook receives those paths, not the file contents.
 
 ## Performance
 

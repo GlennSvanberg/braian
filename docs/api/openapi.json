@@ -363,6 +363,15 @@
         "responses": {}
       }
     },
+    "/v1/feedback": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Send in-app feedback. Admins only, and only when a webhook URL is configured.",
+        "responses": {}
+      }
+    },
     "/v1/frecency": {
       "get": {
         "tags": [
@@ -2995,9 +3004,13 @@
         "required": [
           "handle",
           "kind",
-          "role"
+          "role",
+          "feedback"
         ],
         "properties": {
+          "feedback": {
+            "type": "boolean"
+          },
           "handle": {
             "type": "string"
           },

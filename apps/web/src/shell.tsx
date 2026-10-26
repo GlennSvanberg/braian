@@ -65,6 +65,7 @@ type Me = {
   display_name?: string
   handle?: string
   user_id?: string
+  feedback?: boolean
 }
 type Session = {
   group: string | null
@@ -262,13 +263,7 @@ export function Shell() {
     queryFn: () => api<Json>(`/v1/objects/${objectId}`),
     enabled: Boolean(objectId),
   })
-  const feedback = useQuery({
-    queryKey: ['feedback'],
-    queryFn: () => api<{ enabled: boolean }>('/v1/feedback'),
-    enabled: booted && me.isSuccess,
-    staleTime: 60_000,
-  })
-  const feedbackEnabled = feedback.data?.enabled === true
+  const feedbackEnabled = me.data?.feedback === true
 
   useEffect(() => {
     if (!booted || !me.isSuccess) return
@@ -732,7 +727,7 @@ export function Shell() {
             id: objectId,
             type: String(opened.data?.type ?? ''),
             key: String(opened.data?.key ?? ''),
-            title: textValue(opened.data?.values?.namn ?? opened.data?.values?.a_namn__sv),
+            title: textValue((opened.data?.values as Json | undefined)?.namn),
           } : null}
         />
       ) : null}

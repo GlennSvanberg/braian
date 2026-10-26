@@ -36,6 +36,7 @@ use crate::auth::{Auth, Identity, identities_from};
 pub use crate::auth::{
     IdentitySpec, hash_password, parse_dev_tokens, random_token, token_hash, verify_password,
 };
+pub use crate::feedback::check_feedback_config;
 pub use crate::state::AppState;
 
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
@@ -188,6 +189,7 @@ struct Me {
     on_behalf_of: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     user_id: Option<uuid::Uuid>,
+    feedback: bool,
 }
 
 #[utoipa::path(
@@ -207,6 +209,7 @@ async fn me(Auth(identity): Auth) -> Json<Me> {
         role: identity.role.as_str().to_owned(),
         on_behalf_of: identity.behalf_handle,
         user_id: identity.user_id,
+        feedback: crate::feedback::available_for(identity.role),
     })
 }
 

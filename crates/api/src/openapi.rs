@@ -121,14 +121,9 @@ impl utoipa::Modify for PlatformPaths {
                 "Proxy a chat completion when a model key is set",
             ),
             (
-                HttpMethod::Get,
-                "/v1/feedback",
-                "Whether in-app feedback is enabled",
-            ),
-            (
                 HttpMethod::Post,
                 "/v1/feedback",
-                "Send in-app feedback to the configured webhook",
+                "Send in-app feedback. Admins only, and only when a webhook URL is configured.",
             ),
             (
                 HttpMethod::Get,
