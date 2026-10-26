@@ -187,7 +187,7 @@ input, select, textarea {
   padding: 0 8px;
   box-shadow: var(--inset);
 }
-textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize: vertical; }
+textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize: vertical; overflow: auto; }
 :focus { outline: none; }
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -363,12 +363,23 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   position: relative;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 8px;
   display: flex;
   flex-direction: column;
 }
-.pane-body > * { min-height: 0; min-width: 0; }
+/* The view fills the pane under the fixed tab bar and is the one scrollport.
+   Toolbar, graph canvas, and the detail save bar opt out and scroll an inner body instead. */
+.pane-body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.pane-body > .table-wrap,
+.pane-body > .graph-wrap,
+.pane-body > .detail-form { overflow: hidden; }
 .dock-preview {
   position: absolute;
   z-index: 4;
@@ -447,7 +458,6 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 
 .table-wrap {
   flex: 1 1 auto;
-  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -621,7 +631,7 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 }
 .assortment-picks button.on, .assortment-picks button:hover { background: var(--accent-dim); color: var(--text); }
 .assortment-query { display: flex; flex-wrap: wrap; gap: 4px; }
-.assortment-hits { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.assortment-hits { display: flex; flex-direction: column; min-height: 0; }
 .assortment-hits .row {
   display: flex;
   gap: 12px;
@@ -658,8 +668,17 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 .detail-empty ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .detail-empty li { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .form, .detail-form { display: flex; flex-direction: column; gap: 8px; }
-.detail-form { flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden; }
-.detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; scroll-padding-bottom: 12px; }
+.detail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scroll-padding-bottom: 12px;
+}
 .field { scroll-margin-bottom: 12px; }
 .detail-head { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 0; }
 .detail-kicker { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
@@ -901,11 +920,11 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 .diff th, .diff td { text-align: left; padding: 4px 8px; vertical-align: top; }
 .diff th { color: var(--muted); font-weight: 500; }
 .diff tr + tr td, .diff tr + tr th { border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
-.graph-wrap { position: relative; display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; flex: 1; }
+.graph-wrap { position: relative; display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
 .graph-stage {
   position: relative;
-  flex: 1;
-  min-height: 280px;
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -1410,8 +1429,7 @@ kbd {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  overflow: auto;
-  height: 100%;
+  min-height: 0;
 }
 .proposal-switch {
   display: flex;
@@ -1461,9 +1479,7 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 }
 
 .model-nav, .model-attributes, .model-preview {
-  height: 100%;
   min-height: 0;
-  overflow: auto;
   padding: 8px 10px 12px;
   display: flex;
   flex-direction: column;
@@ -1741,7 +1757,7 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 .import-cell.error { box-shadow: inset 0 0 0 1px var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); border-radius: var(--r-sm); }
 .import-popover { position: fixed; right: 24px; bottom: 72px; z-index: 2; min-width: 220px; justify-items: stretch; }
 .import-confirm { position: fixed; inset: 0; margin: auto; height: max-content; z-index: 3; }
-.class-attributes { display: flex; flex-direction: column; gap: 14px; padding: 12px 14px; overflow: auto; min-height: 0; }
+.class-attributes { display: flex; flex-direction: column; gap: 14px; padding: 12px 14px; min-height: 0; }
 .class-section h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
 .class-attr { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .class-attr span:last-child { color: var(--muted); }
