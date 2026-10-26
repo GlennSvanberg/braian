@@ -2,12 +2,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from './palette'
 import { ObjectTable, type PanesSession } from './panes'
 import { StructureTree } from './shell'
+import { dispatchUi } from './ui-bus'
 import { readUiContext, resetUiContext } from './ui-context'
 
 const { scrollToIndex } = vi.hoisted(() => ({ scrollToIndex: vi.fn() }))
@@ -327,5 +328,49 @@ describe('active row', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(screen.getByTestId('palette-active').textContent).toBe('obj-9')
     expect(screen.getByTestId('detail').textContent).toBe('obj-9')
+  })
+})
+
+describe('hide column', () => {
+  const headers = () => Array.from(document.querySelectorAll('.head [data-testid^="col-"]')).map((node) => node.getAttribute('data-testid'))
+
+  async function hideFromCell(text: string) {
+    fireEvent.contextMenu(screen.getByText(text))
+    const menu = await screen.findByTestId('context-menu')
+    fireEvent.click(within(menu).getByRole('button', { name: 'Hide column' }))
+  }
+
+  it('hides the column that was right-clicked', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+    expect(headers()).toEqual(['col-key', 'col-name', 'col-type', 'col-status', 'col-version'])
+
+    await hideFromCell('Two')
+
+    await waitFor(() => expect(headers()).toEqual(['col-key', 'col-type', 'col-status', 'col-version']))
+  })
+
+  it('hides the right-clicked column after the columns were moved', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+    act(() => {
+      dispatchUi('ui.move_column', { from: 'version', to: 'key' })
+    })
+    await waitFor(() => expect(headers()).toEqual(['col-version', 'col-key', 'col-name', 'col-type', 'col-status']))
+
+    await hideFromCell('ART-3')
+
+    await waitFor(() => expect(headers()).toEqual(['col-version', 'col-name', 'col-type', 'col-status']))
+  })
+
+  it('offers no hide action when no column cell was right-clicked', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    fireEvent.contextMenu(screen.getAllByTestId('object-row')[1]!)
+    const menu = await screen.findByTestId('context-menu')
+
+    expect(within(menu).queryByRole('button', { name: 'Hide column' })).toBeNull()
+    expect(headers()).toEqual(['col-key', 'col-name', 'col-type', 'col-status', 'col-version'])
   })
 })

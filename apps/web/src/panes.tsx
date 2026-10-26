@@ -115,7 +115,7 @@ export function ObjectTable({
   const [hidden, setHidden] = useState<string[]>([])
   // Single current row. Click and arrows both write this; the detail object follows it.
   const [active, setActive] = useState(-1)
-  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string; column: string } | null>(null)
   const [flashId, setFlashId] = useState('')
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
@@ -403,14 +403,14 @@ export function ObjectTable({
     } else setSelected([row.id])
   }
 
-  const onRowMenu = (index: number, x: number, y: number) => {
+  const onRowMenu = (index: number, x: number, y: number, column: string) => {
     focusGrid()
     selectMode.current = null
     setActive(index)
     const row = rowAt(index)
     if (!row) return
     session.setObjectId(row.id)
-    setMenu({ x, y, id: row.id })
+    setMenu({ x, y, id: row.id, column })
   }
 
   const onTableKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -657,7 +657,9 @@ export function ObjectTable({
           <button type="button" onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
           <button type="button" onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
           <button type="button" onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
-          <button type="button" onClick={() => { setHidden((current) => [...new Set([...current, 'status'])]); setMenu(null) }}>{copy.hideColumn}</button>
+          {menu.column ? (
+            <button type="button" onClick={() => { dispatchUi('ui.hide_column', { column: menu.column }); setMenu(null) }}>{copy.hideColumn}</button>
+          ) : null}
           <button type="button" onClick={() => { mass.mutate(); setMenu(null) }}>{copy.massEdit}</button>
           <button type="button" onClick={() => { exportVisible(); setMenu(null) }}>{copy.export}</button>
           <button type="button" onClick={() => setMenu(null)}>{copy.close} <Kbd>Esc</Kbd></button>
@@ -690,7 +692,7 @@ function Row({
   flash: boolean
   active: boolean
   onActivate: (index: number, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => void
-  onMenu: (index: number, x: number, y: number) => void
+  onMenu: (index: number, x: number, y: number, column: string) => void
   onFocusGrid: () => void
   style?: CSSProperties
 }) {
@@ -715,13 +717,15 @@ function Row({
       onClick={(event) => onActivate(index, event)}
       onContextMenu={(event) => {
         event.preventDefault()
-        onMenu(index, event.clientX, event.clientY)
+        // The menu acts on the cell under the pointer, so it needs that cell's column key.
+        const target = event.target instanceof Element ? event.target.closest('[data-column]') : null
+        onMenu(index, event.clientX, event.clientY, target?.getAttribute('data-column') ?? '')
       }}
     >
       {shown.map((id) => {
         const column = columns.find((item) => item.id === id)
         return (
-          <div key={id} className="cell" style={{ width: sizes[id] ?? column?.size ?? 120 }}>
+          <div key={id} className="cell" data-column={id} style={{ width: sizes[id] ?? column?.size ?? 120 }}>
             {cell(row, id)}
           </div>
         )
