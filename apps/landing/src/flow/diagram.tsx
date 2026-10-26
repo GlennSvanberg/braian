@@ -318,7 +318,7 @@ const desktop: Layout = {
 
 const mobile: Layout = {
   width: 460,
-  height: 820,
+  height: 540,
   boxes: [
     { id: 'ui', x: 48, y: 36, w: 86, h: 48, title: 'UI', order: 0, seed: 11 },
     { id: 'agent', x: 146, y: 28, w: 112, h: 64, title: 'Agent', sub: 'Ctrl+K', order: 1, seed: 17 },
@@ -379,7 +379,7 @@ const mobile: Layout = {
       seed: 241,
       tone: 'accent',
       radius: 14,
-      label: { x: 8, y: 120, text: 'LISTEN · SSE', anchor: 'start' },
+      label: { x: 8, y: 205, text: 'LISTEN · SSE', anchor: 'start' },
     },
     {
       id: 'loop',
