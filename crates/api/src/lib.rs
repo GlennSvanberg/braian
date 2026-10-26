@@ -10,6 +10,7 @@ mod auth;
 mod bulk_gate;
 mod definitions;
 mod export;
+mod feedback;
 mod headers;
 pub mod import;
 mod model_proposal;
@@ -114,6 +115,7 @@ pub fn into_router(state: AppState) -> axum::Router {
                 .delete(objects::delete_object),
         )
         .route("/v1/objects/{id}/changes", get(objects::object_changes))
+        .merge(feedback::routes())
         .merge(platform::routes())
         .merge(import::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT));

@@ -46,12 +46,16 @@ export function CommandPalette({
   workspaces,
   views,
   ai,
+  feedbackEnabled,
+  onSendFeedback,
   onClose,
 }: {
   session: SessionLike
   workspaces: Array<{ id: string; name: string; share_token?: string }>
   views: Array<{ id: string; title: string; type: string; state?: Json }>
   ai?: boolean
+  feedbackEnabled?: boolean
+  onSendFeedback?: () => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
@@ -94,8 +98,8 @@ export function CommandPalette({
   const selectedKey = String(selectedObject.data?.type ?? '')
   const selectedSingular = singularOf(defs.data, selectedKey, uiLanguage) || (types.length === 1 ? types[0]?.singular ?? '' : '')
   const catalog = useMemo(
-    () => buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey),
-    [workspaces, views, session.objectId, types, selectedSingular, selectedKey],
+    () => buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, feedbackEnabled),
+    [workspaces, views, session.objectId, types, selectedSingular, selectedKey, feedbackEnabled],
   )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
@@ -211,6 +215,11 @@ export function CommandPalette({
     }
     if (id.startsWith('view:')) {
       dispatchUi('ui.open_view', { id: id.slice(5), zone: 'center' })
+      onClose()
+      return
+    }
+    if (id === 'feedback:send') {
+      onSendFeedback?.()
       onClose()
       return
     }
@@ -573,6 +582,7 @@ function buildCatalog(
   types: ReturnType<typeof typeNames>,
   selectedSingular: string,
   openTypeKey: string,
+  feedbackEnabled?: boolean,
 ): PaletteItem[] {
   const items: PaletteItem[] = [
     ...workspaces.map((workspace, index) => ({
@@ -611,6 +621,16 @@ function buildCatalog(
     { id: 'layout:close_view', group: 'views', title: 'Close view', subtitle: 'Close the focused view', kbd: 'Ctrl+Alt+W', shortcut: 'Ctrl+Alt+W' },
     { id: 'layout:reset_layout', group: 'views', title: 'Reset layout', subtitle: 'Restore the saved workspace layout' },
   ]
+  if (feedbackEnabled) {
+    items.push({
+      id: 'feedback:send',
+      group: 'views',
+      title: 'Send feedback',
+      subtitle: 'Report a bug or share an idea',
+      kbd: 'Ctrl+Shift+B',
+      shortcut: 'Ctrl+Shift+B',
+    })
+  }
   if (objectId) {
     items.push(
       { id: 'object:open', group: 'object', title: selectedSingular ? `Open ${selectedSingular}` : 'Open detail', subtitle: selectedSingular ? `On this ${selectedSingular}` : 'On the selected object', kbd: 'Enter' },

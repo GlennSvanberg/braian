@@ -5,7 +5,7 @@ import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
-import { api, type Json } from './api'
+import { api, textValue, type Json } from './api'
 import { AssortmentList } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { ImportScreen } from './import/view'
@@ -25,6 +25,9 @@ import { publishProposal } from './proposal-bus'
 import { copy } from './i18n'
 import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
+import { FeedbackDialog } from './feedback-dialog'
+import { installClientLog } from './feedback-log'
+import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeShareToken } from './type-workspaces'
@@ -119,6 +122,8 @@ export function Shell() {
   const [liveState, setLiveState] = useState('closed')
   const [statusLine, setStatusLine] = useState<string>(copy.activity)
   const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai'>(null)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [feedbackCapture, setFeedbackCapture] = useState<FeedbackCapture | null>(null)
   const [help, setHelp] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [doc, setDoc] = useState<LayoutDoc | null>(null)
@@ -134,6 +139,16 @@ export function Shell() {
   const ensuredTypes = useRef(new Set<string>())
   const paletteModeRef = useRef(paletteMode)
   paletteModeRef.current = paletteMode
+  const openFeedback = () => {
+    void prepareFeedbackCapture().then((capture) => {
+      setFeedbackCapture(capture)
+      setFeedbackOpen(true)
+    })
+  }
+
+  useEffect(() => {
+    installClientLog()
+  }, [])
 
   useEffect(() => {
     const files = (event: DragEvent) => isFileDrag(event.dataTransfer?.types ?? [])
@@ -247,6 +262,13 @@ export function Shell() {
     queryFn: () => api<Json>(`/v1/objects/${objectId}`),
     enabled: Boolean(objectId),
   })
+  const feedback = useQuery({
+    queryKey: ['feedback'],
+    queryFn: () => api<{ enabled: boolean }>('/v1/feedback'),
+    enabled: booted && me.isSuccess,
+    staleTime: 60_000,
+  })
+  const feedbackEnabled = feedback.data?.enabled === true
 
   useEffect(() => {
     if (!booted || !me.isSuccess) return
@@ -392,6 +414,11 @@ export function Shell() {
         setPaletteMode('list')
         return
       }
+      if (feedbackEnabled && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'b') {
+        event.preventDefault()
+        openFeedback()
+        return
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
         event.preventDefault()
         setPaletteMode('ai')
@@ -447,7 +474,7 @@ export function Shell() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [workspaces.data, defs.data])
+  }, [workspaces.data, defs.data, feedbackEnabled])
 
   useEffect(() => {
     publishMarked(objectId)
@@ -692,6 +719,23 @@ export function Shell() {
         <span>{statusLine}</span>
       </footer>
       <ConsequenceHost session={session} />
+      {feedbackEnabled ? (
+        <FeedbackDialog
+          open={feedbackOpen}
+          onClose={() => {
+            setFeedbackOpen(false)
+            setFeedbackCapture(null)
+          }}
+          capture={feedbackCapture}
+          user={{ handle: user.handle || userName, role: user.role, email: user.email }}
+          object={objectId ? {
+            id: objectId,
+            type: String(opened.data?.type ?? ''),
+            key: String(opened.data?.key ?? ''),
+            title: textValue(opened.data?.values?.namn ?? opened.data?.values?.a_namn__sv),
+          } : null}
+        />
+      ) : null}
       {paletteMode ? (
         <CommandPalette
           key={paletteMode}
@@ -699,6 +743,8 @@ export function Shell() {
           session={session}
           workspaces={orderedWorkspaces}
           views={workspace.data?.views ?? []}
+          feedbackEnabled={feedbackEnabled}
+          onSendFeedback={openFeedback}
           onClose={() => {
             placeOverride.current = undefined
             setPaletteMode(null)

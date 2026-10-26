@@ -122,6 +122,16 @@ impl utoipa::Modify for PlatformPaths {
             ),
             (
                 HttpMethod::Get,
+                "/v1/feedback",
+                "Whether in-app feedback is enabled",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/feedback",
+                "Send in-app feedback to the configured webhook",
+            ),
+            (
+                HttpMethod::Get,
                 "/v1/stream",
                 "Server-sent events for committed changes",
             ),

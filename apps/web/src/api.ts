@@ -14,7 +14,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
+  const method = (init.method ?? 'GET').toUpperCase()
+  const started = performance.now()
   const response = await fetch(path, { ...init, headers, credentials: 'include' })
+  if (typeof window !== 'undefined') {
+    void import('./feedback-log').then(({ noteApiResponse }) => {
+      noteApiResponse(method, path, started, response)
+    })
+  }
   if (response.status === 204) return undefined as T
   const type = response.headers.get('content-type') ?? ''
   if (!type.includes('json')) {
