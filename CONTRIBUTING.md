@@ -32,7 +32,7 @@ For a change in the web app, also run `pnpm --dir apps/web typecheck` and `pnpm 
 
 ## License
 
-Braian is dual licensed under the MIT license and the Apache License, Version 2.0. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), and the [License](README.md#license) section of the README.
+Braian is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE), and the [License](README.md#license) section of the README.
 
 ## Developer Certificate of Origin
 

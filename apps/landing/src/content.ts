@@ -12,7 +12,7 @@ export const nav = [
 ] as const
 
 export const hero = {
-  eyebrow: 'Open-source product data · MIT OR Apache-2.0 · Self-hosted',
+  eyebrow: 'Open-source product data · Apache-2.0 · Self-hosted',
   title: 'Open-source PIM where',
   titleAccent: 'every click is instant.',
   lede: 'A system that understands you, and keeps making your work easier.',
@@ -145,8 +145,13 @@ export const architecture = {
 
 export const openSource = {
   title: 'Open source. Yours to run.',
+<<<<<<< HEAD
   lede: 'MIT OR Apache-2.0 licensed and self-hosted.',
   facts: ['MIT OR Apache-2.0', 'Rust and TypeScript', 'Postgres · Typesense', 'Docker Compose for development'],
+=======
+  lede: 'Apache-2.0 licensed and self-hosted.',
+  facts: ['Apache-2.0', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
+>>>>>>> 2020d48 (Relicense Braian under Apache-2.0 only)
   code: [
     'git clone https://github.com/GlennSvanberg/braian',
     'cd braian && cp .env.example .env',
