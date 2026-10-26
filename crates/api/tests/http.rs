@@ -763,6 +763,218 @@ async fn an_agent_or_import_cannot_commit_and_a_person_save_still_does() {
         call(&app, "GET", "/v1/assortments", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{assortments}");
     assert_eq!(assortments["assortments"].as_array().unwrap().len(), 0);
+
+    for token in [AGENT, IMPORT] {
+        let (status, _, ops) = call(&app, "GET", "/v1/operations", Some(token), &[], None).await;
+        assert_eq!(status, StatusCode::OK, "{ops}");
+        assert!(
+            !ops["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|op| op["name"] == "accept_proposal"),
+            "{token} {ops}"
+        );
+        let (status, _, denied) = call(
+            &app,
+            "POST",
+            "/v1/operations/accept_proposal",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(&format!(r#"{{"id":"{proposal_id}"}}"#)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {denied}");
+        assert_eq!(denied["code"], "agent_cannot_accept");
+    }
+    let (status, _, human_ops) = call(&app, "GET", "/v1/operations", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{human_ops}");
+    assert!(
+        human_ops["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op["name"] == "accept_proposal"),
+        "{human_ops}"
+    );
+}
+
+#[tokio::test]
+async fn a_person_keeps_one_field_and_an_agent_relation_stays_a_proposal() {
+    let (_db, app) = app().await;
+    let (status, _, left) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-FIELD","active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{left}");
+    let id = left["id"].as_str().unwrap();
+    let (status, _, right) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-OTHER","active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{right}");
+    let other = right["id"].as_str().unwrap();
+
+    let (status, _, drafted) = call(
+        &app,
+        "POST",
+        "/v1/proposals",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"title":"Agent draft","source":"agent","rows":[{{"object_id":"{id}","object_key":"SKU-FIELD","type_key":"item","base_version":1,"patch":{{"values":{{"sku":"SKU-CHANGED","active":false}}}}}}]}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{drafted}");
+    let proposal_id = drafted["id"].as_str().unwrap();
+    let row_id = drafted["rows"][0]["id"].as_str().unwrap();
+
+    let (status, _, kept) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"rows":["{row_id}"],"patches":{{"{row_id}":{{"values":{{"active":false}}}}}}}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    assert!(kept["failed"].as_array().unwrap().is_empty(), "{kept}");
+    let (status, _, saved) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["values"]["active"], false, "{saved}");
+    assert_eq!(saved["values"]["sku"], "SKU-FIELD", "{saved}");
+
+    let (status, _, rejected) = call(
+        &app,
+        "POST",
+        "/v1/proposals",
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"title":"Import draft","source":"import","rows":[{{"object_id":"{id}","object_key":"SKU-FIELD","type_key":"item","base_version":2,"patch":{{"values":{{"sku":"SKU-IMPORT"}}}}}}]}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rejected}");
+    let import_id = rejected["id"].as_str().unwrap();
+    let import_row = rejected["rows"][0]["id"].as_str().unwrap();
+    let (status, _, dropped) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{import_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"rows":["{import_row}"],"patches":{{"{import_row}":{{"values":{{}}}}}}}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dropped}");
+    let (status, _, still) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    assert_eq!(still["values"]["sku"], "SKU-FIELD", "{still}");
+    let (status, _, proposal) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{import_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{proposal}");
+    assert_eq!(proposal["status"], "discarded", "{proposal}");
+    assert_eq!(proposal["source"], "import");
+    assert!(proposal["actor_name"].is_string(), "{proposal}");
+
+    let (status, _, relation) = call(
+        &app,
+        "POST",
+        &format!("/v1/objects/{id}/relations"),
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&format!(r#"{{"to":"{other}","kind":"related"}}"#)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{relation}");
+    let (status, _, graph) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}/graph"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{graph}");
+    assert!(graph["relations"].as_array().unwrap().is_empty(), "{graph}");
+
+    let (status, _, listed) = call(&app, "GET", "/v1/proposals", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let pending = &listed["pending"];
+    assert!(pending["total"].as_i64().unwrap() >= 1, "{listed}");
+    let relation_id = listed["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["title"] == "Relation" && row["status"] == "open")
+        .and_then(|row| row["id"].as_str())
+        .expect("relation proposal");
+    let (status, _, accepted) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{relation_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        accepted["failed"].as_array().unwrap().is_empty(),
+        "{accepted}"
+    );
+    let (status, _, linked) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}/graph"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["relations"].as_array().unwrap().len(), 1, "{linked}");
 }
 
 #[tokio::test]

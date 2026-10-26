@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffLines, historyTitle, relativeTime } from './field-diff'
+import { diffLines, historyTitle, relativeTime, sourceLabel, suggestionLines, valuesFromKept } from './field-diff'
 
 const defs = {
   attributes: [
@@ -69,5 +69,48 @@ describe('diff lines', () => {
   it('uses a relative time', () => {
     const now = Date.parse('2026-10-25T12:00:00Z')
     expect(relativeTime('2026-10-25T10:00:00Z', now)).toBe('2 hours ago')
+  })
+})
+
+describe('suggestion lines', () => {
+  const colourDefs = {
+    ...defs,
+    attributes: [
+      ...defs.attributes,
+      { id: 'farg', key: 'farg', labels: { en: 'Colour' }, multiple: true, kind: { type: 'value_list', list: 'farg' } },
+    ],
+    value_lists: [
+      ...defs.value_lists,
+      { key: 'farg', options: [{ code: 'bla', labels: { en: 'Blue' } }, { code: 'gron', labels: { en: 'Green' } }] },
+    ],
+  }
+
+  it('splits languages and multi-value adds and removes', () => {
+    const lines = suggestionLines(
+      { namn: { sv: 'Tält', en: 'Tent' }, farg: ['gron'] },
+      { values: { namn: { sv: 'Tält nytt', en: 'Tent' }, farg: ['bla'] } },
+      colourDefs,
+    )
+    expect(lines.map((line) => line.id)).toEqual(['namn:sv', 'farg:add:0', 'farg:remove:0'])
+    expect(lines[0]).toMatchObject({ language: 'sv', label: 'Name', before: 'Tält', after: 'Tält nytt' })
+    expect(lines[1]).toMatchObject({ change: 'add', after: 'Blue' })
+    expect(lines[2]).toMatchObject({ change: 'remove', before: 'Green' })
+    expect(lines.some((line) => line.language === 'de')).toBe(false)
+  })
+
+  it('keeps only the accepted language and the accepted colour add', () => {
+    const current = { namn: { sv: 'Tält', en: 'Tent' }, farg: ['gron'] }
+    const proposed = { namn: { sv: 'Tält nytt', en: 'Tent new' }, farg: ['bla'] }
+    const lines = suggestionLines(current, { values: proposed }, colourDefs)
+    const kept = lines.filter((line) => line.id !== 'namn:en' && line.change !== 'remove')
+    expect(valuesFromKept(current, proposed, lines, kept)).toEqual({
+      namn: { sv: 'Tält nytt' },
+      farg: ['gron', 'bla'],
+    })
+  })
+
+  it('names an agent and an import job', () => {
+    expect(sourceLabel({ source: 'agent', actor_name: 'Demo Admin' })).toBe('Agent Demo Admin')
+    expect(sourceLabel({ source: 'import', actor_name: 'Demo Admin' })).toBe('Import job')
   })
 })

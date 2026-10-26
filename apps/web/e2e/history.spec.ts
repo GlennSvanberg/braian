@@ -26,7 +26,7 @@ test('history is a compact timeline of the fields that changed', async ({ page }
   const next = `${original}-h`
   await nummer.fill(next)
   await page.getByTestId('save-object').click()
-  await page.getByTestId('confirm-proposal').click()
+  await expect(page.getByTestId('confirm-proposal')).toHaveCount(0)
   await expect(page.getByTestId('activity-log')).toContainText('Saved')
 
   await page.getByRole('button', { name: 'History' }).click()

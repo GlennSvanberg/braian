@@ -155,6 +155,10 @@ export function confirmImport() {
   abandonImport()
 }
 
+export function discardImport() {
+  abandonImport()
+}
+
 function abandonImport() {
   const session = state.session
   generation += 1
