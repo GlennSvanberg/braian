@@ -1,7 +1,7 @@
 export const demoUrl = 'https://demo.braian.io'
-export const repoUrl = 'https://github.com/GlennSvanberg/openpim'
-export const licenseUrl = 'https://github.com/GlennSvanberg/openpim/blob/main/LICENSE'
-export const docsUrl = 'https://github.com/GlennSvanberg/openpim#readme'
+export const repoUrl = 'https://github.com/GlennSvanberg/braian'
+export const licenseUrl = 'https://github.com/GlennSvanberg/braian/blob/main/LICENSE'
+export const docsUrl = 'https://github.com/GlennSvanberg/braian#readme'
 
 export const nav = [
   { href: '#speed', label: 'Speed' },
@@ -148,8 +148,8 @@ export const openSource = {
   lede: 'MIT licensed and self-hosted.',
   facts: ['MIT license', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
   code: [
-    'git clone https://github.com/GlennSvanberg/openpim',
-    'cd openpim && cp .env.example .env',
+    'git clone https://github.com/GlennSvanberg/braian',
+    'cd braian && cp .env.example .env',
     'just up && pnpm install && just dev',
   ],
 } as const
