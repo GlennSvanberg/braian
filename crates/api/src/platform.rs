@@ -18,8 +18,8 @@ use axum::routing::{get, post};
 use braian_model::{AttributeId, AttributeKind, DefinitionSet, Object, ObjectId};
 use braian_search::SearchQuery;
 use braian_store::{
-    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalRow, ProposalWrite, Store,
-    WriteReceipt,
+    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalLock, ProposalRow,
+    ProposalWrite, Store, WriteReceipt,
 };
 use futures::stream;
 use serde::Deserialize;
@@ -2542,10 +2542,38 @@ async fn accept_proposal(
         ));
     }
     let patches = body.patches;
-    if selected.len() >= LARGE_ACCEPT {
-        return accept_later(state, identity, id, selected, patches).await;
+    // Held until this accept finishes, including the background job, so a second
+    // accept waits and then sees the rows are no longer pending.
+    let lock = state.store.lock_proposal(id).await.map_err(store_status)?;
+    let proposal = match state.store.proposal(id).await {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            lock.release().await.map_err(store_status)?;
+            return Err(Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal"));
+        }
+        Err(error) => {
+            lock.release().await.map_err(store_status)?;
+            return Err(store_status(error));
+        }
+    };
+    let rows = proposal
+        .get("rows")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let selected = selected_rows(&rows, &body.rows);
+    if selected.is_empty() {
+        lock.release().await.map_err(store_status)?;
+        return Err(Problem::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this proposal is no longer pending",
+        ));
     }
-    let value = apply_selected(&state, &identity, id, selected, None, &patches).await?;
+    if selected.len() >= LARGE_ACCEPT {
+        return accept_later(state, identity, id, selected, patches, lock).await;
+    }
+    let value = apply_selected(&state, &identity, id, selected, None, &patches, lock).await?;
     if let Some(problem) = refusal_from_accept(&value) {
         return Err(problem);
     }
@@ -2596,6 +2624,7 @@ async fn accept_later(
     proposal_id: Uuid,
     selected: Vec<Value>,
     patches: BTreeMap<Uuid, Value>,
+    lock: ProposalLock,
 ) -> Result<AcceptReply, Problem> {
     state
         .store
@@ -2604,7 +2633,7 @@ async fn accept_later(
         .map_err(store_status)?;
     let job_id = Uuid::now_v7();
     let total = i32::try_from(selected.len()).unwrap_or(i32::MAX);
-    state
+    if let Err(error) = state
         .store
         .create_job_run(
             job_id,
@@ -2615,7 +2644,10 @@ async fn accept_later(
             total,
         )
         .await
-        .map_err(store_status)?;
+    {
+        lock.release().await.map_err(store_status)?;
+        return Err(store_status(error));
+    }
     emit_job(&state, job_id, "running", 0, total);
     let job_state = state.clone();
     tokio::spawn(async move {
@@ -2626,6 +2658,7 @@ async fn accept_later(
             selected,
             Some(job_id),
             &patches,
+            lock,
         )
         .await
         {
@@ -2663,12 +2696,8 @@ async fn apply_selected(
     rows: Vec<Value>,
     job_id: Option<Uuid>,
     patches: &BTreeMap<Uuid, Value>,
+    lock: ProposalLock,
 ) -> Result<Value, Problem> {
-    let lock = state
-        .store
-        .lock_proposal(proposal_id)
-        .await
-        .map_err(store_status)?;
     let outcome = apply_selected_locked(state, identity, proposal_id, rows, job_id, patches).await;
     lock.release().await.map_err(store_status)?;
     let tally = outcome?;
