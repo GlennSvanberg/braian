@@ -81,7 +81,7 @@ export function CommandPalette({
   const [editing, setEditing] = useState<number | null>(null)
   const found = useQuery({
     queryKey: ['palette', query],
-    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(query)}&per_page=8`),
+    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(query)}&per_page=8&lang=${uiLanguage}`),
     enabled: mode === 'list' && query.trim().length > 0 && stack.length === 0,
   })
   const remoteFrecency = useQuery({

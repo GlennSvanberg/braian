@@ -22,7 +22,7 @@ test('structure tree proposes group changes and assortments are saved queries', 
   await login(page)
   const tree = page.getByTestId('structure-tree')
   await expect(tree.getByRole('treeitem', { name: 'Cheese' })).toBeVisible()
-  await expect(tree.getByText('Structure', { exact: true })).toBeVisible()
+  await expect(tree.getByText('Food', { exact: true })).toBeVisible()
   await page.screenshot({ path: `${shots}/tree-dark.png` })
 
   await tree.getByRole('treeitem', { name: 'Cheese' }).click({ button: 'right' })

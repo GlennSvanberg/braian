@@ -8,7 +8,9 @@ async function login(page: Page) {
   await page.getByTestId('email').fill(demo.email)
   await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByTestId('object-row').first()).toBeVisible()
+  const filter = page.getByTestId('quick-filter').first()
+  if ((await filter.inputValue()) !== '') await filter.fill('')
+  await expect(page.getByTestId('object-row').nth(20)).toBeVisible()
 }
 
 test('details pane keeps a single scroll container that fills the pane', async ({ page }) => {

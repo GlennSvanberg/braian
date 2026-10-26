@@ -848,6 +848,7 @@ function Row({
 async function loadPage(q: string, filter: string, sort: string, groupBy: string, page: number) {
   const params = new URLSearchParams({ page: String(page), per_page: String(pageSize) })
   if (q) params.set('q', q)
+  params.set('lang', uiLanguage)
   if (filter) params.set('filter', filter)
   if (sort) params.set('sort', sort)
   if (groupBy) params.set('group', groupBy)
@@ -1396,7 +1397,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
   const [open, setOpen] = useState(false)
   const found = useQuery({
     queryKey: ['ref-pick', q],
-    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(q)}&per_page=8`),
+    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(q)}&per_page=8&lang=${uiLanguage}`),
     enabled: open && q.trim().length > 1,
   })
   return (

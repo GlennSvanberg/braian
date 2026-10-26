@@ -226,6 +226,7 @@ export function GraphMap({
           const params = new URLSearchParams({
             filter: `groups:=${parsed.structure}:${parsed.key}`,
             per_page: '40',
+            lang: uiLanguage,
           })
           const body = await api<Json>(`/v1/search?${params}`)
           const hits = searchDocuments(body).map((doc) => {

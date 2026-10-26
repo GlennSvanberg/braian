@@ -36,17 +36,25 @@ async function openCheddar(page: Page) {
   await articles.getByTestId('quick-filter').fill('ART-CHED-200')
   const row = articles.getByTestId('object-row').filter({ hasText: 'ART-CHED-200' }).first()
   await expect(row).toBeVisible()
+  const objectId = (await row.getAttribute('id'))?.replace(/^object-row-/, '') ?? ''
+  expect(objectId, 'article row id').not.toBe('')
+  const stored = await page.request.get(`/v1/objects/${objectId}`)
+  expect(stored.ok()).toBeTruthy()
+  const body = (await stored.json()) as { values?: { storage?: string; name?: { en?: string } } }
+  expect(body.values?.storage, JSON.stringify(body.values)).toBe('chilled')
+  expect(body.values?.name?.en).toBe('Mature cheddar 200 g')
   await row.click()
   await page.locator('.pane-tab', { hasText: 'Graph' }).first().click()
   await expect(page.locator('canvas[data-testid=graph]')).toBeVisible()
   await expect(page.locator('canvas[data-testid=graph]')).toHaveAttribute('data-settled', 'true')
   await expect(page.getByTestId('graph-inspector')).toContainText('Mature cheddar 200 g')
+  return objectId
 }
 
 test('force-directed graph', async ({ page }) => {
   test.setTimeout(120_000)
   await login(page)
-  await openCheddar(page)
+  const objectId = await openCheddar(page)
 
   for (const kind of ['type-article', 'group', 'value', 'structure']) {
     await expect(page.getByTestId(`legend-${kind}`)).toBeVisible()
@@ -71,7 +79,7 @@ test('force-directed graph', async ({ page }) => {
   }
 
   const nodes = page.getByTestId('graph-nodes')
-  const storage = nodes.getByRole('button', { name: 'Storage', exact: true })
+  const storage = nodes.locator(`[data-node-id="value:${objectId}:storage"]`)
   await expect(storage).toHaveAttribute('data-x', /-?\d+/)
   await storage.dispatchEvent('click')
   await expect(page.getByTestId('graph-inspector')).toContainText('Storage')
