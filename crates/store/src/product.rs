@@ -802,6 +802,41 @@ impl Store {
             .collect())
     }
 
+    /// Open proposals still waiting for a person: a total, and a count per object.
+    pub async fn pending_summary(&self) -> Result<Value, Error> {
+        let client = self.pool().get().await?;
+        let total: i64 = client
+            .query_one(
+                "SELECT COUNT(*)::bigint
+                 FROM proposal_rows r
+                 JOIN proposals p ON p.id = r.proposal_id
+                 WHERE r.status = 'pending' AND p.status = 'open'",
+                &[],
+            )
+            .await?
+            .get(0);
+        let rows = client
+            .query(
+                "SELECT r.object_id, COUNT(*)::bigint
+                 FROM proposal_rows r
+                 JOIN proposals p ON p.id = r.proposal_id
+                 WHERE r.status = 'pending' AND p.status = 'open' AND r.object_id IS NOT NULL
+                 GROUP BY r.object_id",
+                &[],
+            )
+            .await?;
+        let objects = rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "object_id": row.get::<_, Uuid>(0),
+                    "count": row.get::<_, i64>(1),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({ "total": total, "objects": objects }))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn create_proposal(
         &self,
@@ -855,7 +890,12 @@ impl Store {
         let client = self.pool().get().await?;
         let Some(row) = client
             .query_opt(
-                "SELECT id, title, source, status, conflict, actor, on_behalf_of, created_at FROM proposals WHERE id = $1",
+                "SELECT p.id, p.title, p.source, p.status, p.conflict, p.actor, p.on_behalf_of, p.created_at,
+                        a.name AS actor_name, b.name AS behalf_name
+                 FROM proposals p
+                 LEFT JOIN principals a ON a.id = p.actor
+                 LEFT JOIN principals b ON b.id = p.on_behalf_of
+                 WHERE p.id = $1",
                 &[&id],
             )
             .await?
@@ -877,6 +917,8 @@ impl Store {
             "conflict": row.get::<_, bool>("conflict"),
             "actor": row.get::<_, Uuid>("actor"),
             "on_behalf_of": row.get::<_, Option<Uuid>>("on_behalf_of"),
+            "actor_name": row.get::<_, Option<String>>("actor_name"),
+            "behalf_name": row.get::<_, Option<String>>("behalf_name"),
             "created_at": row.get::<_, DateTime<Utc>>("created_at"),
         });
         let items = rows
