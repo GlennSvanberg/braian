@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::error::Error;
 use crate::ids::{Actor, plain_name};
+pub use crate::log::PageGap;
 use crate::session::{self, PgConn, Store};
 use crate::split::StorageForm;
 

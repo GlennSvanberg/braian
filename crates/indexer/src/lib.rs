@@ -52,7 +52,11 @@ use serde_json::Value;
 use tracing::Instrument;
 use uuid::Uuid;
 
-const WINDOW: Duration = Duration::from_millis(100);
+/// Bulk coalesce. A full batch also flushes immediately.
+const BULK_WINDOW: Duration = Duration::from_millis(100);
+/// Interactive coalesce. An idle edit was waiting out the bulk window, which
+/// is the ~95 ms p50. Twenty milliseconds still groups a burst of edits.
+const INTERACTIVE_WINDOW: Duration = Duration::from_millis(20);
 
 /// How the indexer batches Postgres reads and Typesense imports.
 #[derive(Debug, Clone, Copy)]
@@ -296,10 +300,11 @@ pub(crate) fn lane_due(
     pending: usize,
     batch: usize,
     elapsed: Duration,
+    window: Duration,
     other_lane_flushing: bool,
 ) -> bool {
     let _ = other_lane_flushing;
-    pending > 0 && (pending >= batch || elapsed >= WINDOW)
+    pending > 0 && (pending >= batch || elapsed >= window)
 }
 
 struct Shared {
@@ -332,6 +337,7 @@ enum LaneKind {
 struct LanePace {
     idle: Duration,
     armed: Duration,
+    window: Duration,
     rebuild: bool,
     kind: LaneKind,
     batch_size: usize,
@@ -346,6 +352,7 @@ impl LanePace {
             LaneKind::Interactive => Self {
                 idle: Duration::from_millis(5),
                 armed: Duration::from_millis(5),
+                window: INTERACTIVE_WINDOW,
                 rebuild: false,
                 kind,
                 batch_size: config.batch_size,
@@ -356,6 +363,7 @@ impl LanePace {
             LaneKind::Bulk => Self {
                 idle: Duration::from_millis(40),
                 armed: Duration::from_millis(5),
+                window: BULK_WINDOW,
                 rebuild: true,
                 kind,
                 batch_size: config.bulk_batch_size,
@@ -828,14 +836,20 @@ async fn run_lane(
         if pace.kind == LaneKind::Interactive {
             drain.set_pending(pending.len());
         }
-        if lane_due(pending.len(), pace.batch_size, since.elapsed(), false) {
+        if lane_due(
+            pending.len(),
+            pace.batch_size,
+            since.elapsed(),
+            pace.window,
+            false,
+        ) {
             commit_pending(&shared, &mut feed, &mut pending, &pace, &drain).await?;
             since = Instant::now();
         } else if pending.is_empty() {
             since = Instant::now();
         } else {
             // The other lane is a separate task. This one only waits out its window.
-            let wait = WINDOW.saturating_sub(since.elapsed());
+            let wait = pace.window.saturating_sub(since.elapsed());
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
                 result = shutdown.wait_for(|flag| *flag) => { let _ = result; }
@@ -1015,7 +1029,13 @@ async fn build_batch(
         }
         drop(fetch);
         read?;
-        if lane_due(pending.len(), batch_size, since.elapsed(), false) {
+        if lane_due(
+            pending.len(),
+            batch_size,
+            since.elapsed(),
+            pace.window,
+            false,
+        ) {
             break;
         }
         if pending.is_empty() {
@@ -1023,7 +1043,7 @@ async fn build_batch(
             feed.source().commit_many(&claims).await?;
             return Ok(None);
         }
-        let wait = WINDOW.saturating_sub(since.elapsed());
+        let wait = pace.window.saturating_sub(since.elapsed());
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
             result = shutdown.wait_for(|flag| *flag) => { let _ = result; }
@@ -1540,10 +1560,30 @@ mod tests {
 
     #[test]
     fn interactive_lane_flushes_while_bulk_is_flushing() {
-        assert!(lane_due(1, 200, WINDOW, true));
-        assert!(lane_due(200, 200, Duration::ZERO, true));
-        assert!(!lane_due(1, 200, Duration::from_millis(10), true));
-        assert!(!lane_due(0, 200, WINDOW, true));
+        assert!(lane_due(
+            1,
+            200,
+            INTERACTIVE_WINDOW,
+            INTERACTIVE_WINDOW,
+            true
+        ));
+        assert!(lane_due(200, 200, Duration::ZERO, INTERACTIVE_WINDOW, true));
+        assert!(!lane_due(
+            1,
+            200,
+            Duration::from_millis(10),
+            INTERACTIVE_WINDOW,
+            true
+        ));
+        assert!(!lane_due(
+            0,
+            200,
+            INTERACTIVE_WINDOW,
+            INTERACTIVE_WINDOW,
+            true
+        ));
+        assert!(lane_due(1, 2_000, BULK_WINDOW, BULK_WINDOW, false));
+        assert!(!lane_due(1, 2_000, INTERACTIVE_WINDOW, BULK_WINDOW, false));
     }
 
     #[tokio::test]
