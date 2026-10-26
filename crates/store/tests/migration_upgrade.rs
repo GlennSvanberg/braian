@@ -185,7 +185,6 @@ async fn branch_migrations_apply_after_main() {
     assert_ne!(level, "logical");
     migrate(&mut conn.client, &baseline).await;
     let baseline_max = max_migration_version(&baseline_set);
-    let branch_max = max_migration_version(&branch_set);
     // V3 creates the publication and V15 drops it. The check only applies when
     // the baseline is still on the V3 side of that drop. A later migration
     // starts from a database that no longer has `braian_changes`.
