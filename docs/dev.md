@@ -177,15 +177,22 @@ docker compose -f compose.yaml -f deploy/compose.perf.yaml up -d postgres redpan
 Indexern har två spår. Det interaktiva spåret använder
 `BRAIAN_INDEXER_BATCH` (standard 200), `BRAIAN_INDEXER_IMPORT_BATCH`
 (standard 100) och `BRAIAN_INDEXER_IMPORT_CONCURRENCY` (standard 4). Det
-skriver på en egen HTTP-klient. En bulk-import håller sin anslutning tills
-Typesense är klar med hela anropet, och den interaktiva upserten ska inte
-vänta på den anslutningen.
+läser Postgres från `BRAIAN_INDEXER_POOL` (standard 2), skild från
+`BRAIAN_POOL_BULK`, och skriver på en egen HTTP-klient. En bulk-import
+håller sin anslutning tills Typesense är klar med hela anropet, och den
+interaktiva upserten ska inte vänta på den anslutningen eller på bulkens
+Postgres-anslutning.
 
-Bulk-spåret läser `BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000),
-bygger dokumenten och importerar dem i vågor. Nästa läsning från Redpanda
-och nästa dokumentbygge körs medan den pågående importen är i Typesense.
-Offset för den följande batchen committas först när dess egen import är
-klar, så en krasch inte hoppar över den.
+Bulk-spåret läser `BRAIAN_INDEXER_BULK_BATCH` händelser (standard 2 000)
+från bulk-poolen, bygger dokumenten och importerar dem i vågor. De första
+läsningarna är takade vid 200 händelser tills två fulla batchar är klara,
+och växer sedan mot den konfigurerade storleken. En kall läsning av 2 000
+händelser höll det interaktiva spåret i ungefär 3 s. Nästa läsning från
+Redpanda och nästa dokumentbygge körs medan den pågående importen är i
+Typesense. Offset för den följande batchen committas först när dess egen
+import är klar, så en krasch inte hoppar över den. Varje spår loggar
+`fetch`, `build` och `import` som ett tracing-span `indexer` med `lane`,
+`events` och `elapsed_ms`.
 
 `BRAIAN_INDEXER_BULK_IMPORT_BATCH` (standard 200, tak 200) och
 `BRAIAN_INDEXER_BULK_IMPORT_CONCURRENCY` (standard 2, tak 2) är taket, inte

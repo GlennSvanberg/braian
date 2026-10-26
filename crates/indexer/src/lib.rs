@@ -7,21 +7,27 @@
 //!
 //! `BRAIAN_INDEXER_BATCH`, `BRAIAN_INDEXER_IMPORT_BATCH` and
 //! `BRAIAN_INDEXER_IMPORT_CONCURRENCY` size the interactive lane. That lane
-//! writes through its own HTTP client, so a bulk import's connection cannot
-//! hold the upsert.
+//! reads Postgres through `BRAIAN_INDEXER_POOL` (default 2) and writes through
+//! its own HTTP client, so a bulk fetch cannot hold the connection or the upsert.
 //!
-//! The bulk lane reads `BRAIAN_INDEXER_BULK_BATCH` events, builds the
-//! documents, and imports them in waves capped at 200 documents and 2 calls.
-//! The next Redpanda read and document build run while the current import is
-//! in flight, and that next batch's offsets stay uncommitted until its own
-//! import finishes. An idle wave starts at 100×1 and grows only while the
-//! interactive topic stays empty. A second Typesense call is used only when
-//! the previous call finished inside 50 ms, so an upsert is not stuck behind
-//! a long import. When an edit is already queued, the next wave is one batch
-//! of at most 100 and the lane waits up to
+//! The bulk lane reads `BRAIAN_INDEXER_BULK_BATCH` events on the bulk pool,
+//! builds the documents, and imports them in waves capped at 200 documents
+//! and 2 calls. The first reads stay at 200 events until two full batches
+//! have finished, then grow toward the configured size. A cold read of 2 000
+//! events stalled the interactive lane for about 3 s; the warm-up keeps that
+//! first import small. The next Redpanda read and document build run while
+//! the current import is in flight, and that next batch's offsets stay
+//! uncommitted until its own import finishes. An idle wave starts at 100×1
+//! and grows only while the interactive topic stays empty. A second Typesense
+//! call is used only when the previous call finished inside 50 ms, so an
+//! upsert is not stuck behind a long import. When an edit is already queued,
+//! the next wave is one batch of at most 100 and the lane waits up to
 //! `BRAIAN_INDEXER_BULK_YIELD_MAX_MS` before importing anyway. A 4×500 import
 //! held Typesense for the whole batch, and a wait before the flush did
 //! nothing once that import was already in flight.
+//!
+//! Each lane records a tracing span named `indexer` around `fetch`, `build`
+//! and `import`, with `lane`, `events` and `elapsed_ms`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -35,6 +41,7 @@ use braian_search::{Typesense, document};
 use braian_store::{Store, StoredObject};
 use futures::stream::{StreamExt, TryStreamExt};
 use serde_json::Value;
+use tracing::Instrument;
 use uuid::Uuid;
 
 const WINDOW: Duration = Duration::from_millis(100);
@@ -139,6 +146,9 @@ impl Indexer {
             bulk_import_concurrency = config.bulk_import_concurrency,
             bulk_yield_max_ms =
                 u64::try_from(config.bulk_yield_max.as_millis()).unwrap_or(u64::MAX),
+            indexer_pool = store.on_indexer().pool_max(),
+            bulk_pool = store.on_bulk().pool_max(),
+            warm_batch = WARM_BATCH,
             "indexer batching"
         );
         Ok(Self {
@@ -152,7 +162,8 @@ impl Indexer {
 
     pub async fn run(self, shutdown: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<()> {
         let shared = Arc::new(Shared {
-            store: self.store,
+            interactive: self.store.on_indexer(),
+            bulk: self.store.on_bulk(),
             search: self.search,
             config: self.config,
             cache: tokio::sync::Mutex::new(None),
@@ -197,21 +208,21 @@ impl Indexer {
 
 impl Shared {
     async fn rebuild_if_requested(&self) -> anyhow::Result<()> {
-        if !self.store.take_reindex_request().await? {
+        if !self.bulk.take_reindex_request().await? {
             return Ok(());
         }
         tracing::warn!(
             "replication slot recovery requested a reindex; rebuilding the search alias from Postgres"
         );
-        if let Err(error) = reindex_with(&self.store, &self.search, self.config).await {
-            let _ = self.store.request_reindex().await;
+        if let Err(error) = reindex_with(&self.bulk, &self.search, self.config).await {
+            let _ = self.bulk.request_reindex().await;
             return Err(error);
         }
         Ok(())
     }
 
-    async fn compiled(&self) -> anyhow::Result<Option<Arc<RevisionCache>>> {
-        let Some(revision) = self.store.model_revision().await? else {
+    async fn compiled(&self, store: &Store) -> anyhow::Result<Option<Arc<RevisionCache>>> {
+        let Some(revision) = store.model_revision().await? else {
             return Ok(None);
         };
         let mut guard = self.cache.lock().await;
@@ -221,14 +232,14 @@ impl Shared {
         {
             return Ok(Some(Arc::clone(cached)));
         }
-        let defs = match self.store.definition_set().await {
+        let defs = match store.definition_set().await {
             Ok(defs) => defs,
             Err(braian_store::Error::NoDefinitions) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         let model = CompiledModel::compile(&defs)
             .map_err(|errors| anyhow::anyhow!("definitions: {}", errors[0].message))?;
-        ensure_alias(&self.store, &self.search, &defs).await?;
+        ensure_alias(store, &self.search, &defs).await?;
         let cached = Arc::new(RevisionCache {
             revision: defs.model_revision,
             defs: Arc::new(defs),
@@ -245,22 +256,38 @@ impl Shared {
         pace: &LanePace,
     ) -> anyhow::Result<()> {
         let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
-        let Some(cached) = self.compiled().await? else {
-            self.store.set_indexer_seq(max_seq).await?;
+        let Some(cached) = self.compiled(&self.interactive).await? else {
+            self.interactive.set_indexer_seq(max_seq).await?;
             return Ok(());
         };
         let ids = object_ids(pending.values().cloned());
-        let stored = self.store.get_objects(&ids).await?;
-        let docs = documents(&cached.model, &cached.defs, &stored, pending);
-        import_batched(
-            &self.search.interactive_writer(),
-            self.search.alias(),
-            &docs,
-            pace.import_batch,
-            pace.import_concurrency,
-        )
-        .await?;
-        self.store.set_indexer_seq(max_seq).await?;
+        let mut build = Stage::start(pace.kind, "build");
+        build.arm(ids.len());
+        let stored = self
+            .interactive
+            .get_objects(&ids)
+            .instrument(build.span())
+            .await?;
+        let docs = build
+            .span()
+            .in_scope(|| documents(&cached.model, &cached.defs, &stored, pending));
+        build.arm(docs.len());
+        drop(build);
+        if !docs.is_empty() {
+            let mut import = Stage::start(pace.kind, "import");
+            import.arm(docs.len());
+            import_batched(
+                &self.search.interactive_writer(),
+                self.search.alias(),
+                &docs,
+                pace.import_batch,
+                pace.import_concurrency,
+            )
+            .instrument(import.span())
+            .await?;
+            drop(import);
+        }
+        self.interactive.set_indexer_seq(max_seq).await?;
         Ok(())
     }
 }
@@ -278,7 +305,8 @@ pub(crate) fn lane_due(
 }
 
 struct Shared {
-    store: Store,
+    interactive: Store,
+    bulk: Store,
     search: Typesense,
     config: IndexerConfig,
     cache: tokio::sync::Mutex<Option<Arc<RevisionCache>>>,
@@ -551,6 +579,78 @@ fn grow_batch(batch: usize) -> usize {
     batch.saturating_add(batch / 2).max(batch.saturating_add(1))
 }
 
+/// Cold bulk reads stay at this many events. The first configured read of
+/// 2 000 stalled the interactive lane for about 3 s.
+const WARM_BATCH: usize = 200;
+/// Full cold reads before the bulk read size starts growing.
+const WARMUP_BATCHES: usize = 2;
+
+/// Bulk read size. Cold reads stay at [`WARM_BATCH`]. After [`WARMUP_BATCHES`]
+/// full reads the size grows toward the configured batch. A short tail does
+/// not count: the lane is warm only once a read filled the cap it was offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BatchRamp {
+    phase: RampPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RampPhase {
+    Warmup { done: usize },
+    Ramping { limit: usize },
+}
+
+impl BatchRamp {
+    pub(crate) fn new() -> Self {
+        Self {
+            phase: RampPhase::Warmup { done: 0 },
+        }
+    }
+
+    /// Events to pull on the next bulk read.
+    pub(crate) fn batch_size(&self, configured: usize) -> usize {
+        let configured = configured.max(1);
+        match self.phase {
+            RampPhase::Warmup { .. } => WARM_BATCH.min(configured),
+            RampPhase::Ramping { limit } => limit.min(configured).max(1),
+        }
+    }
+
+    /// One finished read. `offered` is the cap that read was built under.
+    pub(crate) fn observe(&mut self, configured: usize, events: usize, offered: usize) {
+        if offered == 0 || events < offered {
+            return;
+        }
+        let configured = configured.max(1);
+        match self.phase {
+            RampPhase::Warmup { done } => {
+                let done = done.saturating_add(1);
+                if done < WARMUP_BATCHES {
+                    self.phase = RampPhase::Warmup { done };
+                    return;
+                }
+                self.phase = RampPhase::Ramping {
+                    limit: WARM_BATCH.min(configured),
+                };
+                self.grow(configured);
+            }
+            RampPhase::Ramping { .. } => self.grow(configured),
+        }
+    }
+
+    fn grow(&mut self, configured: usize) {
+        let RampPhase::Ramping { limit } = self.phase else {
+            return;
+        };
+        if limit >= configured {
+            self.phase = RampPhase::Ramping { limit: configured };
+            return;
+        }
+        self.phase = RampPhase::Ramping {
+            limit: grow_batch(limit).min(configured),
+        };
+    }
+}
+
 /// Documents that would fill `budget` at the rate of `docs` per `elapsed`.
 fn fit_docs(docs: usize, elapsed: Duration, budget: Duration) -> usize {
     if elapsed.is_zero() {
@@ -696,21 +796,35 @@ async fn run_lane(
             shared.rebuild_if_requested().await?;
             checked = Instant::now();
         }
-        let mut first = true;
-        while pending.len() < pace.batch_size {
-            let wait = if pending.is_empty() && first {
-                pace.idle
-            } else if first {
-                pace.armed
-            } else {
-                Duration::ZERO
-            };
-            first = false;
-            let Some(event) = poll(&subscription, wait).await? else {
-                break;
-            };
-            remember(&mut pending, event);
+        let mut fetch = Stage::start(pace.kind, "fetch");
+        let fetch_span = fetch.span();
+        let before = pending.len();
+        let read = async {
+            let mut first = true;
+            while pending.len() < pace.batch_size {
+                let wait = if pending.is_empty() && first {
+                    pace.idle
+                } else if first {
+                    pace.armed
+                } else {
+                    Duration::ZERO
+                };
+                first = false;
+                let Some(event) = poll(&subscription, wait).await? else {
+                    break;
+                };
+                remember(&mut pending, event);
+            }
+            Ok::<(), anyhow::Error>(())
         }
+        .instrument(fetch_span)
+        .await;
+        let read_now = pending.len().saturating_sub(before);
+        if read_now > 0 {
+            fetch.arm(read_now);
+        }
+        drop(fetch);
+        read?;
         if pace.kind == LaneKind::Interactive {
             drain.set_pending(pending.len());
         }
@@ -735,6 +849,10 @@ struct BuiltBatch {
     held: Vec<HeldEvent>,
     docs: Vec<Value>,
     max_seq: i64,
+    /// Coalesced events in this read.
+    events: usize,
+    /// Cap the read was built under. A short tail is `events < offered`.
+    offered: usize,
 }
 
 /// Bulk lane. The next batch is fetched and built while Typesense imports the
@@ -749,6 +867,7 @@ async fn run_bulk_lane(
     drain: Arc<InteractiveDrain>,
 ) -> anyhow::Result<()> {
     let mut tune = WaveTune::new();
+    let mut ramp = BatchRamp::new();
     let mut prefetched: Option<BuiltBatch> = None;
     let mut checked = Instant::now()
         .checked_sub(Duration::from_secs(2))
@@ -767,8 +886,15 @@ async fn run_bulk_lane(
         let current = if let Some(batch) = prefetched.take() {
             batch
         } else {
-            let Some(batch) =
-                build_batch(&shared, &subscription, shutdown.clone(), stop.clone(), pace).await?
+            let Some(batch) = build_batch(
+                &shared,
+                &subscription,
+                shutdown.clone(),
+                stop.clone(),
+                pace,
+                &ramp,
+            )
+            .await?
             else {
                 continue;
             };
@@ -779,9 +905,17 @@ async fn run_bulk_lane(
             return Ok(());
         }
         let imported = import_built(&shared, &current, &drain, &mut tune, &pace);
-        let fetched = build_batch(&shared, &subscription, shutdown.clone(), stop.clone(), pace);
+        let fetched = build_batch(
+            &shared,
+            &subscription,
+            shutdown.clone(),
+            stop.clone(),
+            pace,
+            &ramp,
+        );
         let (imported, fetched) = tokio::join!(imported, fetched);
         imported?;
+        ramp.observe(pace.batch_size, current.events, current.offered);
         subscription.commit_held(&current.held)?;
         prefetched = fetched?;
     }
@@ -808,9 +942,11 @@ async fn import_built(
     pace: &LanePace,
 ) -> anyhow::Result<()> {
     if !batch.docs.is_empty() {
-        import_waves(
+        let mut import = Stage::start(pace.kind, "import");
+        import.arm(batch.docs.len());
+        let result = import_waves(
             &shared.search,
-            &shared.store,
+            &shared.bulk,
             Some(drain),
             shared.search.alias(),
             &batch.docs,
@@ -821,9 +957,12 @@ async fn import_built(
             },
             tune,
         )
-        .await?;
+        .instrument(import.span())
+        .await;
+        drop(import);
+        result?;
     }
-    shared.store.set_indexer_seq(batch.max_seq).await?;
+    shared.bulk.set_indexer_seq(batch.max_seq).await?;
     Ok(())
 }
 
@@ -833,7 +972,9 @@ async fn build_batch(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     mut stop: tokio::sync::watch::Receiver<bool>,
     pace: LanePace,
+    ramp: &BatchRamp,
 ) -> anyhow::Result<Option<BuiltBatch>> {
+    let batch_size = ramp.batch_size(pace.batch_size);
     let mut pending: HashMap<String, ChangeEvent> = HashMap::new();
     let mut held = Vec::new();
     let since = Instant::now();
@@ -841,23 +982,38 @@ async fn build_batch(
         if *shutdown.borrow() || *stop.borrow() {
             break;
         }
-        let mut first = true;
-        while pending.len() < pace.batch_size {
-            let wait = if pending.is_empty() && first {
-                pace.idle
-            } else if first {
-                pace.armed
-            } else {
-                Duration::ZERO
-            };
-            first = false;
-            let Some(event) = poll_held(subscription, wait, &mut shutdown, &mut stop).await? else {
-                break;
-            };
-            remember(&mut pending, event.event.clone());
-            held.push(event);
+        let mut fetch = Stage::start(pace.kind, "fetch");
+        let fetch_span = fetch.span();
+        let before = pending.len();
+        let read = async {
+            let mut first = true;
+            while pending.len() < batch_size {
+                let wait = if pending.is_empty() && first {
+                    pace.idle
+                } else if first {
+                    pace.armed
+                } else {
+                    Duration::ZERO
+                };
+                first = false;
+                let Some(event) = poll_held(subscription, wait, &mut shutdown, &mut stop).await?
+                else {
+                    break;
+                };
+                remember(&mut pending, event.event.clone());
+                held.push(event);
+            }
+            Ok::<(), anyhow::Error>(())
         }
-        if lane_due(pending.len(), pace.batch_size, since.elapsed(), false) {
+        .instrument(fetch_span)
+        .await;
+        let read_now = pending.len().saturating_sub(before);
+        if read_now > 0 {
+            fetch.arm(read_now);
+        }
+        drop(fetch);
+        read?;
+        if lane_due(pending.len(), batch_size, since.elapsed(), false) {
             break;
         }
         if pending.is_empty() {
@@ -873,21 +1029,36 @@ async fn build_batch(
     if pending.is_empty() {
         return Ok(None);
     }
+    let events = pending.len();
     let max_seq = pending.values().map(|event| event.seq).max().unwrap_or(0);
-    let Some(cached) = shared.compiled().await? else {
+    let Some(cached) = shared.compiled(&shared.bulk).await? else {
         return Ok(Some(BuiltBatch {
             held,
             docs: Vec::new(),
             max_seq,
+            events,
+            offered: batch_size,
         }));
     };
     let ids = object_ids(pending.values().cloned());
-    let stored = shared.store.get_objects(&ids).await?;
-    let docs = documents(&cached.model, &cached.defs, &stored, &pending);
+    let mut build = Stage::start(pace.kind, "build");
+    build.arm(ids.len());
+    let stored = shared
+        .bulk
+        .get_objects(&ids)
+        .instrument(build.span())
+        .await?;
+    let docs = build
+        .span()
+        .in_scope(|| documents(&cached.model, &cached.defs, &stored, &pending));
+    build.arm(docs.len());
+    drop(build);
     Ok(Some(BuiltBatch {
         held,
         docs,
         max_seq,
+        events,
+        offered: batch_size,
     }))
 }
 
@@ -1053,6 +1224,69 @@ async fn poll(subscription: &Subscription, wait: Duration) -> anyhow::Result<Opt
         Ok(Ok(event)) => Ok(Some(event)),
         Ok(Err(error)) => Err(error.into()),
         Err(_) => Ok(None),
+    }
+}
+
+fn lane_label(kind: LaneKind) -> &'static str {
+    match kind {
+        LaneKind::Interactive => "interactive",
+        LaneKind::Bulk => "bulk",
+    }
+}
+
+/// Times one lane stage. Unarmed stages are idle polls and stay quiet.
+struct Stage {
+    lane: &'static str,
+    stage: &'static str,
+    span: tracing::Span,
+    started: Instant,
+    events: usize,
+    armed: bool,
+}
+
+impl Stage {
+    fn start(lane: LaneKind, stage: &'static str) -> Self {
+        let label = lane_label(lane);
+        Self {
+            lane: label,
+            stage,
+            span: tracing::info_span!(
+                "indexer",
+                lane = label,
+                stage,
+                events = tracing::field::Empty,
+                elapsed_ms = tracing::field::Empty,
+            ),
+            started: Instant::now(),
+            events: 0,
+            armed: false,
+        }
+    }
+
+    fn span(&self) -> tracing::Span {
+        self.span.clone()
+    }
+
+    fn arm(&mut self, events: usize) {
+        self.events = events;
+        self.armed = true;
+    }
+}
+
+impl Drop for Stage {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let elapsed_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.span.record("events", self.events);
+        self.span.record("elapsed_ms", elapsed_ms);
+        let lane = self.lane;
+        let stage = self.stage;
+        let events = self.events;
+        self.span.in_scope(|| {
+            tracing::info!(lane, stage, events, elapsed_ms, "indexer stage");
+        });
     }
 }
 
@@ -1354,6 +1588,179 @@ mod tests {
         assert!(bulk_import_waits(0, true, Duration::from_millis(99), max));
         assert!(!bulk_import_waits(4, true, max, max));
         assert!(!bulk_import_waits(4, true, Duration::from_millis(150), max));
+    }
+
+    #[test]
+    fn cold_bulk_reads_stay_at_200_until_the_lane_is_warm() {
+        let mut ramp = BatchRamp::new();
+        let configured = 2_000;
+        assert_eq!(ramp.batch_size(configured), 200);
+        ramp.observe(configured, 200, 200);
+        assert_eq!(
+            ramp.batch_size(configured),
+            200,
+            "one full read is not warm yet"
+        );
+        ramp.observe(configured, 17, 200);
+        assert_eq!(
+            ramp.batch_size(configured),
+            200,
+            "a short tail warmed the lane"
+        );
+        ramp.observe(configured, 200, 200);
+        let stepped = ramp.batch_size(configured);
+        assert!(
+            (201..configured).contains(&stepped),
+            "warm lane did not ramp: {stepped}"
+        );
+        let mut guard = 0;
+        while ramp.batch_size(configured) < configured {
+            let offered = ramp.batch_size(configured);
+            let previous = offered;
+            ramp.observe(configured, offered, offered);
+            let next = ramp.batch_size(configured);
+            assert!(next > previous, "ramp stalled at {previous}");
+            guard += 1;
+            assert!(guard < 20, "ramp did not reach {configured}");
+        }
+        assert_eq!(ramp.batch_size(configured), configured);
+        ramp.observe(configured, configured, configured);
+        assert_eq!(ramp.batch_size(configured), configured);
+    }
+
+    #[test]
+    fn a_configured_batch_under_the_warm_cap_does_not_grow() {
+        let mut ramp = BatchRamp::new();
+        assert_eq!(ramp.batch_size(80), 80);
+        ramp.observe(80, 80, 80);
+        ramp.observe(80, 80, 80);
+        assert_eq!(ramp.batch_size(80), 80);
+    }
+
+    #[test]
+    fn stage_spans_name_the_lane_and_record_elapsed() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        use tracing::field::{Field, Visit};
+        use tracing::span::{Attributes, Id, Record};
+        use tracing::{Event, Metadata, Subscriber};
+
+        struct Inner {
+            spans: Mutex<Vec<String>>,
+            records: Mutex<Vec<String>>,
+            events: Mutex<Vec<String>>,
+            next: AtomicU64,
+        }
+
+        struct Hit(Arc<Inner>);
+
+        struct Text<'a>(&'a mut String);
+
+        impl Visit for Text<'_> {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                use std::fmt::Write;
+                let _ = write!(self.0, "{}={:?};", field.name(), value);
+            }
+
+            fn record_str(&mut self, field: &Field, value: &str) {
+                use std::fmt::Write;
+                let _ = write!(self.0, "{}={value};", field.name());
+            }
+
+            fn record_u64(&mut self, field: &Field, value: u64) {
+                use std::fmt::Write;
+                let _ = write!(self.0, "{}={value};", field.name());
+            }
+
+            fn record_i64(&mut self, field: &Field, value: i64) {
+                use std::fmt::Write;
+                let _ = write!(self.0, "{}={value};", field.name());
+            }
+        }
+
+        impl Subscriber for Hit {
+            fn enabled(&self, _: &Metadata<'_>) -> bool {
+                true
+            }
+
+            fn new_span(&self, attrs: &Attributes<'_>) -> Id {
+                let mut text = String::new();
+                attrs.record(&mut Text(&mut text));
+                self.0
+                    .spans
+                    .lock()
+                    .expect("spans")
+                    .push(format!("{} {text}", attrs.metadata().name()));
+                let id = self.0.next.fetch_add(1, Ordering::Relaxed) + 1;
+                Id::from_u64(id)
+            }
+
+            fn record(&self, _: &Id, values: &Record<'_>) {
+                let mut text = String::new();
+                values.record(&mut Text(&mut text));
+                self.0.records.lock().expect("records").push(text);
+            }
+
+            fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+            fn event(&self, event: &Event<'_>) {
+                let mut text = String::new();
+                event.record(&mut Text(&mut text));
+                self.0.events.lock().expect("events").push(text);
+            }
+
+            fn enter(&self, _: &Id) {}
+
+            fn exit(&self, _: &Id) {}
+        }
+
+        let inner = Arc::new(Inner {
+            spans: Mutex::new(Vec::new()),
+            records: Mutex::new(Vec::new()),
+            events: Mutex::new(Vec::new()),
+            next: AtomicU64::new(0),
+        });
+        tracing::subscriber::with_default(Hit(Arc::clone(&inner)), || {
+            for (lane, stage, events) in [
+                (LaneKind::Interactive, "fetch", 3usize),
+                (LaneKind::Bulk, "build", 200),
+                (LaneKind::Bulk, "import", 200),
+            ] {
+                let mut timed = Stage::start(lane, stage);
+                timed.arm(events);
+                drop(timed);
+            }
+            drop(Stage::start(LaneKind::Interactive, "fetch"));
+        });
+
+        let spans = inner.spans.lock().expect("spans");
+        let joined = spans.join("\n");
+        assert!(joined.contains("indexer"), "span name missing: {joined}");
+        assert!(
+            joined.contains("lane=interactive"),
+            "lane missing: {joined}"
+        );
+        assert!(joined.contains("lane=bulk"), "bulk lane missing: {joined}");
+        assert!(joined.contains("stage=fetch"), "fetch missing: {joined}");
+        assert!(joined.contains("stage=build"), "build missing: {joined}");
+        assert!(joined.contains("stage=import"), "import missing: {joined}");
+        let records = inner.records.lock().expect("records").join("\n");
+        assert!(records.contains("events=3"), "events missing: {records}");
+        assert!(
+            records.contains("events=200"),
+            "bulk events missing: {records}"
+        );
+        assert!(
+            records.contains("elapsed_ms="),
+            "elapsed missing: {records}"
+        );
+        let events = inner.events.lock().expect("events");
+        assert_eq!(events.len(), 3, "an idle stage was logged: {events:?}");
+        assert!(
+            events.iter().all(|line| line.contains("indexer stage")),
+            "stage event missing: {events:?}"
+        );
     }
 
     #[test]
