@@ -7,6 +7,9 @@ import { defineConfig } from 'vite'
 const api = process.env.BRAIAN_API_PROXY ?? 'http://127.0.0.1:8090'
 
 export default defineConfig({
+  define: {
+    __BRAIAN_BUILD__: JSON.stringify(process.env.BRAIAN_BUILD_ID ?? process.env.GITHUB_SHA ?? 'dev'),
+  },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
