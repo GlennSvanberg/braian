@@ -145,13 +145,8 @@ export const architecture = {
 
 export const openSource = {
   title: 'Open source. Yours to run.',
-<<<<<<< HEAD
-  lede: 'MIT OR Apache-2.0 licensed and self-hosted.',
-  facts: ['MIT OR Apache-2.0', 'Rust and TypeScript', 'Postgres · Typesense', 'Docker Compose for development'],
-=======
   lede: 'Apache-2.0 licensed and self-hosted.',
-  facts: ['Apache-2.0', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
->>>>>>> 2020d48 (Relicense Braian under Apache-2.0 only)
+  facts: ['Apache-2.0', 'Rust and TypeScript', 'Postgres · Typesense', 'Docker Compose for development'],
   code: [
     'git clone https://github.com/GlennSvanberg/braian',
     'cd braian && cp .env.example .env',
