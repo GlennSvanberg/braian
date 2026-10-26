@@ -55,14 +55,10 @@ Braian talks to the services below over the network. They run as separate offici
 | Component | Version | License | Source |
 | --- | --- | --- | --- |
 | Postgres | 18 | PostgreSQL License | [Licence](https://www.postgresql.org/about/licence/), [COPYRIGHT](https://github.com/postgres/postgres/blob/REL_18_STABLE/COPYRIGHT). Image \`postgres:18\` in \`compose.yaml\`. |
-| Redpanda | v26.2.6 | Business Source License 1.1, plus the Redpanda Community License for enterprise features | [BSL 1.1](https://github.com/redpanda-data/redpanda/blob/v26.2.2/licenses/bsl.md), [RCL](https://github.com/redpanda-data/redpanda/blob/v26.2.2/licenses/rcl.md). Image \`docker.redpanda.com/redpandadata/redpanda:v26.2.6\`. GitHub source tags for this line stop at v26.2.2; that tag is the last published tree that contains \`licenses/\`. |
-| Redpanda Console | v3.13.1 | Business Source License 1.1, plus the Redpanda Community License for enterprise features | [licenses/](https://github.com/redpanda-data/console/tree/v3.13.1/licenses). The [README there](https://github.com/redpanda-data/console/blob/v3.13.1/licenses/README.md) states that BSL covers the core and the Redpanda Community License covers enterprise features, and points at the Redpanda \`licenses/bsl.md\` and \`licenses/rcl.md\` texts. Image \`docker.redpanda.com/redpandadata/console:v3.13.1\`. |
 | Typesense | 30.2 | GPL-3.0 | [LICENSE.txt](https://github.com/typesense/typesense/blob/v30.2/LICENSE.txt). Image \`typesense/typesense:30.2\`. |
-| Apache Kafka | 3.9.1 | Apache-2.0, optional \`kafka\` profile | [LICENSE](https://github.com/apache/kafka/blob/3.9.1/LICENSE), [Apache-2.0 text](https://www.apache.org/licenses/LICENSE-2.0). Image \`apache/kafka:3.9.1\`. Start it with \`docker compose --profile kafka up -d kafka\`. |
 
 ## Rust
 
-\`rdkafka\` 0.37 is built with the \`cmake-build\` feature. That build statically links librdkafka 2.12.1 (BSD-2-Clause; \`librdkafka/LICENSE\` inside \`rdkafka-sys\` 4.10.0+2.12.1) and librdkafka's bundled lz4 (BSD-2-Clause, \`librdkafka/LICENSE.lz4\`). The default \`libz\` feature links zlib (Zlib). zstd and OpenSSL are not linked in this workspace: the \`zstd\` and \`ssl\` features are off, so the cmake build sets \`WITH_ZSTD=0\` and \`WITH_SSL=0\`. Turning those features on would link zstd and OpenSSL as well. Other C sources compiled into that static library are listed in \`librdkafka/LICENSES.txt\` in the \`rdkafka-sys\` crate. \`cargo license\` does not see them.
 
 ${rust.map(rustLine).join('\n')}
 

@@ -10,15 +10,15 @@ men allt nåbart via API/MCP. Inte Fiwes produkt – Fiwe använder det.
 
 ## Nuvarande fokus: Steg 1 – grunden, tunn kedja hela vägen
 1. Definitioner: typ, struktur med klasser, attribut med regler.
-2. Skriva: API validerar, sparar i Postgres, outbox -> Redpanda.
-3. Indexera: indexerare läser Redpanda, uppdaterar Typesense inom sekunder.
+2. Skriva: API validerar, sparar i Postgres. `changes` är auditloggen och kön.
+3. Indexera: indexerare läser `changes` per seq, uppdaterar Typesense inom sekunder.
 4. Läsa: sök/lista via Typesense, enskilt objekt från Postgres.
 5. Skalbevis: 1 miljon syntetiska objekt; mät skrivtakt, fördröjning till index, söklatens.
 Agent, UI, realtid och webhooks kommer sedan som konsumenter av samma lager.
 
 ## Riktningar (2026-10-24)
 - Enterprise-skala (miljontals objekt). Self-hosting får vara flera komponenter.
-- Redpanda är kärnan från start. Kort fördröjning admin -> index (sekunder, inte minuter).
+- Postgres bär ändringsloggen. Kort fördröjning admin -> index (sekunder, inte minuter). Ingen broker.
 - Ingen värdearv; hellre delade värden. Språk på värdenivå. JSONB per objekt, inte EAV.
 - Objekt = typdefinition + klasser från sin strukturgrupp (en klass hör till en strukturgrupp).
   Inga låsta typer som artikel/produkt.
@@ -38,7 +38,7 @@ Agent, UI, realtid och webhooks kommer sedan som konsumenter av samma lager.
 ## Repo
 - Cargo-workspace i `crates/`, pnpm-workspace för `apps/` och `packages/`.
 - `model` och `rules` får inte bero på I/O; `rules` måste kompilera till `wasm32-unknown-unknown`.
-- En binär `braian` med roller (`api`, `relay`, `indexer`, `all`) i `crates/server`.
+- En binär `braian` med roller (`api`, `indexer`, `all`) i `crates/server`.
 - Kommandon via `just` (se `docs/dev.md`). Mätresultat i `docs/measurements/`.
 - Fasplan för kärnan i `docs/plan.md`: varje fas har `just demo-N` och ett end-to-end-test i CI.
 - Designkällan är Notion-sidan; repot dokumenterar bara det som hör ihop med koden.
@@ -48,4 +48,4 @@ Agent, UI, realtid och webhooks kommer sedan som konsumenter av samma lager.
 - Frontend: TypeScript med TanStack Start. Frontend är första klienten mot API:t (bevisar API-first).
 - Snabbhet i UI via lokal data, optimistiska uppdateringar och realtidspush, inte via WASM-ramverk.
 - Valideringsreglerna kan kompileras från Rust till WebAssembly så samma regler körs i klient och API.
-- Infrastruktur: Postgres, Redpanda, Typesense (docker-compose för utveckling).
+- Infrastruktur: Postgres, Typesense (docker-compose för utveckling). Ändringsflödet är Postgres, se `docs/events.md`.

@@ -116,6 +116,8 @@ pub struct Store {
     interactive: Pool,
     bulk: Pool,
     indexer: Pool,
+    /// Opens the `LISTEN` session. Pools cannot hold that session.
+    pub(crate) config: tokio_postgres::Config,
     lane: DbLane,
     yield_limits: YieldLimits,
     load: InteractiveLoad,
@@ -175,13 +177,14 @@ impl Store {
         let indexer = Pool::builder(Manager::new(config.clone(), NoTls))
             .max_size(pools.indexer.max(1))
             .build()?;
-        let bulk = Pool::builder(Manager::new(config, NoTls))
+        let bulk = Pool::builder(Manager::new(config.clone(), NoTls))
             .max_size(pools.bulk.max(1))
             .build()?;
         Ok(Self {
             interactive,
             indexer,
             bulk,
+            config,
             lane: DbLane::Interactive,
             yield_limits: pools.yield_limits(),
             load,

@@ -64,6 +64,14 @@ pub enum Error {
     Data(String),
     #[error("bulk chunk size must be at least 1")]
     EmptyChunk,
+    #[error("index claim on {lane} from {from_seq} is no longer held")]
+    ClaimLost { lane: String, from_seq: i64 },
+}
+
+impl Error {
+    pub fn is_claim_lost(&self) -> bool {
+        matches!(self, Self::ClaimLost { .. })
+    }
 }
 
 impl From<refinery::Error> for Error {

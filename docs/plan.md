@@ -14,36 +14,36 @@ built in order. Everything here is a direction and can change as measurements co
   `docs/measurements/`.
 - **Spikes:** a spike test runs at the start of the phase whose design it decides, and its
   result is written to `docs/measurements/` before the code it decides is written.
-- Postgres is the only source of truth. From phase 4 on, every demo can wipe Redpanda and
-  Typesense and rebuild them from Postgres.
+- Postgres is the only source of truth. Search can be wiped and rebuilt from it
+  (`braian reindex`). The change log lives in the same database. See [events.md](events.md).
 
 ## Decisions recorded while building phases 4–6 (2026-10-24)
+
+The broker described in the original phase 4 notes was removed on 2026-10-26.
+What follows is the flow the code uses now. Older measurement files still
+describe the relay; they are historical.
 
 - The product name is Braian. The GitHub repository name stays as it is. The CLI binary is `braian`.
 - Spike 2 picked one Typesense collection with a field per language. Numbers are in
   `docs/measurements/2026-10-24-spike-2-index.md`. The index stores the base-unit value as a
   float; the exact decimal stays in Postgres.
-- The relay confirms the replication slot from inside the read loop (200 ms), and only
-  up to the oldest event Kafka has accepted. Interactive and bulk are produced on
-  separate tasks so an interactive event is not waiting on a bulk ack. A crash can
-  replay a short tail. Consumers are idempotent. The order test allows that replay and
-  requires the new sequence numbers with no gaps.
-- If Postgres invalidates the slot (`max_slot_wal_keep_size` is instance-wide), the
-  relay drops that slot, asks the indexer to reindex from Postgres, and creates a new
-  one. Settings for a shared versus a dedicated Postgres are in `docs/dev.md`.
-- The same relay test talks to whatever `KAFKA_BROKERS` points at. `compose.yaml` has an
-  Apache Kafka profile (`docker compose --profile kafka up -d kafka`, port 19093).
+- The indexer claims seq ranges on `changes`, one cursor per lane. Interactive and
+  bulk are separate, so an edit is claimed while a bulk range is still open. A crash
+  before commit leaves the lease to expire, and the next worker claims the same
+  sequences. Consumers are idempotent. `just demo-4` covers resume, coalescing,
+  lane priority, two workers, and a notify from another connection.
+- A full rebuild is `braian reindex`. There is no replication slot to invalidate.
 - Phase 6 is the bulk job endpoint with per-row progress and errors. The scale proof
   (5 000/s, 1M, 10M) is not part of this cut.
-- `braian all` seeds, then starts the relay, the indexer and the live consumer when
-  `KAFKA_BROKERS` is set, and serves the API. Default listen address is `127.0.0.1:8090`
-  because Redpanda Console owns 8080.
+- `braian all` seeds, then starts the indexer when `TYPESENSE_URL` is set, and serves
+  the API. The live tail starts with the API. Default listen address is `127.0.0.1:8090`.
+  A leftover `KAFKA_BROKERS` value is logged and ignored.
 - An agent is never a change type. The actor is a person; `via` is `agent` or `api`.
   Operations that need approval, and every agent write, become a proposal.
 
 ## Phase 0 – Skeleton (done)
 
-Cargo workspace, compose stack (Postgres, Redpanda, Redpanda Console, Typesense),
+Cargo workspace, compose stack (Postgres, Typesense),
 devcontainer, CI and a read-only Postgres MCP.
 
 - **Demo:** `just up` brings all services up healthy.
@@ -165,8 +165,8 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
   - A write response carries `version`, `seq`, `model_revision`, `warnings` and an `ETag`.
   - The API re-reads and validates at most three times when the object changed after it
     was read (`StaleRead`). The client's base version is only the conflict check.
-  - `all` seeds, then starts the relay, the indexer and the live consumer when Kafka is
-    configured, and serves the API.
+  - `all` seeds, then starts the indexer when Typesense is configured, and serves the API.
+    The API process tails `changes` for SSE.
 - **Demo:** `just demo-3` creates `braian_demo3`, serves the API on a free port, and runs
   `tests/hurl/phase-3` with Hurl.
 - **Test:** API tests through the router against Postgres, the store conflict matrix, and
@@ -174,20 +174,20 @@ No I/O. This phase fixes the vocabulary the rest of the system uses.
 - **Done when:** `just demo-3` passes, the API tests and the OpenAPI check pass, and API
   latency is recorded in `docs/measurements/`.
 
-## Phase 4 – Relay to Redpanda
+## Phase 4 – Change log
+
+The first cut of this phase published to a broker. That transport is gone.
+`changes` is the log. [events.md](events.md) is the design.
 
 - **Build:**
-  - `relay` reads `changes` through logical replication, in commit order.
-  - It publishes small events ("object X changed to version v") to two topics:
-    interactive and bulk.
-  - It exposes how far the replication slot lags, with a limit for alerting.
-  - `events`: the event contract behind our own interface, using `rdkafka`.
-- **Demo:** `just demo-4` saves through the API and shows the event in Redpanda Console.
-  Then it stops the relay, writes 1,000 changes, restarts it, and shows that all 1,000
-  arrive in commit order.
-- **Test:**
-  - No lost or reordered events across a relay crash.
-  - The same suite also runs against Apache Kafka.
+  - Workers lease seq ranges on `changes`, one durable cursor per lane.
+  - Interactive and bulk stay separate. A crash replays the uncommitted range.
+  - `LISTEN braian_changes` wakes the indexer and the SSE tail. A poll is the fallback.
+  - `events`: the `ChangeSource` contract. The only implementation reads Postgres.
+- **Demo:** `just demo-4` runs the change-log tests: resume after an expired lease,
+  coalescing input, an interactive claim while bulk is open, two disjoint workers,
+  and a notify from another connection.
+- **Test:** the same tests, in CI (`cargo test -p braian-store --test change_log`).
 
 ## Phase 5 – Indexer and search
 

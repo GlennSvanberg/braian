@@ -1,6 +1,6 @@
 # Status 2026-10-25
 
-Braian går att starta lokalt och att klicka igenom. Postgres är källan. Relay, indexer, sök, auth, förslag och webbgränssnittet sitter på samma kedja. Demokatalogen som `just dev` visar är bara seed: 13 hjälteobjekt och 3 000 syntetiska bygg- och friluftsprodukter, 3 013 rader, språk sv/en/de, med strukturer, klasser, värdelistor och enheter. Tester skriver i databasen `braian_e2e` och sökaliaset `braian_e2e`, inte i demon.
+Braian går att starta lokalt och att klicka igenom. Postgres är källan och ändringsloggen. Indexer, sök, auth, förslag och webbgränssnittet sitter på samma kedja. Flödet står i `docs/events.md`. Demokatalogen som `just dev` visar är bara seed: 13 hjälteobjekt och 3 000 syntetiska bygg- och friluftsprodukter, 3 013 rader, språk sv/en/de, med strukturer, klasser, värdelistor och enheter. Tester skriver i databasen `braian_e2e` och sökaliaset `braian_e2e`, inte i demon.
 
 Skalprovet (5 000 skrivningar i sekunden, 1 miljon och 10 miljoner objekt) är inte gjort. En virtuell tabell mot 100 013 objekt är mätt, se `docs/measurements/2026-10-25-table-100k.md`.
 
@@ -15,15 +15,15 @@ just dev
 
 Öppna http://127.0.0.1:3000. API:t lyssnar på http://127.0.0.1:8090. Demokontot skapas från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env` (se `.env.example`). Inget lösenord ligger i källkoden. Playwright läser samma variabler, från miljön eller från `.env`, och har inget lösenord i specen. Agenten vill ha `OPENAI_API_KEY`. Utan nyckel svarar samma Ctrl+K-panel på engelska att ingen modell är kopplad, och resten av programmet fungerar.
 
-På Windows, om `just` inte är installerat: `.\scripts\up.ps1`, `pnpm install`, `.\scripts\dev.ps1`. `just` installeras med `winget install --id Casey.Just` eller `scoop install just`. Rust-bygget behöver CMake och en C++-kompilator eftersom `rdkafka` använder `cmake-build` (Visual Studio Build Tools, workload "Desktop development with C++").
+På Windows, om `just` inte är installerat: `.\scripts\up.ps1`, `pnpm install`, `.\scripts\dev.ps1`. `just` installeras med `winget install --id Casey.Just` eller `scoop install just`.
 
-En ren klon på Linux följde README: `cp .env.example .env`, `just up`, `pnpm install`, `just dev`. API:t lyssnade på 8090 och webben på 3000. Sökningen svarade 3 013 objekt ur den befintliga volymen, hjälteobjekten först (`ART-REGEL-45` och vidare). `just` behöver vara installerat. Första `just dev` byggde Rust-koden i klonen. En befintlig replikeringsslot återanvänds, med en varning, och strömmen fortsätter. Windows-anteckningarna står i README.
+En ren klon på Linux följde README: `cp .env.example .env`, `just up`, `pnpm install`, `just dev`. API:t lyssnade på 8090 och webben på 3000. Sökningen svarade 3 013 objekt ur den befintliga volymen, hjälteobjekten först (`ART-REGEL-45` och vidare). `just` behöver vara installerat. Första `just dev` byggde Rust-koden i klonen. Windows-anteckningarna står i README. En värd som fortfarande har replikeringsslotten `braian_relay` måste släppa den innan `wal_level` sänks. Se `deploy/drop-relay-slot.sql`.
 
 ## Det som fungerar
 
 - Definitioner, validering (samma regler i Rust och wasm), objekt, relationer, enheter och värdelistor.
 - Varje skrivning är en batch med aktör och, för en agent, personen agenten agerar för.
-- Relay läser `changes` via logisk replikering och publicerar till Redpanda (`interactive` och `bulk`) med en eftersläpningsmätare. Interaktiva ändringar produceras på en egen kö, så de väntar inte på att en bulk-batch ska bli kvitterad. Blir slotten ogiltig släpper relayn den, ber indexern bygga om aliaset från Postgres och skapar en ny slot. Samma test kan peka om `KAFKA_BROKERS` mot Apache Kafka-profilen i `compose.yaml`.
+- `changes` är kön. Indexern leasar seq-intervall per spår (`interactive` och `bulk`). Ett interaktivt intervall tas medan ett bulk-intervall fortfarande är öppet. En krasch innan commit lämnar leaset. Nästa arbetare tar samma seq. `LISTEN braian_changes` väcker indexer och SSE-svansen, även när en annan anslutning committade. `braian reindex` bygger om aliaset från Postgres.
 - Indexer, sök med `wait_seq`, och `braian reindex` som byter alias. Indexern hämtar många objekt per fråga och importerar dem till Typesense i batchar. Ett fält per språk i en Typesense-samling.
 - Massändring som jobb (`bulk.write`) med status och fel per rad.
 - Inloggning med lösenord (argon2id), cookie-session, roller admin/editor/viewer, och API-token knuten till en person. Ett ooptimerat debugbygge lät Argon2id och blake2 köra utan optimering, och inloggningen tog omkring tio sekunder på en Windows-laptop. Dev-profilen bygger `argon2` och `blake2` med `opt-level = 3`. Hash plus verify av ett lösenord tog 41 ms i den profilen, se `docs/measurements/2026-10-25-login-debug.md`.
@@ -50,10 +50,10 @@ Tre Playwright-körningar på den här virtuella maskinen (4 vCPU). Första obje
 
 ## Kända fel
 
-- Relayn bekräftar slotten inifrån läsloopen. En krasch kan spela upp en kort svans. Indexern är idempotent, men en konsument som inte tål dubbletter får se samma `seq` igen.
+- En krasch innan claimen committas spelar upp samma seq-intervall. Indexern är idempotent. En konsument som inte tål dubbletter får se samma `seq` igen.
 - Sökningen är till slut konsekvent utom när anropet skickar `wait_seq` från skrivsvaret.
 - Exakt decimal ligger i Postgres. Indexet lagrar basenhetens värde som flyttal, så stora tal kan tappa precision i sortering.
 
 ## Tester
 
-`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (relay- och indexertesten hoppar över om `KAFKA_BROKERS` respektive `TYPESENSE_URL` saknas), wasm-bygget av `rules`, `pnpm --dir apps/web exec tsc --noEmit`, vitest och Playwright. `node scripts/e2e.mjs` kör rök, drag och layout mot `braian_e2e`. Röken bekräftar ett objekts förslag innan raden räknas som sparad. `e2e/drag.spec.ts` drar en kolumn, dockar en flik och flyttar en klass via konsekvensvyn. `e2e/layout.spec.ts` drar en avdelare, dockar till varje zon, byter flikordning, maximerar, laddar om och flyttar med Ctrl+Alt+pil. Samma svit mäter att förhandsvisningen är panelets halva eller hela yta med 4px indrag (±2px), och att fönsterkanten följer 0.3-andelen plus 6px-gapet. Vitest täcker de rena layoutfunktionerna. `e2e/latency.spec.ts` är mätningen ovan och hoppas över om inte `BRAIAN_SCALE=1`. HTTP-testerna täcker modellförslag, att en agent inte får acceptera, och frecency per person. Agentanropet i enhetstesterna är mockat mot OpenAI.
+`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (ändringsloggens tester behöver `BRAIAN_TEST_DATABASE_URL`; indexertesterna mot Typesense hoppar över om `TYPESENSE_URL` saknas), wasm-bygget av `rules`, `pnpm --dir apps/web exec tsc --noEmit`, vitest och Playwright. `node scripts/e2e.mjs` kör rök, drag och layout mot `braian_e2e`. Röken bekräftar ett objekts förslag innan raden räknas som sparad. `e2e/drag.spec.ts` drar en kolumn, dockar en flik och flyttar en klass via konsekvensvyn. `e2e/layout.spec.ts` drar en avdelare, dockar till varje zon, byter flikordning, maximerar, laddar om och flyttar med Ctrl+Alt+pil. Samma svit mäter att förhandsvisningen är panelets halva eller hela yta med 4px indrag (±2px), och att fönsterkanten följer 0.3-andelen plus 6px-gapet. Vitest täcker de rena layoutfunktionerna. `e2e/latency.spec.ts` är mätningen ovan och hoppas över om inte `BRAIAN_SCALE=1`. HTTP-testerna täcker modellförslag, att en agent inte får acceptera, och frecency per person. Agentanropet i enhetstesterna är mockat mot OpenAI.

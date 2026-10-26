@@ -4,7 +4,7 @@
 //!
 //! - Postgres write and read: parallel bulk loaders write `count` objects, then
 //!   sequential HTTP `PATCH` + `GET` pairs, `GET` by id and 100-object reads run
-//!   against an in-process API on the same store. Run it with relay and indexer off.
+//!   against an in-process API on the same store. Run it with the indexer off.
 //! - Change to searchable: with `--typesense-url`, probes run *while the bulk is
 //!   loading*. Each probe patches one searchable text attribute with a unique token
 //!   through the API, then polls Typesense until that object is a hit.

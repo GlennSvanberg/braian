@@ -194,7 +194,7 @@ impl AppState {
     }
 
     /// Best-effort search update after an interactive commit. A full queue is
-    /// dropped; the Redpanda indexer still writes the document.
+    /// dropped; the change-log indexer still writes the document.
     pub fn index_after_commit(&self, id: Uuid, seq: i64) {
         let Some(tx) = &self.index_tx else {
             return;
@@ -212,9 +212,9 @@ impl AppState {
 
     /// Queues one change for the live stream and webhooks.
     ///
-    /// A repeated `seq` is ignored so a local write and the Kafka consumer do
+    /// A repeated `seq` is ignored so a local write and the Postgres tail do
     /// not notify twice. Bulk events are folded by the worker. A full queue is
-    /// dropped; the change is still in Postgres and Redpanda.
+    /// dropped; the change is still in Postgres.
     pub fn emit(&self, body: Value) {
         if let Some(seq) = body.get("seq").and_then(Value::as_i64) {
             let mut seen = self

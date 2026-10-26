@@ -8,7 +8,6 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      KAFKA_BROKERS: redpanda:9092
       TYPESENSE_URL: http://typesense:8108
     volumes:
       - .:/workspaces/Braian:cached
@@ -16,8 +15,6 @@ services:
       - cargo-registry:/usr/local/cargo/registry
     depends_on:
       postgres:
-        condition: service_healthy
-      redpanda:
         condition: service_healthy
 
 volumes:

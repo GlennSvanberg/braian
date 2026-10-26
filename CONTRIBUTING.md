@@ -20,7 +20,7 @@ just check
 just test
 ```
 
-For a change in the web app, also run `pnpm --dir apps/web typecheck` and `pnpm --dir apps/web test`. `just --list` shows the phase demos. `just demo-4` needs Redpanda and `just demo-5` needs Typesense, both started by `just up`.
+For a change in the web app, also run `pnpm --dir apps/web typecheck` and `pnpm --dir apps/web test`. `just --list` shows the phase demos. `just demo-4` needs Postgres and `just demo-5` needs Typesense, both started by `just up`.
 
 ## Project rules
 

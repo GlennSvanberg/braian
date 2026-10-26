@@ -4,7 +4,7 @@ use tokio::sync::OnceCell;
 use uuid::Uuid;
 
 use crate::error::Error;
-use crate::ids::plain_name;
+use crate::ids::{Actor, plain_name};
 use crate::session::{self, PgConn, Store};
 use crate::split::StorageForm;
 
@@ -164,6 +164,7 @@ fn template_name() -> String {
         include_str!("../migrations/V12__structure_labels.sql"),
         include_str!("../migrations/V13__assortment_view.sql"),
         include_str!("../migrations/V14__class_attributes_view.sql"),
+        include_str!("../migrations/V15__change_log.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {
@@ -172,6 +173,20 @@ fn template_name() -> String {
         }
     }
     format!("tpl_{hash:016x}")
+}
+
+/// Appends one `changes` row per id, on `actor`'s lane.
+pub async fn append_changes(
+    store: &Store,
+    actor: &Actor,
+    object_ids: &[Option<Uuid>],
+) -> Result<Vec<i64>, Error> {
+    store.append_log(actor, object_ids).await
+}
+
+/// Expires open leases so the next claim replays them.
+pub async fn expire_claims(store: &Store, lane: &str) -> Result<(), Error> {
+    store.expire_claims(lane).await
 }
 
 async fn admin_conn(admin_url: &str) -> Result<PgConn, Error> {
