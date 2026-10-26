@@ -379,7 +379,7 @@ const mobile: Layout = {
       seed: 241,
       tone: 'accent',
       radius: 14,
-      label: { x: 8, y: 205, text: 'LISTEN · SSE', anchor: 'start' },
+      label: { x: 8, y: 150, text: 'SSE', anchor: 'start' },
     },
     {
       id: 'loop',
