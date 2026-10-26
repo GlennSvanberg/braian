@@ -395,29 +395,53 @@ async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
 /// The blocking transaction starts after the read's first activity check and
 /// before the page. A higher seq then commits. The stale activity snapshot
 /// would call the lower seq aborted.
-async fn during_page_gap<T: Send + 'static>(
-    url: &str,
-    actor: Uuid,
-    read: impl std::future::Future<Output = T> + Send + 'static,
-) -> (T, i64) {
-    let gap = PageGap::arm();
-    let task = gap.drive(read);
-    tokio::time::timeout(Duration::from_secs(5), gap.wait_entered())
-        .await
-        .expect("the read did not reach the page window");
-    let blocker = begin(url).await;
-    let low = insert_row(&blocker, actor, "bulk").await;
-    let other = begin(url).await;
-    let high = insert_row(&other, actor, "interactive").await;
-    other.batch_execute("COMMIT").await.unwrap();
-    assert!(low < high);
-    gap.release();
-    let value = tokio::time::timeout(Duration::from_secs(5), task)
-        .await
-        .expect("the read stayed in the page window")
-        .expect("read task");
-    blocker.batch_execute("ROLLBACK").await.unwrap();
-    (value, low)
+///
+/// A claim with a leading hole returns before that pause when any other
+/// backend already holds an xid. The pressure gauge upserts on its own
+/// connection every few milliseconds, so that early return is a race. Retry
+/// until the read is actually inside the window.
+async fn during_page_gap<T, F, Fut>(url: &str, actor: Uuid, mut read: F) -> (T, i64)
+where
+    T: Send + 'static,
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+{
+    for attempt in 1..=40 {
+        let gap = PageGap::arm();
+        let mut task = gap.drive(read());
+        let entered = tokio::select! {
+            biased;
+            _ = gap.wait_entered() => true,
+            result = &mut task => {
+                result.expect("read task");
+                false
+            }
+            () = tokio::time::sleep(Duration::from_secs(5)) => {
+                panic!("the read did not reach the page window");
+            }
+        };
+        if !entered {
+            assert!(
+                attempt < 40,
+                "the read kept stopping before the page window"
+            );
+            continue;
+        }
+        let blocker = begin(url).await;
+        let low = insert_row(&blocker, actor, "bulk").await;
+        let other = begin(url).await;
+        let high = insert_row(&other, actor, "interactive").await;
+        other.batch_execute("COMMIT").await.unwrap();
+        assert!(low < high);
+        gap.release();
+        let value = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the read stayed in the page window")
+            .expect("read task");
+        blocker.batch_execute("ROLLBACK").await.unwrap();
+        return (value, low);
+    }
+    unreachable!("the retry loop returns or panics");
 }
 
 #[tokio::test]
@@ -431,10 +455,13 @@ async fn an_open_seq_that_starts_after_the_activity_check_is_not_skipped() {
 
     for lane in ["interactive", "bulk"] {
         let reading = store.clone();
-        let (claimed, low) = during_page_gap(&url, actor, async move {
-            reading
-                .claim_changes(lane, Uuid::now_v7(), 10, Duration::from_secs(30))
-                .await
+        let (claimed, low) = during_page_gap(&url, actor, move || {
+            let reading = reading.clone();
+            async move {
+                reading
+                    .claim_changes(lane, Uuid::now_v7(), 10, Duration::from_secs(30))
+                    .await
+            }
         })
         .await;
         assert!(
@@ -455,8 +482,9 @@ async fn an_open_seq_that_starts_after_the_activity_check_is_not_skipped() {
     }
 
     let reading = store.clone();
-    let (tail, low) = during_page_gap(&url, actor, async move {
-        reading.changes_after(cursor, 10).await
+    let (tail, low) = during_page_gap(&url, actor, move || {
+        let reading = reading.clone();
+        async move { reading.changes_after(cursor, 10).await }
     })
     .await;
     let tail = tail.unwrap();
@@ -466,8 +494,11 @@ async fn an_open_seq_that_starts_after_the_activity_check_is_not_skipped() {
     );
 
     let reading = store.clone();
-    let (safe, low) =
-        during_page_gap(&url, actor, async move { reading.safe_change_seq().await }).await;
+    let (safe, low) = during_page_gap(&url, actor, move || {
+        let reading = reading.clone();
+        async move { reading.safe_change_seq().await }
+    })
+    .await;
     let safe = safe.unwrap();
     assert!(safe < low, "safe seq {safe} passed the open seq {low}");
     assert_eq!(safe, cursor);
@@ -500,10 +531,13 @@ async fn a_hole_is_not_filled_when_a_transaction_opens_during_the_page_read() {
         .unwrap();
 
     let reading = store.clone();
-    let (claimed, low) = during_page_gap(&url, actor, async move {
-        reading
-            .claim_changes("bulk", Uuid::now_v7(), 10, Duration::from_secs(30))
-            .await
+    let (claimed, low) = during_page_gap(&url, actor, move || {
+        let reading = reading.clone();
+        async move {
+            reading
+                .claim_changes("bulk", Uuid::now_v7(), 10, Duration::from_secs(30))
+                .await
+        }
     })
     .await;
     assert!(low > 50);
