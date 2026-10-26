@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, textValue, type Json } from './api'
+import { api, catalogName, type Json } from './api'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
 import { assortmentDisplayName } from './demo-labels'
@@ -17,9 +17,11 @@ type AssortmentSession = {
   push: (line: string) => void
 }
 
-function groupChip(group: string) {
-  const key = group.includes(':') ? group.slice(group.indexOf(':') + 1) : group
-  return structureCaption(key)
+function groupChip(group: string, defs?: Json) {
+  const splitAt = group.indexOf(':')
+  const key = splitAt >= 0 ? group.slice(splitAt + 1) : group
+  const structure = splitAt > 0 ? group.slice(0, splitAt) : undefined
+  return structureCaption(key, defs, structure)
 }
 
 function filterOf(query: Json) {
@@ -34,6 +36,7 @@ export function AssortmentList({ session }: { session: AssortmentSession }) {
     queryKey: ['assortments'],
     queryFn: () => api<{ assortments: Json[] }>('/v1/assortments'),
   })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const items = list.data?.assortments ?? []
   const [openId, setOpenId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -117,7 +120,7 @@ export function AssortmentList({ session }: { session: AssortmentSession }) {
         <div data-testid="assortment-open">
           <div className="assortment-query">
             {query.type ? <span className="filter-chip">{String(query.type)}</span> : null}
-            {query.group ? <span className="filter-chip">{groupChip(String(query.group))}</span> : null}
+            {query.group ? <span className="filter-chip">{groupChip(String(query.group), defs.data)}</span> : null}
             {query.text ? <span className="filter-chip">{String(query.text)}</span> : null}
           </div>
           <p className="hint">
@@ -127,7 +130,7 @@ export function AssortmentList({ session }: { session: AssortmentSession }) {
             {hits.map((hit) => {
               const id = String(hit.id ?? '')
               const key = String(hit.key ?? id)
-              const label = textValue(hit.a_namn__en, 'en') || textValue(hit.a_namn__sv, 'sv') || key
+              const label = catalogName(hit) || key
               return (
                 <button key={id || key} type="button" className="row" onClick={() => session.setObjectId(id)}>
                   <span>{key}</span>

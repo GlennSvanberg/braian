@@ -5,7 +5,7 @@ import { scaleBand } from '@tanstack/charts/scales/band'
 import { scaleLinear } from '@tanstack/charts/scales/linear'
 import { Chart } from '@tanstack/react-charts'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
-import { api, textValue, type Json } from './api'
+import { api, recordTitle, textValue, type Json } from './api'
 import { AssortmentList } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { ImportScreen } from './import/view'
@@ -605,8 +605,8 @@ export function Shell() {
           state: {
             object_type: type.id,
             type_key: type.key,
-            columns: ['nummer', 'namn', 'type', 'status', 'farg', 'vikt', 'langd'],
-            sort: 'nummer',
+            columns: ['number', 'name', 'type', 'status'],
+            sort: 'number',
           },
         }
         await api('/v1/views', {
@@ -727,7 +727,7 @@ export function Shell() {
             id: objectId,
             type: String(opened.data?.type ?? ''),
             key: String(opened.data?.key ?? ''),
-            title: textValue((opened.data?.values as Json | undefined)?.namn),
+            title: recordTitle(opened.data?.values as Json | undefined),
           } : null}
         />
       ) : null}
@@ -953,7 +953,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     setMenu(null)
     setPendingDelete(null)
     if (mode === 'child' && !openKeys.includes(row.key)) setOpenKeys((current) => [...current, row.key])
-    setEditing({ row, mode, value: mode === 'rename' ? structureCaption(row.key) : '' })
+    setEditing({ row, mode, value: mode === 'rename' ? structureCaption(row.key, defs.data, row.structureKey) : '' })
   }
   const commitEdit = (typedRaw?: string) => {
     if (!editing) return
@@ -962,7 +962,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     setEditing(null)
     if (!typed) return
     if (mode === 'rename') {
-      if (typed === structureCaption(row.key) || typed === row.key) return
+      if (typed === structureCaption(row.key, defs.data, row.structureKey) || typed === row.key) return
       void propose('model.rename_group', { structure: row.structureKey, group: row.key, label: typed })
       return
     }
@@ -1044,7 +1044,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
         const rows = entries.filter((row) => row.structureKey === structureKey)
         return (
           <div key={structureKey}>
-            <strong>{structureCaption(structureKey)}</strong>
+            <strong>{structureCaption(structureKey, defs.data, structureKey)}</strong>
             {rows.map((row) => {
               const selected = session.group === `${structureKey}:${row.key}`
               const Icon = row.kids ? (row.open ? FolderOpen : Folder) : File
@@ -1109,7 +1109,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                       <span className="tree-chevron" aria-hidden="true" />
                     )}
                     <Icon size={14} className="tree-icon" aria-hidden="true" />
-                    <span className="tree-label">{structureCaption(row.key)}</span>
+                    <span className="tree-label">{structureCaption(row.key, defs.data, structureKey)}</span>
                     {row.count > 0 ? <span className="tree-count">{row.count}</span> : null}
                   </button>
                   {editing?.row.id === row.id ? (

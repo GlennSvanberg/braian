@@ -1,6 +1,6 @@
 # Status 2026-10-25
 
-Braian går att starta lokalt och att klicka igenom. Postgres är källan och ändringsloggen. Indexer, sök, auth, förslag och webbgränssnittet sitter på samma kedja. Flödet står i `docs/events.md`. Demokatalogen som `just dev` visar är bara seed: 13 hjälteobjekt och 3 000 syntetiska bygg- och friluftsprodukter, 3 013 rader, språk sv/en/de, med strukturer, klasser, värdelistor och enheter. Tester skriver i databasen `braian_e2e` och sökaliaset `braian_e2e`, inte i demon.
+Braian går att starta lokalt och att klicka igenom. Postgres är källan och ändringsloggen. Indexer, sök, auth, förslag och webbgränssnittet sitter på samma kedja. Flödet står i `docs/events.md`. Demokatalogen som `just dev` visar är bara seed: hjälteobjekt plus 240 syntetiska livsmedel (leverantörer, produkter och artiklar). Etiketter finns på sv/en/de och objektdata är engelska. Strukturen heter Food, leverantörer står utanför trädet och pekas ut med objektreferens. Tester skriver i databasen `braian_e2e` och sökaliaset `braian_e2e`, inte i demon.
 
 Skalprovet (5 000 skrivningar i sekunden, 1 miljon och 10 miljoner objekt) är inte gjort. En virtuell tabell mot 100 013 objekt är mätt, se `docs/measurements/2026-10-25-table-100k.md`.
 

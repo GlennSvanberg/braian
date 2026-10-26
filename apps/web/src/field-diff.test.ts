@@ -9,8 +9,11 @@ const defs = {
   value_lists: [{ key: 'status', options: [{ code: 'ok', labels: { en: 'OK' } }, { code: 'draft', labels: { en: 'Draft' } }] }],
   structures: [
     {
-      key: 'sortiment',
-      groups: [{ id: 'g-talt', key: 'talt' }, { id: 'g-virke', key: 'virke' }],
+      key: 'food',
+      groups: [
+        { id: 'g-cheese', key: 'cheese', labels: { en: 'Cheese' } },
+        { id: 'g-juice', key: 'juice', labels: { en: 'Juice' } },
+      ],
     },
   ],
 }
@@ -56,13 +59,13 @@ describe('diff lines', () => {
     const lines = diffLines(
       {
         status: { before: 'draft', after: 'ok' },
-        $groups: { sortiment: { before: 'g-talt', after: 'g-virke' } },
+        $groups: { food: { before: 'g-cheese', after: 'g-juice' } },
       },
       defs,
     )
     expect(lines.map((line) => `${line.label}: ${line.before} -> ${line.after}`)).toEqual([
       'Status: Draft -> OK',
-      'Group: Tents -> Timber',
+      'Group: Cheese -> Juice',
     ])
   })
 

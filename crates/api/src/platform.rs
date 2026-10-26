@@ -2301,7 +2301,11 @@ async fn run_bulk(
             match create_op(&cached, object) {
                 Ok(op) => ops.push(op),
                 Err(problem) => errors.push(json!({
-                    "key": object.values.get("nummer").or_else(|| object.values.get("sku")).cloned().unwrap_or(Value::Null),
+                    "key": labeled_key_from(&cached.model, Some(&object.object_type), |key| {
+                        object.values.get(key)
+                    })
+                    .cloned()
+                    .unwrap_or(Value::Null),
                     "message": problem.detail,
                     "code": problem.code,
                 })),
@@ -2349,6 +2353,35 @@ async fn run_bulk(
         )
         .await;
     emit_job(&state, id, status, done, total);
+}
+
+fn key_attribute_name(
+    model: &braian_rules::CompiledModel,
+    type_key: Option<&str>,
+) -> Option<String> {
+    let type_key = type_key?;
+    let type_id = model.type_id(type_key)?;
+    let attribute_id = model.key_attribute(type_id)?;
+    model
+        .attribute(attribute_id)
+        .map(|attribute| attribute.key.clone())
+}
+
+/// Business key for a bulk error or an agent proposal.
+///
+/// The name comes from the type's key attribute. `number`, then the older
+/// `nummer` and `sku` names, are only used when that type is not in the model.
+fn labeled_key_from<'a>(
+    model: &braian_rules::CompiledModel,
+    type_key: Option<&str>,
+    get: impl Fn(&str) -> Option<&'a Value>,
+) -> Option<&'a Value> {
+    match key_attribute_name(model, type_key) {
+        Some(name) => get(&name),
+        None => get("number")
+            .or_else(|| get("nummer"))
+            .or_else(|| get("sku")),
+    }
 }
 
 fn create_op(cached: &crate::state::CachedModel, body: &CreateObject) -> Result<ObjectOp, Problem> {
@@ -3537,30 +3570,34 @@ async fn object_names(
         }
     }
     let cached = state.models.get(&state.store).await?;
-    let name_id = cached
-        .model
-        .attribute_by_key("namn")
-        .map(|attribute| attribute.id);
-    // The graph asks for names in batches. Load only the `namn` parts; the
+    let name_ids: Vec<_> = ["name", "company_name", "namn"]
+        .into_iter()
+        .filter_map(|key| {
+            cached
+                .model
+                .attribute_by_key(key)
+                .map(|attribute| attribute.id)
+        })
+        .collect();
+    // The graph asks for names in batches. Load the display-name parts; the
     // object key and type come from the object row.
-    let projection = match name_id {
-        Some(id) => {
-            let parts = state
-                .store
-                .parts_for_attributes(&[id], None)
-                .await
-                .map_err(store_status)?;
-            ObjectProjection {
-                groups: false,
-                values: true,
-                parts: Some(parts),
-            }
-        }
-        None => ObjectProjection {
+    let projection = if name_ids.is_empty() {
+        ObjectProjection {
             groups: false,
             values: false,
             parts: None,
-        },
+        }
+    } else {
+        let parts = state
+            .store
+            .parts_for_attributes(&name_ids, None)
+            .await
+            .map_err(store_status)?;
+        ObjectProjection {
+            groups: false,
+            values: true,
+            parts: Some(parts),
+        }
     };
     let stored = state
         .store
@@ -3572,9 +3609,21 @@ async fn object_names(
         if item.deleted_at.is_some() {
             continue;
         }
-        let name = name_id
-            .and_then(|id| item.object.values.get(&id))
-            .map(display_name_text)
+        let name = name_ids
+            .iter()
+            .find_map(|id| {
+                let text = item
+                    .object
+                    .values
+                    .get(id)
+                    .map(display_name_text)
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            })
             .unwrap_or_default();
         objects.push(json!({
             "id": item.object.id.as_uuid(),
@@ -4427,14 +4476,25 @@ async fn propose_operation(
                 .get("id")
                 .and_then(Value::as_str)
                 .and_then(|text| Uuid::parse_str(text).ok());
+            let cached = state.models.get(&state.store).await.ok();
+            let object_key = match &cached {
+                Some(cached) => labeled_key_from(
+                    &cached.model,
+                    args.get("type").and_then(Value::as_str),
+                    |key| args.get("values").and_then(|values| values.get(key)),
+                )
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+                None => args
+                    .get("values")
+                    .and_then(|values| values.get("number").or_else(|| values.get("nummer")))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            };
             let row = ProposalRow {
                 id: Uuid::now_v7(),
                 object_id,
-                object_key: args
-                    .get("values")
-                    .and_then(|values| values.get("nummer"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
+                object_key,
                 type_key: args.get("type").and_then(Value::as_str).map(str::to_owned),
                 base_version: args.get("base_version").and_then(Value::as_i64),
                 patch: args.clone(),
@@ -4898,33 +4958,50 @@ mod tests {
     }
 
     #[test]
+    fn business_key_follows_the_type_key_attribute() {
+        let defs: DefinitionSet = serde_json::from_str(ANCESTOR_DEFS).expect("defs");
+        let model = braian_rules::CompiledModel::compile(&defs).expect("compile");
+        let values = json!({"number": "ART-1", "nummer": "OLD"});
+        let found = labeled_key_from(&model, Some("article"), |key| values.get(key));
+        assert_eq!(found.and_then(Value::as_str), Some("ART-1"));
+        let only_old = json!({"nummer": "OLD"});
+        assert!(labeled_key_from(&model, Some("article"), |key| only_old.get(key)).is_none());
+        let unknown = json!({"nummer": "OLD"});
+        assert_eq!(
+            labeled_key_from(&model, Some("missing"), |key| unknown.get(key))
+                .and_then(Value::as_str),
+            Some("OLD")
+        );
+    }
+
+    #[test]
     fn graph_marks_an_ancestor_group_attribute_as_inherited() {
         let defs: DefinitionSet = serde_json::from_str(ANCESTOR_DEFS).expect("defs");
         let model = braian_rules::CompiledModel::compile(&defs).expect("compile");
-        let sortiment = braian_model::StructureId::from_uuid(
+        let food = braian_model::StructureId::from_uuid(
             Uuid::parse_str("018f0000-0000-7000-8000-000000000300").expect("structure"),
         );
-        let friluft = braian_model::GroupId::from_uuid(
-            Uuid::parse_str("018f0000-0000-7000-8000-000000000310").expect("friluft"),
+        let dairy = braian_model::GroupId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-000000000310").expect("dairy"),
         );
-        let talt = braian_model::GroupId::from_uuid(
-            Uuid::parse_str("018f0000-0000-7000-8000-000000000311").expect("talt"),
+        let cheese = braian_model::GroupId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-000000000311").expect("cheese"),
         );
         let type_id = braian_model::TypeId::from_uuid(
             Uuid::parse_str("018f0000-0000-7000-8000-000000000201").expect("type"),
         );
-        let in_talt = Object {
+        let in_cheese = Object {
             id: ObjectId::from_uuid(
                 Uuid::parse_str("018f1000-0000-7000-8000-000000000011").expect("object"),
             ),
             type_id,
             model_revision: 1,
-            groups: BTreeMap::from([(sortiment, talt)]),
+            groups: BTreeMap::from([(food, cheese)]),
             values: BTreeMap::new(),
         };
-        let in_friluft = Object {
-            groups: BTreeMap::from([(sortiment, friluft)]),
-            ..in_talt.clone()
+        let in_dairy = Object {
+            groups: BTreeMap::from([(food, dairy)]),
+            ..in_cheese.clone()
         };
         let rows = |object: &Object, key: &str| {
             let attribute = model.attribute_by_key(key).expect(key);
@@ -4939,32 +5016,27 @@ mod tests {
             }
         };
 
-        let vikt = rows(&in_talt, "vikt");
-        assert_eq!(vikt.len(), 1, "{vikt:?}");
-        assert_eq!(vikt[0]["from"], "group");
-        assert_eq!(vikt[0]["structure"], "sortiment");
-        assert_eq!(vikt[0]["group"], "friluft");
-        assert_eq!(vikt[0]["class"], "friluft");
-        assert_eq!(vikt[0]["inherited"], true);
+        let fat = rows(&in_cheese, "fat_content");
+        assert_eq!(fat.len(), 1, "{fat:?}");
+        assert_eq!(fat[0]["from"], "group");
+        assert_eq!(fat[0]["structure"], "food");
+        assert_eq!(fat[0]["group"], "dairy");
+        assert!(fat[0]["class"].is_null());
+        assert_eq!(fat[0]["inherited"], true);
 
-        let badge = rows(&in_talt, "badge");
-        assert_eq!(badge.len(), 1, "{badge:?}");
-        assert_eq!(badge[0]["group"], "friluft");
-        assert!(badge[0]["class"].is_null());
-        assert_eq!(badge[0]["inherited"], true);
+        let ripeness = rows(&in_cheese, "ripeness");
+        assert_eq!(ripeness.len(), 1, "{ripeness:?}");
+        assert_eq!(ripeness[0]["group"], "cheese");
+        assert!(ripeness[0]["class"].is_null());
+        assert_eq!(ripeness[0]["inherited"], false);
 
-        let langd = rows(&in_talt, "langd");
-        assert_eq!(langd[0]["group"], "talt");
-        assert_eq!(langd[0]["class"], "talt");
-        assert_eq!(langd[0]["inherited"], false);
+        let number = rows(&in_cheese, "number");
+        assert_eq!(number[0]["from"], "type");
+        assert_eq!(number[0]["inherited"], false);
 
-        let nummer = rows(&in_talt, "nummer");
-        assert_eq!(nummer[0]["from"], "type");
-        assert_eq!(nummer[0]["inherited"], false);
-
-        assert_eq!(rows(&in_friluft, "vikt")[0]["inherited"], false);
-        assert_eq!(rows(&in_friluft, "vikt")[0]["group"], "friluft");
-        assert!(rows(&in_friluft, "langd").is_empty());
+        assert_eq!(rows(&in_dairy, "fat_content")[0]["inherited"], false);
+        assert_eq!(rows(&in_dairy, "fat_content")[0]["group"], "dairy");
+        assert!(rows(&in_dairy, "ripeness").is_empty());
     }
 
     #[test]
@@ -5283,7 +5355,7 @@ mod tests {
         "attributes": [
             {
                 "id": "018f0000-0000-7000-8000-000000000100",
-                "key": "nummer",
+                "key": "number",
                 "labels": {},
                 "language_dependent": false,
                 "multiple": false,
@@ -5292,8 +5364,8 @@ mod tests {
             },
             {
                 "id": "018f0000-0000-7000-8000-000000000105",
-                "key": "vikt",
-                "labels": { "en": "Weight" },
+                "key": "fat_content",
+                "labels": { "en": "Fat content" },
                 "language_dependent": false,
                 "multiple": false,
                 "kind": { "type": "text" },
@@ -5301,8 +5373,8 @@ mod tests {
             },
             {
                 "id": "018f0000-0000-7000-8000-000000000106",
-                "key": "langd",
-                "labels": { "en": "Length" },
+                "key": "ripeness",
+                "labels": { "en": "Ripeness" },
                 "language_dependent": false,
                 "multiple": false,
                 "kind": { "type": "text" },
@@ -5321,7 +5393,7 @@ mod tests {
         "types": [
             {
                 "id": "018f0000-0000-7000-8000-000000000201",
-                "key": "artikel",
+                "key": "article",
                 "labels": {},
                 "key_attribute": "018f0000-0000-7000-8000-000000000100",
                 "attributes": ["018f0000-0000-7000-8000-000000000100"]
@@ -5330,33 +5402,21 @@ mod tests {
         "structures": [
             {
                 "id": "018f0000-0000-7000-8000-000000000300",
-                "key": "sortiment",
+                "key": "food",
                 "groups": [
                     {
                         "id": "018f0000-0000-7000-8000-000000000310",
-                        "key": "friluft",
-                        "attributes": ["018f0000-0000-7000-8000-000000000107"]
-                    },
-                    {
-                        "id": "018f0000-0000-7000-8000-000000000311",
-                        "key": "talt",
-                        "parent": "018f0000-0000-7000-8000-000000000310"
-                    }
-                ],
-                "classes": [
-                    {
-                        "id": "018f0000-0000-7000-8000-000000000320",
-                        "key": "friluft",
-                        "group": "018f0000-0000-7000-8000-000000000310",
+                        "key": "dairy",
                         "attributes": ["018f0000-0000-7000-8000-000000000105"]
                     },
                     {
-                        "id": "018f0000-0000-7000-8000-000000000321",
-                        "key": "talt",
-                        "group": "018f0000-0000-7000-8000-000000000311",
+                        "id": "018f0000-0000-7000-8000-000000000311",
+                        "key": "cheese",
+                        "parent": "018f0000-0000-7000-8000-000000000310",
                         "attributes": ["018f0000-0000-7000-8000-000000000106"]
                     }
-                ]
+                ],
+                "classes": []
             }
         ]
     }"#;

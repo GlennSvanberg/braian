@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
 import { MetaChip, optionLabel, statusTone, typeLabel, type ChipTone } from './chips'
 import { toast } from 'sonner'
-import { ApiError, api, textValue, type Json } from './api'
+import { ApiError, api, catalogName, textValue, type Json } from './api'
 import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
@@ -127,7 +127,7 @@ export function CommandPalette({
     const type = String(row.type_key ?? row.type ?? '')
     const status = textValue(row.a_status)
     const version = String(row.version ?? '')
-    const name = textValue(row.a_namn__sv)
+    const name = catalogName(row)
     return {
       id: `hit:${String(row.id)}`,
       sourceId: String(row.id),

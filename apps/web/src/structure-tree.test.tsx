@@ -17,21 +17,21 @@ const defs: Json = {
   languages: ['en'],
   structures: [
     {
-      key: 'sortiment',
-      labels: { en: 'eCom' },
+      key: 'food',
+      labels: { en: 'Food' },
       groups: [
-        { id: 'outdoor', key: 'friluft', labels: { en: 'Outdoor' } },
-        { id: 'tents', key: 'talt', parent: 'outdoor', labels: { en: 'Tents' } },
-        { id: 'bags', key: 'sovsack', parent: 'outdoor', labels: { en: 'Sleeping bags' } },
-        { id: 'building', key: 'bygg', labels: { en: 'Building' } },
-        { id: 'timber', key: 'virke', parent: 'building', labels: { en: 'Timber' } },
+        { id: 'dairy', key: 'dairy', labels: { en: 'Dairy & eggs' } },
+        { id: 'cheese', key: 'cheese', parent: 'dairy', labels: { en: 'Cheese' } },
+        { id: 'yoghurt', key: 'yoghurt', parent: 'dairy', labels: { en: 'Yoghurt' } },
+        { id: 'beverages', key: 'beverages', labels: { en: 'Beverages' } },
+        { id: 'juice', key: 'juice', parent: 'beverages', labels: { en: 'Juice' } },
       ],
     },
     {
-      key: 'environment',
-      labels: { en: 'Environment' },
+      key: 'market',
+      labels: { en: 'Market' },
       groups: [
-        { id: 'climate', key: 'climate', labels: { en: 'Climate' } },
+        { id: 'local', key: 'local', labels: { en: 'Local' } },
       ],
     },
   ],
@@ -74,70 +74,70 @@ describe('model structure tree', () => {
 
   it('starts collapsed and expands only the nodes the user opens', () => {
     render(<Tree />)
-    expect(screen.getByTestId('group-friluft')).toBeTruthy()
-    expect(screen.getByTestId('group-bygg')).toBeTruthy()
-    expect(screen.getByTestId('group-climate')).toBeTruthy()
-    expect(screen.queryByTestId('group-talt')).toBeNull()
-    expect(screen.queryByTestId('group-sovsack')).toBeNull()
-    expect(screen.queryByTestId('group-virke')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Outdoor' }).getAttribute('aria-expanded')).toBe('false')
-    expect(screen.getByRole('button', { name: 'Climate' }).getAttribute('aria-expanded')).toBeNull()
+    expect(screen.getByTestId('group-dairy')).toBeTruthy()
+    expect(screen.getByTestId('group-beverages')).toBeTruthy()
+    expect(screen.getByTestId('group-local')).toBeTruthy()
+    expect(screen.queryByTestId('group-cheese')).toBeNull()
+    expect(screen.queryByTestId('group-yoghurt')).toBeNull()
+    expect(screen.queryByTestId('group-juice')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Dairy & eggs' }).getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Local' }).getAttribute('aria-expanded')).toBeNull()
 
-    fireEvent.click(within(screen.getByTestId('group-friluft')).getByRole('button', { name: 'Outdoor' }).querySelector('.twist')!)
-    expect(screen.getByTestId('group-talt')).toBeTruthy()
-    expect(screen.getByTestId('group-sovsack')).toBeTruthy()
-    expect(screen.queryByTestId('group-virke')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Outdoor' }).getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(within(screen.getByTestId('group-dairy')).getByRole('button', { name: 'Dairy & eggs' }).querySelector('.twist')!)
+    expect(screen.getByTestId('group-cheese')).toBeTruthy()
+    expect(screen.getByTestId('group-yoghurt')).toBeTruthy()
+    expect(screen.queryByTestId('group-juice')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Dairy & eggs' }).getAttribute('aria-expanded')).toBe('true')
 
-    fireEvent.click(within(screen.getByTestId('group-friluft')).getByRole('button', { name: 'Outdoor' }).querySelector('.twist')!)
-    expect(screen.queryByTestId('group-talt')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Outdoor' }).getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(within(screen.getByTestId('group-dairy')).getByRole('button', { name: 'Dairy & eggs' }).querySelector('.twist')!)
+    expect(screen.queryByTestId('group-cheese')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Dairy & eggs' }).getAttribute('aria-expanded')).toBe('false')
   })
 
   it('places add child below the clicked node, expands it, and saves from the keyboard', async () => {
     render(<Tree />)
-    await chooseMenu('group-menu-sortiment-friluft', 'Add child')
+    await chooseMenu('group-menu-food-dairy', 'Add child')
 
-    const outdoor = screen.getByTestId('group-friluft')
-    expect(within(outdoor).getByRole('button', { name: 'Outdoor' })).toBeTruthy()
+    const outdoor = screen.getByTestId('group-dairy')
+    expect(within(outdoor).getByRole('button', { name: 'Dairy & eggs' })).toBeTruthy()
     const draft = within(outdoor).getByTestId('group-draft')
     expect(draft.style.paddingLeft).toBe('14px')
-    const button = within(outdoor).getByRole('button', { name: 'Outdoor' })
+    const button = within(outdoor).getByRole('button', { name: 'Dairy & eggs' })
     expect(button.compareDocumentPosition(draft) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByTestId('group-talt')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Outdoor' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByTestId('group-cheese')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dairy & eggs' }).getAttribute('aria-expanded')).toBe('true')
 
     const input = within(draft).getByRole('textbox', { name: 'Add child' })
     await waitFor(() => expect(document.activeElement).toBe(input))
 
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.queryByTestId('group-draft')).toBeNull()
-    expect(within(outdoor).getByRole('button', { name: 'Outdoor' })).toBeTruthy()
+    expect(within(outdoor).getByRole('button', { name: 'Dairy & eggs' })).toBeTruthy()
     expect(api).not.toHaveBeenCalled()
 
-    await chooseMenu('group-menu-sortiment-talt', 'Add child')
-    const tents = screen.getByTestId('group-talt')
-    expect(within(tents).getByRole('button', { name: 'Tents' })).toBeTruthy()
+    await chooseMenu('group-menu-food-cheese', 'Add child')
+    const tents = screen.getByTestId('group-cheese')
+    expect(within(tents).getByRole('button', { name: 'Cheese' })).toBeTruthy()
     const child = within(tents).getByTestId('group-draft')
     expect(child.style.paddingLeft).toBe('28px')
-    const tentsButton = within(tents).getByRole('button', { name: 'Tents' })
+    const tentsButton = within(tents).getByRole('button', { name: 'Cheese' })
     expect(tentsButton.compareDocumentPosition(child) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const childInput = within(child).getByRole('textbox', { name: 'Add child' })
     await waitFor(() => expect(document.activeElement).toBe(childInput))
     fireEvent.change(childInput, { target: { value: 'Canopy' } })
     fireEvent.keyDown(childInput, { key: 'Enter' })
-    await waitFor(() => expect(api).toHaveBeenCalledWith('/v1/structures/sortiment/groups', {
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/v1/structures/food/groups', {
       method: 'POST',
-      body: JSON.stringify({ key: 'canopy', label: 'Canopy', parent: 'talt' }),
+      body: JSON.stringify({ key: 'canopy', label: 'Canopy', parent: 'cheese' }),
     }))
   })
 
   it('places a new root group under the structure title', async () => {
     render(<Tree />)
-    const structure = screen.getByTestId('structure-sortiment')
-    expect(structure.querySelector('strong')?.textContent).toBe('eCom')
-    await chooseMenu('structure-menu-sortiment', 'Add child')
-    expect(structure.querySelector('strong')?.textContent).toBe('eCom')
+    const structure = screen.getByTestId('structure-food')
+    expect(structure.querySelector('strong')?.textContent).toBe('Food')
+    await chooseMenu('structure-menu-food', 'Add child')
+    expect(structure.querySelector('strong')?.textContent).toBe('Food')
     const draft = within(structure).getByTestId('group-draft')
     expect(draft.style.paddingLeft).toBe('0px')
     const title = structure.querySelector('strong')
@@ -147,7 +147,7 @@ describe('model structure tree', () => {
     await waitFor(() => expect(document.activeElement).toBe(input))
     fireEvent.change(input, { target: { value: 'Campaigns' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(api).toHaveBeenCalledWith('/v1/structures/sortiment/groups', {
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/v1/structures/food/groups', {
       method: 'POST',
       body: JSON.stringify({ key: 'campaigns', label: 'Campaigns' }),
     }))

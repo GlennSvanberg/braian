@@ -159,7 +159,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
   }
   const title = selection.kind === 'type'
     ? objectTypes(defs, uiLanguage).find((item) => item.key === selection.typeKey)?.label ?? selection.typeKey
-    : structureCaption(selection.group)
+    : structureCaption(selection.group, defs, selection.kind === 'group' ? selection.structure : undefined)
   return (
     <div data-testid="data-model" className="model-attributes">
       <div data-testid="attribute-table" className="attr-table">
@@ -188,6 +188,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
             key={row.id}
             row={row}
             families={families}
+            defs={defs}
             locked={row.id === keyAttribute}
             onUpdate={(patch) => run('model.update_attribute', { key: row.key, ...patch })}
             onRemove={() =>
@@ -217,12 +218,14 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
 function AttributeLine({
   row,
   families,
+  defs,
   locked,
   onUpdate,
   onRemove,
 }: {
   row: AttributeRow
   families: string[]
+  defs?: Json
   locked: boolean
   onUpdate: (patch: Json) => void
   onRemove: () => void
@@ -232,7 +235,7 @@ function AttributeLine({
       <div className="attr-row inherited" data-inherited="true">
         <span>
           {row.label}
-          <small>{copy.fromSource} {structureCaption(row.fromKey ?? '')}</small>
+          <small>{copy.fromSource} {structureCaption(row.fromKey ?? '', defs)}</small>
         </span>
         <span>{kindLabel(row.kind)}</span>
         <span>{row.unit || '—'}</span>
@@ -481,7 +484,7 @@ function ModelPreview({ defs }: { defs: Json | undefined }) {
             <small>{kindLabel(field.kind)}</small>
             <small>
               {copy.fromSource}{' '}
-              {field.sources.map((source) => (source.kind === 'type' ? typeName(defs, source.key) : structureCaption(source.group))).join(', ')}
+              {field.sources.map((source) => (source.kind === 'type' ? typeName(defs, source.key) : structureCaption(source.group, defs))).join(', ')}
             </small>
           </article>
         ))}
@@ -541,7 +544,7 @@ function TypeNameFields({
 }
 
 function typeName(defs: Json | undefined, key: string) {
-  return objectTypes(defs, uiLanguage).find((item) => item.key === key)?.label ?? structureCaption(key)
+  return objectTypes(defs, uiLanguage).find((item) => item.key === key)?.label ?? structureCaption(key, defs)
 }
 
 function kindLabel(kind: string) {

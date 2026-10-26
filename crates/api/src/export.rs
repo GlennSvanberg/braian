@@ -664,7 +664,7 @@ fn attribute_name(id: &str, attribute: Option<&str>) -> String {
         return attribute.to_owned();
     }
     if id == "name" {
-        return "namn".to_owned();
+        return "name".to_owned();
     }
     if let Some(rest) = id.strip_prefix("a_") {
         return rest.split("__").next().unwrap_or(rest).to_owned();

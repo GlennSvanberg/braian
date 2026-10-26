@@ -42,7 +42,8 @@ test('each object type has its own workspace and class attributes', async ({ pag
   const tabs = page.locator('nav.tabs')
   await expect(tabs.getByRole('button', { name: 'Products' })).toBeVisible()
   await expect(tabs.getByRole('button', { name: 'Articles' })).toBeVisible()
-  await expect(tabs.getByRole('button', { name: 'Variants' })).toBeVisible()
+  await expect(tabs.getByRole('button', { name: 'Suppliers' })).toBeVisible()
+  await expect(tabs.getByRole('button', { name: 'Variants' })).toHaveCount(0)
   await expect(tabs.getByRole('button', { name: 'Data model' })).toBeVisible()
   await expect(tabs.getByRole('button', { name: /^Enrich/ })).toHaveCount(0)
 

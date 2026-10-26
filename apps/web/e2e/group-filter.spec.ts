@@ -52,9 +52,9 @@ test('selecting a structure group lists the same articles as its assortment', as
   await expect(count).not.toHaveText(/^0 /)
   const filter = table.getByTestId('quick-filter')
 
-  await page.getByTestId('structure-tree').getByRole('treeitem', { name: 'Tents' }).click()
-  await filter.fill('ART-TALT')
-  await expect(table.getByTestId('object-row').first()).toContainText('ART-TALT')
+  await page.getByTestId('structure-tree').getByRole('treeitem', { name: 'Cheese' }).click()
+  await filter.fill('ART-CHED')
+  await expect(table.getByTestId('object-row').first()).toContainText('ART-CHED')
   await expect(table).not.toContainText('no rows')
   const grouped = (await count.textContent()) ?? ''
   expect(grouped.startsWith('0 ')).toBeFalsy()
@@ -62,9 +62,9 @@ test('selecting a structure group lists the same articles as its assortment', as
 
   await choose(table, 'All')
   await expect(table.getByTestId('object-row').first()).toBeVisible()
-  await choose(table, 'Tents')
-  await filter.fill('ART-TALT')
-  await expect(table.getByTestId('object-row').first()).toContainText('ART-TALT')
+  await choose(table, 'Cheese')
+  await filter.fill('ART-CHED')
+  await expect(table.getByTestId('object-row').first()).toContainText('ART-CHED')
   await expect(count).toHaveText(grouped)
 
   await page.getByRole('button', { name: 'Light' }).click()

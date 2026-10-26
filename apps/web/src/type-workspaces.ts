@@ -28,6 +28,11 @@ export function missingTypeWorkspaces(rows: Array<{ share_token?: string | null 
   return types.filter((type) => type.id && type.key && !tokens.has(typeShareToken(type.key)))
 }
 
+/** Supplier sits beside the Food tree and is linked with object references. */
+export function typeUsesTree(key: string) {
+  return key !== 'supplier'
+}
+
 function workspaceRank(shareToken: string | null | undefined, types: TypeName[]) {
   if (shareToken === 'braian-model') return 1
   if (shareToken?.startsWith(TYPE_SHARE_PREFIX)) {

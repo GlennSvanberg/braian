@@ -97,7 +97,7 @@ test('polish screenshots', async ({ page }) => {
 
   await page.keyboard.press('Control+k')
   await expect(page.getByTestId('palette')).toBeVisible()
-  await page.getByTestId('palette-input').fill('talt')
+  await page.getByTestId('palette-input').fill('cheese')
   await expect(page.locator('.meta-chip').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/palette-dark.png` })
   await page.keyboard.press('Escape')
@@ -109,14 +109,14 @@ test('polish screenshots', async ({ page }) => {
   await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Data model' }).click()
-  await page.getByTestId('group-friluft').locator('.twist').click()
-  await expect(page.getByTestId('group-sovsack')).toBeVisible()
+  await page.getByTestId('group-dairy').locator('.twist').click()
+  await expect(page.getByTestId('group-yoghurt')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-dark.png` })
   await page.getByRole('button', { name: 'Light' }).click()
   await page.screenshot({ path: `${shots}/data-model-light.png` })
   await page.getByRole('button', { name: 'Dark' }).click()
-  await page.getByTestId('group-sovsack').locator('.model-node').click()
-  await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
+  await page.getByTestId('group-yoghurt').locator('.model-node').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('from Dairy')
   await page.screenshot({ path: `${shots}/class-card-dark.png` })
 
   await page.getByRole('button', { name: 'Review' }).click()

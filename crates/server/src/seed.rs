@@ -1,8 +1,12 @@
-//! Synthetic outdoor and building-materials catalog. Safe to run more than once.
+//! Synthetic food catalog shaped like Open Food Facts. Safe to run more than once.
+//!
+//! Hero objects live in `demo/objects.json`. `BRAIAN_SEED_COUNT` (default 240)
+//! scales the same deterministic generator. Together with the heroes that is
+//! about 250 objects: suppliers, products and articles.
 
 use std::collections::{BTreeMap, HashSet};
 
-use braian_model::{AttributeId, Class, ClassId, DefinitionSet, GroupId, Object, ObjectId};
+use braian_model::{AttributeId, DefinitionSet, Object, ObjectId};
 use braian_rules::CompiledModel;
 use braian_search::Typesense;
 use braian_store::{Actor, BatchKind, Error, ObjectOp, PrincipalId, ProposalRow, Store};
@@ -64,15 +68,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         Ok(_) => {}
         Err(error) => return Err(error.into()),
     }
-    let mut defs = store.definition_set().await?;
-    let mut changed = ensure_demo_inheritance(&mut defs);
-    changed |= ensure_type_names(&mut defs);
-    changed |= sync_demo_catalog(&mut defs);
-    if changed {
-        defs.model_revision = defs.model_revision.saturating_add(1);
-        CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
-        store.put_definitions(&actor, &defs).await?;
-    }
+    let defs = store.definition_set().await?;
     let model =
         CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
     let rows: Vec<Value> = serde_json::from_str(OBJECTS)?;
@@ -81,7 +77,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         let type_id = model
             .type_id(type_key)
             .ok_or_else(|| anyhow::anyhow!("unknown type {type_key}"))?;
-        let key = row["values"]["nummer"].as_str().unwrap_or("");
+        let key = row["values"]["number"].as_str().unwrap_or("");
         let id = ObjectId::from_uuid(
             Uuid::parse_str(row["id"].as_str().unwrap_or_default())
                 .map_err(|error| anyhow::anyhow!("object id: {error}"))?,
@@ -91,13 +87,18 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         {
             continue;
         }
-        let structure = model
-            .structure_id("sortiment")
-            .ok_or_else(|| anyhow::anyhow!("sortiment is missing"))?;
-        let group_key = row["group"].as_str().unwrap_or("");
-        let group = model
-            .group_id("sortiment", group_key)
-            .ok_or_else(|| anyhow::anyhow!("unknown group {group_key}"))?;
+        let groups = match row["group"].as_str().filter(|key| !key.is_empty()) {
+            Some(group_key) => {
+                let structure = model
+                    .structure_id("food")
+                    .ok_or_else(|| anyhow::anyhow!("food is missing"))?;
+                let group = model
+                    .group_id("food", group_key)
+                    .ok_or_else(|| anyhow::anyhow!("unknown group {group_key}"))?;
+                BTreeMap::from([(structure, group)])
+            }
+            None => BTreeMap::new(),
+        };
         let mut values = BTreeMap::new();
         let Some(raw) = row["values"].as_object() else {
             continue;
@@ -112,7 +113,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
             id,
             type_id,
             model_revision: defs.model_revision,
-            groups: BTreeMap::from([(structure, group)]),
+            groups,
             values,
         };
         let errors = model.validate(&object);
@@ -126,21 +127,12 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         store
             .write_batch(&actor, vec![ObjectOp::Create(object)])
             .await?;
-        if let Some(links) = row.get("links").and_then(Value::as_array) {
-            for link in links {
-                let to = Uuid::parse_str(link["to"].as_str().unwrap_or_default())?;
-                let kind = link["kind"].as_str().unwrap_or("related");
-                store
-                    .set_relation(id, ObjectId::from_uuid(to), kind)
-                    .await?;
-            }
-        }
     }
 
     let target = std::env::var("BRAIAN_SEED_COUNT")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(3_000);
+        .unwrap_or(DEFAULT_SEED_COUNT);
     if target > 0 {
         seed_catalog(store, &actor, &model, defs.model_revision, target).await?;
     }
@@ -167,19 +159,19 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
             "018f2000-0000-7000-8000-000000000003",
             "Products",
             false,
-            "braian-type-produkt",
+            "braian-type-product",
         ),
         (
             "018f2000-0000-7000-8000-000000000005",
             "Articles",
             false,
-            "braian-type-artikel",
+            "braian-type-article",
         ),
         (
-            "018f2000-0000-7000-8000-000000000006",
-            "Variants",
+            "018f2000-0000-7000-8000-000000000007",
+            "Suppliers",
             false,
-            "braian-type-variant",
+            "braian-type-supplier",
         ),
         (
             "018f2000-0000-7000-8000-000000000004",
@@ -210,8 +202,8 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?,
             user.id,
-            "Tents",
-            &json!({ "type": "artikel", "group": "sortiment:talt" }),
+            "Cheese",
+            &json!({ "type": "article", "group": "food:cheese" }),
         )
         .await?;
     store
@@ -226,8 +218,8 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2")?,
             user.id,
-            "Timber",
-            &json!({ "type": "artikel", "group": "sortiment:virke" }),
+            "Organic",
+            &json!({ "type": "article", "text": "Organic" }),
         )
         .await?;
     store
@@ -297,16 +289,20 @@ fn layout(workspace: &str) -> Value {
                 "018f2000-0000-7000-8000-000000000509",
             ],
         ),
-        "018f2000-0000-7000-8000-000000000006" => catalog_layout(
-            "018f2000-0000-7000-8000-000000000601",
-            "018f2000-0000-7000-8000-000000000608",
-            "018f2000-0000-7000-8000-000000000307",
-            &[
-                "018f2000-0000-7000-8000-000000000603",
-                "018f2000-0000-7000-8000-000000000604",
-                "018f2000-0000-7000-8000-000000000605",
-                "018f2000-0000-7000-8000-000000000609",
-            ],
+        "018f2000-0000-7000-8000-000000000007" => split(
+            "horizontal",
+            0.22,
+            tabs(&["018f2000-0000-7000-8000-000000000701"]),
+            split(
+                "horizontal",
+                0.62,
+                tabs(&["018f2000-0000-7000-8000-000000000702"]),
+                tabs(&[
+                    "018f2000-0000-7000-8000-000000000703",
+                    "018f2000-0000-7000-8000-000000000704",
+                    "018f2000-0000-7000-8000-000000000705",
+                ]),
+            ),
         ),
         "018f2000-0000-7000-8000-000000000002" => split(
             "horizontal",
@@ -365,10 +361,10 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000301",
             "018f2000-0000-7000-8000-000000000003",
             "structure_tree",
-            "eCom",
+            "Food",
             "left",
             0,
-            json!({"expanded": ["friluft", "bygg"]}),
+            json!({"expanded": ["dairy", "beverages"]}),
         ),
         (
             "018f2000-0000-7000-8000-000000000308",
@@ -386,7 +382,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "Products",
             "center",
             0,
-            json!({"columns": ["nummer", "namn", "type", "status", "farg", "vikt", "langd"], "sort": "nummer", "object_type": "018f0000-0000-7000-8000-000000000200", "type_key": "produkt"}),
+            json!({"columns": ["number", "name", "brand", "nutriscore", "status"], "sort": "number", "object_type": "018f0000-0000-7000-8000-000000000200", "type_key": "product"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000303",
@@ -395,7 +391,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "Detail",
             "right",
             0,
-            json!({"language": "sv"}),
+            json!({"language": "en"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000304",
@@ -449,16 +445,16 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "Articles",
             "center",
             1,
-            json!({"columns": ["nummer", "namn", "type", "status", "farg", "vikt", "langd"], "sort": "nummer", "object_type": "018f0000-0000-7000-8000-000000000201", "type_key": "artikel"}),
+            json!({"columns": ["number", "name", "gtin", "storage", "status"], "sort": "number", "object_type": "018f0000-0000-7000-8000-000000000201", "type_key": "article"}),
         ),
         (
-            "018f2000-0000-7000-8000-000000000307",
-            "018f2000-0000-7000-8000-000000000006",
+            "018f2000-0000-7000-8000-000000000702",
+            "018f2000-0000-7000-8000-000000000007",
             "object_table",
-            "Variants",
+            "Suppliers",
             "center",
-            2,
-            json!({"columns": ["nummer", "namn", "type", "status"], "sort": "nummer", "object_type": "018f0000-0000-7000-8000-000000000202", "type_key": "variant"}),
+            0,
+            json!({"columns": ["number", "company_name", "country", "city", "status"], "sort": "number", "object_type": "018f0000-0000-7000-8000-000000000202", "type_key": "supplier"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000309",
@@ -473,10 +469,10 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000501",
             "018f2000-0000-7000-8000-000000000005",
             "structure_tree",
-            "eCom",
+            "Food",
             "left",
             0,
-            json!({"expanded": ["friluft", "bygg"]}),
+            json!({"expanded": ["dairy", "beverages"]}),
         ),
         (
             "018f2000-0000-7000-8000-000000000508",
@@ -494,7 +490,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "Detail",
             "right",
             0,
-            json!({"language": "sv"}),
+            json!({"language": "en"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000504",
@@ -524,35 +520,26 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             json!({}),
         ),
         (
-            "018f2000-0000-7000-8000-000000000601",
-            "018f2000-0000-7000-8000-000000000006",
-            "structure_tree",
-            "eCom",
-            "left",
-            0,
-            json!({"expanded": ["friluft", "bygg"]}),
-        ),
-        (
-            "018f2000-0000-7000-8000-000000000608",
-            "018f2000-0000-7000-8000-000000000006",
+            "018f2000-0000-7000-8000-000000000701",
+            "018f2000-0000-7000-8000-000000000007",
             "assortment_list",
             "Assortments",
             "left",
-            1,
+            0,
             json!({}),
         ),
         (
-            "018f2000-0000-7000-8000-000000000603",
-            "018f2000-0000-7000-8000-000000000006",
+            "018f2000-0000-7000-8000-000000000703",
+            "018f2000-0000-7000-8000-000000000007",
             "object_detail",
             "Detail",
             "right",
             0,
-            json!({"language": "sv"}),
+            json!({"language": "en"}),
         ),
         (
-            "018f2000-0000-7000-8000-000000000604",
-            "018f2000-0000-7000-8000-000000000006",
+            "018f2000-0000-7000-8000-000000000704",
+            "018f2000-0000-7000-8000-000000000007",
             "graph",
             "Graph",
             "right",
@@ -560,21 +547,12 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             json!({}),
         ),
         (
-            "018f2000-0000-7000-8000-000000000605",
-            "018f2000-0000-7000-8000-000000000006",
+            "018f2000-0000-7000-8000-000000000705",
+            "018f2000-0000-7000-8000-000000000007",
             "history",
             "History",
             "right",
             2,
-            json!({}),
-        ),
-        (
-            "018f2000-0000-7000-8000-000000000609",
-            "018f2000-0000-7000-8000-000000000006",
-            "class_attributes",
-            "Classes",
-            "right",
-            3,
             json!({}),
         ),
     ];
@@ -604,54 +582,183 @@ fn synthetic_id(index: u32) -> ObjectId {
     ObjectId::from_uuid(Uuid::from_bytes(bytes))
 }
 
-fn seed_target_kind(index: u32) -> (&'static str, &'static str) {
-    match index % 10 {
-        0 => ("produkt", "friluft"),
-        1 => ("produkt", "bygg"),
-        2 => ("variant", "talt"),
-        3 => ("variant", "sovsack"),
-        _ => match index % 3 {
-            0 => ("artikel", "talt"),
-            1 => ("artikel", "sovsack"),
-            _ => ("artikel", "virke"),
-        },
+const DEFAULT_SEED_COUNT: u32 = 240;
+
+const LEAVES: [&str; 17] = [
+    "milk",
+    "cheese",
+    "yoghurt",
+    "juice",
+    "soft_drinks",
+    "coffee_tea",
+    "plant_drinks",
+    "pasta_rice",
+    "cereals",
+    "canned",
+    "spices",
+    "bread",
+    "chips",
+    "chocolate",
+    "fruit_vegetables",
+    "meat_fish",
+    "frozen",
+];
+
+/// Suppliers, products and articles for a generator target.
+///
+/// The ratio matches the demo shape (about 15 / 60 / 175 at 250 objects,
+/// heroes included separately). Every product receives 1 to 5 articles
+/// whenever the target is large enough to hold that.
+fn catalog_plan(target: u32) -> (u32, u32, u32) {
+    if target == 0 {
+        return (0, 0, 0);
+    }
+    let mut suppliers = target * 13 / DEFAULT_SEED_COUNT;
+    let mut products = target * 57 / DEFAULT_SEED_COUNT;
+    if target >= 3 {
+        suppliers = suppliers.max(1);
+        products = products.max(1);
+    } else if target == 2 {
+        suppliers = 1;
+        products = 1;
+    } else {
+        return (1, 0, 0);
+    }
+    if suppliers + products > target {
+        products = target.saturating_sub(suppliers).min(products);
+        if suppliers > target {
+            suppliers = target;
+            products = 0;
+        }
+    }
+    let mut articles = target - suppliers - products;
+    if products > 0 && articles > 0 && articles < products {
+        products = articles;
+        articles = target - suppliers - products;
+    }
+    (suppliers, products, articles)
+}
+
+fn leaf_for(index: u32) -> &'static str {
+    LEAVES[(index as usize) % LEAVES.len()]
+}
+
+fn uses_volume(group: &str) -> bool {
+    matches!(group, "milk" | "juice" | "soft_drinks" | "plant_drinks")
+}
+
+fn storage_for(group: &str) -> &'static str {
+    match group {
+        "milk" | "cheese" | "yoghurt" | "meat_fish" => "chilled",
+        "frozen" => "frozen",
+        _ => "ambient",
     }
 }
 
-fn product_name(group: &str, index: u32) -> (String, String, String) {
-    let family = match group {
-        "talt" => ["Kupoltält", "Tunneltält", "Familjetält", "Vindskydd"],
-        "sovsack" => ["Dunsovsäck", "Syntetsäck", "Sommarsäck", "Vintersäck"],
-        "virke" => ["Regel", "Råspont", "Läkt", "Fasadpanel"],
-        "bygg" => ["Gipsskiva", "Isolering", "Plywood", "Trallskruv"],
-        _ => ["Ryggsäck", "Stormkök", "Liggunderlag", "Vattenflaska"],
-    };
-    let en = match group {
-        "talt" => ["Dome tent", "Tunnel tent", "Family tent", "Tarp"],
-        "sovsack" => ["Down bag", "Synthetic bag", "Summer bag", "Winter bag"],
-        "virke" => ["Stud", "Tongue and groove", "Batten", "Cladding"],
-        "bygg" => ["Plasterboard", "Insulation", "Plywood", "Deck screw"],
-        _ => ["Backpack", "Stove", "Sleeping pad", "Bottle"],
-    };
-    let de = match group {
-        "talt" => ["Kuppelzelt", "Tunnelzelt", "Familienzelt", "Tarp"],
-        "sovsack" => [
-            "Daunenschlafsack",
-            "Kunstfaserschlafsack",
-            "Sommerschlafsack",
-            "Winterschlafsack",
+fn food_name(group: &str, index: u32) -> String {
+    let words: &[&str] = match group {
+        "milk" => &[
+            "Whole milk",
+            "Semi-skimmed milk",
+            "Skimmed milk",
+            "Buttermilk",
         ],
-        "virke" => ["Kantholz", "Profilbrett", "Latte", "Fassadenprofil"],
-        "bygg" => ["Gipskarton", "Dämmung", "Sperrholz", "Terrassenschraube"],
-        _ => ["Rucksack", "Kocher", "Isomatte", "Flasche"],
+        "cheese" => &["Cheddar", "Gouda", "Mozzarella", "Feta"],
+        "yoghurt" => &[
+            "Natural yoghurt",
+            "Vanilla yoghurt",
+            "Greek-style yoghurt",
+            "Skyr",
+        ],
+        "juice" => &["Apple juice", "Orange juice", "Pear juice", "Grape juice"],
+        "soft_drinks" => &["Lemon soda", "Cola", "Ginger ale", "Orange soda"],
+        "coffee_tea" => &["Filter coffee", "Espresso", "Black tea", "Green tea"],
+        "plant_drinks" => &["Oat drink", "Soya drink", "Almond drink", "Rice drink"],
+        "pasta_rice" => &["Spaghetti", "Penne", "Jasmine rice", "Basmati rice"],
+        "cereals" => &["Oat flakes", "Muesli", "Corn flakes", "Puffed rice"],
+        "canned" => &["Chopped tomatoes", "Chickpeas", "Red lentils", "Sweetcorn"],
+        "spices" => &["Black pepper", "Cinnamon", "Paprika", "Cumin"],
+        "bread" => &[
+            "Sourdough loaf",
+            "Rye bread",
+            "Wholemeal roll",
+            "Seeded loaf",
+        ],
+        "chips" => &[
+            "Salted chips",
+            "Paprika chips",
+            "Lentil chips",
+            "Potato crisps",
+        ],
+        "chocolate" => &[
+            "Dark chocolate",
+            "Milk chocolate",
+            "Hazelnut chocolate",
+            "Cocoa nibs",
+        ],
+        "fruit_vegetables" => &["Apples", "Bananas", "Carrots", "Tomatoes"],
+        "meat_fish" => &[
+            "Minced beef",
+            "Chicken fillet",
+            "Salmon fillet",
+            "Bean burger",
+        ],
+        "frozen" => &[
+            "Frozen peas",
+            "Frozen berries",
+            "Fish fingers",
+            "Vegetable mix",
+        ],
+        _ => &["Pantry item", "Grocery item", "Store item", "Kitchen item"],
     };
-    let slot = (index as usize) % 4;
-    let n = index + 1;
-    (
-        format!("{} {n}", family[slot]),
-        format!("{} {n}", en[slot]),
-        format!("{} {n}", de[slot]),
+    let organic = if index.is_multiple_of(4) {
+        "Organic "
+    } else {
+        ""
+    };
+    format!(
+        "{organic}{} {}",
+        words[(index as usize) % words.len()],
+        index + 1
     )
+}
+
+fn brand_for(index: u32) -> &'static str {
+    const BRANDS: [&str; 8] = [
+        "Northmill",
+        "Harbor & Rye",
+        "Little Kiln",
+        "Meadow Route",
+        "Bright Tin",
+        "Orchard Lane",
+        "Copper Kettle",
+        "Field Note",
+    ];
+    BRANDS[(index as usize) % BRANDS.len()]
+}
+
+fn status_code(index: u32) -> &'static str {
+    match index % 5 {
+        0 => "draft",
+        4 => "discontinued",
+        _ => "ok",
+    }
+}
+
+fn country_code(index: u32) -> &'static str {
+    const CODES: [&str; 8] = ["se", "dk", "fi", "de", "fr", "it", "nl", "es"];
+    CODES[(index as usize) % CODES.len()]
+}
+
+fn allergen_for(group: &str) -> &'static str {
+    match group {
+        "milk" | "cheese" | "yoghurt" => "milk",
+        "bread" | "pasta_rice" | "cereals" => "gluten",
+        "meat_fish" => "fish",
+        "chocolate" | "chips" => "soybeans",
+        "plant_drinks" => "gluten",
+        _ => "mustard",
+    }
 }
 
 fn put_attr(
@@ -665,6 +772,389 @@ fn put_attr(
         .ok_or_else(|| anyhow::anyhow!("unknown attribute {key}"))?;
     values.insert(attribute.id, value);
     Ok(())
+}
+
+fn grams(amount: u32) -> Value {
+    json!({ "value": amount.to_string(), "unit": "g" })
+}
+
+fn whole(amount: u32) -> Value {
+    json!({ "value": amount.to_string() })
+}
+
+struct Slot {
+    index: u32,
+    type_key: &'static str,
+    group_key: Option<&'static str>,
+    product: Option<u32>,
+    supplier: Option<u32>,
+}
+
+fn slot_for(index: u32, suppliers: u32, products: u32) -> Slot {
+    if index < suppliers {
+        return Slot {
+            index,
+            type_key: "supplier",
+            group_key: None,
+            product: None,
+            supplier: None,
+        };
+    }
+    if index < suppliers + products {
+        return Slot {
+            index,
+            type_key: "product",
+            group_key: Some(leaf_for(index)),
+            product: None,
+            supplier: None,
+        };
+    }
+    let article = index - suppliers - products;
+    let product = suppliers + (article % products.max(1));
+    Slot {
+        index,
+        type_key: "article",
+        group_key: Some(leaf_for(product)),
+        product: Some(product),
+        supplier: Some(article % suppliers.max(1)),
+    }
+}
+
+fn fill_values(model: &CompiledModel, slot: &Slot) -> anyhow::Result<BTreeMap<AttributeId, Value>> {
+    let index = slot.index;
+    let key = format!("SYN-{index:06}");
+    let mut values = BTreeMap::new();
+    put_attr(model, &mut values, "number", json!(key))?;
+    put_attr(model, &mut values, "status", json!(status_code(index)))?;
+    match slot.type_key {
+        "supplier" => {
+            put_attr(
+                model,
+                &mut values,
+                "active",
+                json!(!index.is_multiple_of(17)),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "company_name",
+                json!(format!("{} Foods {}", brand_for(index), index + 1)),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "org_number",
+                json!(format!(
+                    "556{:03}-{:04}",
+                    index % 1000,
+                    1000 + (index % 9000)
+                )),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "gln",
+                json!(format!(
+                    "{:013}",
+                    730_000_000_000u64 + u64::from(index % 1_000_000)
+                )),
+            )?;
+            put_attr(model, &mut values, "country", json!(country_code(index)))?;
+            let cities = ["Umeå", "Malmö", "Aarhus", "Hamburg", "Lyon", "Turin"];
+            put_attr(
+                model,
+                &mut values,
+                "city",
+                json!(cities[(index as usize) % cities.len()]),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "website",
+                json!(format!("https://supplier{index}.example")),
+            )?;
+            let certs = match index % 4 {
+                0 => json!(["brc", "krav"]),
+                1 => json!(["ifs"]),
+                2 => json!(["msc", "fairtrade"]),
+                _ => json!(["brc"]),
+            };
+            put_attr(model, &mut values, "certifications", certs)?;
+            put_attr(
+                model,
+                &mut values,
+                "lead_time_days",
+                whole(2 + (index % 12)),
+            )?;
+        }
+        "product" => {
+            let group = slot.group_key.unwrap_or("bread");
+            let name = food_name(group, index);
+            put_attr(model, &mut values, "name", json!({ "en": name }))?;
+            put_attr(
+                model,
+                &mut values,
+                "description",
+                json!({ "en": format!("{name}. Synthetic grocery recipe for the demo.") }),
+            )?;
+            put_attr(model, &mut values, "brand", json!(brand_for(index)))?;
+            put_attr(
+                model,
+                &mut values,
+                "ingredients",
+                json!({ "en": format!("Water, {group} ingredients, salt.") }),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "allergens",
+                json!([allergen_for(group)]),
+            )?;
+            put_attr(model, &mut values, "traces", json!([]))?;
+            let mut labels = Vec::new();
+            if index.is_multiple_of(4) {
+                labels.push("organic_eu");
+            }
+            if matches!(group, "plant_drinks" | "fruit_vegetables" | "pasta_rice") {
+                labels.push("vegan");
+            }
+            if group == "meat_fish" && index.is_multiple_of(3) {
+                labels.push("msc");
+            }
+            put_attr(model, &mut values, "labels", json!(labels))?;
+            let scores = ["a", "b", "c", "d", "e"];
+            put_attr(
+                model,
+                &mut values,
+                "nutriscore",
+                json!(scores[(index as usize) % scores.len()]),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "nova",
+                json!(((index % 4) + 1).to_string()),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "country_of_origin",
+                json!(country_code(index)),
+            )?;
+            let energy = 80 + (index % 40) * 50;
+            put_attr(
+                model,
+                &mut values,
+                "energy",
+                json!({ "value": energy.to_string(), "unit": "kJ" }),
+            )?;
+            let fat = index % 36;
+            put_attr(model, &mut values, "fat", grams(fat))?;
+            put_attr(model, &mut values, "saturated_fat", grams(fat / 2))?;
+            put_attr(model, &mut values, "carbohydrates", grams(4 + (index % 30)))?;
+            put_attr(model, &mut values, "sugars", grams(index % 20))?;
+            put_attr(model, &mut values, "fiber", grams(index % 12))?;
+            put_attr(model, &mut values, "protein", grams(index % 25))?;
+            put_attr(
+                model,
+                &mut values,
+                "salt",
+                json!({ "value": format!("0.{}", index % 10), "unit": "g" }),
+            )?;
+            fill_group_measures(model, &mut values, group, index)?;
+        }
+        "article" => {
+            let group = slot.group_key.unwrap_or("bread");
+            let name = food_name(group, index);
+            put_attr(
+                model,
+                &mut values,
+                "active",
+                json!(!index.is_multiple_of(17)),
+            )?;
+            put_attr(model, &mut values, "name", json!({ "en": name }))?;
+            put_attr(
+                model,
+                &mut values,
+                "gtin",
+                json!(format!("{:014}", 7_300_000_000_000u64 + u64::from(index))),
+            )?;
+            if let Some(product) = slot.product {
+                put_attr(
+                    model,
+                    &mut values,
+                    "product",
+                    json!(synthetic_id(product).as_uuid().to_string()),
+                )?;
+            }
+            if let Some(supplier) = slot.supplier {
+                put_attr(
+                    model,
+                    &mut values,
+                    "supplier",
+                    json!(synthetic_id(supplier).as_uuid().to_string()),
+                )?;
+            }
+            put_attr(model, &mut values, "units_per_pack", whole(1 + (index % 6)))?;
+            if uses_volume(group) {
+                let ml = 250 + (index % 4) * 250;
+                put_attr(
+                    model,
+                    &mut values,
+                    "net_volume",
+                    json!({ "value": ml.to_string(), "unit": "ml" }),
+                )?;
+                put_attr(model, &mut values, "packaging", json!("bottle"))?;
+                put_attr(
+                    model,
+                    &mut values,
+                    "packaging_material",
+                    json!(["glass", "plastic"]),
+                )?;
+                put_attr(
+                    model,
+                    &mut values,
+                    "deposit",
+                    json!(index.is_multiple_of(2)),
+                )?;
+                put_attr(model, &mut values, "gross_weight", grams(ml + 40))?;
+            } else {
+                let grams_net = 100 + (index % 8) * 50;
+                put_attr(model, &mut values, "net_weight", grams(grams_net))?;
+                let pack = if group == "canned" { "can" } else { "bag" };
+                put_attr(model, &mut values, "packaging", json!(pack))?;
+                let material = if group == "canned" { "steel" } else { "paper" };
+                put_attr(model, &mut values, "packaging_material", json!([material]))?;
+                put_attr(model, &mut values, "deposit", json!(false))?;
+                put_attr(model, &mut values, "gross_weight", grams(grams_net + 15))?;
+            }
+            put_attr(model, &mut values, "storage", json!(storage_for(group)))?;
+            put_attr(
+                model,
+                &mut values,
+                "shelf_life_days",
+                whole(14 + (index % 50) * 7),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "height",
+                json!({ "value": (40 + index % 180).to_string(), "unit": "mm" }),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "width",
+                json!({ "value": (40 + index % 120).to_string(), "unit": "mm" }),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "depth",
+                json!({ "value": (20 + index % 90).to_string(), "unit": "mm" }),
+            )?;
+            let dates = [
+                "2023-03-01",
+                "2023-09-15",
+                "2024-04-01",
+                "2024-11-20",
+                "2025-05-12",
+                "2026-01-08",
+            ];
+            put_attr(
+                model,
+                &mut values,
+                "launched",
+                json!(dates[(index as usize) % dates.len()]),
+            )?;
+            put_attr(
+                model,
+                &mut values,
+                "co2_footprint",
+                json!({ "value": format!("{}.{}", 1 + index % 5, index % 10), "unit": "kgCO2e" }),
+            )?;
+            fill_group_measures(model, &mut values, group, index)?;
+        }
+        _ => {}
+    }
+    Ok(values)
+}
+
+fn fill_group_measures(
+    model: &CompiledModel,
+    values: &mut BTreeMap<AttributeId, Value>,
+    group: &str,
+    index: u32,
+) -> anyhow::Result<()> {
+    if matches!(group, "milk" | "cheese" | "yoghurt") {
+        put_attr(
+            model,
+            values,
+            "fat_content",
+            json!({ "value": format!("{}", 1 + (index % 40)) }),
+        )?;
+    }
+    if group == "chocolate" {
+        put_attr(
+            model,
+            values,
+            "cocoa_content",
+            json!({ "value": format!("{}", 40 + (index % 50)) }),
+        )?;
+    }
+    if group == "coffee_tea" {
+        put_attr(
+            model,
+            values,
+            "caffeine",
+            json!({ "value": format!("{}", 5 + (index % 80)) }),
+        )?;
+    }
+    Ok(())
+}
+
+fn synthetic_object(
+    model: &CompiledModel,
+    revision: u64,
+    index: u32,
+    suppliers: u32,
+    products: u32,
+) -> anyhow::Result<Object> {
+    let slot = slot_for(index, suppliers, products);
+    let type_id = model
+        .type_id(slot.type_key)
+        .ok_or_else(|| anyhow::anyhow!("unknown type {}", slot.type_key))?;
+    let groups = if let Some(group_key) = slot.group_key {
+        let structure = model
+            .structure_id("food")
+            .ok_or_else(|| anyhow::anyhow!("food is missing"))?;
+        let group = model
+            .group_id("food", group_key)
+            .ok_or_else(|| anyhow::anyhow!("unknown group {group_key}"))?;
+        BTreeMap::from([(structure, group)])
+    } else {
+        BTreeMap::new()
+    };
+    let mut values = fill_values(model, &slot)?;
+    if slot.type_key == "article" && index.is_multiple_of(11) {
+        let article_n = index - suppliers - products;
+        if article_n > 0 {
+            let previous = index - 1;
+            put_attr(
+                model,
+                &mut values,
+                "replaces",
+                json!(synthetic_id(previous).as_uuid().to_string()),
+            )?;
+        }
+    }
+    Ok(Object {
+        id: synthetic_id(index),
+        type_id,
+        model_revision: revision,
+        groups,
+        values,
+    })
 }
 
 async fn seed_catalog(
@@ -682,9 +1172,12 @@ async fn seed_catalog(
         );
         return Ok(());
     }
-    let structure = model
-        .structure_id("sortiment")
-        .ok_or_else(|| anyhow::anyhow!("sortiment is missing"))?;
+    let (suppliers, products, articles) = catalog_plan(target);
+    if suppliers + products + articles != target {
+        return Err(anyhow::anyhow!(
+            "seed plan {suppliers}+{products}+{articles} does not add up to {target}"
+        ));
+    }
     let bulk = Actor {
         kind: BatchKind::Bulk,
         source: "seed-catalog".into(),
@@ -699,109 +1192,7 @@ async fn seed_catalog(
         if existing.contains(&key) {
             continue;
         }
-        let (type_key, group_key) = seed_target_kind(index);
-        let type_id = model
-            .type_id(type_key)
-            .ok_or_else(|| anyhow::anyhow!("unknown type {type_key}"))?;
-        let group = model
-            .group_id("sortiment", group_key)
-            .ok_or_else(|| anyhow::anyhow!("unknown group {group_key}"))?;
-        let (sv, en, de) = product_name(group_key, index);
-        let mut values = BTreeMap::new();
-        put_attr(model, &mut values, "nummer", json!(key))?;
-        put_attr(
-            model,
-            &mut values,
-            "namn",
-            json!({ "sv": sv, "en": en, "de": de }),
-        )?;
-        put_attr(
-            model,
-            &mut values,
-            "status",
-            json!(match index % 5 {
-                0 => "utkast",
-                4 => "slut",
-                _ => "ok",
-            }),
-        )?;
-        put_attr(model, &mut values, "aktiv", json!(index % 17 != 0))?;
-        if type_key != "variant" {
-            put_attr(
-                model,
-                &mut values,
-                "beskrivning",
-                json!({
-                    "sv": format!("{sv} för bygg och friluft. Syntetiskt demoobjekt."),
-                    "en": format!("{en} for building and outdoor use. Synthetic demo object."),
-                    "de": format!("{de} für Bau und Outdoor. Synthetisches Demo-Objekt."),
-                }),
-            )?;
-        }
-        if type_key != "produkt" {
-            let color = match index % 4 {
-                0 => "svart",
-                1 => "gra",
-                2 => "gron",
-                _ => "bla",
-            };
-            put_attr(model, &mut values, "farg", json!([color]))?;
-        }
-        if type_key == "artikel" {
-            let dates = [
-                "2023-03-01",
-                "2023-09-15",
-                "2024-04-01",
-                "2024-11-20",
-                "2025-05-12",
-                "2026-01-08",
-            ];
-            put_attr(
-                model,
-                &mut values,
-                "lanserad",
-                json!(dates[(index as usize) % dates.len()]),
-            )?;
-            if index % 5 == 0 {
-                put_attr(
-                    model,
-                    &mut values,
-                    "ersatter",
-                    json!("018f1000-0000-7000-8000-000000000011"),
-                )?;
-            }
-        }
-        if matches!(group_key, "talt" | "sovsack" | "virke") {
-            put_attr(
-                model,
-                &mut values,
-                "vikt",
-                json!({ "value": format!("{}", 400 + (index % 80) * 25), "unit": "g" }),
-            )?;
-        }
-        if matches!(group_key, "talt" | "virke") {
-            put_attr(
-                model,
-                &mut values,
-                "langd",
-                json!({ "value": format!("{}", 80 + (index % 40) * 5), "unit": "cm" }),
-            )?;
-        }
-        if group_key == "talt" {
-            put_attr(
-                model,
-                &mut values,
-                "spann",
-                json!({ "min": "180", "max": "240", "unit": "cm" }),
-            )?;
-        }
-        let object = Object {
-            id: synthetic_id(index),
-            type_id,
-            model_revision: revision,
-            groups: BTreeMap::from([(structure, group)]),
-            values,
-        };
+        let object = synthetic_object(model, revision, index, suppliers, products)?;
         let errors = model.validate(&object);
         if !errors.is_empty() {
             return Err(anyhow::anyhow!(
@@ -820,7 +1211,9 @@ async fn seed_catalog(
         inserted += u32::try_from(pending.len()).unwrap_or(0);
         store.write_ops(batch, &bulk, pending).await?;
     }
-    println!("seed catalog inserted {inserted} synthetic objects (target {target})");
+    println!(
+        "seed catalog inserted {inserted} synthetic objects (target {target}, {suppliers} suppliers, {products} products, {articles} articles)"
+    );
     Ok(())
 }
 
@@ -849,10 +1242,10 @@ async fn seed_job_run(
 async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> {
     let id = Uuid::parse_str("018f2000-0000-7000-8000-0000000000c1")?;
     if store.proposal(id).await?.is_some() {
-        store.set_proposal_title(id, "Accept ART-TALT-3").await?;
+        store.set_proposal_title(id, "Accept ART-CHED-400").await?;
         return Ok(());
     }
-    let object_id = ObjectId::from_uuid(Uuid::parse_str("018f1000-0000-7000-8000-000000000012")?);
+    let object_id = ObjectId::from_uuid(Uuid::parse_str("018f1000-0000-7000-8000-000000000023")?);
     let Some(stored) = store.get_object(object_id).await? else {
         return Ok(());
     };
@@ -860,7 +1253,7 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
     store
         .create_proposal(
             id,
-            "Accept ART-TALT-3",
+            "Accept ART-CHED-400",
             "user",
             actor,
             None,
@@ -869,7 +1262,7 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
                 id: Uuid::parse_str("018f2000-0000-7000-8000-0000000000c2")?,
                 object_id: Some(object_id.as_uuid()),
                 object_key: Some(stored.key),
-                type_key: Some("artikel".into()),
+                type_key: Some("article".into()),
                 base_version: Some(version),
                 patch: json!({ "values": { "status": "ok" } }),
                 status: "pending".into(),
@@ -881,248 +1274,134 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// Writes singular and plural names. The demo types use explicit labels.
-/// Any other type copies its label into the singular and derives a plural.
-fn ensure_type_names(defs: &mut DefinitionSet) -> bool {
-    let mut changed = false;
-    for object_type in &mut defs.types {
-        if let Some(names) = demo_type_names(&object_type.key) {
-            for (language, singular, plural) in names {
-                changed |= write_label(&mut object_type.labels, language, singular);
-                changed |= write_label(&mut object_type.singular, language, singular);
-                changed |= write_label(&mut object_type.plural, language, plural);
-            }
-            continue;
-        }
-        let labels = object_type.labels.clone();
-        for (tag, label) in labels {
-            if label.is_empty() {
-                continue;
-            }
-            let missing_singular = object_type.singular.get(&tag).is_none_or(String::is_empty);
-            if missing_singular {
-                object_type.singular.insert(tag.clone(), label.clone());
-                changed = true;
-            }
-            let singular = object_type
-                .singular
-                .get(&tag)
-                .cloned()
-                .filter(|value| !value.is_empty())
-                .unwrap_or(label);
-            let missing_plural = object_type.plural.get(&tag).is_none_or(String::is_empty);
-            if missing_plural {
-                object_type
-                    .plural
-                    .insert(tag, braian_model::default_plural(&singular));
-                changed = true;
-            }
-        }
-    }
-    changed
-}
-
-fn demo_type_names(key: &str) -> Option<[(&'static str, &'static str, &'static str); 3]> {
-    match key {
-        "produkt" => Some([
-            ("sv", "Produkt", "Produkter"),
-            ("en", "Product", "Products"),
-            ("de", "Produkt", "Produkte"),
-        ]),
-        "artikel" => Some([
-            ("sv", "Artikel", "Artiklar"),
-            ("en", "Article", "Articles"),
-            ("de", "Artikel", "Artikel"),
-        ]),
-        "variant" => Some([
-            ("sv", "Variant", "Varianter"),
-            ("en", "Variant", "Variants"),
-            ("de", "Variante", "Varianten"),
-        ]),
-        _ => None,
-    }
-}
-
-fn write_label(
-    map: &mut BTreeMap<braian_model::LanguageTag, String>,
-    language: &str,
-    text: &str,
-) -> bool {
-    let tag = braian_model::LanguageTag::parse(language).expect("demo language");
-    if map.get(&tag).map(String::as_str) == Some(text) {
-        return false;
-    }
-    map.insert(tag, text.to_owned());
-    true
-}
-
-/// Copies display names and the Environment structure from the embedded catalog.
-///
-/// Existing databases keep the wire key `sortiment`. Labels are filled only
-/// when a demo node has none, so a renamed label is left alone. Missing
-/// environment attributes, the unit family, and the value list are appended.
-fn sync_demo_catalog(defs: &mut DefinitionSet) -> bool {
-    let Ok(embedded) = serde_json::from_str::<DefinitionSet>(DEFINITIONS) else {
-        return false;
-    };
-    let mut changed = false;
-    for family in &embedded.unit_families {
-        if !defs.unit_families.iter().any(|item| item.key == family.key) {
-            defs.unit_families.push(family.clone());
-            changed = true;
-        }
-    }
-    for list in &embedded.value_lists {
-        if !defs.value_lists.iter().any(|item| item.key == list.key) {
-            defs.value_lists.push(list.clone());
-            changed = true;
-        }
-    }
-    for attribute in &embedded.attributes {
-        if !defs.attributes.iter().any(|item| item.key == attribute.key) {
-            defs.attributes.push(attribute.clone());
-            changed = true;
-        }
-    }
-    for embedded_structure in &embedded.structures {
-        let Some(live) = defs
-            .structures
-            .iter_mut()
-            .find(|item| item.key == embedded_structure.key)
-        else {
-            defs.structures.push(embedded_structure.clone());
-            changed = true;
-            continue;
-        };
-        if live.labels.is_empty() && !embedded_structure.labels.is_empty() {
-            live.labels.clone_from(&embedded_structure.labels);
-            changed = true;
-        }
-        for embedded_group in &embedded_structure.groups {
-            let Some(group) = live
-                .groups
-                .iter_mut()
-                .find(|item| item.key == embedded_group.key)
-            else {
-                continue;
-            };
-            if group.labels.is_empty() && !embedded_group.labels.is_empty() {
-                group.labels.clone_from(&embedded_group.labels);
-                changed = true;
-            }
-        }
-    }
-    changed
-}
-
-/// Gives the synthetic catalog a parent class so the data-model screen can show
-/// inherited attributes. Runs only when the known demo groups are present and
-/// the parent class has not been added yet.
-fn ensure_demo_inheritance(defs: &mut DefinitionSet) -> bool {
-    let Some(structure) = defs
-        .structures
-        .iter_mut()
-        .find(|item| item.key == "sortiment")
-    else {
-        return false;
-    };
-    if structure.classes.iter().any(|class| class.key == "friluft") {
-        return false;
-    }
-    let friluft = demo_id("018f0000-0000-7000-8000-000000000310");
-    let talt = demo_id("018f0000-0000-7000-8000-000000000311");
-    let sovsack = demo_id("018f0000-0000-7000-8000-000000000312");
-    let bygg = demo_id("018f0000-0000-7000-8000-000000000313");
-    let virke = demo_id("018f0000-0000-7000-8000-000000000314");
-    let groups = [friluft, talt, sovsack, bygg, virke];
-    if !groups.iter().all(|id| {
-        structure
-            .groups
-            .iter()
-            .any(|group| group.id.as_uuid() == *id)
-    }) {
-        return false;
-    }
-    let vikt = AttributeId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000105"));
-    let langd = AttributeId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000106"));
-    let spann = AttributeId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000107"));
-    let friluft_class = ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000320"));
-    let bygg_class = ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000324"));
-    structure
-        .classes
-        .retain(|class| !matches!(class.key.as_str(), "talt" | "sovsack" | "virke"));
-    structure.classes.extend([
-        Class {
-            id: friluft_class,
-            key: "friluft".into(),
-            group: GroupId::from_uuid(friluft),
-            parent: None,
-            attributes: vec![vikt],
-        },
-        Class {
-            id: ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000321")),
-            key: "talt".into(),
-            group: GroupId::from_uuid(talt),
-            parent: Some(friluft_class),
-            attributes: vec![langd, spann],
-        },
-        Class {
-            id: ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000322")),
-            key: "sovsack".into(),
-            group: GroupId::from_uuid(sovsack),
-            parent: Some(friluft_class),
-            attributes: vec![],
-        },
-        Class {
-            id: bygg_class,
-            key: "bygg".into(),
-            group: GroupId::from_uuid(bygg),
-            parent: None,
-            attributes: vec![langd],
-        },
-        Class {
-            id: ClassId::from_uuid(demo_id("018f0000-0000-7000-8000-000000000323")),
-            key: "virke".into(),
-            group: GroupId::from_uuid(virke),
-            parent: Some(bygg_class),
-            attributes: vec![vikt],
-        },
-    ]);
-    true
-}
-
-fn demo_id(text: &str) -> Uuid {
-    Uuid::parse_str(text).expect("demo id")
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
-    #[test]
-    fn demo_catalog_keeps_the_wire_key_and_compiles_environment() {
+    fn model() -> (DefinitionSet, CompiledModel) {
         let defs: DefinitionSet = serde_json::from_str(DEFINITIONS).expect("definitions");
-        CompiledModel::compile(&defs).expect("demo definitions compile");
-        let sortiment = defs
+        let compiled = CompiledModel::compile(&defs).expect("demo definitions compile");
+        (defs, compiled)
+    }
+
+    #[test]
+    fn food_catalog_compiles_without_the_outdoor_model() {
+        let (defs, _) = model();
+        assert!(defs.types.iter().any(|item| item.key == "product"));
+        assert!(defs.types.iter().any(|item| item.key == "article"));
+        assert!(defs.types.iter().any(|item| item.key == "supplier"));
+        assert!(defs.types.iter().all(|item| item.key != "variant"));
+        assert!(defs.structures.iter().all(|item| item.key != "environment"));
+        let food = defs
             .structures
             .iter()
-            .find(|item| item.key == "sortiment")
-            .expect("sortiment");
-        assert!(sortiment.labels.values().all(|label| label == "eCom"));
-        assert!(sortiment.groups.iter().any(|group| group.key == "talt"));
-        let environment = defs
-            .structures
-            .iter()
-            .find(|item| item.key == "environment")
-            .expect("environment");
-        assert_eq!(environment.groups.len(), 3);
+            .find(|item| item.key == "food")
+            .expect("food");
+        assert!(food.labels.values().any(|label| label == "Food"));
+        assert!(food.groups.iter().any(|group| group.key == "chocolate"));
         assert!(
-            environment
-                .groups
+            defs.unit_families
                 .iter()
-                .all(|group| !group.attributes.is_empty())
+                .any(|family| family.key == "volume")
         );
-        assert!(defs.unit_families.iter().any(|family| family.key == "co2e"));
-        assert!(defs.value_lists.iter().any(|list| list.key == "eco_label"));
+        assert!(
+            defs.unit_families
+                .iter()
+                .any(|family| family.key == "energy")
+        );
+        assert!(defs.value_lists.iter().any(|list| list.key == "allergens"));
+        assert!(defs.value_lists.iter().all(|list| list.key != "farg"));
+        assert!(defs.value_lists.iter().all(|list| list.key != "eco_label"));
+        assert!(
+            defs.attributes
+                .iter()
+                .any(|item| item.key == "product" && item.required)
+        );
+        assert!(
+            defs.attributes
+                .iter()
+                .any(|item| item.key == "supplier" && item.required)
+        );
+    }
+
+    #[test]
+    fn generator_is_deterministic_and_keeps_one_to_five_articles() {
+        let (defs, compiled) = model();
+        let (suppliers, products, articles) = catalog_plan(DEFAULT_SEED_COUNT);
+        assert_eq!((suppliers, products, articles), (13, 57, 170));
+        let mut per_product: HashMap<u32, u32> = HashMap::new();
+        let mut first = Vec::new();
+        for index in 0..DEFAULT_SEED_COUNT {
+            let object =
+                synthetic_object(&compiled, defs.model_revision, index, suppliers, products)
+                    .expect("object");
+            let again =
+                synthetic_object(&compiled, defs.model_revision, index, suppliers, products)
+                    .expect("again");
+            assert_eq!(object, again);
+            let errors = compiled.validate(&object);
+            assert!(
+                errors.is_empty(),
+                "SYN-{index:06}: {}",
+                errors
+                    .first()
+                    .map(|error| error.message.as_str())
+                    .unwrap_or("")
+            );
+            let slot = slot_for(index, suppliers, products);
+            if slot.type_key == "supplier" {
+                assert!(object.groups.is_empty());
+            }
+            if slot.type_key == "article" {
+                assert!(object.values.values().any(|value| value.as_str().is_some()));
+                let product = slot.product.expect("product");
+                *per_product.entry(product).or_default() += 1;
+            }
+            if index < 3 {
+                first.push(object.id);
+            }
+        }
+        assert!(per_product.values().all(|count| (1..=5).contains(count)));
+        assert_eq!(per_product.len(), products as usize);
+        let rows: Vec<Value> = serde_json::from_str(OBJECTS).expect("heroes");
+        assert!(rows.len() >= 10 && rows.len() <= 12);
+        for row in rows {
+            let type_key = row["type"].as_str().unwrap();
+            let type_id = compiled.type_id(type_key).expect(type_key);
+            let id = ObjectId::from_uuid(Uuid::parse_str(row["id"].as_str().unwrap()).unwrap());
+            let groups = match row["group"].as_str() {
+                Some(group_key) => {
+                    let structure = compiled.structure_id("food").unwrap();
+                    let group = compiled.group_id("food", group_key).unwrap();
+                    BTreeMap::from([(structure, group)])
+                }
+                None => BTreeMap::new(),
+            };
+            let mut values = BTreeMap::new();
+            for (name, value) in row["values"].as_object().unwrap() {
+                let attribute = compiled.attribute_by_key(name).expect(name);
+                values.insert(attribute.id, value.clone());
+            }
+            let object = Object {
+                id,
+                type_id,
+                model_revision: defs.model_revision,
+                groups,
+                values,
+            };
+            let errors = compiled.validate(&object);
+            assert!(
+                errors.is_empty(),
+                "{}: {}",
+                row["values"]["number"],
+                errors
+                    .first()
+                    .map(|error| error.message.as_str())
+                    .unwrap_or("")
+            );
+        }
+        assert_eq!(first.len(), 3);
     }
 }
