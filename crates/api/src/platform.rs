@@ -1219,6 +1219,7 @@ fn empty_ui_context() -> Value {
         "selection": [],
         "filter": "",
         "sort": "",
+        "columns": [],
         "language": ""
     })
 }
@@ -1237,6 +1238,19 @@ fn compact_pane(value: &Value) -> Value {
         "title": field_text(value, "title", 120),
         "focused": value.get("focused").and_then(Value::as_bool).unwrap_or(false),
     })
+}
+
+/// A table column: `ui.hide_column` and `ui.show_column` take its `id` as `column`.
+fn compact_column(value: &Value) -> Option<Value> {
+    let id = field_text(value, "id", 80);
+    if id.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "id": id,
+        "header": field_text(value, "header", 120),
+        "hidden": value.get("hidden").and_then(Value::as_bool).unwrap_or(false),
+    }))
 }
 
 fn compact_selected(value: &Value) -> Option<Value> {
@@ -1282,6 +1296,17 @@ fn compact_ui_context(context: &Value) -> Value {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let columns = context
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(64)
+                .filter_map(compact_column)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     json!({
         "workspace": workspace,
         "panes": panes,
@@ -1289,6 +1314,7 @@ fn compact_ui_context(context: &Value) -> Value {
         "selection": selection,
         "filter": field_text(context, "filter", 200),
         "sort": field_text(context, "sort", 120),
+        "columns": columns,
         "language": field_text(context, "language", 16),
     })
 }
@@ -1344,7 +1370,8 @@ fn agent_system_prompt(context: &Value, latest: &str) -> String {
     format!(
         "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. \
 Answer in {language}, the language of the person's latest message. \
-The UI snapshot is the current screen: workspace, open panes with their types, focused pane, selected objects (id, key, name, type), active filter and sort, and the data language. \
+The UI snapshot is the current screen: workspace, open panes with their types, focused pane, selected objects (id, key, name, type), active filter and sort, the open table's columns (id, header, hidden), and the data language. \
+To hide or show a column, call ui_hide_column or ui_show_column with {{\"column\": id}}. \
 Answer questions about the selection, the open views, or the workspace from that snapshot. Do not call search or list_objects for those questions, and do not ask for a screenshot. \
 Call get_object when a field value is missing from the snapshot. Call ui_get_context or ui_get_selection to read the snapshot again. \
 UI snapshot: {snapshot}"
@@ -5100,6 +5127,10 @@ mod tests {
             }],
             "filter": "",
             "sort": "a_nummer:asc",
+            "columns": [
+                { "id": "name", "header": "Name", "hidden": false },
+                { "id": "status", "header": "Status", "hidden": true }
+            ],
             "language": "sv"
         })
     }
@@ -5134,6 +5165,13 @@ mod tests {
             context_tool_result("ui_get_selection", &json!({}), Some(&context)).expect("tool");
         assert_eq!(read["selection"][0]["key"], "SYN-000001");
         assert_eq!(read["selection"][0]["name"], "Insulation 2");
+
+        // The agent sees which columns are hidden, so it can show them again.
+        assert!(prompt.contains("ui_show_column"), "{prompt}");
+        let screen = compact_ui_context(&context);
+        assert_eq!(screen["columns"][1]["id"], "status");
+        assert_eq!(screen["columns"][1]["hidden"], true);
+        assert_eq!(compact_ui_context(&Value::Null)["columns"], json!([]));
     }
 
     #[test]

@@ -26,6 +26,7 @@ import {
   typeViewPaletteItems,
 } from './type-labels'
 import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
+import { readUiContext, type UiColumn } from './ui-context'
 
 type SessionLike = {
   objectId: string | null
@@ -112,9 +113,14 @@ export function CommandPalette({
   const suggestionTotal = Number(((suggestions.data?.pending as Json | undefined)?.total) ?? 0)
   const selectedKey = String(selectedObject.data?.type ?? '')
   const selectedSingular = singularOf(defs.data, selectedKey, uiLanguage) || (types.length === 1 ? types[0]?.singular ?? '' : '')
+  // Columns of the open table, read once when the palette opens.
+  const tableColumns = useMemo(() => readUiContext().columns, [])
   const catalog = useMemo(
-    () => buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled),
-    [workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled],
+    () => [
+      ...buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled),
+      ...columnEntries(tableColumns),
+    ],
+    [workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns],
   )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
@@ -155,6 +161,19 @@ export function CommandPalette({
     if (id !== 'ask') {
       touch(remembered)
       void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
+    }
+    if (id === 'columns:hide' || id === 'columns:show') {
+      const hide = id === 'columns:hide'
+      setStack((current) => [...current, { label: item.title, rows: columnRows(tableColumns, hide) }])
+      setQuery('')
+      setActive(0)
+      return
+    }
+    if (id.startsWith('column:hide:') || id.startsWith('column:show:')) {
+      const column = id.slice('column:hide:'.length)
+      dispatchUi(id.startsWith('column:hide:') ? 'ui.hide_column' : 'ui.show_column', { column })
+      onClose()
+      return
     }
     if (id === 'assortment:save') {
       const name = query.replace(/^save assortment\s+/i, '').trim()
@@ -675,6 +694,29 @@ function buildCatalog(
     )
   }
   return items
+}
+
+// "Hide column ›" and "Show column ›" open a list of the open table's columns.
+function columnEntries(columns: UiColumn[]): PaletteItem[] {
+  const items: PaletteItem[] = []
+  if (columns.some((column) => !column.hidden)) {
+    items.push({ id: 'columns:hide', group: 'views', title: `${copy.hideColumn} ›`, subtitle: 'Pick a column in the open table', keywords: ['column'] })
+  }
+  if (columns.some((column) => column.hidden)) {
+    items.push({ id: 'columns:show', group: 'views', title: `${copy.showColumn} ›`, subtitle: 'Pick a hidden column', keywords: ['column'] })
+  }
+  return items
+}
+
+function columnRows(columns: UiColumn[], hide: boolean): PaletteItem[] {
+  return columns
+    .filter((column) => column.hidden !== hide)
+    .map((column) => ({
+      id: `column:${hide ? 'hide' : 'show'}:${column.id}`,
+      group: 'views' as const,
+      title: column.header,
+      subtitle: hide ? copy.hideColumn : copy.showColumn,
+    }))
 }
 
 function groupBlocks(rows: PaletteItem[]) {
