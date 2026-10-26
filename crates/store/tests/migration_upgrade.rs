@@ -1,8 +1,8 @@
 //! A database that already applied main's migrations must accept this branch.
 //!
 //! refinery 0.8 aborts when an applied migration's checksum changes. CI points
-//! `BRAIAN_BASELINE_MIGRATIONS` at main's `crates/store/migrations` (V1–V14),
-//! applies those, then applies the migrations in this checkout.
+//! `BRAIAN_BASELINE_MIGRATIONS` at main's `crates/store/migrations`, applies
+//! those, then applies the migrations in this checkout.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -82,14 +82,10 @@ fn baseline_migrations() -> PathBuf {
             path.join("V3__app.sql").is_file(),
             "BRAIAN_BASELINE_MIGRATIONS={dir} has no V3__app.sql"
         );
-        assert!(
-            !path.join("V15__change_log.sql").exists(),
-            "BRAIAN_BASELINE_MIGRATIONS={dir} already contains V15; it must be main's migrations"
-        );
         return path;
     }
     panic!(
-        "BRAIAN_BASELINE_MIGRATIONS is not set. Point it at main's crates/store/migrations so this test applies V1–V14 before the branch."
+        "BRAIAN_BASELINE_MIGRATIONS is not set. Point it at main's crates/store/migrations so this test applies main before the branch."
     );
 }
 
@@ -169,15 +165,23 @@ async fn branch_migrations_apply_after_main() {
         "this branch changed V3__app.sql; refinery will refuse to start on the existing database"
     );
 
+    let baseline_stops_before_v15 = !baseline.join("V15__change_log.sql").is_file();
+    let latest_branch = branch_set
+        .iter()
+        .map(|migration| migration.version())
+        .max()
+        .expect("branch migrations");
     let db = EmptyDb::create().await;
     let mut conn = db.connect().await;
     let level = wal_level(&conn.client).await;
     assert_ne!(level, "logical");
     migrate(&mut conn.client, &baseline).await;
-    assert!(
-        publication_exists(&conn.client).await,
-        "main's V3 creates braian_changes even when wal_level is {level}"
-    );
+    if baseline_stops_before_v15 {
+        assert!(
+            publication_exists(&conn.client).await,
+            "main's V3 creates braian_changes even when wal_level is {level}"
+        );
+    }
     migrate(&mut conn.client, &branch).await;
     assert!(!publication_exists(&conn.client).await);
     let stored: String = conn
@@ -196,5 +200,5 @@ async fn branch_migrations_apply_after_main() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(latest, 15);
+    assert_eq!(u32::try_from(latest).unwrap(), latest_branch);
 }

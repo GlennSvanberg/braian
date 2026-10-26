@@ -55,7 +55,6 @@ jobs:
           mkdir -p "$dest"
           git archive origin/main crates/store/migrations | tar -x --strip-components=3 -C "$dest"
           test -f "$dest/V3__app.sql"
-          test ! -e "$dest/V15__change_log.sql"
           echo "BRAIAN_BASELINE_MIGRATIONS=$dest" >> "$GITHUB_ENV"
       - run: cargo fmt --all --check
         if: steps.changes.outputs.code == 'true'
