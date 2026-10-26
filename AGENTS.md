@@ -1,6 +1,6 @@
 # Braian (arbetsnamn)
 
-Öppen källkod (MIT), self-hosted datahanteringssystem för det PIM brukar användas till.
+Öppen källkod (MIT OR Apache-2.0), self-hosted datahanteringssystem för det PIM brukar användas till.
 Positionering: mellan Akeneo och Supabase. Färdiga gränssnitt som ett traditionellt PIM,
 men allt nåbart via API/MCP. Inte Fiwes produkt – Fiwe använder det.
 

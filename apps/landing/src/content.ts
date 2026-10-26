@@ -1,6 +1,6 @@
 export const demoUrl = 'https://demo.braian.io'
 export const repoUrl = 'https://github.com/GlennSvanberg/braian'
-export const licenseUrl = 'https://github.com/GlennSvanberg/braian/blob/main/LICENSE'
+export const licenseUrl = 'https://github.com/GlennSvanberg/braian/blob/main/README.md#license'
 export const docsUrl = 'https://github.com/GlennSvanberg/braian#readme'
 
 export const nav = [
@@ -12,7 +12,7 @@ export const nav = [
 ] as const
 
 export const hero = {
-  eyebrow: 'Open-source product data · MIT · Self-hosted',
+  eyebrow: 'Open-source product data · MIT OR Apache-2.0 · Self-hosted',
   title: 'Open-source PIM where',
   titleAccent: 'every click is instant.',
   lede: 'A system that understands you, and keeps making your work easier.',
@@ -145,8 +145,8 @@ export const architecture = {
 
 export const openSource = {
   title: 'Open source. Yours to run.',
-  lede: 'MIT licensed and self-hosted.',
-  facts: ['MIT license', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
+  lede: 'MIT OR Apache-2.0 licensed and self-hosted.',
+  facts: ['MIT OR Apache-2.0', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
   code: [
     'git clone https://github.com/GlennSvanberg/braian',
     'cd braian && cp .env.example .env',
