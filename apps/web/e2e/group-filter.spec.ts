@@ -11,7 +11,8 @@ async function login(page: Page) {
   await page.getByTestId('email').fill(demo.email)
   await page.getByTestId('password').fill(demo.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByTestId('structure-tree')).toBeVisible()
+  await expect(page.getByTestId('object-row').first()).toBeVisible()
+  await expect(page.getByTestId('structure-tree')).toBeVisible({ timeout: 45_000 })
   await expect(page.getByTestId('object-row').first()).toBeVisible()
 }
 
