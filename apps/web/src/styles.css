@@ -1137,6 +1137,9 @@ canvas.graph.panning { cursor: grabbing; }
 .menu button:hover, .menu-item:hover, .menu-item[data-highlighted] { background: var(--accent-dim); }
 .menu button.danger { color: var(--danger); }
 .menu-note { margin: 0; padding: 4px 8px; color: var(--text-2); font-size: 12px; }
+.menu button:focus-visible { background: var(--accent-dim); outline: none; }
+/* The active cell in the active row: where Shift+F10 opens the menu. */
+.row.selected .cell.active-cell { box-shadow: inset 0 0 0 1px var(--accent); }
 .palette, .help, .login, .overlay {
   position: fixed;
   inset: 0;

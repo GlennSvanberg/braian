@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from './palette'
 import { ObjectTable, type PanesSession } from './panes'
 import { StructureTree } from './shell'
-import { dispatchUi } from './ui-bus'
-import { readUiContext, resetUiContext } from './ui-context'
+import { dispatchUi, onUi } from './ui-bus'
+import { publishColumns, readUiContext, resetUiContext } from './ui-context'
 
 const { scrollToIndex } = vi.hoisted(() => ({ scrollToIndex: vi.fn() }))
 
@@ -337,7 +337,7 @@ describe('hide column', () => {
   async function hideFromCell(text: string) {
     fireEvent.contextMenu(screen.getByText(text))
     const menu = await screen.findByTestId('context-menu')
-    fireEvent.click(within(menu).getByRole('button', { name: 'Hide column' }))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Hide column' }))
   }
 
   it('hides the column that was right-clicked', async () => {
@@ -370,7 +370,157 @@ describe('hide column', () => {
     fireEvent.contextMenu(screen.getAllByTestId('object-row')[1]!)
     const menu = await screen.findByTestId('context-menu')
 
-    expect(within(menu).queryByRole('button', { name: 'Hide column' })).toBeNull()
+    expect(within(menu).queryByRole('menuitem', { name: 'Hide column' })).toBeNull()
     expect(headers()).toEqual(['col-key', 'col-name', 'col-type', 'col-status', 'col-version'])
+  })
+})
+
+const allColumns = ['col-key', 'col-name', 'col-type', 'col-status', 'col-version']
+
+function headerIds() {
+  return Array.from(document.querySelectorAll('.head [data-testid^="col-"]')).map((node) => node.getAttribute('data-testid'))
+}
+
+describe('show column', () => {
+  it('shows a hidden column again from the cell menu', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    fireEvent.contextMenu(screen.getByText('Two'))
+    fireEvent.click(within(await screen.findByTestId('context-menu')).getByRole('menuitem', { name: 'Hide column' }))
+    await waitFor(() => expect(headerIds()).toEqual(['col-key', 'col-type', 'col-status', 'col-version']))
+
+    fireEvent.contextMenu(screen.getByText('ART-1'))
+    const menu = await screen.findByTestId('context-menu')
+    expect(within(menu).queryByRole('menuitem', { name: 'Show Number' })).toBeNull()
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Show Name' }))
+
+    await waitFor(() => expect(headerIds()).toEqual(allColumns))
+    expect(screen.queryByTestId('context-menu')).toBeNull()
+  })
+
+  it('hides and shows through ui.hide_column and ui.show_column, and publishes the columns', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'type' })
+    })
+    await waitFor(() => expect(headerIds()).toEqual(['col-key', 'col-name', 'col-status', 'col-version']))
+    await waitFor(() => expect(readUiContext().columns.find((column) => column.id === 'type')?.hidden).toBe(true))
+
+    act(() => {
+      dispatchUi('ui.show_column', { column: 'type' })
+    })
+    await waitFor(() => expect(headerIds()).toEqual(allColumns))
+    await waitFor(() => expect(readUiContext().columns.every((column) => !column.hidden)).toBe(true))
+    expect(readUiContext().columns.map((column) => column.header)).toEqual(['Number', 'Name', 'Type', 'Status', 'Version'])
+  })
+})
+
+describe('keyboard context menu', () => {
+  const focusedText = () => (document.activeElement as HTMLElement | null)?.textContent ?? ''
+
+  it('opens with Shift+F10 on the active cell, moves with arrows and closes with Esc', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    fireEvent.click(screen.getByText('Two'))
+    await waitFor(() => expect(screen.getByTestId('detail').textContent).toBe('id-2'))
+    fireEvent.keyDown(grid(), { key: 'ArrowRight' })
+    expect(document.querySelector('.row.selected .active-cell')?.getAttribute('data-column')).toBe('type')
+
+    fireEvent.keyDown(grid(), { key: 'F10', shiftKey: true })
+    const menu = await screen.findByTestId('context-menu')
+    expect(menu.getAttribute('role')).toBe('menu')
+    expect(menu.getAttribute('aria-label')).toBe('Type')
+    await waitFor(() => expect(focusedText()).toBe('Open Enter'))
+
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    expect(focusedText()).toBe('Open to the right')
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(focusedText()).toBe('Close Esc')
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    expect(focusedText()).toBe('Open Enter')
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' })
+    expect(focusedText()).toBe('Close Esc')
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' })
+    expect(focusedText()).toBe('Open Enter')
+
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('context-menu')).toBeNull())
+    expect(document.activeElement).toBe(grid())
+    expect(headerIds()).toEqual(allColumns)
+  })
+
+  it('opens with the ContextMenu key and Enter hides the active column', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    fireEvent.click(screen.getByText('ART-3'))
+    await waitFor(() => expect(screen.getByTestId('detail').textContent).toBe('id-3'))
+    fireEvent.keyDown(grid(), { key: 'ContextMenu' })
+    await screen.findByTestId('context-menu')
+    await waitFor(() => expect(focusedText()).toBe('Open Enter'))
+
+    for (let step = 0; step < 10 && focusedText() !== 'Hide column'; step += 1) {
+      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    }
+    expect(focusedText()).toBe('Hide column')
+    fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
+
+    await waitFor(() => expect(headerIds()).toEqual(['col-name', 'col-type', 'col-status', 'col-version']))
+    expect(screen.queryByTestId('context-menu')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(grid()))
+  })
+})
+
+describe('palette column entries', () => {
+  function captured() {
+    const events: Array<{ name: string; args: unknown }> = []
+    const stop = onUi((event) => {
+      if (event.name === 'ui.hide_column' || event.name === 'ui.show_column') events.push({ name: event.name, args: event.args })
+    })
+    return { events, stop }
+  }
+
+  beforeEach(() => {
+    publishColumns('table', [
+      { id: 'key', header: 'Number', hidden: false },
+      { id: 'name', header: 'Name', hidden: false },
+      { id: 'status', header: 'Status', hidden: true },
+    ])
+  })
+
+  it('runs Hide column › for a visible column', async () => {
+    const { events, stop } = captured()
+    render(<PaletteHarness />)
+    const input = await screen.findByTestId('palette-input')
+    fireEvent.change(input, { target: { value: 'hide column' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: /Hide column ›/ })).toBeTruthy())
+    expect(screen.queryByRole('option', { name: /Show column ›/ })).toBeNull()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['NumberHide column', 'NameHide column']))
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(events).toEqual([{ name: 'ui.hide_column', args: { column: 'name' } }])
+    stop()
+  })
+
+  it('runs Show column › for a hidden column', async () => {
+    const { events, stop } = captured()
+    render(<PaletteHarness />)
+    const input = await screen.findByTestId('palette-input')
+    fireEvent.change(input, { target: { value: 'show column' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: /Show column ›/ })).toBeTruthy())
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['StatusShow column']))
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(events).toEqual([{ name: 'ui.show_column', args: { column: 'status' } }])
+    stop()
   })
 })

@@ -124,6 +124,8 @@ export const copy = {
   resetLayout: 'Reset layout',
   newTab: 'New tab',
   hideColumn: 'Hide column',
+  showColumn: 'Show column',
+  show: 'Show',
   lockWorkspace: 'Lock workspace',
   unlockWorkspace: 'Unlock workspace',
   copyShare: 'Copy share link',

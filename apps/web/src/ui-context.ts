@@ -2,6 +2,9 @@ export type SelectedObject = { id: string; key: string; name: string; type: stri
 
 export type UiPane = { id: string; type: string; title: string; focused: boolean }
 
+/** A table column in display order. `id` is the key `ui.hide_column` and `ui.show_column` take. */
+export type UiColumn = { id: string; header: string; hidden: boolean }
+
 export type UiContextSnapshot = {
   workspace: { id: string; name: string } | null
   panes: UiPane[]
@@ -9,6 +12,7 @@ export type UiContextSnapshot = {
   selection: SelectedObject[]
   filter: string
   sort: string
+  columns: UiColumn[]
   language: string
 }
 
@@ -24,6 +28,7 @@ const blankFrame = (): Frame => ({ workspace: null, panes: [], focused: null, la
 let frame: Frame = blankFrame()
 let markedId: string | null = null
 const tables = new Map<string, { filter: string; sort: string }>()
+const tableColumns = new Map<string, UiColumn[]>()
 const selections = new Map<string, SelectedObject[]>()
 const enriched = new Map<string, SelectedObject>()
 
@@ -31,6 +36,7 @@ export function resetUiContext() {
   frame = blankFrame()
   markedId = null
   tables.clear()
+  tableColumns.clear()
   selections.clear()
   enriched.clear()
 }
@@ -57,6 +63,10 @@ export function publishMarked(id: string | null) {
 
 export function publishTable(viewId: string, filter: string, sort: string) {
   tables.set(viewId, { filter, sort })
+}
+
+export function publishColumns(viewId: string, columns: UiColumn[]) {
+  tableColumns.set(viewId, columns)
 }
 
 export function publishSelection(viewId: string, rows: SelectedObject[]) {
@@ -87,6 +97,7 @@ function mergeObject(object: SelectedObject): SelectedObject {
 export function readUiContext(): UiContextSnapshot {
   const focused = frame.focused
   const table = (focused && tables.get(focused)) || [...tables.values()][0]
+  const columns = (focused && tableColumns.get(focused)) || [...tableColumns.values()][0] || []
   const chosen = (focused && selections.get(focused)) || [...selections.values()].find((rows) => rows.length > 0) || []
   let selection = chosen.map(mergeObject)
   if (selection.length === 0 && markedId) {
@@ -101,6 +112,7 @@ export function readUiContext(): UiContextSnapshot {
     selection,
     filter: table?.filter ?? '',
     sort: table?.sort ?? '',
+    columns: columns.map((column) => ({ ...column })),
     language: frame.language || 'sv',
   }
 }
