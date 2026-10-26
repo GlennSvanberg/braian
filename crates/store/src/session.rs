@@ -16,13 +16,15 @@ embed_migrations!("migrations");
 
 /// Which connection pool a cloned [`Store`] checks out from.
 ///
-/// Interactive reads and edits use [`DbLane::Interactive`]. Bulk import,
-/// bulk jobs and the indexer use [`DbLane::Bulk`], whose pool is capped so a
-/// large COPY cannot take every connection.
+/// Interactive reads and edits use [`DbLane::Interactive`]. Bulk import and
+/// bulk jobs use [`DbLane::Bulk`], whose pool is capped so a large COPY cannot
+/// take every connection. The indexer's interactive lane uses [`DbLane::Indexer`],
+/// a small pool that a bulk fetch does not check out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DbLane {
     Interactive,
     Bulk,
+    Indexer,
 }
 
 /// Pool sizes and the pause between bulk batches.
@@ -33,13 +35,19 @@ pub enum DbLane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolConfig {
     pub interactive: usize,
-    /// Connections for import, bulk jobs and the indexer.
+    /// Connections for import, bulk jobs and the indexer's bulk lane.
     ///
     /// Eight matches the bench's default loader count without taking the
     /// interactive pool. `BRAIAN_POOL_BULK=12` is the quiet-host size for an
     /// import that should use more of the machine; the interactive gauge is
     /// what keeps that from sitting on a click.
     pub bulk: usize,
+    /// Connections for the indexer's interactive lane.
+    ///
+    /// Two is enough for one object read plus the seq update, and it stays off
+    /// [`Self::bulk`] so a cold 2 000-object fetch cannot queue an edit.
+    /// `BRAIAN_INDEXER_POOL` overrides it.
+    pub indexer: usize,
     /// Sleep after each idle bulk slice, on top of a scheduler yield.
     /// Zero still yields the task.
     pub bulk_yield: Duration,
@@ -55,6 +63,7 @@ impl Default for PoolConfig {
         Self {
             interactive: 24,
             bulk: 8,
+            indexer: 2,
             bulk_yield: Duration::from_millis(1),
             bulk_yield_step: Duration::from_millis(4),
             bulk_yield_max: Duration::from_millis(25),
@@ -68,6 +77,7 @@ impl PoolConfig {
         Self {
             interactive: positive_env("BRAIAN_POOL_INTERACTIVE", defaults.interactive),
             bulk: positive_env("BRAIAN_POOL_BULK", defaults.bulk),
+            indexer: positive_env("BRAIAN_INDEXER_POOL", defaults.indexer),
             bulk_yield: duration_env("BRAIAN_BULK_YIELD_MS", defaults.bulk_yield),
             bulk_yield_step: duration_env("BRAIAN_BULK_YIELD_STEP_MS", defaults.bulk_yield_step),
             bulk_yield_max: duration_env("BRAIAN_BULK_YIELD_MAX_MS", defaults.bulk_yield_max),
@@ -105,6 +115,7 @@ fn duration_env(name: &str, default: Duration) -> Duration {
 pub struct Store {
     interactive: Pool,
     bulk: Pool,
+    indexer: Pool,
     lane: DbLane,
     yield_limits: YieldLimits,
     load: InteractiveLoad,
@@ -161,11 +172,15 @@ impl Store {
         let interactive = Pool::builder(Manager::new(config.clone(), NoTls))
             .max_size(pools.interactive.max(1))
             .build()?;
+        let indexer = Pool::builder(Manager::new(config.clone(), NoTls))
+            .max_size(pools.indexer.max(1))
+            .build()?;
         let bulk = Pool::builder(Manager::new(config, NoTls))
             .max_size(pools.bulk.max(1))
             .build()?;
         Ok(Self {
             interactive,
+            indexer,
             bulk,
             lane: DbLane::Interactive,
             yield_limits: pools.yield_limits(),
@@ -187,6 +202,16 @@ impl Store {
     pub fn on_interactive(&self) -> Self {
         let mut store = self.clone();
         store.lane = DbLane::Interactive;
+        store
+    }
+
+    /// Same store, checking out connections from the indexer's interactive pool.
+    ///
+    /// Bulk indexing stays on [`Self::on_bulk`]. The two lanes then do not wait
+    /// on each other's Postgres connections.
+    pub fn on_indexer(&self) -> Self {
+        let mut store = self.clone();
+        store.lane = DbLane::Indexer;
         store
     }
 
@@ -321,6 +346,7 @@ impl Store {
         match self.lane {
             DbLane::Interactive => &self.interactive,
             DbLane::Bulk => &self.bulk,
+            DbLane::Indexer => &self.indexer,
         }
     }
 
@@ -394,4 +420,17 @@ pub async fn drop_database(client: &tokio_postgres::Client, name: &str) -> Resul
         .batch_execute(&format!("DROP DATABASE IF EXISTS {name}"))
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PoolConfig;
+
+    #[test]
+    fn the_indexer_pool_is_small_and_separate_from_bulk() {
+        let pools = PoolConfig::default();
+        assert_eq!(pools.indexer, 2);
+        assert!(pools.indexer < pools.bulk);
+        assert!(pools.bulk < pools.interactive);
+    }
 }

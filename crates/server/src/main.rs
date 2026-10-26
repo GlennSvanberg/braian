@@ -209,8 +209,9 @@ async fn indexer() -> anyhow::Result<()> {
 }
 
 async fn run_indexer(store: Store, brokers: &str) -> anyhow::Result<()> {
-    let store = store.on_bulk();
     let search = typesense().ok_or_else(|| anyhow::anyhow!("TYPESENSE_URL is not set"))?;
+    // The indexer puts its interactive lane on `BRAIAN_INDEXER_POOL` and bulk
+    // reads on the bulk pool. Forcing `on_bulk` here would share one pool.
     let indexer = braian_indexer::Indexer::new(store, search, brokers, "braian-indexer")?;
     let (_tx, rx) = watch::channel(false);
     indexer.run(rx).await

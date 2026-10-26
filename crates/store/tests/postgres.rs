@@ -1042,6 +1042,41 @@ async fn a_full_bulk_pool_does_not_block_an_interactive_connection() {
     drop(held);
 }
 
+#[tokio::test]
+async fn a_full_bulk_pool_does_not_block_the_indexer_lane() {
+    let db = TestDb::create().await;
+    let bulk = db.store().on_bulk();
+    let indexer = db.store().on_indexer();
+    assert_eq!(indexer.lane(), DbLane::Indexer);
+    assert_eq!(indexer.pool_max(), 2);
+    assert!(indexer.pool_max() < bulk.pool_max());
+    let mut held = Vec::new();
+    for _ in 0..bulk.pool_max() {
+        held.push(bulk.hold_connection().await.unwrap());
+    }
+    assert_eq!(bulk.pool_available(), 0);
+    assert_eq!(
+        indexer.pool_size(),
+        0,
+        "the bulk pool opened indexer connections"
+    );
+    let started = std::time::Instant::now();
+    let live = indexer.hold_connection().await.unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(200),
+        "the indexer lane waited on a full bulk pool"
+    );
+    assert_eq!(indexer.pool_size(), 1);
+    assert_eq!(bulk.pool_size(), bulk.pool_max());
+    assert_eq!(
+        db.store().pool_size(),
+        0,
+        "the indexer lane took an API connection"
+    );
+    drop(live);
+    drop(held);
+}
+
 async fn explain_batch_read(url: &str, ids: &[braian_model::Uuid]) -> Vec<String> {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
