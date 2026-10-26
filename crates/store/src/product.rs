@@ -968,48 +968,6 @@ impl Store {
         Ok(())
     }
 
-    /// Moves pending rows to `applying` and returns the ids this caller now owns.
-    /// A second accept sees no pending row and gets nothing back.
-    pub async fn claim_proposal_rows(
-        &self,
-        proposal_id: Uuid,
-        row_ids: &[Uuid],
-    ) -> Result<Vec<Uuid>, Error> {
-        if row_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let client = self.pool().get().await?;
-        let rows = client
-            .query(
-                "UPDATE proposal_rows SET status = 'applying'
-                 WHERE proposal_id = $1 AND id = ANY($2) AND status = 'pending'
-                 RETURNING id",
-                &[&proposal_id, &row_ids],
-            )
-            .await?;
-        Ok(rows.into_iter().map(|row| row.get("id")).collect())
-    }
-
-    /// Gives a claimed row back to `pending` when the write did not happen.
-    pub async fn release_proposal_rows(
-        &self,
-        proposal_id: Uuid,
-        row_ids: &[Uuid],
-    ) -> Result<(), Error> {
-        if row_ids.is_empty() {
-            return Ok(());
-        }
-        let client = self.pool().get().await?;
-        client
-            .execute(
-                "UPDATE proposal_rows SET status = 'pending'
-                 WHERE proposal_id = $1 AND id = ANY($2) AND status = 'applying'",
-                &[&proposal_id, &row_ids],
-            )
-            .await?;
-        Ok(())
-    }
-
     pub async fn set_proposal_status(&self, id: Uuid, status: &str) -> Result<(), Error> {
         let client = self.pool().get().await?;
         client

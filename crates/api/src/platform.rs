@@ -18,7 +18,8 @@ use axum::routing::{get, post};
 use braian_model::{AttributeId, AttributeKind, DefinitionSet, Object, ObjectId};
 use braian_search::SearchQuery;
 use braian_store::{
-    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalRow, Store,
+    Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalRow, ProposalWrite, Store,
+    WriteReceipt,
 };
 use futures::stream;
 use serde::Deserialize;
@@ -2083,8 +2084,10 @@ async fn propose_assortment(
 async fn apply_assortment_row(
     state: &AppState,
     identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
     row: &Value,
-) -> Result<i64, Problem> {
+) -> Result<Option<i64>, Problem> {
     let patch = row.get("patch").cloned().unwrap_or(json!({}));
     let name = patch
         .get("name")
@@ -2103,12 +2106,21 @@ async fn apply_assortment_row(
         .and_then(Value::as_str)
         .and_then(|value| Uuid::parse_str(value).ok())
         .unwrap_or_else(Uuid::now_v7);
-    state
-        .store
-        .save_assortment(id, owner, name, &query)
-        .await
-        .map_err(store_status)?;
-    Ok(0)
+    let receipt = finish_row(
+        state,
+        identity,
+        proposal_id,
+        row_id,
+        "accepted",
+        ProposalWrite::Assortment {
+            id,
+            owner,
+            name: name.to_owned(),
+            query,
+        },
+    )
+    .await?;
+    Ok(receipt.map(|receipt| receipt.last_seq))
 }
 
 async fn list_job_types(
@@ -2522,24 +2534,13 @@ async fn accept_proposal(
         .unwrap_or_default();
     let selected = selected_rows(&rows, &body.rows);
     validate_accept_patches(&state, &selected, &body.patches).await?;
-    let wanted: Vec<Uuid> = selected.iter().filter_map(row_uuid).collect();
-    let claimed = state
-        .store
-        .claim_proposal_rows(id, &wanted)
-        .await
-        .map_err(store_status)?;
-    if claimed.is_empty() {
+    if selected.is_empty() {
         return Err(Problem::new(
             StatusCode::CONFLICT,
             "conflict",
             "this proposal is no longer pending",
         ));
     }
-    let owned: BTreeSet<Uuid> = claimed.into_iter().collect();
-    let selected: Vec<Value> = selected
-        .into_iter()
-        .filter(|row| row_uuid(row).is_some_and(|row_id| owned.contains(&row_id)))
-        .collect();
     let patches = body.patches;
     if selected.len() >= LARGE_ACCEPT {
         return accept_later(state, identity, id, selected, patches).await;
@@ -2663,28 +2664,71 @@ async fn apply_selected(
     job_id: Option<Uuid>,
     patches: &BTreeMap<Uuid, Value>,
 ) -> Result<Value, Problem> {
+    let lock = state
+        .store
+        .lock_proposal(proposal_id)
+        .await
+        .map_err(store_status)?;
+    let outcome = apply_selected_locked(state, identity, proposal_id, rows, job_id, patches).await;
+    lock.release().await.map_err(store_status)?;
+    let tally = outcome?;
+    if tally.accepted.is_empty() && tally.failed.is_empty() && tally.rejected == 0 {
+        return Err(Problem::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this proposal is no longer pending",
+        ));
+    }
+    if tally.failed.is_empty() {
+        let status = if tally.accepted.is_empty() && tally.rejected > 0 {
+            "discarded"
+        } else {
+            "accepted"
+        };
+        let _ = state.store.set_proposal_status(proposal_id, status).await;
+    }
+    Ok(json!({ "accepted": tally.accepted, "failed": tally.failed }))
+}
+
+struct AcceptTally {
+    accepted: Vec<Value>,
+    failed: Vec<Value>,
+    rejected: i32,
+}
+
+async fn apply_selected_locked(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    rows: Vec<Value>,
+    job_id: Option<Uuid>,
+    patches: &BTreeMap<Uuid, Value>,
+) -> Result<AcceptTally, Problem> {
     let total = i32::try_from(rows.len()).unwrap_or(i32::MAX);
     let mut done = 0i32;
     let mut accepted = Vec::new();
     let mut failed = Vec::new();
     let mut rejected = 0i32;
     for row in rows {
-        let Some(row_id) = row
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-        else {
+        let Some(row_id) = row_uuid(&row) else {
             continue;
         };
         let mut row = row;
         if let Some(replacement) = patches.get(&row_id) {
             if patch_is_empty(replacement) {
-                state
-                    .store
-                    .set_proposal_rows(proposal_id, &[row_id], "rejected")
-                    .await
-                    .map_err(store_status)?;
-                rejected += 1;
+                if finish_row(
+                    state,
+                    identity,
+                    proposal_id,
+                    row_id,
+                    "rejected",
+                    ProposalWrite::None,
+                )
+                .await?
+                .is_some()
+                {
+                    rejected += 1;
+                }
                 done += 1;
                 if let Some(job_id) = job_id {
                     let _ = state
@@ -2704,21 +2748,10 @@ async fn apply_selected(
                 object.insert("patch".to_owned(), replacement.clone());
             }
         }
-        match apply_row(state, identity, &row).await {
-            Ok(seq) => {
-                state
-                    .store
-                    .set_proposal_rows(proposal_id, &[row_id], "accepted")
-                    .await
-                    .map_err(store_status)?;
-                accepted.push(json!({ "id": row_id, "seq": seq }));
-            }
+        match apply_row(state, identity, proposal_id, row_id, &row).await {
+            Ok(Some(seq)) => accepted.push(json!({ "id": row_id, "seq": seq })),
+            Ok(None) => {}
             Err(problem) => {
-                state
-                    .store
-                    .release_proposal_rows(proposal_id, &[row_id])
-                    .await
-                    .map_err(store_status)?;
                 let detail = problem
                     .errors
                     .first()
@@ -2743,15 +2776,11 @@ async fn apply_selected(
             emit_job(state, job_id, "running", done, total);
         }
     }
-    if failed.is_empty() {
-        let status = if accepted.is_empty() && rejected > 0 {
-            "discarded"
-        } else {
-            "accepted"
-        };
-        let _ = state.store.set_proposal_status(proposal_id, status).await;
-    }
-    Ok(json!({ "accepted": accepted, "failed": failed }))
+    Ok(AcceptTally {
+        accepted,
+        failed,
+        rejected,
+    })
 }
 
 fn row_uuid(row: &Value) -> Option<Uuid> {
@@ -3004,12 +3033,18 @@ fn relation_proposal(row: &Value) -> Option<(Uuid, String)> {
     Some((to, kind.to_owned()))
 }
 
-async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result<i64, Problem> {
+async fn apply_row(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    row: &Value,
+) -> Result<Option<i64>, Problem> {
     if crate::model_proposal::is_model_row(row) {
-        return crate::model_proposal::apply_row(state, identity, row).await;
+        return crate::model_proposal::apply_row(state, identity, proposal_id, row_id, row).await;
     }
     if row.get("type_key").and_then(Value::as_str) == Some("assortment") {
-        return apply_assortment_row(state, identity, row).await;
+        return apply_assortment_row(state, identity, proposal_id, row_id, row).await;
     }
     if let Some((to, kind)) = relation_proposal(row) {
         let from = row
@@ -3017,12 +3052,16 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
             .and_then(Value::as_str)
             .and_then(|id| Uuid::parse_str(id).ok())
             .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "invalid_id", "relation"))?;
-        state
-            .store
-            .set_relation(ObjectId::from_uuid(from), ObjectId::from_uuid(to), &kind)
-            .await
-            .map_err(store_status)?;
-        return Ok(0);
+        let receipt = finish_row(
+            state,
+            identity,
+            proposal_id,
+            row_id,
+            "accepted",
+            ProposalWrite::Relation { from, to, kind },
+        )
+        .await?;
+        return Ok(receipt.map(|receipt| receipt.last_seq));
     }
     let cached = state.models.get(&state.store).await?;
     let patch_body = row.get("patch").cloned().unwrap_or(json!({}));
@@ -3052,43 +3091,26 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
             return Err(base_version_required());
         };
         let base = base as u64;
-        if base < stored.version {
-            let mut problem = Problem::new(
-                StatusCode::CONFLICT,
-                "conflict",
-                format!(
-                    "proposal base_version {base} is older than the object's version {}; the object was not changed",
-                    stored.version
-                ),
-            );
-            problem.current_version = Some(stored.version);
-            return Err(problem);
-        }
-        if base > stored.version {
-            let mut problem = Problem::new(
-                StatusCode::CONFLICT,
-                "base_ahead",
-                format!(
-                    "proposal base_version {base} is ahead of the object's version {}; the object was not changed",
-                    stored.version
-                ),
-            );
-            problem.current_version = Some(stored.version);
-            return Err(problem);
-        }
-        let receipt = state
-            .store
-            .write_batch(
-                &identity.actor,
-                vec![ObjectOp::Update {
+        let Some(receipt) = finish_row(
+            state,
+            identity,
+            proposal_id,
+            row_id,
+            "accepted",
+            ProposalWrite::Objects {
+                ops: vec![ObjectOp::Update {
                     id,
                     patch,
                     base_version: base,
-                    read_version: stored.version,
+                    read_version: base,
                 }],
-            )
-            .await
-            .map_err(store_status)?;
+                expect_version: Some((id, base)),
+            },
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
         state.emit(json!({
             "seq": receipt.last_seq,
             "op": "update",
@@ -3097,7 +3119,7 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
             "type": type_key,
         }));
         state.index_after_commit(id.as_uuid(), receipt.last_seq);
-        return Ok(receipt.last_seq);
+        return Ok(Some(receipt.last_seq));
     }
     let body = CreateObject {
         id: None,
@@ -3109,16 +3131,73 @@ async fn apply_row(state: &AppState, identity: &Identity, row: &Value) -> Result
         values,
     };
     let op = create_op(&cached, &body)?;
-    let receipt = state
-        .store
-        .write_batch(&identity.actor, vec![op])
-        .await
-        .map_err(store_status)?;
+    let Some(receipt) = finish_row(
+        state,
+        identity,
+        proposal_id,
+        row_id,
+        "accepted",
+        ProposalWrite::Objects {
+            ops: vec![op],
+            expect_version: None,
+        },
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
     state.emit(json!({ "seq": receipt.last_seq, "op": "create", "type": type_key }));
     if let Some((id, _)) = receipt.versions.first() {
         state.index_after_commit(id.as_uuid(), receipt.last_seq);
     }
-    Ok(receipt.last_seq)
+    Ok(Some(receipt.last_seq))
+}
+
+/// `Ok(None)` means another accept already took the row. The status change and the
+/// write commit together, so a failure leaves the row `pending`.
+async fn finish_row(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    status: &str,
+    write: ProposalWrite,
+) -> Result<Option<WriteReceipt>, Problem> {
+    state
+        .store
+        .commit_proposal_row(&identity.actor, proposal_id, row_id, status, write)
+        .await
+        .map_err(proposal_write_error)
+}
+
+fn proposal_write_error(error: braian_store::Error) -> Problem {
+    match error {
+        braian_store::Error::Conflict {
+            current_version, ..
+        } => {
+            let mut problem = Problem::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                format!(
+                    "proposal base_version is older than the object's version {current_version}; the object was not changed"
+                ),
+            );
+            problem.current_version = Some(current_version);
+            problem
+        }
+        braian_store::Error::BaseAhead { current_version } => {
+            let mut problem = Problem::new(
+                StatusCode::CONFLICT,
+                "base_ahead",
+                format!(
+                    "proposal base_version is ahead of the object's version {current_version}; the object was not changed"
+                ),
+            );
+            problem.current_version = Some(current_version);
+            problem
+        }
+        other => store_status(other),
+    }
 }
 
 async fn discard_proposal(

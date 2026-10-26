@@ -23,6 +23,7 @@ pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind};
 pub use imports::{ImportRowIn, ImportRowOut, ImportSession};
 pub use log::{ChangeListener, LogClaim, LogEvent};
+pub use ops::{ProposalLock, ProposalWrite};
 pub use pressure::InteractiveGuard;
 pub use product::{HistoryEntry, ProposalRow, UserRecord};
 pub use scan::{EXPORT_CHUNK, ExportObject, ExportOrder, ExportScan};
