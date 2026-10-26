@@ -93,7 +93,7 @@ export const architecture = {
   eyebrow: 'For developers',
   title: 'One write path',
   lede: 'Everything else is a consumer.',
-  stack: ['Rust', 'TanStack Start', 'Postgres', 'Redpanda', 'Typesense'],
+  stack: ['Rust', 'TanStack Start', 'Postgres', 'Typesense'],
   principles: [
     {
       title: 'One operation registry',
@@ -102,7 +102,7 @@ export const architecture = {
     },
     {
       title: 'A change queue you subscribe to',
-      body: 'Every committed change lands in Redpanda on an interactive lane and a bulk lane, so a single edit never waits behind a bulk load. Read it as server-sent events or signed webhooks.',
+      body: 'Every committed change appends to the `changes` table in Postgres on an interactive lane and a bulk lane, so a single edit never waits behind a bulk load. The indexer and live stream read by seq. Subscribe via server-sent events or signed webhooks.',
       code: 'GET /v1/stream',
     },
     {
@@ -146,7 +146,7 @@ export const architecture = {
 export const openSource = {
   title: 'Open source. Yours to run.',
   lede: 'MIT OR Apache-2.0 licensed and self-hosted.',
-  facts: ['MIT OR Apache-2.0', 'Rust and TypeScript', 'Postgres · Redpanda · Typesense', 'Docker Compose for development'],
+  facts: ['MIT OR Apache-2.0', 'Rust and TypeScript', 'Postgres · Typesense', 'Docker Compose for development'],
   code: [
     'git clone https://github.com/GlennSvanberg/braian',
     'cd braian && cp .env.example .env',
