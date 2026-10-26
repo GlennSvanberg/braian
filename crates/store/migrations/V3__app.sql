@@ -1,7 +1,5 @@
--- Product tables on top of the phase 2 log. `kind` is the lane (interactive or
--- bulk). A publication is created only when this server is already on logical
--- replication, so a fresh database at the default wal_level still migrates.
--- V15 drops that publication: the indexer reads `changes` by seq.
+-- Product tables on top of the phase 2 log. `kind` lets the relay choose a topic
+-- without joining batches. The publication is what the relay's replication slot reads.
 
 ALTER TABLE changes ADD COLUMN kind text NOT NULL DEFAULT 'interactive';
 
@@ -10,8 +8,7 @@ ALTER TABLE changes
 
 DO $$
 BEGIN
-    IF current_setting('wal_level') = 'logical'
-       AND NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'braian_changes') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'braian_changes') THEN
         CREATE PUBLICATION braian_changes FOR TABLE changes
             WITH (publish = 'insert', publish_via_partition_root = true);
     END IF;

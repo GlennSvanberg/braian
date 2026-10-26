@@ -104,6 +104,8 @@ BEGIN
     END LOOP;
 END $$;
 
+-- V3 creates `braian_changes`. When wal_level is not logical that statement
+-- warns and still creates the publication. Nothing reads it anymore.
 DROP PUBLICATION IF EXISTS braian_changes;
 
 DO $$

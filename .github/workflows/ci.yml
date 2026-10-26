@@ -47,6 +47,16 @@ jobs:
           BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
           EOF
           docker compose up -d --wait postgres
+      - name: Baseline migrations from main
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          dest="${RUNNER_TEMP}/baseline-migrations"
+          mkdir -p "$dest"
+          git archive origin/main crates/store/migrations | tar -x --strip-components=3 -C "$dest"
+          test -f "$dest/V3__app.sql"
+          test ! -e "$dest/V15__change_log.sql"
+          echo "BRAIAN_BASELINE_MIGRATIONS=$dest" >> "$GITHUB_ENV"
       - run: cargo fmt --all --check
         if: steps.changes.outputs.code == 'true'
       - run: cargo clippy --workspace --all-targets -- -D warnings
