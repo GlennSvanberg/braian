@@ -21,6 +21,7 @@ test('final data-model and polish shots', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Data model' }).click()
   const tree = page.getByTestId('data-model').first()
+  await tree.getByTestId('group-friluft').locator('.twist').click()
   await expect(tree.getByTestId('group-sovsack')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
