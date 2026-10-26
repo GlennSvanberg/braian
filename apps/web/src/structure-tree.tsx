@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
 import { ApiError, api, type Json } from './api'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
 import { copy } from './i18n'
-import { groupNodes, structureKeys } from './model-view'
+import { groupNodes, structureKeys, type GroupNode, type ModelSelection } from './model-view'
 import { structureCaption } from './graph-scene'
 import {
   deletionNeedsMove,
@@ -15,7 +15,6 @@ import {
   structureKeyFromName,
   type MenuNode,
 } from './structure-menu'
-import type { ModelSelection } from './model-view'
 
 type Draft =
   | { kind: 'structure' }
@@ -45,8 +44,10 @@ export function StructureSection({
   onPick: (next: ModelSelection) => void
 }) {
   const client = useQueryClient()
-  const [collapsed, setCollapsed] = useState<string[]>([])
+  const [expanded, setExpanded] = useState<string[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
+  const nameRef = useRef<HTMLInputElement | null>(null)
+  const focusName = useRef(false)
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -87,6 +88,25 @@ export function StructureSection({
     void run(() => work(key, label))
   }
 
+  // The dropdown restores focus to its trigger after close. Hold the name field instead.
+  const holdNameFocus = (event: Event) => {
+    if (!focusName.current) return
+    event.preventDefault()
+    focusName.current = false
+    nameRef.current?.focus()
+  }
+
+  const editName = (next: Draft) => {
+    focusName.current = true
+    setDraft(next)
+  }
+
+  const expandGroup = (structure: string, parent: string) => {
+    const node = groupNodes(defs, structure).find((item) => item.key === parent)
+    if (!node) return
+    setExpanded((current) => (current.includes(node.id) ? current : [...current, node.id]))
+  }
+
   const openDelete = (next: DialogState) => {
     setNotice('')
     setDialog(next)
@@ -115,6 +135,7 @@ export function StructureSection({
       {draft?.kind === 'structure' ? (
         <NameField
           label={copy.newStructure}
+          inputRef={nameRef}
           onCommit={(name) => commitName(name, (key, label) => api('/v1/structures:create', { method: 'POST', body: JSON.stringify({ key, label }) }).then(() => undefined))}
           onCancel={() => setDraft(null)}
         />
@@ -128,6 +149,7 @@ export function StructureSection({
                 <NameField
                   label={copy.rename}
                   initial={draft.value}
+                  inputRef={nameRef}
                   onCommit={(name) => {
                     const label = name.trim()
                     if (!label) {
@@ -138,37 +160,47 @@ export function StructureSection({
                   }}
                   onCancel={() => setDraft(null)}
                 />
-              ) : draft?.kind === 'group' && draft.structure === key && !draft.parent ? (
-                <NameField
-                  label={copy.addChild}
-                  onCommit={(name) => commitName(name, (groupKey, label) => api(`/v1/structures/${encodeURIComponent(key)}/groups`, { method: 'POST', body: JSON.stringify({ key: groupKey, label }) }).then(() => undefined))}
-                  onCancel={() => setDraft(null)}
-                />
               ) : (
                 <strong>{title}</strong>
               )}
               <NodeMenu
                 testId={`structure-menu-${key}`}
-                onAdd={() => setDraft({ kind: 'group', structure: key })}
-                onRename={() => setDraft({ kind: 'rename-structure', structure: key, value: title })}
+                onCloseAutoFocus={holdNameFocus}
+                onAdd={() => editName({ kind: 'group', structure: key })}
+                onRename={() => editName({ kind: 'rename-structure', structure: key, value: title })}
                 onDelete={() => openDelete({ kind: 'delete-structure', structure: key, label: title, count: null, moveTo: '', error: '' })}
               />
             </div>
+            {draft?.kind === 'group' && draft.structure === key && !draft.parent ? (
+              <DraftRow depth={0}>
+                <NameField
+                  label={copy.addChild}
+                  inputRef={nameRef}
+                  onCommit={(name) => commitName(name, (groupKey, label) => api(`/v1/structures/${encodeURIComponent(key)}/groups`, { method: 'POST', body: JSON.stringify({ key: groupKey, label }) }).then(() => undefined))}
+                  onCancel={() => setDraft(null)}
+                />
+              </DraftRow>
+            ) : null}
             <GroupList
               defs={defs}
               structure={key}
-              collapsed={collapsed}
-              setCollapsed={setCollapsed}
+              expanded={expanded}
+              setExpanded={setExpanded}
+              nameRef={nameRef}
+              onCloseAutoFocus={holdNameFocus}
               selection={selection}
               onPick={onPick}
               draft={draft}
               setDraft={setDraft}
-              onAdd={(parent) => setDraft({ kind: 'group', structure: key, parent })}
+              onAdd={(parent) => {
+                expandGroup(key, parent)
+                editName({ kind: 'group', structure: key, parent })
+              }}
               onCreate={(parent, name) => commitName(name, (groupKey, label) => api(`/v1/structures/${encodeURIComponent(key)}/groups`, {
                 method: 'POST',
                 body: JSON.stringify({ key: groupKey, label, parent }),
               }).then(() => undefined))}
-              onRename={(group, label) => setDraft({ kind: 'rename-group', structure: key, group, value: label })}
+              onRename={(group, label) => editName({ kind: 'rename-group', structure: key, group, value: label })}
               onRenameCommit={(group, name) => {
                 const label = name.trim()
                 if (!label) {
@@ -216,8 +248,10 @@ export function StructureSection({
 function GroupList({
   defs,
   structure,
-  collapsed,
-  setCollapsed,
+  expanded,
+  setExpanded,
+  nameRef,
+  onCloseAutoFocus,
   selection,
   onPick,
   draft,
@@ -231,8 +265,10 @@ function GroupList({
 }: {
   defs: Json | undefined
   structure: string
-  collapsed: string[]
-  setCollapsed: (update: (current: string[]) => string[]) => void
+  expanded: string[]
+  setExpanded: (update: (current: string[]) => string[]) => void
+  nameRef: RefObject<HTMLInputElement | null>
+  onCloseAutoFocus: (event: Event) => void
   selection: ModelSelection | null
   onPick: (next: ModelSelection) => void
   draft: Draft | null
@@ -245,38 +281,34 @@ function GroupList({
   onDelete: (group: string, label: string) => void
 }) {
   const rows = groupNodes(defs, structure)
-  let skipDepth = -1
-  const visible = rows.filter((node) => {
-    if (skipDepth >= 0) {
-      if (node.depth > skipDepth) return false
-      skipDepth = -1
-    }
-    if (collapsed.includes(node.id)) skipDepth = node.depth
-    return true
-  })
+  const visible = visibleGroups(rows, expanded)
   return (
     <>
       {visible.map((node) => {
-        const open = !collapsed.includes(node.id)
+        const open = expanded.includes(node.id)
         const on = selection?.kind === 'group' && selection.structure === structure && selection.group === node.key
         const hasChildren = rows.some((item) => item.parentKey === node.key)
         const label = structureCaption(node.key, defs, structure)
         const renaming = draft?.kind === 'rename-group' && draft.structure === structure && draft.group === node.key
+        const adding = draft?.kind === 'group' && draft.structure === structure && draft.parent === node.key
         return (
           <div key={node.id} data-testid={`group-${node.key}`}>
             <div className="model-row" style={{ paddingLeft: node.depth * 14 }}>
               {renaming ? (
-                <NameField label={copy.rename} initial={draft.value} onCommit={(name) => onRenameCommit(node.key, name)} onCancel={() => setDraft(null)} />
-              ) : draft?.kind === 'group' && draft.structure === structure && draft.parent === node.key ? (
-                <NameField label={copy.addChild} onCommit={(name) => onCreate(node.key, name)} onCancel={() => setDraft(null)} />
+                <NameField label={copy.rename} initial={draft.value} inputRef={nameRef} onCommit={(name) => onRenameCommit(node.key, name)} onCancel={() => setDraft(null)} />
               ) : (
-                <button type="button" className={on ? 'model-node on' : 'model-node'} onClick={() => onPick({ kind: 'group', structure, group: node.key })}>
+                <button
+                  type="button"
+                  className={on ? 'model-node on' : 'model-node'}
+                  aria-expanded={hasChildren ? open : undefined}
+                  onClick={() => onPick({ kind: 'group', structure, group: node.key })}
+                >
                   {hasChildren ? (
                     <span
                       className="twist"
                       onClick={(event) => {
                         event.stopPropagation()
-                        setCollapsed((current) => (current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id]))
+                        setExpanded((current) => (current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id]))
                       }}
                     >
                       {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
@@ -287,16 +319,45 @@ function GroupList({
               )}
               <NodeMenu
                 testId={`group-menu-${structure}-${node.key}`}
+                onCloseAutoFocus={onCloseAutoFocus}
                 onAdd={() => onAdd(node.key)}
                 onRename={() => onRename(node.key, label)}
                 onMove={() => onMove(node.key, label, node.parentKey)}
                 onDelete={() => onDelete(node.key, label)}
               />
             </div>
+            {adding ? (
+              <DraftRow depth={node.depth + 1}>
+                <NameField label={copy.addChild} inputRef={nameRef} onCommit={(name) => onCreate(node.key, name)} onCancel={() => setDraft(null)} />
+              </DraftRow>
+            ) : null}
           </div>
         )
       })}
     </>
+  )
+}
+
+/** A node shows when every ancestor is expanded. The expanded set starts empty. */
+function visibleGroups(rows: GroupNode[], expanded: string[]) {
+  const parents = new Set(rows.flatMap((node) => (node.parentKey ? [node.parentKey] : [])))
+  let skipDepth = -1
+  return rows.filter((node) => {
+    if (skipDepth >= 0) {
+      if (node.depth > skipDepth) return false
+      skipDepth = -1
+    }
+    if (parents.has(node.key) && !expanded.includes(node.id)) skipDepth = node.depth
+    return true
+  })
+}
+
+function DraftRow({ depth, children }: { depth: number; children: ReactNode }) {
+  return (
+    <div className="model-row" data-testid="group-draft" style={{ paddingLeft: depth * 14 }}>
+      <span className="twist" aria-hidden="true" />
+      {children}
+    </div>
   )
 }
 
@@ -306,19 +367,21 @@ function NodeMenu({
   onRename,
   onMove,
   onDelete,
+  onCloseAutoFocus,
 }: {
   testId: string
   onAdd: () => void
   onRename: () => void
   onMove?: () => void
   onDelete: () => void
+  onCloseAutoFocus: (event: Event) => void
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="icon-btn" aria-label={copy.moreActions} data-testid={testId}>
         <MoreHorizontal size={14} />
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuContent onCloseAutoFocus={onCloseAutoFocus}>
         <DropdownMenuItem onSelect={onAdd} onClick={onAdd}>{copy.addChild}</DropdownMenuItem>
         <DropdownMenuItem onSelect={onRename} onClick={onRename}>{copy.rename}</DropdownMenuItem>
         {onMove ? <DropdownMenuItem onSelect={onMove} onClick={onMove}>{copy.move}</DropdownMenuItem> : null}
@@ -333,21 +396,35 @@ function NameField({
   initial = '',
   onCommit,
   onCancel,
+  inputRef,
 }: {
   label: string
   initial?: string
   onCommit: (name: string) => void
   onCancel: () => void
+  inputRef?: RefObject<HTMLInputElement | null>
 }) {
   const [value, setValue] = useState(initial)
   const field = useRef<HTMLInputElement>(null)
+  const setField = (node: HTMLInputElement | null) => {
+    field.current = node
+    if (inputRef) inputRef.current = node
+  }
   useEffect(() => {
-    field.current?.focus()
-    field.current?.scrollIntoView({ block: 'nearest' })
+    const node = field.current
+    if (!node) return
+    const focus = () => {
+      node.focus()
+      node.scrollIntoView({ block: 'nearest' })
+    }
+    focus()
+    // Radix returns focus to the menu trigger in a timeout after close.
+    const timer = window.setTimeout(focus, 0)
+    return () => window.clearTimeout(timer)
   }, [])
   return (
     <input
-      ref={field}
+      ref={setField}
       className="model-rename"
       placeholder={label}
       aria-label={label}

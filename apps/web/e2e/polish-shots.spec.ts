@@ -109,6 +109,7 @@ test('polish screenshots', async ({ page }) => {
   await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Data model' }).click()
+  await page.getByTestId('group-friluft').locator('.twist').click()
   await expect(page.getByTestId('group-sovsack')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-dark.png` })
   await page.getByRole('button', { name: 'Light' }).click()
