@@ -197,3 +197,197 @@ async fn a_commit_on_another_connection_wakes_the_listener() {
     let rows = store.changes_after(cursor, 10).await.unwrap();
     assert_eq!(rows.iter().map(|row| row.seq).collect::<Vec<_>>(), seqs);
 }
+
+/// A lower seq is still open. The higher seq has committed. Neither lane, nor
+/// the live tail, may move past the open seq.
+async fn assert_open_seq_blocks(store: &Store, cursor: i64) {
+    for lane in ["interactive", "bulk"] {
+        assert!(
+            store
+                .claim_changes(lane, Uuid::now_v7(), 10, Duration::from_secs(30))
+                .await
+                .unwrap()
+                .is_none(),
+            "{lane} claimed past an open seq"
+        );
+        assert_eq!(store.lane_committed(lane).await.unwrap(), cursor);
+    }
+    assert!(
+        store.changes_after(cursor, 10).await.unwrap().is_empty(),
+        "live tail read past an open seq"
+    );
+    assert_eq!(store.safe_change_seq().await.unwrap(), cursor);
+}
+
+async fn connect(url: &str) -> tokio_postgres::Client {
+    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            panic!("log connection closed: {error}");
+        }
+    });
+    client
+}
+
+async fn begin(url: &str) -> tokio_postgres::Client {
+    let client = connect(url).await;
+    client.batch_execute("BEGIN").await.unwrap();
+    client
+}
+
+async fn insert_row(client: &tokio_postgres::Client, actor: Uuid, kind: &str) -> i64 {
+    let batch = Uuid::now_v7();
+    client
+        .execute(
+            "INSERT INTO batches (id, actor, on_behalf_of, kind, source)
+             VALUES ($1, $2, NULL, $3, 'log')",
+            &[&batch, &actor, &kind],
+        )
+        .await
+        .unwrap();
+    let row = client
+        .query_one(
+            "INSERT INTO changes
+                (batch_id, object_id, version, op, actor, on_behalf_of, diff, kind)
+             VALUES ($1, $2, 1, 'update', $3, NULL, NULL, $4)
+             RETURNING seq",
+            &[&batch, &Uuid::now_v7(), &actor, &kind],
+        )
+        .await
+        .unwrap();
+    row.get(0)
+}
+
+#[tokio::test]
+async fn a_higher_seq_that_commits_first_stays_behind_the_open_one() {
+    let db = TestDb::create().await;
+    let store = db.store();
+    let who = principal(store).await;
+    let actor = who.actor.as_uuid();
+    let cursor = store.safe_change_seq().await.unwrap();
+    let early = begin(&db.database_url()).await;
+    let low = insert_row(&early, actor, "bulk").await;
+    let late = begin(&db.database_url()).await;
+    let high = insert_row(&late, actor, "interactive").await;
+    late.batch_execute("COMMIT").await.unwrap();
+    assert!(low < high);
+
+    assert_open_seq_blocks(store, cursor).await;
+
+    early.batch_execute("COMMIT").await.unwrap();
+    let tail = store.changes_after(cursor, 10).await.unwrap();
+    assert_eq!(
+        tail.iter().map(|row| row.seq).collect::<Vec<_>>(),
+        vec![low, high]
+    );
+    assert_eq!(store.safe_change_seq().await.unwrap(), high);
+
+    let interactive = store
+        .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .expect("interactive");
+    assert_eq!(
+        interactive
+            .events
+            .iter()
+            .map(|event| event.seq)
+            .collect::<Vec<_>>(),
+        vec![high]
+    );
+    let bulk = store
+        .claim_changes("bulk", Uuid::now_v7(), 10, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .expect("bulk");
+    assert_eq!(
+        bulk.events
+            .iter()
+            .map(|event| event.seq)
+            .collect::<Vec<_>>(),
+        vec![low]
+    );
+}
+
+#[tokio::test]
+async fn an_earlier_transaction_can_commit_a_higher_seq_first() {
+    let db = TestDb::create().await;
+    let store = db.store();
+    let who = principal(store).await;
+    let actor = who.actor.as_uuid();
+    let cursor = store.safe_change_seq().await.unwrap();
+    // Lower xid, higher seq: xmin would call this row stable while `low` is open.
+    let early = begin(&db.database_url()).await;
+    early
+        .query_one("SELECT pg_current_xact_id()", &[])
+        .await
+        .unwrap();
+    let later = begin(&db.database_url()).await;
+    let low = insert_row(&later, actor, "bulk").await;
+    let high = insert_row(&early, actor, "interactive").await;
+    early.batch_execute("COMMIT").await.unwrap();
+    assert!(low < high);
+
+    assert_open_seq_blocks(store, cursor).await;
+
+    later.batch_execute("COMMIT").await.unwrap();
+    let tail = store.changes_after(cursor, 10).await.unwrap();
+    assert_eq!(
+        tail.iter().map(|row| row.seq).collect::<Vec<_>>(),
+        vec![low, high]
+    );
+    assert_eq!(store.safe_change_seq().await.unwrap(), high);
+    let interactive = store
+        .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .expect("interactive");
+    assert_eq!(interactive.events[0].seq, high);
+    let bulk = store
+        .claim_changes("bulk", Uuid::now_v7(), 10, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .expect("bulk");
+    assert_eq!(bulk.events[0].seq, low);
+}
+
+#[tokio::test]
+async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
+    let db = TestDb::create().await;
+    let store = db.store();
+    let who = principal(store).await;
+    let actor = who.actor.as_uuid();
+    let cursor = store.safe_change_seq().await.unwrap();
+    let early = begin(&db.database_url()).await;
+    let low = insert_row(&early, actor, "bulk").await;
+    let late = begin(&db.database_url()).await;
+    let high = insert_row(&late, actor, "interactive").await;
+    late.batch_execute("COMMIT").await.unwrap();
+    assert_open_seq_blocks(store, cursor).await;
+
+    early.batch_execute("ROLLBACK").await.unwrap();
+    let tail = store.changes_after(cursor, 10).await.unwrap();
+    assert_eq!(
+        tail.iter().map(|row| row.seq).collect::<Vec<_>>(),
+        vec![high]
+    );
+    assert!(tail.iter().all(|row| row.seq != low));
+    assert_eq!(store.safe_change_seq().await.unwrap(), high);
+    let interactive = store
+        .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .expect("interactive");
+    assert_eq!(interactive.events[0].seq, high);
+    assert!(
+        store
+            .claim_changes("bulk", Uuid::now_v7(), 10, Duration::from_secs(30))
+            .await
+            .unwrap()
+            .is_none(),
+        "aborted bulk seq was claimed as a row"
+    );
+    assert_eq!(store.lane_committed("bulk").await.unwrap(), high);
+}

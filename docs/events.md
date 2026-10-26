@@ -16,7 +16,11 @@ A worker locks its lane row, drops expired unfinished claims, and leases the nex
 
 The cursor advances only across a contiguous prefix of finished claims. A later range that finishes first does not skip an earlier open range. A crash before commit leaves the lease to expire. The next worker claims the same sequences. Delivery is at-least-once. Typesense still refuses an older `seq` for an object it has already applied.
 
-An empty hole in one lane (sequences that belong to the other lane, or a range with no rows) is closed with a claim that is already done, then folded. That is a single insert and delete of a claim row, not an update of `changes`.
+`seq` is allocated when the row is inserted, not when its transaction commits. A claim therefore reads every kind, not only its own, and stops before the first missing seq while another backend in this database holds a transaction id (`pg_stat_activity.backend_xid`) or a prepared transaction exists. That transaction can still commit the missing seq. `pg_snapshot_xip` is not enough to see it: on Postgres 16 the oldest active xid is folded into `xmin:xmax` and the in-progress list is empty. The same rule is what `changes_after` and the live tail use. The tail starts at `safe_change_seq`, the last seq of that prefix, rather than `max(seq)`.
+
+A hole is closed with an already-done claim only when a second read still shows the hole and no other backend in this database holds a transaction id. Every missing seq is then aborted: identity values are not reused, and a transaction that starts afterwards can only take a seq above the ones already allocated. The closed hole is one insert and delete of a claim row, not an update of `changes`. Rows of the other lane that are already visible are skipped the same way, so a bulk backlog does not become interactive work.
+
+An `xid8` column filled by `pg_current_xact_id()`, compared with `pg_snapshot_xmin`, does not draw this line. A transaction that starts first has the lower xid and can still insert a higher seq and commit while a later transaction holds a lower seq. That committed row has an xid below xmin, so a watermark on xmin steps over the open seq. The activity check is a read. COPY does not grow a column, a default, or an index.
 
 Idle polls are a read (`COUNT` with a limit). They do not write the cursor. A claim takes at most 5 000 rows.
 
@@ -28,11 +32,13 @@ An `AFTER INSERT` row trigger on each `changes` partition runs `pg_notify('braia
 
 The indexer and the API each hold a `LISTEN` connection. A missed notify is covered by a poll: 5 ms on the interactive lane when it is idle, 40 ms on bulk, and 250 ms on the live tail. `braian all` therefore keeps two listen connections. That is intentional.
 
-The API samples `max(seq)` before it listens, then reads `changes` after that cursor, so a commit that landed in the gap is not skipped. The same process also emits locally after its own commit. Subscribers dedupe by `seq`. A commit from another connection, or another host, reaches the UI through the tail.
+The API takes `safe_change_seq` before it listens, then reads `changes` after that cursor. A commit that was still open, with a lower seq than the visible tip, stays in front of the cursor until it commits or aborts. The same process also emits locally after its own commit. Subscribers dedupe by `seq`. A commit from another connection, or another host, reaches the UI through the tail.
 
 ## Coalescing
 
-Inside one claim, and across the short index window (100 ms), events for the same object collapse to the highest `seq`. The indexer then reads the current Postgres row and imports that. Bulk imports stay batched. The first bulk reads stay small and grow once the lane is warm, same as before.
+Inside one claim, events for the same object collapse to the highest `seq`. The indexer then reads the current Postgres row and imports that. The interactive lane waits 20 ms to pick up a burst; the bulk lane waits 100 ms. Idle edit→searchable p50 on the perf stack was about 95 ms, which is that old shared 100 ms wait plus a short import. The interactive poll is still 5 ms. Bulk imports stay batched. The first bulk reads stay small and grow once the lane is warm, same as before.
+
+Edit→searchable p95 during heavy COPY was about 345 ms, against about 222 ms when the log was Redpanda. The poll is not that gap. Part of it is the coalesce wait, which the shorter interactive window removes. The rest is Typesense serving the bulk import, and, after the visibility rule, an edit whose seq sits above a COPY transaction that has not committed yet. The cursor waits for that transaction. This tree did not re-run the 8-vCPU perf stack, so those two figures are the earlier run, not a new measurement.
 
 Interactive commits still write through to Typesense via `index_after_commit`. That path does not move the lane cursor. If it drops a document, the claim path imports it.
 

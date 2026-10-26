@@ -193,7 +193,7 @@ async fn run_live(state: AppState) -> anyhow::Result<()> {
 }
 
 async fn live_once(state: &AppState) -> anyhow::Result<()> {
-    let mut cursor = state.store.max_change_seq().await?;
+    let mut cursor = state.store.safe_change_seq().await?;
     let listener = state.store.listen_changes().await?;
     loop {
         let rows = state.store.changes_after(cursor, 200).await?;
