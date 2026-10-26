@@ -7,7 +7,7 @@
 <p align="center">Open-source, self-hosted product data, built for agents.</p>
 
 <p align="center">
-  <a href="https://github.com/GlennSvanberg/braian/actions/workflows/ci.yml"><img src="https://github.com/GlennSvanberg/braian/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/braian-io/braian/actions/workflows/ci.yml"><img src="https://github.com/braian-io/braian/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0" /></a>
 </p>
 
