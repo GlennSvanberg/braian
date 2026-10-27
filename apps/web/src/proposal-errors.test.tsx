@@ -105,10 +105,10 @@ describe('proposal mutation errors', () => {
     render(<Host push={push} />)
     await screen.findAllByText('Proposal')
     fireEvent.click(screen.getByTestId('save-all'))
-    await waitFor(() => expect(screen.getByTestId('discard-all')).toBeDisabled())
-    expect(screen.getByTestId('save-all')).toBeDisabled()
+    await waitFor(() => expect((screen.getByTestId('discard-all') as HTMLButtonElement).disabled).toBe(true))
+    expect((screen.getByTestId('save-all') as HTMLButtonElement).disabled).toBe(true)
     finishAccept(new Error('this proposal is no longer pending'))
-    await waitFor(() => expect(screen.getByTestId('discard-all')).not.toBeDisabled())
+    await waitFor(() => expect((screen.getByTestId('discard-all') as HTMLButtonElement).disabled).toBe(false))
   })
 
 })
