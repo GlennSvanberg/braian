@@ -47,6 +47,11 @@ use utoipa::OpenApi;
         crate::definitions::put_unit_family,
         crate::definitions::delete_unit_family_route,
         crate::definitions::put_languages,
+        crate::model_draft::list_value_lists,
+        crate::model_draft::post_value_list,
+        crate::model_draft::get_value_list,
+        crate::model_draft::put_value_list,
+        crate::model_draft::delete_value_list,
         crate::keys::resolve_ref,
         crate::keys::rename_key,
         crate::objects::create_object,
@@ -82,7 +87,9 @@ use utoipa::OpenApi;
         braian_model::ObjectType,
         braian_model::Structure,
         braian_model::UnitFamily,
+        braian_model::SharedValueList,
         braian_model::ValidationError,
+        crate::model_draft::ValueListBody,
     ))
 )]
 struct ApiDoc;

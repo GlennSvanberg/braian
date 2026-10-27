@@ -7,8 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use rust_decimal::Decimal;
+
 use crate::definition::{
-    Attribute, AttributeKind, Class, DefinitionSet, Group, ObjectType, Structure, TextForm,
+    Attribute, AttributeKind, Class, DefinitionSet, Group, ObjectType, Structure, TextForm, Unit,
+    ValueOption,
 };
 use crate::id::{AttributeId, ClassId, GroupId, StructureId, UnitFamilyId};
 use crate::language::LanguageTag;
@@ -68,6 +71,9 @@ pub enum ModelChange {
         filterable: bool,
         #[serde(default)]
         sortable: bool,
+        /// Min, max, length, text form, value list and unit family set on create.
+        #[serde(flatten, default)]
+        bounds: AttributeBounds,
     },
     /// Link an existing attribute onto a type or a group. The definition stays one row.
     AttachAttribute {
@@ -97,6 +103,12 @@ pub enum ModelChange {
         singular: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plural: Option<String>,
+        /// Replaces the trees the type may use. Empty means the type has no tree.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structures: Option<Vec<String>>,
+        /// Replaces the type's default values, keyed by attribute key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        defaults: Option<BTreeMap<String, String>>,
     },
     UpdateAttribute {
         key: String,
@@ -118,6 +130,62 @@ pub enum ModelChange {
         filterable: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sortable: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        multiple: Option<bool>,
+        #[serde(flatten, default)]
+        bounds: AttributeBounds,
+    },
+    /// A new object type. Standard attributes are attached. An existing key stays put.
+    CreateType {
+        key: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plural: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structures: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        defaults: Option<BTreeMap<String, String>>,
+    },
+    CreateValueList {
+        key: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default)]
+        options: Vec<NamedOption>,
+    },
+    UpdateValueList {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        /// Replaces the options, in this order. Omitted leaves them as they are.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<Vec<NamedOption>>,
+    },
+    CreateUnitFamily {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dimension: Option<String>,
+        base_unit: String,
+        #[serde(default)]
+        units: Vec<UnitSpec>,
+    },
+    UpdateUnitFamily {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dimension: Option<String>,
+        #[serde(default)]
+        clear_dimension: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_unit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        units: Option<Vec<UnitSpec>>,
+    },
+    /// Reorders the attributes on a type. Standard attributes stay at the front.
+    ReorderTypeAttributes {
+        #[serde(rename = "type", alias = "type_key")]
+        type_key: String,
+        attributes: Vec<String>,
     },
     CreateClass {
         structure: String,
@@ -238,6 +306,57 @@ pub enum ModelChange {
         type_key: String,
         structures: Vec<String>,
     },
+}
+
+/// One option on a value list, in the order the step names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NamedOption {
+    pub code: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// One unit in a family. `factor` is a decimal string. The base unit is 1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitSpec {
+    pub code: String,
+    #[serde(default = "factor_one")]
+    pub factor: String,
+}
+
+fn factor_one() -> String {
+    "1".into()
+}
+
+/// Extra rules on an attribute. Flattened into create and update steps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AttributeBounds {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false_flag")]
+    pub clear_min: bool,
+    #[serde(default, skip_serializing_if = "is_false_flag")]
+    pub clear_max: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integer: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false_flag")]
+    pub clear_max_length: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_form: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_list: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false_flag")]
+    pub clear_value_list: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_family: Option<String>,
+}
+
+fn is_false_flag(value: &bool) -> bool {
+    !*value
 }
 
 /// A definition edit that did not apply.
@@ -439,7 +558,8 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     || previous.multiple != attribute.multiple
                     || previous.language_dependent != attribute.language_dependent
                     || previous.index != attribute.index
-                    || kind_label(&previous.kind) != kind_label(&attribute.kind)
+                    || previous.kind != attribute.kind
+                    || previous.labels != attribute.labels
                 {
                     lines.push(format!("Update attribute {}", attribute.key));
                     fields.insert(attribute.key.clone());
@@ -592,8 +712,49 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             groups.insert(group.id.as_uuid().to_string());
         }
     }
+    for list in &after.value_lists {
+        match before.value_lists.iter().find(|item| item.id == list.id) {
+            None => lines.push(format!("Create value list {}", list.key)),
+            Some(previous)
+                if previous.options != list.options || previous.labels != list.labels =>
+            {
+                lines.push(format!("Update value list {}", list.key));
+            }
+            Some(_) => {}
+        }
+    }
+    for old in &before.value_lists {
+        if after.value_lists.iter().all(|item| item.id != old.id) {
+            lines.push(format!("Delete value list {}", old.key));
+        }
+    }
+    for family in &after.unit_families {
+        match before
+            .unit_families
+            .iter()
+            .find(|item| item.id == family.id)
+        {
+            None => lines.push(format!("Create unit family {}", family.key)),
+            Some(previous)
+                if previous.units != family.units
+                    || previous.base_unit != family.base_unit
+                    || previous.dimension != family.dimension =>
+            {
+                lines.push(format!("Update unit family {}", family.key));
+            }
+            Some(_) => {}
+        }
+    }
+    for old in &before.unit_families {
+        if after.unit_families.iter().all(|item| item.id != old.id) {
+            lines.push(format!("Delete unit family {}", old.key));
+        }
+    }
     for object_type in &after.types {
         let old = before.types.iter().find(|item| item.id == object_type.id);
+        if old.is_none() {
+            lines.push(format!("Create type {}", object_type.key));
+        }
         let old_keys = attribute_keys(
             before,
             old.map(|item| item.attributes.as_slice()).unwrap_or(&[]),
@@ -626,6 +787,9 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     object_type.plural_label("en")
                 ));
             }
+            if previous.defaults != object_type.defaults {
+                lines.push(format!("Type {} defaults changed", object_type.key));
+            }
             if previous.structures != object_type.structures {
                 let listed = object_type.structures.as_ref().map(|ids| {
                     ids.iter()
@@ -650,6 +814,11 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     }
                 }
             }
+        }
+    }
+    for old in &before.types {
+        if after.types.iter().all(|item| item.id != old.id) {
+            lines.push(format!("Delete type {}", old.key));
         }
     }
     ChangeImpact {
@@ -796,37 +965,23 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             searchable,
             filterable,
             sortable,
-        } => {
-            let unit_family = match unit {
-                Some(unit) => Some(family_for_unit(defs, unit)?),
-                None => None,
-            };
-            let wanted = attribute_kind(kind, unit_family)?;
-            if let Some(existing) = defs.attributes.iter().find(|item| item.key == *key) {
-                if !wanted.same_type_and_unit(&existing.kind) {
-                    return Err(format!(
-                        "attribute {key} already exists with a different type or unit"
-                    )
-                    .into());
-                }
-                return Ok(());
-            }
-            defs.attributes.push(Attribute {
-                id: AttributeId::from_uuid(stable_uuid(&format!("attribute:{key}"))),
-                key: key.clone(),
-                labels: label_map(defs, if label.is_empty() { key } else { label }),
-                language_dependent: *languages,
+            bounds,
+        } => create_attribute(
+            defs,
+            AttributeDraft {
+                key,
+                label,
+                kind,
+                unit: unit.as_deref(),
                 multiple: *multiple,
+                languages: *languages,
                 required: *required,
-                kind: wanted,
-                index: crate::definition::IndexFlags {
-                    searchable: *searchable,
-                    filterable: *filterable,
-                    sortable: *sortable,
-                },
-            });
-            Ok(())
-        }
+                searchable: *searchable,
+                filterable: *filterable,
+                sortable: *sortable,
+                bounds,
+            },
+        ),
         ModelChange::MoveClass {
             structure,
             class_key,
@@ -919,14 +1074,66 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             language,
             singular,
             plural,
+            structures,
+            defaults,
         } => update_type(
             defs,
             key,
             language.as_deref(),
             singular.as_deref(),
             plural.as_deref(),
+            structures.as_deref(),
+            defaults.as_ref(),
         )
         .map_err(ApplyError::from),
+        ModelChange::CreateType {
+            key,
+            label,
+            plural,
+            structures,
+            defaults,
+        } => create_type(
+            defs,
+            key,
+            label,
+            plural.as_deref(),
+            structures.as_deref(),
+            defaults.as_ref(),
+        ),
+        ModelChange::CreateValueList {
+            key,
+            label,
+            options,
+        } => create_value_list(defs, key, label, options),
+        ModelChange::UpdateValueList {
+            key,
+            label,
+            options,
+        } => update_value_list(defs, key, label.as_deref(), options.as_deref()),
+        ModelChange::CreateUnitFamily {
+            key,
+            dimension,
+            base_unit,
+            units,
+        } => create_unit_family(defs, key, dimension.as_deref(), base_unit, units),
+        ModelChange::UpdateUnitFamily {
+            key,
+            dimension,
+            clear_dimension,
+            base_unit,
+            units,
+        } => update_unit_family(
+            defs,
+            key,
+            dimension.as_deref(),
+            *clear_dimension,
+            base_unit.as_deref(),
+            units.as_deref(),
+        ),
+        ModelChange::ReorderTypeAttributes {
+            type_key,
+            attributes,
+        } => reorder_type_attributes(defs, type_key, attributes),
         ModelChange::DeleteType { .. }
         | ModelChange::DeleteAttribute { .. }
         | ModelChange::DeleteValueList { .. }
@@ -948,6 +1155,8 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             searchable,
             filterable,
             sortable,
+            multiple,
+            bounds,
         } => update_attribute(
             defs,
             AttributeUpdate {
@@ -961,6 +1170,8 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
                 searchable: *searchable,
                 filterable: *filterable,
                 sortable: *sortable,
+                multiple: *multiple,
+                bounds,
             },
         )
         .map_err(ApplyError::from),
@@ -986,6 +1197,7 @@ fn add_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelCh
             searchable: false,
             filterable: true,
             sortable: false,
+            bounds: AttributeBounds::default(),
         });
     }
     let (structure, class_key) = if let Some(found) = find_class(defs, class_name) {
@@ -1531,7 +1743,12 @@ fn update_type(
     language: Option<&str>,
     singular: Option<&str>,
     plural: Option<&str>,
+    structures: Option<&[String]>,
+    defaults: Option<&BTreeMap<String, String>>,
 ) -> Result<(), String> {
+    if let Some(structures) = structures {
+        set_structures(defs, key, structures)?;
+    }
     let object_type = type_mut(defs, key)?;
     let tag = LanguageTag::parse(language.unwrap_or("en")).map_err(|error| error.to_string())?;
     if let Some(singular) = singular {
@@ -1552,6 +1769,9 @@ fn update_type(
             object_type.plural.insert(tag, text.to_owned());
         }
     }
+    if let Some(defaults) = defaults {
+        object_type.defaults.clone_from(defaults);
+    }
     Ok(())
 }
 
@@ -1566,6 +1786,8 @@ struct AttributeUpdate<'a> {
     searchable: Option<bool>,
     filterable: Option<bool>,
     sortable: Option<bool>,
+    multiple: Option<bool>,
+    bounds: &'a AttributeBounds,
 }
 
 fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Result<(), String> {
@@ -1580,30 +1802,35 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
         searchable,
         filterable,
         sortable,
+        multiple,
+        bounds,
     } = patch;
-    let (kind_now, family_now) = {
+    let mut next_kind = {
         let current = defs
             .attributes
             .iter()
             .find(|item| eq_key(&item.key, key))
             .ok_or_else(|| format!("unknown attribute {key}"))?;
-        (
-            kind_token(&current.kind).to_owned(),
-            current.kind.unit_family_id(),
-        )
+        current.kind.clone()
     };
-    let next_kind = if kind.is_some() || unit.is_some() || clear_unit {
-        let kind_name = kind.clone().unwrap_or(kind_now);
-        let unit_family = if clear_unit {
-            None
-        } else if let Some(unit) = unit {
-            Some(family_for_unit(defs, unit)?)
-        } else {
-            family_now
-        };
-        Some(attribute_kind(&kind_name, unit_family)?)
-    } else {
-        None
+    if let Some(kind_name) = kind
+        && kind_token(&next_kind) != kind_name.to_lowercase().as_str()
+    {
+        next_kind = attribute_kind(kind_name, next_kind.unit_family_id())?;
+    }
+    if clear_unit {
+        set_unit_family(&mut next_kind, None)?;
+    } else if let Some(unit) = unit {
+        set_unit_family(&mut next_kind, Some(family_for_unit(defs, unit)?))?;
+    }
+    apply_bounds(&mut next_kind, bounds, defs)?;
+    let kind_changed = {
+        let current = defs
+            .attributes
+            .iter()
+            .find(|item| eq_key(&item.key, key))
+            .ok_or_else(|| format!("unknown attribute {key}"))?;
+        current.kind != next_kind
     };
     let label_tag = defs
         .languages
@@ -1617,13 +1844,16 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
         .find(|item| eq_key(&item.key, key))
         .map(|item| crate::standard::is_locked_standard(defs, item.id))
         .unwrap_or(false);
+    let bounds_set = bounds != &AttributeBounds::default();
     if locked
-        && (next_kind.is_some()
+        && (kind_changed
             || languages.is_some()
             || required.is_some()
             || searchable.is_some()
             || filterable.is_some()
-            || sortable.is_some())
+            || sortable.is_some()
+            || multiple.is_some()
+            || bounds_set)
     {
         return Err(format!("attribute {key} is a standard attribute"));
     }
@@ -1635,8 +1865,9 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
     if let (Some(label), Some(tag)) = (label, label_tag) {
         attribute.labels.insert(tag, label.clone());
     }
-    if let Some(kind) = next_kind {
-        attribute.kind = kind;
+    attribute.kind = next_kind;
+    if let Some(value) = multiple {
+        attribute.multiple = value;
     }
     if let Some(value) = languages {
         attribute.language_dependent = value;
@@ -1654,6 +1885,429 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
         attribute.index.sortable = value;
     }
     Ok(())
+}
+
+struct AttributeDraft<'a> {
+    key: &'a str,
+    label: &'a str,
+    kind: &'a str,
+    unit: Option<&'a str>,
+    multiple: bool,
+    languages: bool,
+    required: bool,
+    searchable: bool,
+    filterable: bool,
+    sortable: bool,
+    bounds: &'a AttributeBounds,
+}
+
+fn create_attribute(defs: &mut DefinitionSet, draft: AttributeDraft<'_>) -> Result<(), ApplyError> {
+    let AttributeDraft {
+        key,
+        label,
+        kind,
+        unit,
+        multiple,
+        languages,
+        required,
+        searchable,
+        filterable,
+        sortable,
+        bounds,
+    } = draft;
+    let unit_family = match unit {
+        Some(unit) => Some(family_for_unit(defs, unit)?),
+        None => None,
+    };
+    let mut wanted = attribute_kind(kind, unit_family)?;
+    apply_bounds(&mut wanted, bounds, defs)?;
+    if let Some(existing) = defs.attributes.iter().find(|item| item.key == key) {
+        if !wanted.same_type_and_unit(&existing.kind) {
+            return Err(
+                format!("attribute {key} already exists with a different type or unit").into(),
+            );
+        }
+        return Ok(());
+    }
+    defs.attributes.push(Attribute {
+        id: AttributeId::from_uuid(stable_uuid(&format!("attribute:{key}"))),
+        key: key.to_owned(),
+        labels: label_map(defs, if label.is_empty() { key } else { label }),
+        language_dependent: languages,
+        multiple,
+        required,
+        kind: wanted,
+        index: crate::definition::IndexFlags {
+            searchable,
+            filterable,
+            sortable,
+        },
+    });
+    Ok(())
+}
+
+fn create_type(
+    defs: &mut DefinitionSet,
+    key: &str,
+    label: &str,
+    plural: Option<&str>,
+    structures: Option<&[String]>,
+    defaults: Option<&BTreeMap<String, String>>,
+) -> Result<(), ApplyError> {
+    let key = key.trim();
+    crate::refs::check_new_key(key)?;
+    if defs.types.iter().any(|item| eq_key(&item.key, key)) {
+        return Ok(());
+    }
+    crate::standard::ensure_standard_rows(defs);
+    let mut ids = Vec::new();
+    if let Some(structures) = structures {
+        for token in structures {
+            let id = crate::refs::structure_id(defs, token)
+                .map_err(|_| format!("unknown structure {token}"))?;
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    let caption = if label.trim().is_empty() {
+        key
+    } else {
+        label.trim()
+    };
+    let mut object_type = ObjectType {
+        id: crate::id::TypeId::from_uuid(stable_uuid(&format!("type:{key}"))),
+        key: key.to_owned(),
+        labels: label_map(defs, caption),
+        singular: label_map(defs, caption),
+        plural: plural
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|text| label_map(defs, text))
+            .unwrap_or_default(),
+        key_attribute: crate::standard::standard_ids().number,
+        attributes: Vec::new(),
+        structures: Some(ids),
+        defaults: defaults.cloned().unwrap_or_default(),
+    };
+    crate::standard::attach_standard_attributes(&mut object_type);
+    defs.types.push(object_type);
+    Ok(())
+}
+
+fn create_value_list(
+    defs: &mut DefinitionSet,
+    key: &str,
+    label: &str,
+    options: &[NamedOption],
+) -> Result<(), ApplyError> {
+    let key = key.trim();
+    crate::refs::check_new_key(key)?;
+    if defs.value_lists.iter().any(|item| eq_key(&item.key, key)) {
+        return Ok(());
+    }
+    let caption = if label.trim().is_empty() {
+        key
+    } else {
+        label.trim()
+    };
+    defs.value_lists.push(crate::definition::SharedValueList {
+        id: crate::id::ValueListId::from_uuid(stable_uuid(&format!("value_list:{key}"))),
+        key: key.to_owned(),
+        labels: label_map(defs, caption),
+        options: named_options(defs, options)?,
+    });
+    Ok(())
+}
+
+fn update_value_list(
+    defs: &mut DefinitionSet,
+    key: &str,
+    label: Option<&str>,
+    options: Option<&[NamedOption]>,
+) -> Result<(), ApplyError> {
+    let id = crate::refs::value_list_id(defs, key)?;
+    let built = options
+        .map(|options| named_options(defs, options))
+        .transpose()?;
+    let list = defs
+        .value_lists
+        .iter_mut()
+        .find(|item| item.id == id)
+        .ok_or_else(|| format!("unknown value list {key}"))?;
+    if let Some(label) = label.map(str::trim).filter(|text| !text.is_empty()) {
+        let tag = list
+            .labels
+            .keys()
+            .next()
+            .cloned()
+            .or_else(|| defs.languages.first().cloned());
+        if let Some(tag) = tag {
+            list.labels.insert(tag, label.to_owned());
+        }
+    }
+    if let Some(options) = built {
+        list.options = options;
+    }
+    Ok(())
+}
+
+fn create_unit_family(
+    defs: &mut DefinitionSet,
+    key: &str,
+    dimension: Option<&str>,
+    base_unit: &str,
+    units: &[UnitSpec],
+) -> Result<(), ApplyError> {
+    let key = key.trim();
+    crate::refs::check_new_key(key)?;
+    if defs.unit_families.iter().any(|item| eq_key(&item.key, key)) {
+        return Ok(());
+    }
+    let base_unit = base_unit.trim();
+    if base_unit.is_empty() {
+        return Err("base unit is empty".into());
+    }
+    defs.unit_families.push(crate::definition::UnitFamily {
+        id: UnitFamilyId::from_uuid(stable_uuid(&format!("unit_family:{key}"))),
+        key: key.to_owned(),
+        dimension: dimension
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned),
+        base_unit: base_unit.to_owned(),
+        units: unit_specs(base_unit, units)?,
+    });
+    Ok(())
+}
+
+fn update_unit_family(
+    defs: &mut DefinitionSet,
+    key: &str,
+    dimension: Option<&str>,
+    clear_dimension: bool,
+    base_unit: Option<&str>,
+    units: Option<&[UnitSpec]>,
+) -> Result<(), ApplyError> {
+    let id = crate::refs::unit_family_id(defs, key)?;
+    let family = defs
+        .unit_families
+        .iter_mut()
+        .find(|item| item.id == id)
+        .ok_or_else(|| format!("unknown unit family {key}"))?;
+    if clear_dimension {
+        family.dimension = None;
+    }
+    if let Some(dimension) = dimension.map(str::trim).filter(|text| !text.is_empty()) {
+        family.dimension = Some(dimension.to_owned());
+    }
+    if let Some(base_unit) = base_unit.map(str::trim).filter(|text| !text.is_empty()) {
+        family.base_unit = base_unit.to_owned();
+    }
+    if let Some(units) = units {
+        let base = family.base_unit.clone();
+        family.units = unit_specs(&base, units)?;
+    }
+    if !family
+        .units
+        .iter()
+        .any(|unit| unit.code == family.base_unit)
+    {
+        family.units.insert(
+            0,
+            Unit {
+                code: family.base_unit.clone(),
+                factor: Decimal::ONE,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn reorder_type_attributes(
+    defs: &mut DefinitionSet,
+    type_key: &str,
+    attributes: &[String],
+) -> Result<(), ApplyError> {
+    let ids = crate::standard::standard_ids();
+    let pinned = [
+        ids.number,
+        ids.name,
+        ids.created_at,
+        ids.updated_at,
+        ids.updated_by,
+    ];
+    let wanted = attributes
+        .iter()
+        .map(|key| attribute_id(defs, key))
+        .collect::<Result<Vec<_>, _>>()?;
+    let object_type = type_mut(defs, type_key)?;
+    let mut ordered = Vec::new();
+    for id in pinned {
+        if object_type.attributes.contains(&id) {
+            ordered.push(id);
+        }
+    }
+    for id in wanted {
+        if ordered.contains(&id) {
+            continue;
+        }
+        if !object_type.attributes.contains(&id) {
+            return Err(format!("attribute is not on type {}", object_type.key).into());
+        }
+        ordered.push(id);
+    }
+    for id in &object_type.attributes {
+        if !ordered.contains(id) {
+            ordered.push(*id);
+        }
+    }
+    object_type.attributes = ordered;
+    Ok(())
+}
+
+fn named_options(
+    defs: &DefinitionSet,
+    options: &[NamedOption],
+) -> Result<Vec<ValueOption>, String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for option in options {
+        let code = option.code.trim();
+        if code.is_empty() {
+            return Err("option code is empty".into());
+        }
+        if !seen.insert(code.to_owned()) {
+            return Err(format!("option {code} is repeated"));
+        }
+        out.push(ValueOption {
+            code: code.to_owned(),
+            labels: if option.label.trim().is_empty() {
+                label_map(defs, code)
+            } else {
+                label_map(defs, option.label.trim())
+            },
+        });
+    }
+    Ok(out)
+}
+
+fn unit_specs(base_unit: &str, units: &[UnitSpec]) -> Result<Vec<Unit>, String> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for spec in units {
+        let code = spec.code.trim();
+        if code.is_empty() {
+            return Err("unit code is empty".into());
+        }
+        if !seen.insert(code.to_owned()) {
+            return Err(format!("unit {code} is repeated"));
+        }
+        out.push(Unit {
+            code: code.to_owned(),
+            factor: parse_decimal(&spec.factor)?,
+        });
+    }
+    if !seen.contains(base_unit) {
+        out.insert(
+            0,
+            Unit {
+                code: base_unit.to_owned(),
+                factor: Decimal::ONE,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn set_unit_family(kind: &mut AttributeKind, family: Option<UnitFamilyId>) -> Result<(), String> {
+    match kind {
+        AttributeKind::Number { unit_family, .. } | AttributeKind::Range { unit_family } => {
+            *unit_family = family;
+            Ok(())
+        }
+        _ if family.is_none() => Ok(()),
+        _ => Err("a unit family applies to a number or a range".into()),
+    }
+}
+
+fn apply_bounds(
+    kind: &mut AttributeKind,
+    bounds: &AttributeBounds,
+    defs: &DefinitionSet,
+) -> Result<(), String> {
+    if bounds == &AttributeBounds::default() {
+        return Ok(());
+    }
+    if let Some(token) = &bounds.unit_family {
+        let id = crate::refs::unit_family_id(defs, token)?;
+        set_unit_family(kind, Some(id))?;
+    }
+    if bounds.clear_min
+        || bounds.min.is_some()
+        || bounds.clear_max
+        || bounds.max.is_some()
+        || bounds.integer.is_some()
+    {
+        let AttributeKind::Number {
+            min, max, integer, ..
+        } = kind
+        else {
+            return Err("min and max apply to a number".into());
+        };
+        if bounds.clear_min {
+            *min = None;
+        }
+        if let Some(text) = &bounds.min {
+            *min = Some(parse_decimal(text)?);
+        }
+        if bounds.clear_max {
+            *max = None;
+        }
+        if let Some(text) = &bounds.max {
+            *max = Some(parse_decimal(text)?);
+        }
+        if let Some(value) = bounds.integer {
+            *integer = value;
+        }
+    }
+    if bounds.clear_max_length || bounds.max_length.is_some() || bounds.text_form.is_some() {
+        let AttributeKind::Text { max_length, form } = kind else {
+            return Err("length applies to text".into());
+        };
+        if bounds.clear_max_length {
+            *max_length = None;
+        }
+        if let Some(value) = bounds.max_length {
+            *max_length = Some(value);
+        }
+        if let Some(form_name) = &bounds.text_form {
+            *form = match form_name.to_lowercase().as_str() {
+                "short" => TextForm::Short,
+                "long" => TextForm::Long,
+                other => return Err(format!("unknown text form {other}")),
+            };
+        }
+    }
+    if bounds.clear_value_list || bounds.value_list.is_some() {
+        let AttributeKind::ValueList { list, .. } = kind else {
+            return Err("a value list applies to a value list attribute".into());
+        };
+        if bounds.clear_value_list {
+            *list = None;
+        }
+        if let Some(token) = &bounds.value_list {
+            let _ = crate::refs::value_list_id(defs, token)?;
+            *list = Some(token.clone());
+        }
+    }
+    Ok(())
+}
+
+fn parse_decimal(text: &str) -> Result<Decimal, String> {
+    text.trim()
+        .parse::<Decimal>()
+        .map_err(|_| format!("invalid number {text}"))
 }
 
 fn attribute_kind(kind: &str, unit_family: Option<UnitFamilyId>) -> Result<AttributeKind, String> {
@@ -2024,6 +2678,102 @@ mod tests {
         assert_eq!(impact.usage_fields, vec!["weight".to_owned()]);
     }
 
+    #[test]
+    fn a_type_a_value_list_and_a_number_preview_together() {
+        let defs = base();
+        let steps = vec![
+            ModelChange::CreateValueList {
+                key: "difficulty".into(),
+                label: "Difficulty".into(),
+                options: vec![
+                    NamedOption {
+                        code: "easy".into(),
+                        label: "Easy".into(),
+                    },
+                    NamedOption {
+                        code: "hard".into(),
+                        label: "Hard".into(),
+                    },
+                ],
+            },
+            ModelChange::CreateUnitFamily {
+                key: "portion".into(),
+                dimension: Some("count".into()),
+                base_unit: "pc".into(),
+                units: vec![UnitSpec {
+                    code: "pc".into(),
+                    factor: "1".into(),
+                }],
+            },
+            ModelChange::CreateType {
+                key: "recipe".into(),
+                label: "Recipe".into(),
+                plural: Some("Recipes".into()),
+                structures: None,
+                defaults: None,
+            },
+            ModelChange::CreateAttribute {
+                key: "servings".into(),
+                label: "Servings".into(),
+                kind: "number".into(),
+                unit: Some("pc".into()),
+                multiple: false,
+                languages: false,
+                required: false,
+                searchable: false,
+                filterable: true,
+                sortable: true,
+                bounds: AttributeBounds {
+                    min: Some("1".into()),
+                    max: Some("12".into()),
+                    ..AttributeBounds::default()
+                },
+            },
+            ModelChange::AttachAttribute {
+                attribute: "servings".into(),
+                type_key: Some("recipe".into()),
+                structure: None,
+                group: None,
+            },
+        ];
+        let (after, impact) = preview(&defs, &steps).expect("preview");
+        assert!(
+            impact
+                .lines
+                .iter()
+                .any(|line| line.contains("Create type recipe"))
+        );
+        assert!(
+            impact
+                .lines
+                .iter()
+                .any(|line| line.contains("Difficulty") || line.contains("difficulty"))
+        );
+        let recipe = after
+            .types
+            .iter()
+            .find(|item| item.key == "recipe")
+            .expect("recipe");
+        assert!(recipe.attributes.len() > 1);
+        let servings = after
+            .attributes
+            .iter()
+            .find(|item| item.key == "servings")
+            .expect("servings");
+        match &servings.kind {
+            AttributeKind::Number {
+                min,
+                max,
+                unit_family,
+                ..
+            } => {
+                assert!(min.is_some() && max.is_some());
+                assert!(unit_family.is_some());
+            }
+            other => panic!("expected a number, got {other:?}"),
+        }
+    }
+
     fn create(key: &str, kind: &str, unit: Option<&str>) -> ModelChange {
         ModelChange::CreateAttribute {
             key: key.into(),
@@ -2036,6 +2786,7 @@ mod tests {
             searchable: false,
             filterable: false,
             sortable: false,
+            bounds: AttributeBounds::default(),
         }
     }
 

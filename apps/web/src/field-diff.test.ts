@@ -69,9 +69,8 @@ describe('diff lines', () => {
     ])
   })
 
-  it('uses a relative time', () => {
-    const now = Date.parse('2026-10-25T12:00:00Z')
-    expect(relativeTime('2026-10-25T10:00:00Z', now)).toBe('2 hours ago')
+  it('prints history times as YYYY-MM-DD HH:mm', () => {
+    expect(relativeTime('2026-10-25T10:00:00Z')).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
   })
 })
 

@@ -6,6 +6,7 @@
 
 mod consequence;
 mod definition;
+mod draft;
 mod edit;
 mod error;
 mod id;
@@ -26,6 +27,7 @@ pub use definition::{
     SharedValueList, Structure, TextForm, Unit, UnitFamily, ValueOption, default_plural,
     operation_title,
 };
+pub use draft::{ModelDraft, change_removed_definitions, restored_definitions, undo_purge};
 pub use edit::{
     delete_attribute, delete_structure, delete_type, delete_unit_family, set_languages,
     upsert_attribute, upsert_structure, upsert_type, upsert_unit_family,
@@ -36,8 +38,8 @@ pub use id::{
 };
 pub use language::{LanguageTag, LanguageTagError};
 pub use model_change::{
-    ApplyError, ChangeImpact, ModelChange, apply_all, change_needs_reindex, deletes_data,
-    diff as model_diff, interpret, preview,
+    ApplyError, AttributeBounds, ChangeImpact, ModelChange, NamedOption, UnitSpec, apply_all,
+    change_needs_reindex, deletes_data, diff as model_diff, interpret, preview,
 };
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};

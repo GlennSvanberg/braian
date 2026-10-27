@@ -18,9 +18,12 @@ import { flashObject } from './flash'
 import { structureCaption } from './graph-scene'
 import { dropReparents, groupKeyFromLabel } from './group-tree'
 import { publishProposal } from './proposal-bus'
+import { formatCount, formatTimestamp } from './format'
 import { copy } from './i18n'
 import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
+import { ModelDraftHost } from './model-draft-ui'
+import { stageModel } from './model-stage'
 import { FeedbackDialog } from './feedback-dialog'
 import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
@@ -204,7 +207,7 @@ export function Shell() {
   }, [theme, booted])
 
   const push = (line: string) => {
-    const stamp = new Date().toLocaleTimeString('en-GB', { hour12: false })
+    const stamp = formatTimestamp(new Date())
     const text = `${stamp} ${line}`
     setStatusLine(text)
     setLogText((current) => [text, ...current.split('\n').filter(Boolean)].slice(0, 6).join('\n'))
@@ -404,6 +407,11 @@ export function Shell() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteMode('list')
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        window.dispatchEvent(new Event('braian-review-save'))
         return
       }
       if (feedbackEnabled && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'b') {
@@ -716,6 +724,7 @@ export function Shell() {
         <span className="grow" />
         <span>{statusLine}</span>
       </footer>
+      <ModelDraftHost />
       <ConsequenceHost session={session} />
       {feedbackEnabled ? (
         <FeedbackDialog
@@ -972,13 +981,15 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     setMenu(null)
     setEditing(null)
     try {
-      const result = await api<Json>(`/v1/operations/${name}`, { method: 'POST', body: JSON.stringify(args) })
+      const result = await stageModel(name, args)
       const id = String(result.proposal_id ?? result.id ?? '')
-      if (id) {
+      if (id && name.includes('delete')) {
         publishProposal(id)
         session.setProposalId(id)
+        session.push(copy.proposed)
+      } else {
+        session.push(`${copy.unsavedChanges}`)
       }
-      session.push(copy.proposed)
     } catch (reason) {
       session.push(reason instanceof Error ? reason.message : copy.validation)
     }
@@ -1156,7 +1167,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                     )}
                     <Icon size={14} className="tree-icon" aria-hidden="true" />
                     <span className="tree-label">{row.key === 'unplaced' ? copy.unplaced : structureCaption(row.key, defs.data, structureKey)}</span>
-                    {row.count > 0 ? <span className="tree-count">{row.count}</span> : null}
+                    {row.count > 0 ? <span className="tree-count">{formatCount(row.count)}</span> : null}
                   </button>
                   {editing?.row.id === row.id ? (
                     <input

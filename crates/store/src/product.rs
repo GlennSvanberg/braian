@@ -51,6 +51,95 @@ pub struct ProposalRow {
 }
 
 impl Store {
+    pub async fn model_draft(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<(i64, serde_json::Value, DateTime<Utc>)>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT base_revision, steps, updated_at FROM model_drafts WHERE user_id = $1",
+                &[&user_id],
+            )
+            .await?;
+        Ok(row.map(|row| (row.get(0), row.get(1), row.get(2))))
+    }
+
+    pub async fn put_model_draft(
+        &self,
+        user_id: Uuid,
+        base_revision: i64,
+        steps: &serde_json::Value,
+    ) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "INSERT INTO model_drafts (user_id, base_revision, steps, updated_at)
+                 VALUES ($1, $2, $3, now())
+                 ON CONFLICT (user_id) DO UPDATE
+                 SET base_revision = EXCLUDED.base_revision,
+                     steps = EXCLUDED.steps,
+                     updated_at = now()",
+                &[&user_id, &base_revision, steps],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_model_draft(&self, user_id: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("DELETE FROM model_drafts WHERE user_id = $1", &[&user_id])
+            .await?;
+        Ok(())
+    }
+
+    pub async fn principal_by_handle(&self, handle: &str) -> Result<Option<PrincipalId>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt("SELECT id FROM principals WHERE handle = $1", &[&handle])
+            .await?;
+        Ok(row.map(|row| PrincipalId::from_uuid(row.get(0))))
+    }
+
+    pub async fn attach_user(
+        &self,
+        principal: PrincipalId,
+        email: &str,
+        password_hash: &str,
+        role: &str,
+        display_name: &str,
+    ) -> Result<Uuid, Error> {
+        let id = Uuid::now_v7();
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "INSERT INTO users (id, principal_id, email, password_hash, role, display_name)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+                &[
+                    &id,
+                    &principal.as_uuid(),
+                    &email,
+                    &password_hash,
+                    &role,
+                    &display_name,
+                ],
+            )
+            .await?;
+        Ok(id)
+    }
+
+    pub async fn user_id_for_principal(&self, principal: Uuid) -> Result<Option<Uuid>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT id FROM users WHERE principal_id = $1",
+                &[&principal],
+            )
+            .await?;
+        Ok(row.map(|row| row.get(0)))
+    }
+
     pub async fn create_user(
         &self,
         email: &str,

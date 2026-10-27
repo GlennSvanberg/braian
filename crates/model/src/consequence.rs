@@ -932,6 +932,7 @@ mod tests {
                 searchable: false,
                 filterable: false,
                 sortable: false,
+                bounds: crate::model_change::AttributeBounds::default(),
             },
             ModelChange::UpdateAttribute {
                 key: "name".into(),
@@ -944,12 +945,16 @@ mod tests {
                 searchable: None,
                 filterable: None,
                 sortable: None,
+                multiple: None,
+                bounds: crate::model_change::AttributeBounds::default(),
             },
             ModelChange::UpdateType {
                 key: "product".into(),
                 language: Some("en".into()),
                 singular: Some("Product".into()),
                 plural: None,
+                structures: None,
+                defaults: None,
             },
             ModelChange::RenameTypeKey {
                 key: "product".into(),

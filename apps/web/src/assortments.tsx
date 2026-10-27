@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, catalogName, type Json } from './api'
+import { formatCount } from './format'
 import {
   currentSelectionLabels,
   labelCodes,
@@ -196,7 +197,7 @@ export function AssortmentList({ session }: { session: SelectionSession }) {
             ))}
           </div>
           <p className="hint">
-            {found} {copy.matchingObjects}
+            {formatCount(found)} {copy.matchingObjects}
           </p>
           <div className="assortment-hits">
             {hits.map((hit) => {

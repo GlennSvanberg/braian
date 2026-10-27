@@ -17,6 +17,7 @@ import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
 import { exportPayload, runExport, saveWorkbook } from './export'
 import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, sourceLabel, suggestionLines, valuesFromKept } from './field-diff'
+import { formatCount, formatTimestamp } from './format'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import {
@@ -564,7 +565,7 @@ export function ObjectTable({
       return count > 0 ? (
         <span>
           {row.name}
-          <span className="suggestion-count" data-testid="suggestion-count">{count} {copy.suggested}</span>
+          <span className="suggestion-count" data-testid="suggestion-count">{formatCount(count)} {copy.suggested}</span>
         </span>
       ) : row.name
     }
@@ -641,7 +642,7 @@ export function ObjectTable({
           </div>
         )}
         <NewObject session={session} typeKey={typeKey} singular={bound?.singular} />
-        <span className="row-count" data-testid="row-count">{found} {copy.rows}</span>
+        <span className="row-count" data-testid="row-count">{formatCount(found)} {copy.rows}</span>
       </div>
       <div
         className="grid"
@@ -716,7 +717,7 @@ export function ObjectTable({
               let index = 0
               return groups.map((group) => (
                 <div key={group.key}>
-                  <strong>{group.key || '—'} ({group.found})</strong>
+                  <strong>{group.key || '—'} ({formatCount(group.found)})</strong>
                   {group.hits.map((row) => {
                     const rowIndex = index
                     index += 1
@@ -1282,7 +1283,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             <MetaChip>{typeLabel(defs.data, String(object.data.type), uiLanguage)}</MetaChip>
             {status ? <MetaChip tone={statusTone(status)}>{optionLabel(defs.data, 'status', status, uiLanguage)}</MetaChip> : null}
             <MetaChip>{String(object.data.version ?? '')}</MetaChip>
-            {suggestionCount > 0 ? <span className="suggestion-count" data-testid="suggestion-count">{suggestionCount} {copy.suggested}</span> : null}
+            {suggestionCount > 0 ? <span className="suggestion-count" data-testid="suggestion-count">{formatCount(suggestionCount)} {copy.suggested}</span> : null}
           </div>
         </header>
         {fieldSections(valueKeys).map((section) => (
@@ -1739,10 +1740,7 @@ function nearestSeq(seqs: number[], value: number) {
 }
 
 function formatWhen(value: unknown) {
-  if (typeof value !== 'string' || !value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+  return formatTimestamp(value)
 }
 
 function renderValue(value: unknown, field: string, defs: Json | undefined): ReactNode {

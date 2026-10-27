@@ -1,3 +1,5 @@
+import { formatTimestamp } from './format'
+
 export type ClientLogEntry = {
   at: number
   kind: 'console' | 'api' | 'navigation' | 'action'
@@ -92,7 +94,7 @@ export function formatLogPreview(entries: ClientLogEntry[]): string {
   return entries
     .slice(-40)
     .map((entry) => {
-      const stamp = new Date(entry.at).toISOString().slice(11, 19)
+      const stamp = formatTimestamp(entry.at)
       const id = entry.requestId ? ` id=${entry.requestId}` : ''
       return `${stamp} ${entry.kind}${entry.level ? `:${entry.level}` : ''} ${entry.message}${id}`
     })

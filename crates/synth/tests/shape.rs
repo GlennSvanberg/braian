@@ -127,7 +127,11 @@ fn mutations_fail_with_the_expected_error() {
             // synthetic tiers do not generate. Those kinds are covered in braian-rules.
             if matches!(
                 code,
-                ErrorCode::NotInteger | ErrorCode::RangeInverted | ErrorCode::InvalidObjectRef
+                ErrorCode::NotInteger
+                    | ErrorCode::RangeInverted
+                    | ErrorCode::InvalidObjectRef
+                    | ErrorCode::DisallowedStructure
+                    | ErrorCode::MissingRequired
             ) {
                 continue;
             }

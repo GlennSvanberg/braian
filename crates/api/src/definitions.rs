@@ -82,8 +82,9 @@ pub async fn get_definitions(
     path = "/v1/definitions",
     tag = "definitions",
     request_body(content = braian_model::DefinitionSet, description = "JSON or YAML definition set"),
+    params(("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")),
     responses(
-        (status = 200, description = "Imported", body = DefinitionWrite),
+        (status = 200, description = "Imported, or a dry run", body = DefinitionWrite),
         (status = 409, description = "Revision conflict", body = crate::problem::Problem),
         (status = 422, description = "The set does not compile", body = crate::problem::Problem)
     ),
@@ -92,10 +93,13 @@ pub async fn get_definitions(
 pub async fn put_definitions(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<crate::deletes::DryRun>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, Problem> {
-    crate::auth::require_commit(&identity)?;
+    if !query.dry_run {
+        crate::auth::require_commit(&identity)?;
+    }
     let mut defs: DefinitionSet = if content_is_yaml(&headers) {
         serde_norway::from_slice(&body).map_err(|error| bad_body(error.to_string()))?
     } else {
@@ -115,6 +119,16 @@ pub async fn put_definitions(
             "precondition_failed",
             format!("definitions are at revision {current}"),
         ));
+    }
+    if query.dry_run {
+        let stored = state.store.definition_set().await.map_err(store_status)?;
+        let impact = braian_model::model_diff(&stored, &defs);
+        return Ok(Json(serde_json::json!({
+            "applied": false,
+            "lines": impact.lines,
+            "warnings": impact.warnings,
+        }))
+        .into_response());
     }
     defs.model_revision = current + 1;
     CompiledModel::compile(&defs).map_err(Problem::definitions)?;

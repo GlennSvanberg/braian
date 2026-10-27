@@ -15,6 +15,7 @@ mod feedback;
 mod headers;
 pub mod import;
 mod keys;
+mod model_draft;
 mod model_proposal;
 mod objects;
 mod platform;
@@ -125,6 +126,7 @@ pub fn into_router(state: AppState) -> axum::Router {
                 .delete(objects::delete_object),
         )
         .route("/v1/objects/{id}/changes", get(objects::object_changes))
+        .merge(model_draft::routes())
         .merge(feedback::routes())
         .merge(platform::routes())
         .merge(import::routes())

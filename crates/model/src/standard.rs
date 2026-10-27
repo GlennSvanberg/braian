@@ -82,6 +82,16 @@ fn id(text: &str) -> AttributeId {
 /// its label. Timestamp attributes are created when they are missing. They are
 /// not stored on the object; the columns are.
 pub fn install_standard_attributes(defs: &mut DefinitionSet) {
+    ensure_standard_rows(defs);
+    for object_type in &mut defs.types {
+        attach_standard_attributes(object_type);
+    }
+}
+
+/// Inserts the five standard attribute rows when they are missing.
+///
+/// Existing types keep their attribute lists and key attribute.
+pub fn ensure_standard_rows(defs: &mut DefinitionSet) {
     let ids = standard_ids();
     let language = defs
         .languages
@@ -123,6 +133,12 @@ pub fn install_standard_attributes(defs: &mut DefinitionSet) {
         &language,
         false,
     );
+}
+
+/// Pins number, name and the timestamps on one type. The key attribute becomes number.
+pub fn attach_standard_attributes(object_type: &mut ObjectType) {
+    let ids = standard_ids();
+    object_type.key_attribute = ids.number;
     let order = [
         ids.number,
         ids.name,
@@ -130,21 +146,18 @@ pub fn install_standard_attributes(defs: &mut DefinitionSet) {
         ids.updated_at,
         ids.updated_by,
     ];
-    for object_type in &mut defs.types {
-        object_type.key_attribute = ids.number;
-        let mut attributes = Vec::with_capacity(object_type.attributes.len() + order.len());
-        for id in order {
-            if !attributes.contains(&id) {
-                attributes.push(id);
-            }
+    let mut attributes = Vec::with_capacity(object_type.attributes.len() + order.len());
+    for id in order {
+        if !attributes.contains(&id) {
+            attributes.push(id);
         }
-        for id in &object_type.attributes {
-            if !attributes.contains(id) {
-                attributes.push(*id);
-            }
-        }
-        object_type.attributes = attributes;
     }
+    for id in &object_type.attributes {
+        if !attributes.contains(id) {
+            attributes.push(*id);
+        }
+    }
+    object_type.attributes = attributes;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -317,7 +330,7 @@ mod tests {
     use super::*;
     use crate::definition::{AttributeKind, IndexFlags, TextForm};
     use crate::id::TypeId;
-    use crate::model_change::{ModelChange, apply_all};
+    use crate::model_change::{AttributeBounds, ModelChange, apply_all};
 
     fn bare_type() -> DefinitionSet {
         let sku = AttributeId::from_uuid(Uuid::from_u128(9));
@@ -395,6 +408,8 @@ mod tests {
                 searchable: None,
                 filterable: None,
                 sortable: None,
+                multiple: None,
+                bounds: AttributeBounds::default(),
             }],
         );
         assert!(renamed.is_ok(), "{renamed:?}");
