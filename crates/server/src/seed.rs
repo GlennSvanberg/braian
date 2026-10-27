@@ -57,18 +57,10 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         kind: BatchKind::Interactive,
         source: "seed".into(),
     };
-    seed_demo_surface(store, &user).await?;
-    match store.definition_set().await {
-        Err(Error::NoDefinitions) => {
-            let defs: DefinitionSet = serde_json::from_str(DEFINITIONS)?;
-            CompiledModel::compile(&defs)
-                .map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
-            store.put_definitions(&actor, &defs).await?;
-        }
-        Ok(_) => {}
-        Err(error) => return Err(error.into()),
-    }
-    let defs = store.definition_set().await?;
+    // Views and selections are translated against the live definition set.
+    // Install it first so the first seed can store ids, not keys.
+    let defs = ensure_definitions(store, &actor).await?;
+    seed_demo_surface(store, &user, &defs).await?;
     let model =
         CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
     let rows: Vec<Value> = serde_json::from_str(OBJECTS)?;
@@ -148,7 +140,25 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
     Ok(())
 }
 
-async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> anyhow::Result<()> {
+async fn ensure_definitions(store: &Store, actor: &Actor) -> anyhow::Result<DefinitionSet> {
+    match store.definition_set().await {
+        Ok(defs) => Ok(defs),
+        Err(Error::NoDefinitions) => {
+            let defs: DefinitionSet = serde_json::from_str(DEFINITIONS)?;
+            CompiledModel::compile(&defs)
+                .map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
+            store.put_definitions(actor, &defs).await?;
+            Ok(defs)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn seed_demo_surface(
+    store: &Store,
+    user: &braian_store::UserRecord,
+    defs: &DefinitionSet,
+) -> anyhow::Result<()> {
     // Removed demo workspace: drop it from databases seeded before.
     store
         .delete_workspace(Uuid::parse_str("018f2000-0000-7000-8000-000000000001")?)
@@ -202,40 +212,43 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         .delete_view(Uuid::parse_str("018f2000-0000-7000-8000-000000000404")?)
         .await?;
     store.delete_view_type("leverantor").await?; // english-check: allow-line
-    save_views(store).await?;
+    save_views(store, defs).await?;
     // Selections belong to a type. The article Cheese keeps the food:cheese group.
     // Organic is assigned to article: the generator marks more articles than
     // products with organic_eu, and this seed runs before those objects exist.
     // A second Cheese is the product example, so each type workspace has one.
     let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201")?;
     let product = Uuid::parse_str("018f0000-0000-7000-8000-000000000200")?;
-    store
-        .save_assortment(
-            Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?,
-            user.id,
-            article,
-            "Cheese",
-            &json!({ "group": "food:cheese" }),
-        )
-        .await?;
-    store
-        .save_assortment(
-            Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2")?,
-            user.id,
-            article,
-            "Organic",
-            &organic_assortment_query(),
-        )
-        .await?;
-    store
-        .save_assortment(
-            Uuid::parse_str("018f2000-0000-7000-8000-0000000000a3")?,
-            user.id,
-            product,
-            "Cheese",
-            &json!({ "group": "food:cheese" }),
-        )
-        .await?;
+    save_seed_assortment(
+        store,
+        defs,
+        Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?,
+        user.id,
+        article,
+        "Cheese",
+        json!({ "group": "food:cheese" }),
+    )
+    .await?;
+    save_seed_assortment(
+        store,
+        defs,
+        Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2")?,
+        user.id,
+        article,
+        "Organic",
+        organic_assortment_query(),
+    )
+    .await?;
+    save_seed_assortment(
+        store,
+        defs,
+        Uuid::parse_str("018f2000-0000-7000-8000-0000000000a3")?,
+        user.id,
+        product,
+        "Cheese",
+        json!({ "group": "food:cheese" }),
+    )
+    .await?;
     // Status check is a registered stub, not a runner. Drop it from databases seeded before.
     store.delete_job_type("dq.status").await?;
     store
@@ -344,7 +357,36 @@ fn layout(workspace: &str) -> Value {
     }
 }
 
-async fn save_views(store: &Store) -> anyhow::Result<()> {
+/// Inserts a missing selection with ids in `query`.
+///
+/// An existing row keeps its name, type and query. Key tokens still stored in
+/// that query are rewritten to ids; the rest of the document stays.
+async fn save_seed_assortment(
+    store: &Store,
+    defs: &DefinitionSet,
+    id: Uuid,
+    owner: Uuid,
+    type_id: Uuid,
+    name: &str,
+    mut query: Value,
+) -> anyhow::Result<()> {
+    if let Some(existing) = store.assortment(id).await? {
+        let stored = existing.get("query").cloned().unwrap_or(Value::Null);
+        let mut repaired = stored.clone();
+        braian_model::translate_assortment_query(&mut repaired, defs);
+        if repaired != stored {
+            store.update_assortment_query(id, &repaired).await?;
+        }
+        return Ok(());
+    }
+    braian_model::translate_assortment_query(&mut query, defs);
+    store
+        .save_assortment(id, owner, type_id, name, &query)
+        .await?;
+    Ok(())
+}
+
+async fn save_views(store: &Store, defs: &DefinitionSet) -> anyhow::Result<()> {
     let views = [
         (
             "018f2000-0000-7000-8000-000000000201",
@@ -572,10 +614,22 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             json!({}),
         ),
     ];
-    for (id, workspace, kind, title, pane, position, state) in views {
+    for (id, workspace, kind, title, pane, position, mut state) in views {
+        let id = Uuid::parse_str(id)?;
+        // A later boot must not put the template back over a saved layout.
+        // Key tokens left in an existing document are still rewritten to ids.
+        if let Some(stored) = store.view_state(id).await? {
+            let mut repaired = stored.clone();
+            braian_model::translate_view_state(&mut repaired, defs);
+            if repaired != stored {
+                store.update_view_state(id, &repaired).await?;
+            }
+            continue;
+        }
+        braian_model::translate_view_state(&mut state, defs);
         store
             .save_view(
-                Uuid::parse_str(id)?,
+                id,
                 Uuid::parse_str(workspace)?,
                 kind,
                 title,
@@ -1566,6 +1620,212 @@ mod tests {
         assert_eq!(again["title"], "Accept ART-CHED-400");
         assert_eq!(again["source"], "agent");
         assert_eq!(matching_proposals(db.store()).await, 1);
+    }
+
+    /// The seed stores ids. A second run repairs leftover keys and does not
+    /// replace a saved view or selection. Renaming an attribute key leaves
+    /// those column ids in place.
+    #[tokio::test]
+    async fn seeded_views_keep_ids_across_a_second_seed_and_an_attribute_rename() {
+        load_test_database_url();
+        let _restore = SeedEnv::set(&[
+            ("BRAIAN_DEMO_EMAIL", "seed-ids@example.com"),
+            ("BRAIAN_DEMO_PASSWORD", "seed-test-password"),
+            ("BRAIAN_SEED_COUNT", "0"),
+        ]);
+        let db = braian_store::testing::TestDb::create().await;
+        let store = db.store();
+
+        run(store, None).await.expect("first seed");
+        let defs = store.definition_set().await.expect("definitions");
+        let number = braian_model::resolve(&defs, braian_model::RefKind::Attribute, "number", None)
+            .expect("number");
+        let company = braian_model::resolve(
+            &defs,
+            braian_model::RefKind::Attribute,
+            "company_name",
+            None,
+        )
+        .expect("company_name");
+        let supplier = braian_model::resolve(&defs, braian_model::RefKind::Type, "supplier", None)
+            .expect("supplier");
+        let food =
+            braian_model::resolve(&defs, braian_model::RefKind::Structure, "food", None).unwrap();
+        let cheese_group =
+            braian_model::resolve(&defs, braian_model::RefKind::Group, "cheese", Some("food"))
+                .unwrap();
+        let cheese_ref = format!("{}:{}", food.id, cheese_group.id);
+
+        let products = stored_view(store, PRODUCTS_WORKSPACE, PRODUCTS_VIEW).await;
+        assert_eq!(products["state"]["columns"][0], number.id);
+        assert_eq!(products["state"]["sort"], number.id);
+        assert_eq!(
+            products["state"]["type_key"],
+            "018f0000-0000-7000-8000-000000000200"
+        );
+        assert_refs_are_ids(&defs, &products["state"], &json!({}));
+        let cheese = store
+            .assortment(id(CHEESE_ARTICLE))
+            .await
+            .expect("query")
+            .expect("cheese");
+        assert_eq!(cheese["query"]["group"], cheese_ref);
+        assert!(cheese["query"].get("type").is_none());
+        assert_refs_are_ids(&defs, &json!({}), &cheese["query"]);
+
+        let user = store
+            .user_by_email("seed-ids@example.com")
+            .await
+            .expect("user")
+            .expect("demo user");
+        let suppliers = stored_view(store, SUPPLIERS_WORKSPACE, SUPPLIERS_VIEW).await;
+        store
+            .save_view(
+                id(SUPPLIERS_VIEW),
+                id(SUPPLIERS_WORKSPACE),
+                suppliers["type"].as_str().unwrap(),
+                "Supplier grid",
+                suppliers["pane"].as_str().unwrap(),
+                suppliers["position"].as_i64().unwrap() as i32,
+                &json!({
+                    "columns": ["company_name"],
+                    "sort": "company_name",
+                    "object_type": "018f0000-0000-7000-8000-000000000202",
+                    "type_key": "supplier"
+                }),
+            )
+            .await
+            .expect("narrow the supplier view");
+        store
+            .save_assortment(
+                id(CHEESE_ARTICLE),
+                user.id,
+                id("018f0000-0000-7000-8000-000000000201"),
+                "Aged cheese",
+                &json!({ "group": "food:cheese" }),
+            )
+            .await
+            .expect("put a key back into the selection");
+
+        run(store, None).await.expect("second seed");
+        let defs = store.definition_set().await.expect("definitions");
+        let suppliers = stored_view(store, SUPPLIERS_WORKSPACE, SUPPLIERS_VIEW).await;
+        assert_eq!(suppliers["title"], "Supplier grid");
+        assert_eq!(suppliers["state"]["columns"], json!([company.id]));
+        assert_eq!(suppliers["state"]["sort"], company.id);
+        assert_eq!(suppliers["state"]["type_key"], supplier.id);
+        assert_refs_are_ids(&defs, &suppliers["state"], &json!({}));
+        let products = stored_view(store, PRODUCTS_WORKSPACE, PRODUCTS_VIEW).await;
+        assert_eq!(products["state"]["columns"][0], number.id);
+        assert_eq!(products["title"], "Products");
+        for workspace in [PRODUCTS_WORKSPACE, ARTICLES_WORKSPACE, SUPPLIERS_WORKSPACE] {
+            let body = store
+                .workspace(id(workspace))
+                .await
+                .expect("workspace")
+                .expect("workspace row");
+            for view in body["views"].as_array().expect("views") {
+                assert_refs_are_ids(&defs, &view["state"], &json!({}));
+            }
+        }
+        let cheese = store
+            .assortment(id(CHEESE_ARTICLE))
+            .await
+            .expect("query")
+            .expect("cheese");
+        assert_eq!(cheese["name"], "Aged cheese");
+        assert_eq!(cheese["query"]["group"], cheese_ref);
+        assert_refs_are_ids(&defs, &json!({}), &cheese["query"]);
+        let product_cheese = store
+            .assortment(id(CHEESE_PRODUCT))
+            .await
+            .expect("query")
+            .expect("product cheese");
+        assert_eq!(product_cheese["query"]["group"], cheese_ref);
+        let organic = store
+            .assortment(id(ORGANIC))
+            .await
+            .expect("query")
+            .expect("organic");
+        assert_eq!(organic["query"]["labels"], "organic_eu");
+        assert_refs_are_ids(&defs, &json!({}), &organic["query"]);
+
+        let mut renamed = defs.clone();
+        renamed.model_revision += 1;
+        braian_model::apply_all(
+            &mut renamed,
+            &[braian_model::ModelChange::RenameAttributeKey {
+                key: "number".into(),
+                new_key: "item_number".into(),
+            }],
+        )
+        .expect("rename");
+        let actor = Actor {
+            actor: user.principal_id,
+            on_behalf_of: None,
+            kind: BatchKind::Interactive,
+            source: "test".into(),
+        };
+        store
+            .put_definitions(&actor, &renamed)
+            .await
+            .expect("save the renamed key");
+
+        let products = stored_view(store, PRODUCTS_WORKSPACE, PRODUCTS_VIEW).await;
+        let columns = products["state"]["columns"].as_array().expect("columns");
+        assert!(columns.iter().any(|column| column == &number.id));
+        assert!(
+            columns
+                .iter()
+                .all(|column| column != "number" && column != "item_number")
+        );
+        assert_eq!(products["state"]["sort"], number.id);
+        let articles = stored_view(store, ARTICLES_WORKSPACE, ARTICLES_VIEW).await;
+        let article_columns = articles["state"]["columns"].as_array().expect("columns");
+        assert!(article_columns.iter().any(|column| column == &number.id));
+        assert_refs_are_ids(&renamed, &products["state"], &json!({}));
+        assert_refs_are_ids(&renamed, &articles["state"], &json!({}));
+    }
+
+    const PRODUCTS_WORKSPACE: &str = "018f2000-0000-7000-8000-000000000003";
+    const ARTICLES_WORKSPACE: &str = "018f2000-0000-7000-8000-000000000005";
+    const SUPPLIERS_WORKSPACE: &str = "018f2000-0000-7000-8000-000000000007";
+    const PRODUCTS_VIEW: &str = "018f2000-0000-7000-8000-000000000302";
+    const ARTICLES_VIEW: &str = "018f2000-0000-7000-8000-000000000306";
+    const SUPPLIERS_VIEW: &str = "018f2000-0000-7000-8000-000000000702";
+    const CHEESE_ARTICLE: &str = "018f2000-0000-7000-8000-0000000000a1";
+    const CHEESE_PRODUCT: &str = "018f2000-0000-7000-8000-0000000000a3";
+    const ORGANIC: &str = "018f2000-0000-7000-8000-0000000000a2";
+
+    fn id(text: &str) -> Uuid {
+        Uuid::parse_str(text).expect("uuid")
+    }
+
+    async fn stored_view(store: &Store, workspace: &str, view: &str) -> Value {
+        let body = store
+            .workspace(id(workspace))
+            .await
+            .expect("workspace")
+            .expect("workspace row");
+        body["views"]
+            .as_array()
+            .expect("views")
+            .iter()
+            .find(|row| row["id"].as_str() == Some(view))
+            .unwrap_or_else(|| panic!("missing view {view}"))
+            .clone()
+    }
+
+    fn assert_refs_are_ids(defs: &DefinitionSet, state: &Value, query: &Value) {
+        let mut state_again = state.clone();
+        braian_model::translate_view_state(&mut state_again, defs);
+        assert_eq!(&state_again, state, "view state still stores keys: {state}");
+        let mut query_again = query.clone();
+        braian_model::translate_assortment_query(&mut query_again, defs);
+        assert_eq!(
+            &query_again, query,
+            "selection query still stores keys: {query}"
+        );
     }
 
     async fn matching_proposals(store: &Store) -> usize {
