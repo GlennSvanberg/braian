@@ -3929,3 +3929,110 @@ async fn rest_upserts_match_the_draft_and_land_in_history() {
         "{still}"
     );
 }
+
+#[tokio::test]
+async fn an_import_writes_a_value_list_and_is_refused_on_the_other_upserts() {
+    let (_db, app) = app().await;
+    let refused = [
+        (
+            "POST",
+            "/v1/attributes",
+            r#"{"key":"import_extra","labels":{"sv":"Extra"},"language_dependent":false,"multiple":false,"kind":{"type":"text","max_length":16},"index":{"searchable":false,"filterable":false,"sortable":false}}"#,
+        ),
+        (
+            "POST",
+            "/v1/types",
+            r#"{"key":"import_type","labels":{},"key_attribute":"018f0000-0000-7000-8000-000000000100","attributes":["018f0000-0000-7000-8000-000000000100"]}"#,
+        ),
+        (
+            "POST",
+            "/v1/structures",
+            r#"{"key":"import_shelf","groups":[],"classes":[]}"#,
+        ),
+        (
+            "POST",
+            "/v1/unit-families",
+            r#"{"key":"import_count","base_unit":"pc","units":[{"code":"pc","factor":"1"}]}"#,
+        ),
+        (
+            "POST",
+            "/v1/link-types",
+            r#"{"key":"import_link","label":"Import","from_types":["item"],"to_types":["item"],"from_key":"out","from_label":"Out","to_key":"in","to_label":"In"}"#,
+        ),
+    ];
+    for (method, path, body) in refused {
+        let (status, _, denied) = call(
+            &app,
+            method,
+            path,
+            Some(IMPORT),
+            &[("content-type", "application/json")],
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path} {denied}");
+        assert_eq!(denied["code"], "needs_approval", "{path} {denied}");
+    }
+
+    let (status, _, saved) = call(
+        &app,
+        "POST",
+        "/v1/value-lists",
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"import_shade","label":"Shade","options":[{"code":"grey","label":"Grey"}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["key"], "import_shade");
+
+    let (status, _, updated) = call(
+        &app,
+        "PUT",
+        "/v1/value-lists/import_shade",
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"import_shade","label":"Shade updated","options":[{"code":"grey","label":"Grey"}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert!(
+        updated["labels"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|label| label == "Shade updated"),
+        "{updated}"
+    );
+
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    assert!(
+        defs["value_lists"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["key"] == "import_shade"),
+        "{defs}"
+    );
+    assert!(
+        defs["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "import_extra"),
+        "{defs}"
+    );
+    assert!(
+        defs["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "import_link" && item["key"] != "import_type"),
+        "{defs}"
+    );
+}

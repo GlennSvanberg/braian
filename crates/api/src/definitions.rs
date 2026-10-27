@@ -756,7 +756,32 @@ pub(crate) async fn commit_model_change(
     change: ModelChange,
     dry_run: bool,
 ) -> Result<Value, Problem> {
-    if !dry_run {
+    save_model_change(state, identity, change, dry_run, false).await
+}
+
+/// Same save as [`commit_model_change`]. An integration may write.
+///
+/// Value lists already stored a direct save from an import token. Attribute,
+/// type, structure, unit family and link type upserts did not.
+pub(crate) async fn commit_model_change_allowing_import(
+    state: &AppState,
+    identity: &Identity,
+    change: ModelChange,
+    dry_run: bool,
+) -> Result<Value, Problem> {
+    save_model_change(state, identity, change, dry_run, true).await
+}
+
+async fn save_model_change(
+    state: &AppState,
+    identity: &Identity,
+    change: ModelChange,
+    dry_run: bool,
+    import_may_write: bool,
+) -> Result<Value, Problem> {
+    let import_write =
+        import_may_write && identity.kind == braian_store::PrincipalKind::Integration;
+    if !dry_run && !import_write {
         ensure_person(state, &identity.actor).await?;
     }
     crate::model_draft::commit_steps(
