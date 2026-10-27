@@ -1,7 +1,5 @@
 -- Attribute definitions is a model view, separate from an object's Attributes panel.
--- PR 8 owns V21. This file is V22 so the two branches do not share a version.
--- Merge it after V21, or renumber it to V21 if this branch merges first.
--- refinery rejects a later migration whose version is below one already applied.
+-- This file is V21. The link types PR takes V22.
 
 INSERT INTO view_types (key, title, builtin)
 VALUES ('attribute_definitions', 'Attribute definitions', true)

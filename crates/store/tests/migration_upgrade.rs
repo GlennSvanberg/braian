@@ -260,7 +260,7 @@ async fn attribute_definitions_view_is_added_to_an_existing_data_model() {
         .unwrap();
     conn.client
         .batch_execute(include_str!(
-            "../migrations/V22__attribute_definitions_view.sql"
+            "../migrations/V21__attribute_definitions_view.sql"
         ))
         .await
         .unwrap();
@@ -289,7 +289,7 @@ async fn attribute_definitions_view_is_added_to_an_existing_data_model() {
     );
     conn.client
         .batch_execute(include_str!(
-            "../migrations/V22__attribute_definitions_view.sql"
+            "../migrations/V21__attribute_definitions_view.sql"
         ))
         .await
         .unwrap();
