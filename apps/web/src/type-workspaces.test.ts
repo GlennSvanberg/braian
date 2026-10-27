@@ -61,6 +61,24 @@ describe('type workspaces', () => {
       'article',
       'supplier',
     ])
+    const withLink = typeNames(
+      {
+        ...defs,
+        types: [
+          ...(defs.types as Json[]),
+          { id: '210', key: 'product_articles', kind: 'link', singular: { en: 'Product' }, plural: { en: 'Products' } },
+        ],
+      },
+      'en',
+    )
+    expect(missingTypeWorkspaces(ordered, withLink).map((type) => type.key)).toEqual([])
+    expect(workspaceTemplates(withLink).map((item) => item.name)).toEqual([
+      'Products',
+      'Articles',
+      'Suppliers',
+      'Data model',
+      'Review',
+    ])
   })
 
   it('builds a template per type and none named Enrich', () => {
