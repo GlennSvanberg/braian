@@ -354,7 +354,7 @@ pub fn operation_title(title: &str, types: &[ObjectType], language: &str) -> Str
 #[serde(deny_unknown_fields)]
 pub struct Structure {
     pub id: StructureId,
-    /// Stable wire key. Object placement uses `key:group`, for example `sortiment:talt`.
+    /// Stable wire key. Object placement uses `key:group`, for example `food:cheese`.
     pub key: String,
     /// Display name per language. Empty on revisions written before labels existed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -429,7 +429,7 @@ mod label_tests {
         assert_eq!(default_plural("Article"), "Articles");
         assert_eq!(default_plural("Category"), "Categories");
         assert_eq!(default_plural("Bus"), "Buses");
-        let product = object_type("produkt", "Product", None);
+        let product = object_type("product", "Product", None);
         assert_eq!(product.singular_label("en"), "Product");
         assert_eq!(product.plural_label("en"), "Products");
         assert_eq!(
@@ -440,7 +440,7 @@ mod label_tests {
             operation_title("Search objects", std::slice::from_ref(&product), "en"),
             "Search Products"
         );
-        let article = object_type("artikel", "Article", Some("Articles"));
+        let article = object_type("article", "Article", Some("Articles"));
         assert_eq!(
             operation_title("Open object", &[product, article], "en"),
             "Open object"

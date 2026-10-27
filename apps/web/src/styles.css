@@ -1247,10 +1247,6 @@ canvas.graph.panning { cursor: grabbing; }
 .bubble.user { background: var(--amber-bg); }
 .bubble.assistant { background: var(--accent-dim); }
 .chart { height: 220px; }
-[data-testid='dashboard'] { display: grid; gap: 8px; }
-[data-testid='dashboard'] p { margin: 0; color: var(--text-2); }
-[data-testid='dashboard'] svg rect { fill: var(--accent); }
-[data-testid='dashboard'] svg text { fill: var(--muted); font-size: 11px; }
 .timeline { display: grid; gap: 4px; align-content: start; }
 .timeline article {
   border-left: 2px solid var(--accent);

@@ -251,15 +251,6 @@ pub fn interpret(text: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
     if trimmed.is_empty() {
         return None;
     }
-    let lower = trimmed.to_lowercase();
-    if lower.contains("power tool")
-        && (lower.contains("model")
-            || lower.contains("set up")
-            || lower.contains("setup")
-            || lower.contains("draft"))
-    {
-        return Some(power_tools(defs));
-    }
     if let Some(rest) = strip_prefix_ci(trimmed, "add attribute ") {
         return add_attribute_command(rest, defs);
     }
@@ -288,88 +279,6 @@ pub fn interpret(text: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
         return move_command(rest, defs);
     }
     None
-}
-
-/// A small power-tool model: structure, groups, parent class, drill, weight and voltage.
-pub fn power_tools(defs: &DefinitionSet) -> Vec<ModelChange> {
-    let mut steps = vec![
-        ModelChange::CreateStructure {
-            key: "power_tools".into(),
-            label: "Power tools".into(),
-        },
-        ModelChange::CreateGroup {
-            structure: "power_tools".into(),
-            group: "tools".into(),
-            parent: None,
-            label: "Tools".into(),
-        },
-        ModelChange::CreateGroup {
-            structure: "power_tools".into(),
-            group: "drills".into(),
-            parent: Some("tools".into()),
-            label: "Drills".into(),
-        },
-        ModelChange::CreateClass {
-            structure: "power_tools".into(),
-            class_key: "Power tool".into(),
-            group: "tools".into(),
-            parent: None,
-            attributes: vec![],
-        },
-        ModelChange::CreateClass {
-            structure: "power_tools".into(),
-            class_key: "Drill".into(),
-            group: "drills".into(),
-            parent: Some("Power tool".into()),
-            attributes: vec![],
-        },
-        ModelChange::CreateAttribute {
-            key: "weight".into(),
-            label: "Weight".into(),
-            kind: "number".into(),
-            unit: Some("kg".into()),
-            multiple: false,
-            languages: false,
-            required: false,
-            searchable: false,
-            filterable: true,
-            sortable: false,
-        },
-        ModelChange::AddAttribute {
-            structure: "power_tools".into(),
-            class_key: "Power tool".into(),
-            attribute: "weight".into(),
-        },
-        ModelChange::CreateAttribute {
-            key: "voltage".into(),
-            label: "Voltage".into(),
-            kind: "number".into(),
-            unit: None,
-            multiple: false,
-            languages: false,
-            required: true,
-            searchable: false,
-            filterable: true,
-            sortable: false,
-        },
-        ModelChange::AddAttribute {
-            structure: "power_tools".into(),
-            class_key: "Drill".into(),
-            attribute: "voltage".into(),
-        },
-    ];
-    if defs
-        .attributes
-        .iter()
-        .any(|attribute| attribute.key == "status")
-    {
-        steps.push(ModelChange::AddAttribute {
-            structure: "power_tools".into(),
-            class_key: "Drill".into(),
-            attribute: "status".into(),
-        });
-    }
-    steps
 }
 
 pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
@@ -886,21 +795,21 @@ fn add_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelCh
     let (structure, class_key) = if let Some(found) = find_class(defs, class_name) {
         found
     } else {
-        let structure = "power_tools".to_owned();
+        let structure = "unplaced".to_owned();
         steps.push(ModelChange::CreateStructure {
             key: structure.clone(),
             label: String::new(),
         });
         steps.push(ModelChange::CreateGroup {
             structure: structure.clone(),
-            group: "tools".into(),
+            group: "groups".into(),
             parent: None,
             label: String::new(),
         });
         steps.push(ModelChange::CreateClass {
             structure: structure.clone(),
             class_key: class_name.to_owned(),
-            group: "tools".into(),
+            group: "groups".into(),
             parent: None,
             attributes: vec![],
         });
@@ -1560,19 +1469,19 @@ mod tests {
             }],
             structures: vec![Structure {
                 id: structure,
-                key: "sortiment".into(),
+                key: "assortment".into(),
                 labels: BTreeMap::new(),
                 groups: vec![
                     Group {
                         id: tents,
-                        key: "talt".into(),
+                        key: "camp".into(),
                         labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![],
                     },
                     Group {
                         id: timber,
-                        key: "bygg".into(),
+                        key: "timber".into(),
                         labels: BTreeMap::new(),
                         parent: None,
                         attributes: vec![],
@@ -1580,7 +1489,7 @@ mod tests {
                 ],
                 classes: vec![Class {
                     id: class,
-                    key: "sovsack".into(),
+                    key: "bag".into(),
                     group: tents,
                     parent: None,
                     attributes: vec![weight],
@@ -1602,39 +1511,39 @@ mod tests {
     #[test]
     fn group_commands_rename_move_duplicate_and_delete() {
         let defs = base();
-        let renamed = interpret("rename group talt to canopy", &defs).expect("rename");
+        let renamed = interpret("rename group camp to canopy", &defs).expect("rename");
         let (after, impact) = preview(&defs, &renamed).expect("preview");
-        assert_eq!(impact.lines, vec!["Rename group talt to canopy".to_owned()]);
+        assert_eq!(impact.lines, vec!["Rename group camp to canopy".to_owned()]);
         let tents = after.structures[0]
             .groups
             .iter()
-            .find(|group| group.key == "talt")
-            .expect("talt");
+            .find(|group| group.key == "camp")
+            .expect("camp");
         assert!(tents.labels.values().any(|label| label == "canopy"));
 
-        let moved = interpret("move group sovsack to bygg", &defs);
+        let moved = interpret("move group bag to timber", &defs);
         assert!(moved.is_none(), "a class move must not become a group move");
-        let moved = interpret("move group talt to bygg", &defs).expect("move");
+        let moved = interpret("move group camp to timber", &defs).expect("move");
         let (after, impact) = preview(&defs, &moved).expect("preview");
         assert!(
             impact
                 .lines
                 .iter()
-                .any(|line| line.contains("Move group talt"))
+                .any(|line| line.contains("Move group camp"))
         );
-        let talt = after.structures[0]
+        let camp = after.structures[0]
             .groups
             .iter()
-            .find(|group| group.key == "talt")
-            .expect("talt");
-        let bygg = after.structures[0]
+            .find(|group| group.key == "camp")
+            .expect("camp");
+        let timber = after.structures[0]
             .groups
             .iter()
-            .find(|group| group.key == "bygg")
-            .expect("bygg");
-        assert_eq!(talt.parent, Some(bygg.id));
+            .find(|group| group.key == "timber")
+            .expect("timber");
+        assert_eq!(camp.parent, Some(timber.id));
 
-        let copied = interpret("duplicate group talt as spare", &defs).expect("copy");
+        let copied = interpret("duplicate group camp as spare", &defs).expect("copy");
         let (after, _) = preview(&defs, &copied).expect("preview");
         assert!(
             after.structures[0]
@@ -1643,14 +1552,14 @@ mod tests {
                 .any(|group| group.key == "spare")
         );
 
-        let removed = interpret("delete group talt", &defs).expect("delete");
+        let removed = interpret("delete group camp", &defs).expect("delete");
         let (after, impact) = preview(&defs, &removed).expect("preview");
-        assert_eq!(impact.lines, vec!["Delete group talt".to_owned()]);
+        assert_eq!(impact.lines, vec!["Delete group camp".to_owned()]);
         assert!(
             !after.structures[0]
                 .groups
                 .iter()
-                .any(|group| group.key == "talt")
+                .any(|group| group.key == "camp")
         );
         assert!(impact.groups.iter().any(|id| id.ends_with("000000000005")));
     }
@@ -1658,89 +1567,50 @@ mod tests {
     #[test]
     fn moving_a_class_names_both_groups() {
         let defs = base();
-        let steps = interpret("move sovsack to bygg", &defs).expect("command");
+        let steps = interpret("move bag to timber", &defs).expect("command");
         let (_after, impact) = preview(&defs, &steps).expect("preview");
         assert_eq!(
             impact.lines,
-            vec!["Move class sovsack from talt to bygg".to_owned()]
+            vec!["Move class bag from camp to timber".to_owned()]
         );
         assert!(impact.usage_fields.iter().any(|field| field == "weight"));
         assert_eq!(impact.groups.len(), 2);
     }
 
     #[test]
-    fn power_tools_is_a_tree_the_person_can_read() {
-        let defs = base();
-        let steps = interpret("set up a model for power tools", &defs).expect("command");
-        let (after, impact) = preview(&defs, &steps).expect("preview");
-        let text = impact.lines.join("\n");
-        assert!(text.contains("Add structure power_tools"));
-        assert!(text.contains("Add group Drills under Tools"));
-        assert!(text.contains("Add class Drill on Drills, parent Power tool"));
-        assert!(text.contains("Add attribute weight to Power tool"));
-        assert!(text.contains("Create attribute voltage"));
-        assert!(text.contains("status"));
-        let drill = after
-            .structures
-            .iter()
-            .find(|item| item.key == "power_tools")
-            .expect("structure")
-            .classes
-            .iter()
-            .find(|item| item.key == "Drill")
-            .expect("drill");
-        assert!(drill.parent.is_some());
-        let voltage = after
-            .attributes
-            .iter()
-            .find(|item| item.key == "voltage")
-            .expect("voltage");
-        assert!(voltage.required);
-    }
-
-    #[test]
     fn add_group_diff_uses_the_caption_not_the_key() {
         let mut defs = base();
-        defs.languages = vec![
-            LanguageTag::parse("sv").unwrap(),
-            LanguageTag::parse("en").unwrap(),
-            LanguageTag::parse("de").unwrap(),
-        ];
-        let tents = defs.structures[0]
+        let camp = defs.structures[0]
             .groups
             .iter_mut()
-            .find(|group| group.key == "talt")
-            .expect("talt");
-        tents
-            .labels
-            .insert(LanguageTag::parse("sv").unwrap(), "Tält".into());
-        tents
-            .labels
+            .find(|group| group.key == "camp")
+            .expect("camp");
+        camp.labels
             .insert(LanguageTag::parse("en").unwrap(), "Tents".into());
-        tents
-            .labels
-            .insert(LanguageTag::parse("de").unwrap(), "Zelte".into());
         let (_after, impact) = preview(
             &defs,
             &[ModelChange::CreateGroup {
-                structure: "sortiment".into(),
+                structure: "assortment".into(),
                 group: "canopy".into(),
-                parent: Some("talt".into()),
+                parent: Some("camp".into()),
                 label: "Canopy".into(),
             }],
         )
         .expect("preview");
-        assert_eq!(impact.lines, vec!["Add group Canopy under Tält".to_owned()]);
+        assert_eq!(
+            impact.lines,
+            vec!["Add group Canopy under Tents".to_owned()]
+        );
     }
 
     #[test]
     fn removing_an_attribute_is_a_usage_change() {
         let defs = base();
-        let steps = interpret("remove attribute weight from sovsack", &defs).expect("command");
+        let steps = interpret("remove attribute weight from bag", &defs).expect("command");
         let (_after, impact) = preview(&defs, &steps).expect("preview");
         assert_eq!(
             impact.lines,
-            vec!["Remove attribute weight from sovsack".to_owned()]
+            vec!["Remove attribute weight from bag".to_owned()]
         );
         assert_eq!(impact.usage_fields, vec!["weight".to_owned()]);
     }
@@ -1802,8 +1672,8 @@ mod tests {
                 ModelChange::AttachAttribute {
                     attribute: "status".into(),
                     type_key: None,
-                    structure: Some("sortiment".into()),
-                    group: Some("talt".into()),
+                    structure: Some("assortment".into()),
+                    group: Some("camp".into()),
                 },
             ],
         )

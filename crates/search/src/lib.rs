@@ -798,7 +798,7 @@ pub fn document(
                     push_blob(&mut blobs, field_language(language.as_str()), &indexed);
                 }
                 if defs.languages.is_empty() {
-                    push_blob(&mut blobs, "sv".into(), &indexed);
+                    push_blob(&mut blobs, "en".into(), &indexed);
                 }
             }
             if stores_own_field(attribute) {
@@ -983,7 +983,7 @@ mod tests {
         assert!(names.iter().all(|name| !name.starts_with("a_name")));
 
         let mut values = BTreeMap::new();
-        values.insert(name.id, json!({"sv": "Talt", "en-GB": "Tent"}));
+        values.insert(name.id, json!({"sv": "Canvas", "en-GB": "Tent"}));
         values.insert(sku.id, json!("SKU-1"));
         values.insert(active.id, json!(false));
         let object = Object {
@@ -999,7 +999,7 @@ mod tests {
         assert_eq!(doc["a_sku"], "SKU-1");
         assert_eq!(doc["a_active"], "false");
         let blob = doc["search_sv"].as_str().expect("blob");
-        assert!(blob.contains("Talt"), "{blob}");
+        assert!(blob.contains("Canvas"), "{blob}");
         assert!(blob.contains("SKU-1"), "{blob}");
     }
 }

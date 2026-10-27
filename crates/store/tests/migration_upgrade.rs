@@ -4,6 +4,7 @@
 //! `BRAIAN_BASELINE_MIGRATIONS` at main's `crates/store/migrations`,
 //! applies those, then applies the migrations in this checkout.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -163,6 +164,45 @@ async fn a_fresh_database_migrates_when_wal_level_is_not_logical() {
 }
 
 #[tokio::test]
+async fn view_types_are_english_and_have_no_dashboard() {
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    migrate(&mut conn.client, &branch_migrations()).await;
+    let rows = conn
+        .client
+        .query("SELECT key, title FROM view_types", &[])
+        .await
+        .unwrap();
+    let mut titles = BTreeMap::new();
+    for row in rows {
+        titles.insert(row.get::<_, String>(0), row.get::<_, String>(1));
+    }
+    assert!(!titles.contains_key("dashboard"), "{titles:?}");
+    let dashboards: i64 = conn
+        .client
+        .query_one(
+            "SELECT COUNT(*) FROM views WHERE type_key = 'dashboard'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(dashboards, 0);
+    assert_eq!(titles["structure_tree"], "Structure");
+    assert_eq!(titles["object_table"], "Objects");
+    assert_eq!(titles["object_detail"], "Detail");
+    assert_eq!(titles["graph"], "Graph");
+    assert_eq!(titles["data_model"], "Data model");
+    assert_eq!(titles["history"], "History");
+    assert_eq!(titles["batch_log"], "Batch log");
+    assert_eq!(titles["job_history"], "Jobs");
+    assert_eq!(titles["proposal"], "Proposals");
+    assert_eq!(titles["embed"], "Embedded view");
+    assert_eq!(titles["assortment_list"], "Assortments");
+    assert_eq!(titles["class_attributes"], "Classes");
+}
+
+#[tokio::test]
 async fn branch_migrations_apply_after_main() {
     let baseline = baseline_migrations();
     let branch = branch_migrations();
@@ -184,14 +224,10 @@ async fn branch_migrations_apply_after_main() {
     let level = wal_level(&conn.client).await;
     assert_ne!(level, "logical");
     migrate(&mut conn.client, &baseline).await;
-    let baseline_max = max_migration_version(&baseline_set);
-    let branch_max = max_migration_version(&branch_set);
-    if baseline_max < branch_max {
-        assert!(
-            publication_exists(&conn.client).await,
-            "main's V3 creates braian_changes even when wal_level is {level}"
-        );
-    }
+    assert!(
+        !publication_exists(&conn.client).await,
+        "main drops braian_changes in V15 even when wal_level is {level}"
+    );
     migrate(&mut conn.client, &branch).await;
     assert!(!publication_exists(&conn.client).await);
     let stored: String = conn

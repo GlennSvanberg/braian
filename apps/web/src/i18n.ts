@@ -92,7 +92,6 @@ export const copy = {
   jobs: 'Jobs',
   batches: 'Batch log',
   proposals: 'Proposals',
-  dashboard: 'Overview',
   dataModel: 'Data model',
   graph: 'Graph',
   columns: 'Columns',

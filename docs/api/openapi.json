@@ -3313,7 +3313,7 @@
           },
           "key": {
             "type": "string",
-            "description": "Stable wire key. Object placement uses `key:group`, for example `sortiment:talt`."
+            "description": "Stable wire key. Object placement uses `key:group`, for example `food:cheese`."
           },
           "labels": {
             "type": "object",

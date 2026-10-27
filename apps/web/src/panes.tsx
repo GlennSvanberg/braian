@@ -942,7 +942,7 @@ function createGroups(typeKey: string, group: string | null) {
 
 function NewObject({ session, typeKey, singular }: { session: PanesSession; typeKey?: string; singular?: string }) {
   const [open, setOpen] = useState(false)
-  const [nummer, setNummer] = useState('')
+  const [number, setNumber] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
   if (!open) return <button onClick={() => setOpen(true)}>{newObjectLabel(singular)}</button>
@@ -956,20 +956,20 @@ function NewObject({ session, typeKey, singular }: { session: PanesSession; type
           body: JSON.stringify({
             type: typeKey || 'product',
             groups: createGroups(typeKey || 'product', session.group),
-            values: { number: nummer, name: { en: nummer }, status: 'draft' },
+            values: { number, name: { en: number }, status: 'draft' },
           }),
         })
           .then((created) => {
             setError('')
             setOpen(false)
             session.setObjectId(String(created.id))
-            session.push(`${copy.saved} ${nummer}`)
+            session.push(`${copy.saved} ${number}`)
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
           })
           .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
       }}
     >
-      <input data-testid="new-nummer" value={nummer} onChange={(event) => setNummer(event.target.value)} placeholder={copy.numberPlaceholder} />
+      <input data-testid="new-number" value={number} onChange={(event) => setNumber(event.target.value)} placeholder={copy.numberPlaceholder} />
       <button className="primary" type="submit" data-testid="create-object">{copy.save}</button>
       {error ? <span className="error" data-testid="validation-error">{error}</span> : null}
     </form>
@@ -1111,6 +1111,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             form={String(kind.form ?? '')}
             multiple={Boolean(attribute?.multiple)}
             languageDependent={Boolean(attribute?.language_dependent)}
+            languages={modelLanguages(defs.data)}
             value={values[key]}
             options={optionsFor(lists, String(kind.list ?? ''))}
             units={unitsFor(families, String(kind.unit_family ?? ''))}
@@ -1179,12 +1180,12 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
 }
 
 const fieldSectionDefs: Array<{ id: string; title: string; keys: string[] }> = [
-  { id: 'identity', title: copy.identity, keys: ['number', 'name', 'company_name', 'gtin', 'brand', 'org_number', 'gln', 'nummer', 'namn'] },
-  { id: 'description', title: copy.description, keys: ['description', 'ingredients', 'beskrivning'] },
-  { id: 'classification', title: copy.classification, keys: ['status', 'allergens', 'traces', 'labels', 'nutriscore', 'nova', 'country', 'country_of_origin', 'certifications', 'storage', 'packaging', 'packaging_material', 'deposit', 'active', 'farg', 'aktiv'] },
-  { id: 'measures', title: copy.measures, keys: ['net_weight', 'net_volume', 'units_per_pack', 'height', 'width', 'depth', 'gross_weight', 'energy', 'fat', 'saturated_fat', 'carbohydrates', 'sugars', 'fiber', 'protein', 'salt', 'fat_content', 'cocoa_content', 'caffeine', 'shelf_life_days', 'lead_time_days', 'co2_footprint', 'vikt', 'langd', 'spann'] },
-  { id: 'dates', title: copy.dates, keys: ['launched', 'lanserad'] },
-  { id: 'references', title: copy.references, keys: ['product', 'supplier', 'replaces', 'image', 'website', 'bild', 'ersatter'] },
+  { id: 'identity', title: copy.identity, keys: ['number', 'name', 'company_name', 'gtin', 'brand', 'org_number', 'gln'] },
+  { id: 'description', title: copy.description, keys: ['description', 'ingredients'] },
+  { id: 'classification', title: copy.classification, keys: ['status', 'allergens', 'traces', 'labels', 'nutriscore', 'nova', 'country', 'country_of_origin', 'certifications', 'storage', 'packaging', 'packaging_material', 'deposit', 'active'] },
+  { id: 'measures', title: copy.measures, keys: ['net_weight', 'net_volume', 'units_per_pack', 'height', 'width', 'depth', 'gross_weight', 'energy', 'fat', 'saturated_fat', 'carbohydrates', 'sugars', 'fiber', 'protein', 'salt', 'fat_content', 'cocoa_content', 'caffeine', 'shelf_life_days', 'lead_time_days', 'co2_footprint'] },
+  { id: 'dates', title: copy.dates, keys: ['launched'] },
+  { id: 'references', title: copy.references, keys: ['product', 'supplier', 'replaces', 'image', 'website'] },
 ]
 
 function fieldSections(keys: string[]) {
@@ -1212,11 +1213,17 @@ function unitsFor(families: Json[], id: string) {
   return ((family?.units as Json[]) ?? []).map((unit) => String(unit.code))
 }
 
+function modelLanguages(defs: Json | undefined): string[] {
+  const listed = ((defs?.languages as unknown[]) ?? []).map(String).filter(Boolean)
+  return listed.length > 0 ? listed : ['en']
+}
+
 function Editor({
   kind,
   form,
   value,
   languageDependent,
+  languages,
   multiple,
   options,
   units,
@@ -1226,6 +1233,7 @@ function Editor({
   form: string
   multiple: boolean
   languageDependent: boolean
+  languages: string[]
   value: unknown
   options: Array<{ code: string; label: string }>
   units: string[]
@@ -1233,9 +1241,10 @@ function Editor({
 }) {
   if (languageDependent) {
     const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : { en: textValue(value) }
+    const cards = languages.length > 0 ? languages : ['en']
     return (
       <div className="langs">
-        {['sv', 'en', 'de'].map((language) => (
+        {cards.map((language) => (
           <div key={language} className="lang-card">
             <MetaChip>{language}</MetaChip>
             {form === 'long' ? (
@@ -1396,7 +1405,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
   const current = useQuery({
     queryKey: ['object-ref', id],
     queryFn: () =>
-      batchGetObjects([id], { groups: true, fields: ['number', 'name', 'company_name', 'nummer', 'namn'], languages: [uiLanguage] }).then(
+      batchGetObjects([id], { groups: true, fields: ['number', 'name', 'company_name'], languages: [uiLanguage] }).then(
         (rows) => rows[0] ?? null,
       ),
     enabled: /^[0-9a-f-]{36}$/i.test(id),

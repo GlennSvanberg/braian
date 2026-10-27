@@ -3,12 +3,12 @@ import { humanizeLive, objectIdFromLive } from './activity'
 
 describe('activity', () => {
   it('turns a live event into a sentence and keeps the word live', () => {
-    const line = humanizeLive(JSON.stringify({ op: 'create', type: 'artikel', key: 'ART-1' }))
+    const line = humanizeLive(JSON.stringify({ op: 'create', type: 'article', key: 'ART-1' }))
     expect(line).toContain('live')
     expect(line).toContain('ART-1')
     expect(line).not.toContain('{')
     expect(objectIdFromLive(JSON.stringify({ object_id: 'abc' }))).toBe('abc')
-    expect(humanizeLive(JSON.stringify({ op: 'update', type: 'produkt', key: 'PROD-1' }), 'Product')).toBe(
+    expect(humanizeLive(JSON.stringify({ op: 'update', type: 'product', key: 'PROD-1' }), 'Product')).toBe(
       'live · Updated Product PROD-1',
     )
   })

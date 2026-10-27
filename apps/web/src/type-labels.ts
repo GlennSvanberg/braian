@@ -23,7 +23,7 @@ export type WorkspaceMigration = {
   views: Array<{ id: string; title: string; state: Json }>
 }
 
-const GENERIC_TITLES = new Set(['objects', 'objekt'])
+const GENERIC_TITLES = new Set(['objects'])
 
 /** English-style plural used when a type has no plural label. */
 export function defaultPlural(singular: string) {

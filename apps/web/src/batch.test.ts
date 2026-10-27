@@ -7,10 +7,10 @@ describe('batch get body', () => {
   })
 
   it('asks only for the named fields and languages', () => {
-    expect(batchGetBody(['a'], { fields: ['namn'], languages: ['sv'], groups: true })).toEqual({
+    expect(batchGetBody(['a'], { fields: ['name'], languages: ['sv'], groups: true })).toEqual({
       ids: ['a'],
       groups: true,
-      fields: ['namn'],
+      fields: ['name'],
       languages: ['sv'],
     })
   })

@@ -35,12 +35,12 @@ test('final data-model and polish shots', async ({ page }) => {
 
   const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
     headers: { authorization: 'Bearer dev-agent' },
-    data: { preset: 'power_tools' },
+    data: { text: 'add attribute voltage to Drill' },
   })
   expect(drafted.ok()).toBeTruthy()
 
   await page.getByRole('button', { name: 'Review' }).click()
-  await page.getByRole('button', { name: 'Power tools', exact: true }).first().click()
+  await page.getByRole('button', { name: 'add attribute voltage to Drill', exact: true }).first().click()
   await expect(page.getByTestId('proposal-tree')).toContainText('Drill')
   await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
   await page.getByRole('button', { name: 'Review the change before it is saved.' }).click()
@@ -70,11 +70,11 @@ test('agent tree shot', async ({ page }) => {
   await login(page)
   const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
     headers: { authorization: 'Bearer dev-agent' },
-    data: { preset: 'power_tools' },
+    data: { text: 'add attribute voltage to Drill' },
   })
   expect(drafted.ok()).toBeTruthy()
   await page.getByRole('button', { name: 'Review' }).click()
-  await page.getByRole('button', { name: 'Power tools', exact: true }).first().click()
+  await page.getByRole('button', { name: 'add attribute voltage to Drill', exact: true }).first().click()
   await expect(page.getByTestId('proposal-tree')).toContainText('Add class Drill')
   await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
   await page.getByRole('button', { name: 'Review the change before it is saved.' }).click()

@@ -122,22 +122,22 @@ mod tests {
     #[test]
     fn language_patch_keeps_the_other_languages() {
         let id = AttributeId::from_uuid(uuid::Uuid::nil());
-        let mut values = BTreeMap::from([(id, json!({"sv": "gammal", "en-GB": "old"}))]);
+        let mut values = BTreeMap::from([(id, json!({"sv": "previous", "en-GB": "old"}))]);
         let mut languages = BTreeMap::new();
-        languages.insert(LanguageTag::parse("sv").unwrap(), Some(json!("ny")));
+        languages.insert(LanguageTag::parse("sv").unwrap(), Some(json!("next")));
         apply_value_patch(
             &mut values,
             &ValuePatch {
                 attributes: BTreeMap::from([(id, AttributePatch::Languages { values: languages })]),
             },
         );
-        assert_eq!(values[&id], json!({"en-GB": "old", "sv": "ny"}));
+        assert_eq!(values[&id], json!({"en-GB": "old", "sv": "next"}));
     }
 
     #[test]
     fn null_language_removes_only_that_language() {
         let id = AttributeId::from_uuid(uuid::Uuid::nil());
-        let mut values = BTreeMap::from([(id, json!({"sv": "gammal", "en-GB": "old"}))]);
+        let mut values = BTreeMap::from([(id, json!({"sv": "previous", "en-GB": "old"}))]);
         let mut languages = BTreeMap::new();
         languages.insert(LanguageTag::parse("sv").unwrap(), None);
         apply_value_patch(

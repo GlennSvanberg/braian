@@ -46,12 +46,12 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await expect(page.getByTestId('activity-log')).toContainText('Saved')
 
   await page.getByRole('button', { name: 'New Product' }).click()
-  await page.getByTestId('new-nummer').fill('')
+  await page.getByTestId('new-number').fill('')
   await page.getByTestId('create-object').click()
   await expect(page.getByTestId('validation-error')).toBeVisible()
 
   const created = `ART-E2E-${Date.now().toString().slice(-6)}`
-  await page.getByTestId('new-nummer').fill(created)
+  await page.getByTestId('new-number').fill(created)
   await page.getByTestId('create-object').click()
   await expect(page.getByTestId('validation-error')).toHaveCount(0)
   await expect(page.getByTestId('activity-log')).toContainText(created)

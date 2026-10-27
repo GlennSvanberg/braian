@@ -54,7 +54,7 @@ mod tests {
             },
             "values": {
                 "018f0000-0000-7000-8000-000000000100": "SKU-1",
-                "018f0000-0000-7000-8000-000000000101": {"sv": "Namn", "en-GB": "Name"}
+                "018f0000-0000-7000-8000-000000000101": {"sv": "Label", "en-GB": "Name"}
             }
         }"#;
         let object: Object = serde_json::from_str(raw).unwrap();

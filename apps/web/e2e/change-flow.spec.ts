@@ -70,7 +70,6 @@ test('a person saves directly and reviews an agent draft field by field', async 
   const name = object.values?.name ?? {}
   const storage = STORAGE.find((item) => item.code !== object.values?.storage) ?? STORAGE[0]
   const stamp = Date.now().toString().slice(-5)
-  const swedish = `Agentost ${stamp}`
   const english = `Agent cheese ${stamp}`
   const created = await page.request.post('/v1/proposals', {
     data: {
@@ -83,7 +82,7 @@ test('a person saves directly and reviews an agent draft field by field', async 
           base_version: object.version ?? 0,
           patch: {
             values: {
-              name: { sv: swedish, en: english },
+              name: { en: english },
               storage: storage.code,
             },
           },
@@ -125,8 +124,7 @@ test('a person saves directly and reviews an agent draft field by field', async 
   await page.locator('nav.tabs').getByRole('button', { name: /Review/ }).click()
   const review = page.getByTestId('proposal')
   await expect(review.getByTestId('source-badge')).toHaveText(badge)
-  await expect(review).toContainText(swedish)
-  await expect(review.getByTestId('lang-chip').filter({ hasText: 'sv' }).first()).toBeVisible()
+  await expect(review).toContainText(english)
   await expect(review.getByTestId('lang-chip').filter({ hasText: 'en' }).first()).toBeVisible()
   await expect(review.getByText(storage.label, { exact: false }).first()).toBeVisible()
   await expect(review.locator('.diff-old').first()).toBeVisible()
@@ -146,7 +144,7 @@ test('a person saves directly and reviews an agent draft field by field', async 
   const after = await page.request.get(`/v1/objects/${objectId}`)
   expect(after.ok()).toBeTruthy()
   const saved = (await after.json()) as { values?: { name?: Record<string, string>; storage?: string } }
-  expect(saved.values?.name?.sv).toBe(swedish)
   expect(saved.values?.name?.en ?? '').toBe(name.en ?? '')
+  expect(saved.values?.name?.sv).toBeUndefined()
   expect(saved.values?.storage).toBe(storage.code)
 })

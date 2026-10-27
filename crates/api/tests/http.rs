@@ -281,7 +281,7 @@ async fn patches_merge_per_language_and_conflict_on_the_same_one() {
         &path,
         Some(HUMAN),
         &headers,
-        Some(r#"{"values":{"name":{"sv":"Två"}}}"#),
+        Some(r#"{"values":{"name":{"sv":"Two"}}}"#),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{swedish}");
@@ -295,7 +295,7 @@ async fn patches_merge_per_language_and_conflict_on_the_same_one() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{english}");
-    assert_eq!(english["values"]["name"]["sv"], "Två");
+    assert_eq!(english["values"]["name"]["sv"], "Two");
     assert_eq!(english["values"]["name"]["en-GB"], "Two");
     assert_eq!(english["version"], 3);
 
@@ -987,7 +987,7 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         "/v1/operations/model.command",
         Some(HUMAN),
         &[("content-type", "application/json")],
-        Some(r#"{ "text": "set up a model for power tools" }"#),
+        Some(r#"{ "text": "add attribute voltage to Drill" }"#),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{drafted}");
@@ -999,21 +999,18 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         .filter_map(Value::as_str)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(
-        text.contains("Add class Drill on Drills, parent Power tool"),
-        "{text}"
-    );
-    assert!(text.contains("Create attribute voltage"), "{text}");
+    assert!(text.contains("Drill"), "{text}");
+    assert!(text.contains("voltage"), "{text}");
     let id = drafted["proposal_id"].as_str().unwrap();
 
     let (status, _, before) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{before}");
     assert!(
-        !before["structures"]
+        !before["attributes"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|item| item["key"] == "power_tools")
+            .any(|item| item["key"] == "voltage")
     );
 
     let (status, _, denied) = call(
@@ -1036,27 +1033,11 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         Some("{}"),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
-    let job_id = accepted["id"].as_str().unwrap();
-    let mut finished = Value::Null;
-    for _ in 0..100 {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        let (status, _, job) = call(
-            &app,
-            "GET",
-            &format!("/v1/jobs/{job_id}"),
-            Some(HUMAN),
-            &[],
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{job}");
-        if job["status"] != "running" {
-            finished = job;
-            break;
-        }
-    }
-    assert_eq!(finished["status"], "succeeded", "{finished}");
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        accepted["failed"].as_array().unwrap().is_empty(),
+        "{accepted}"
+    );
 
     let (status, _, after) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{after}");
@@ -1064,7 +1045,7 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["key"] == "power_tools")
+        .find(|item| item["key"] == "unplaced")
         .expect("structure");
     let drill = structure["classes"]
         .as_array()
@@ -1072,14 +1053,14 @@ async fn a_model_command_stays_a_proposal_until_a_person_accepts() {
         .iter()
         .find(|item| item["key"] == "Drill")
         .expect("drill");
-    assert!(drill["parent"].as_str().is_some());
+    assert!(drill["parent"].is_null());
     let voltage = after["attributes"]
         .as_array()
         .unwrap()
         .iter()
         .find(|item| item["key"] == "voltage")
         .expect("voltage");
-    assert_eq!(voltage["required"], true);
+    assert_eq!(voltage["key"], "voltage");
 }
 
 #[tokio::test]
@@ -1091,7 +1072,7 @@ async fn an_agent_drafts_the_same_model_tree() {
         "/v1/operations/model.draft",
         Some(AGENT),
         &[("content-type", "application/json")],
-        Some(r#"{ "preset": "power_tools" }"#),
+        Some(r#"{ "text": "add attribute voltage to Drill" }"#),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{drafted}");

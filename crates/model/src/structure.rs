@@ -537,8 +537,8 @@ mod tests {
     #[test]
     fn create_and_rename_keep_the_key_and_set_the_label() {
         let mut defs = empty();
-        create_structure(&mut defs, sid(1), "sortiment", "eCom", true).unwrap();
-        assert_eq!(defs.structures[0].key, "sortiment");
+        create_structure(&mut defs, sid(1), "assortment", "eCom", true).unwrap();
+        assert_eq!(defs.structures[0].key, "assortment");
         assert_eq!(
             defs.structures[0]
                 .labels
@@ -547,8 +547,8 @@ mod tests {
                 .map(String::as_str),
             Some("eCom")
         );
-        rename_structure(&mut defs, "sortiment", "Shop").unwrap();
-        assert_eq!(defs.structures[0].key, "sortiment");
+        rename_structure(&mut defs, "assortment", "Shop").unwrap();
+        assert_eq!(defs.structures[0].key, "assortment");
         assert_eq!(
             defs.structures[0]
                 .labels

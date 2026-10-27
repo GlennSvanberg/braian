@@ -70,36 +70,36 @@ describe('import mapping helpers', () => {
     expect(mappingRank(lines[1])).toBeLessThan(mappingRank(lines[0]))
     expect(confidenceTone(lines[1])).toBe('low')
     expect(confidenceTone(lines[2])).toBe('unmapped')
-    expect(showTypeConfidence('artikel', 'artikel', 1)).toBeNull()
-    expect(showTypeConfidence('artikel', 'artikel', 0.72)).toBe(0.72)
-    expect(showTypeConfidence('variant', 'artikel', 0.72)).toBeNull()
+    expect(showTypeConfidence('article', 'article', 1)).toBeNull()
+    expect(showTypeConfidence('article', 'article', 0.72)).toBe(0.72)
+    expect(showTypeConfidence('variant', 'article', 0.72)).toBeNull()
     expect(
       dedupedTargets([
-        { id: 'type:beskrivning', label: 'Beskrivning (sv)' },
-        { id: 'type:beskrivning@sv', label: 'Beskrivning (sv)' },
-        { id: 'type:beskrivning@en', label: 'Description (en)' },
+        { id: 'type:description', label: 'Description (sv)' },
+        { id: 'type:description@sv', label: 'Description (sv)' },
+        { id: 'type:description@en', label: 'Description (en)' },
       ]).map((target) => target.id),
-    ).toEqual(['type:beskrivning', 'type:beskrivning@en'])
+    ).toEqual(['type:description', 'type:description@en'])
     expect(
       alternativeChoices(
         {
           col: 2,
-          target: 'type:beskrivning',
+          target: 'type:description',
           confidence: 1,
           source: 'deterministic',
           alternatives: [
-            { value: 'type:beskrivning@sv', p: 0.86 },
-            { value: 'type:beskrivning@en', p: 0.86 },
+            { value: 'type:description@sv', p: 0.86 },
+            { value: 'type:description@en', p: 0.86 },
           ],
         },
         [
-          { id: 'type:beskrivning', label: 'Beskrivning (sv)' },
-          { id: 'type:beskrivning@sv', label: 'Beskrivning (sv)' },
-          { id: 'type:beskrivning@en', label: 'Description (en)' },
+          { id: 'type:description', label: 'Description (sv)' },
+          { id: 'type:description@sv', label: 'Description (sv)' },
+          { id: 'type:description@en', label: 'Description (en)' },
         ],
       ).map((alt) => alt.label),
     ).toEqual(['Description (en)'])
-    expect(ariaMap('Artnr', 'SKU', 0.97)).toBe('Column Artnr maps to SKU, 97 percent')
+    expect(ariaMap('Number', 'SKU', 0.97)).toBe('Column Number maps to SKU, 97 percent')
   })
 
   it('changes, removes, adds and undoes a line', () => {
