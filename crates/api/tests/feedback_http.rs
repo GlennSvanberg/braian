@@ -211,7 +211,7 @@ async fn feedback_relays_paths_and_a_full_header_line() {
     assert_eq!(body["view"]["title"], "Articles");
     assert_eq!(body["workspace"]["name"], "Articles");
     assert_eq!(body["object"]["id"], "obj-1");
-    assert_eq!(body["object"]["type"], "artikel");
+    assert_eq!(body["object"]["type"], "article");
     assert_eq!(body["object"]["title"], "Tent");
     assert_eq!(body["filter"], "status:draft");
     assert_eq!(body["build"], "abc123");
