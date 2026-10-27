@@ -24,6 +24,8 @@ import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, t
 import { ConsequenceHost } from './consequence'
 import { ModelDraftHost } from './model-draft-ui'
 import { stageModel } from './model-stage'
+import { AttributeDefinitions } from './attribute-definitions'
+import { clearQueuedViewType, peekQueuedViewType } from './attribute-actions'
 import { FeedbackDialog } from './feedback-dialog'
 import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
@@ -501,6 +503,16 @@ export function Shell() {
   }, [doc, workspace.data, workspaceId])
 
   useEffect(() => {
+    const surface = workspace.data
+    const wanted = peekQueuedViewType()
+    if (!surface || !wanted) return
+    const found = surface.views.find((view) => view.type === wanted)
+    if (!found) return
+    clearQueuedViewType()
+    applyRef.current('ui.open_view', { id: found.id, zone: 'center' })
+  }, [workspace.data])
+
+  useEffect(() => {
     return onUi((event) => {
       if (event.name === 'ui.set_theme') setTheme(event.args.theme === 'light' ? 'light' : 'dark')
       if (event.name === 'ui.open_workspace' && typeof event.args.id === 'string') setWorkspaceId(event.args.id)
@@ -854,6 +866,7 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'history') return <HistoryView session={session} />
   if (view.type === 'class_attributes') return <ClassAttributes session={session} />
   if (view.type === 'data_model') return <DataModel view={view} />
+  if (view.type === 'attribute_definitions') return <AttributeDefinitions />
   if (view.type === 'proposal') return <ProposalView session={session} />
   if (view.type === 'batch_log') return <BatchLog />
   if (view.type === 'job_history') return <JobHistory view={view} />

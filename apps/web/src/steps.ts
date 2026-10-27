@@ -74,6 +74,10 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
       return 'Listing selections…'
     case 'assortment.save':
       return 'Preparing a selection…'
+    case 'model.list_attribute_definitions':
+      return 'Listing attribute definitions…'
+    case 'model.attribute_usage':
+      return 'Reading attribute usage…'
     case 'model.command':
     case 'model.draft':
     case 'model.move_class':

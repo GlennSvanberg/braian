@@ -65,8 +65,9 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
       { type: 'data_model', title: 'Model', state: { mode: 'tree' } },
       { type: 'data_model', title: 'Attributes', state: { mode: 'classes' } },
       { type: 'data_model', title: 'Preview', state: { mode: 'card' } },
+      { type: 'attribute_definitions', title: 'Attribute definitions', state: {} },
     ],
-    layout: (ids) => splitPair('horizontal', 0.22, tabGroup([ids[0]]), splitPair('horizontal', 0.58, tabGroup([ids[1]]), tabGroup([ids[2]]))),
+    layout: (ids) => splitPair('horizontal', 0.22, tabGroup([ids[0]]), splitPair('horizontal', 0.58, tabGroup([ids[1], ids[3]]), tabGroup([ids[2]]))),
   },
   {
     id: 'review',

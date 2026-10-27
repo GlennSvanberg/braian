@@ -5,6 +5,7 @@ import {
   FileText,
   History,
   Layers,
+  Library,
   ListChecks,
   ListTree,
   ScrollText,
@@ -49,6 +50,7 @@ export function ViewGlyph({ type }: { type: string }) {
   if (type === 'graph') return <Waypoints {...props} />
   if (type === 'history') return <History {...props} />
   if (type === 'class_attributes') return <Layers {...props} />
+  if (type === 'attribute_definitions') return <Library {...props} />
   if (type === 'data_model') return <Boxes {...props} />
   if (type === 'proposal') return <ScrollText {...props} />
   if (type === 'batch_log') return <ScrollText {...props} />

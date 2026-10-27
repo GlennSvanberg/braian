@@ -6,6 +6,7 @@
 //! Definitions can be written one entity at a time or imported as a whole set.
 //! Objects are created, patched, read and deleted with validation always on.
 
+mod attribute_catalog;
 mod auth;
 mod bulk_gate;
 mod definitions;

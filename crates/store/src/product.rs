@@ -50,6 +50,20 @@ pub struct ProposalRow {
     pub position: i32,
 }
 
+/// One usage count. Empty place ids mean the attribute's total object count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttributeUsageCount {
+    pub attribute_id: Uuid,
+    pub type_id: Option<Uuid>,
+    pub structure_id: Option<Uuid>,
+    pub group_id: Option<Uuid>,
+    pub objects: i64,
+}
+
+fn usage_attribute_id(text: String) -> Option<Uuid> {
+    Uuid::parse_str(&text).ok()
+}
+
 impl Store {
     pub async fn model_draft(
         &self,
@@ -1240,6 +1254,84 @@ impl Store {
             )
             .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
+
+    /// Objects, types and groups that store a value for each attribute.
+    ///
+    /// A row with `type_id`, `structure_id` and `group_id` all empty is the
+    /// total. That total uses the same predicate as [`Self::count_attribute_usage`].
+    pub async fn attribute_usage_counts(&self) -> Result<Vec<AttributeUsageCount>, Error> {
+        let client = self.pool().get().await?;
+        let totals = client
+            .query(
+                "SELECT keys.attr, count(DISTINCT v.object_id)::bigint
+                 FROM object_values v
+                 CROSS JOIN LATERAL jsonb_object_keys(v.\"values\") AS keys(attr)
+                 WHERE v.is_latest
+                 GROUP BY keys.attr",
+                &[],
+            )
+            .await?;
+        let types = client
+            .query(
+                "SELECT keys.attr, o.type_id, count(DISTINCT v.object_id)::bigint
+                 FROM object_values v
+                 JOIN objects o ON o.id = v.object_id
+                 CROSS JOIN LATERAL jsonb_object_keys(v.\"values\") AS keys(attr)
+                 WHERE v.is_latest
+                 GROUP BY keys.attr, o.type_id",
+                &[],
+            )
+            .await?;
+        let groups = client
+            .query(
+                "SELECT keys.attr, s.structure_id, s.group_id, count(DISTINCT v.object_id)::bigint
+                 FROM object_values v
+                 JOIN object_structures s ON s.object_id = v.object_id
+                 CROSS JOIN LATERAL jsonb_object_keys(v.\"values\") AS keys(attr)
+                 WHERE v.is_latest
+                 GROUP BY keys.attr, s.structure_id, s.group_id",
+                &[],
+            )
+            .await?;
+        let mut counts = Vec::new();
+        for row in totals {
+            let Some(attribute_id) = usage_attribute_id(row.get(0)) else {
+                continue;
+            };
+            counts.push(AttributeUsageCount {
+                attribute_id,
+                type_id: None,
+                structure_id: None,
+                group_id: None,
+                objects: row.get(1),
+            });
+        }
+        for row in types {
+            let Some(attribute_id) = usage_attribute_id(row.get(0)) else {
+                continue;
+            };
+            counts.push(AttributeUsageCount {
+                attribute_id,
+                type_id: Some(row.get(1)),
+                structure_id: None,
+                group_id: None,
+                objects: row.get(2),
+            });
+        }
+        for row in groups {
+            let Some(attribute_id) = usage_attribute_id(row.get(0)) else {
+                continue;
+            };
+            counts.push(AttributeUsageCount {
+                attribute_id,
+                type_id: None,
+                structure_id: Some(row.get(1)),
+                group_id: Some(row.get(2)),
+                objects: row.get(3),
+            });
+        }
+        Ok(counts)
     }
 
     pub async fn count_attribute_usage(&self, attribute_id: Uuid) -> Result<i64, Error> {

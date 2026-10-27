@@ -3229,3 +3229,170 @@ async fn an_agent_dry_run_of_definitions_writes_nothing_and_a_save_is_forbidden(
     assert_eq!(after_deny["model_revision"], revision, "{after_deny}");
     assert_eq!(after_deny, before, "{after_deny}");
 }
+
+#[tokio::test]
+async fn attribute_definitions_list_usage_and_a_draft_step() {
+    let (db, app) = app().await;
+    let principal = db
+        .store()
+        .principal_by_handle("ada")
+        .await
+        .unwrap()
+        .expect("ada");
+    db.store()
+        .attach_user(principal, "ada@example.com", "x", "admin", "Ada")
+        .await
+        .unwrap();
+
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    let (status, _, listed) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.list_attribute_definitions",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["attributes"].as_array().map(Vec::len),
+        defs["attributes"].as_array().map(Vec::len),
+        "{listed}"
+    );
+
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"type":"item","groups":{"catalog":"root"},"values":{"sku":"SKU-USED","name":{"sv":"Rod"},"color":"red"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let (status, _, usage) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.attribute_usage",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"attribute":"color"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{usage}");
+    let color = uuid::Uuid::parse_str("018f0000-0000-7000-8000-000000000104").unwrap();
+    let stored = db.store().count_attribute_usage(color).await.unwrap();
+    assert_eq!(
+        usage["used_in"]["objects"].as_i64(),
+        Some(stored),
+        "{usage}"
+    );
+    assert!(stored >= 1, "{stored}");
+    let item = usage["used_in"]["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["key"] == "item")
+        .expect("type");
+    assert_eq!(item["objects"], 1, "{usage}");
+    let root = usage["used_in"]["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["key"] == "root" && row["structure_key"] == "catalog")
+        .expect("group");
+    assert_eq!(root["objects"], 1, "{usage}");
+
+    let (status, _, draft) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"operation":"model.attach_attribute","args":{"attribute":"secret","type":"item"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    let steps = draft["steps"].as_array().expect("steps");
+    assert!(
+        steps.iter().any(|step| step["op"] == "attach_attribute"),
+        "{draft}"
+    );
+
+    let (status, _, before) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    let (status, _, proposed) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.attach_attribute",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"attribute":"secret","type":"item"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{proposed}");
+    assert_eq!(proposed["needs_approval"], true, "{proposed}");
+    let (status, _, after) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["model_revision"], before["model_revision"]);
+    assert_eq!(
+        after["types"][0]["attributes"],
+        before["types"][0]["attributes"]
+    );
+
+    let (status, _, agent_list) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.list_attribute_definitions",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{agent_list}");
+    assert!(!agent_list["attributes"].as_array().unwrap().is_empty());
+    let (status, _, agent_usage) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.attribute_usage",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"attribute":"color"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{agent_usage}");
+    assert_eq!(agent_usage["used_in"]["objects"].as_i64(), Some(stored));
+
+    let demo = include_str!("../../../crates/server/demo/definitions.json");
+    let (status, _, replaced) = call(
+        &app,
+        "PUT",
+        "/v1/definitions",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(demo),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replaced}");
+    let (status, _, demo_list) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.list_attribute_definitions",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{demo_list}");
+    assert_eq!(
+        demo_list["attributes"].as_array().map(Vec::len),
+        Some(54),
+        "the demo has 54 attributes after the standard attributes"
+    );
+}

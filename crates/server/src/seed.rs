@@ -340,7 +340,10 @@ fn layout(workspace: &str) -> Value {
             split(
                 "horizontal",
                 0.58,
-                tabs(&["018f2000-0000-7000-8000-000000000202"]),
+                tabs(&[
+                    "018f2000-0000-7000-8000-000000000202",
+                    "018f2000-0000-7000-8000-000000000204",
+                ]),
                 tabs(&["018f2000-0000-7000-8000-000000000203"]),
             ),
         ),
@@ -414,6 +417,15 @@ async fn save_views(store: &Store, defs: &DefinitionSet) -> anyhow::Result<()> {
             "right",
             0,
             json!({"mode": "card"}),
+        ),
+        (
+            "018f2000-0000-7000-8000-000000000204",
+            "018f2000-0000-7000-8000-000000000002",
+            "attribute_definitions",
+            "Attribute definitions",
+            "center",
+            1,
+            json!({}),
         ),
         (
             "018f2000-0000-7000-8000-000000000301",
