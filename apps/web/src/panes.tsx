@@ -309,7 +309,7 @@ export function ObjectTable({
         body: JSON.stringify({
           title: 'Status OK',
           ids: selected,
-          type: [...byIndex.values()].find((row) => selected.includes(row.id))?.type ?? 'artikel',
+          type: [...byIndex.values()].find((row) => selected.includes(row.id))?.type ?? 'article',
           values: { status: 'ok' },
         }),
       }),
