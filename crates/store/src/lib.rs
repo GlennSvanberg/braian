@@ -13,6 +13,7 @@ mod log;
 mod ops;
 mod pressure;
 mod product;
+mod purge;
 mod scan;
 mod session;
 mod split;

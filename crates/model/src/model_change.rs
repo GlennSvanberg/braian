@@ -206,6 +206,32 @@ pub enum ModelChange {
         key: String,
         new_key: String,
     },
+    /// Removes a type. Objects, their values, links and selections of that type go with it.
+    DeleteType {
+        #[serde(alias = "id")]
+        key: String,
+    },
+    /// Removes an attribute from the pool and from every type and group.
+    DeleteAttribute {
+        #[serde(alias = "id")]
+        key: String,
+    },
+    DeleteValueList {
+        #[serde(alias = "id")]
+        key: String,
+    },
+    DeleteValueOption {
+        list: String,
+        option: String,
+    },
+    DeleteUnitFamily {
+        #[serde(alias = "id")]
+        key: String,
+    },
+    DeleteUnit {
+        family: String,
+        unit: String,
+    },
 }
 
 /// A definition edit that did not apply.
@@ -260,11 +286,22 @@ fn default_filterable() -> bool {
     true
 }
 
-/// A step that removes a structure or a group. The agent is not offered these.
+/// A step that removes stored data or a definition that data hangs on.
+///
+/// The agent is not offered these, and cannot propose them.
 pub fn deletes_data(change: &ModelChange) -> bool {
     matches!(
         change,
-        ModelChange::DeleteStructure { .. } | ModelChange::DeleteGroup { .. }
+        ModelChange::DeleteStructure { .. }
+            | ModelChange::DeleteGroup { .. }
+            | ModelChange::DeleteType { .. }
+            | ModelChange::DeleteAttribute { .. }
+            | ModelChange::DeleteValueList { .. }
+            | ModelChange::DeleteValueOption { .. }
+            | ModelChange::DeleteUnitFamily { .. }
+            | ModelChange::DeleteUnit { .. }
+            | ModelChange::RemoveAttribute { .. }
+            | ModelChange::DetachAttribute { .. }
     )
 }
 
@@ -594,6 +631,9 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
 }
 
 fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), ApplyError> {
+    if crate::consequence::apply_destructive(defs, change).map_err(ApplyError::from)? {
+        return Ok(());
+    }
     match change {
         ModelChange::CreateStructure { key, label } => {
             let id = StructureId::from_uuid(stable_uuid(&format!("structure:{key}")));
@@ -856,6 +896,12 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             plural.as_deref(),
         )
         .map_err(ApplyError::from),
+        ModelChange::DeleteType { .. }
+        | ModelChange::DeleteAttribute { .. }
+        | ModelChange::DeleteValueList { .. }
+        | ModelChange::DeleteValueOption { .. }
+        | ModelChange::DeleteUnitFamily { .. }
+        | ModelChange::DeleteUnit { .. } => Ok(()),
         ModelChange::UpdateAttribute {
             key,
             label,

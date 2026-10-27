@@ -9,8 +9,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use braian_model::structure::{
-    create_group, create_structure, delete_group, delete_structure, move_group, plan_delete_group,
-    plan_delete_structure, rename_group, rename_structure, set_group_labels, set_structure_labels,
+    create_group, create_structure, move_group, plan_delete_group, plan_delete_structure,
+    rename_group, rename_structure, set_group_labels, set_structure_labels,
 };
 use braian_model::{
     GroupId, LanguageTag, ModelChange, Structure, StructureError, StructureId, Uuid,
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth::Auth;
-use crate::definitions::{self, DefinitionWrite};
+use crate::definitions;
 use crate::problem::{Problem, store_status};
 use crate::state::AppState;
 
@@ -71,6 +71,9 @@ pub struct MoveToQuery {
     /// Group key that receives objects from the deleted group and its descendants.
     #[serde(default)]
     pub move_to: Option<String>,
+    /// When true, count what the delete would remove and change nothing.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -230,9 +233,11 @@ pub async fn group_usage(
         MoveToQuery
     ),
     responses(
-        (status = 200, description = "Group, descendants, and their classes removed", body = DefinitionWrite),
+        (status = 204, description = "Group and descendants removed. Objects leave the tree unless move_to names another group."),
+        (status = 200, description = "Consequence analysis", body = crate::deletes::ConsequenceReport),
+        (status = 403, description = "An agent or MCP token cannot delete", body = Problem),
         (status = 404, description = "Unknown structure or group", body = Problem),
-        (status = 422, description = "group_occupied lists count unless move_to is set. target_in_subtree when move_to is inside the deleted subtree.", body = Problem)
+        (status = 422, description = "target_in_subtree when move_to is inside the deleted subtree", body = Problem)
     ),
     security(("bearer" = []))
 )]
@@ -241,27 +246,27 @@ pub async fn delete_group_route(
     Auth(identity): Auth,
     Path((id, group)): Path<(String, String)>,
     Query(query): Query<MoveToQuery>,
-) -> Result<Json<DefinitionWrite>, Problem> {
+) -> Result<axum::response::Response, Problem> {
     guard_group(
         &state,
         &identity.actor,
         &id,
         &group,
         query.move_to.as_deref(),
-        true,
+        !query.dry_run,
     )
     .await?;
-    let move_to = query.move_to.clone();
-    let (defs, receipt) = definitions::commit(&state, &identity.actor, |defs| {
-        let structure_key = structure_key(defs, &id)?;
-        delete_group(defs, &structure_key, &group, move_to.as_deref()).map_err(structure_status)?;
-        Ok(())
-    })
-    .await?;
-    Ok(Json(DefinitionWrite {
-        model_revision: defs.model_revision,
-        seq: receipt.last_seq,
-    }))
+    crate::deletes::delete_model(
+        &state,
+        &identity,
+        query.dry_run,
+        ModelChange::DeleteGroup {
+            structure: id,
+            group,
+            move_to: query.move_to,
+        },
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -350,22 +355,6 @@ pub async fn structure_usage(
     Ok(Json(PlacementCount { count }))
 }
 
-/// Deletes a structure that no object is placed in.
-pub async fn delete_structure_guarded(
-    state: &AppState,
-    actor: &Actor,
-    id: &str,
-) -> Result<(u64, i64), Problem> {
-    guard_structure(state, id).await?;
-    let (defs, receipt) = definitions::commit(state, actor, |defs| {
-        let structure_key = structure_key(defs, id)?;
-        delete_structure(defs, &structure_key).map_err(structure_status)?;
-        Ok(())
-    })
-    .await?;
-    Ok((defs.model_revision, receipt.last_seq))
-}
-
 /// Refuses a whole-structure replace that drops groups objects still use.
 pub async fn reject_removed_groups(state: &AppState, removed: &[GroupId]) -> Result<(), Problem> {
     let count = count_groups(state, removed).await?;
@@ -382,16 +371,8 @@ pub async fn reject_removed_groups(state: &AppState, removed: &[GroupId]) -> Res
 async fn guard_structure(state: &AppState, id: &str) -> Result<(), Problem> {
     let defs = state.store.definition_set().await.map_err(store_status)?;
     let structure_key = structure_key(&defs, id)?;
-    let plan = plan_delete_structure(&defs, &structure_key).map_err(structure_status)?;
-    let count = count_groups(state, &plan.removed).await?;
-    if count == 0 {
-        return Ok(());
-    }
-    Err(Problem::occupied(
-        "structure_occupied",
-        format!("{count} objects are still placed in this structure"),
-        count,
-    ))
+    plan_delete_structure(&defs, &structure_key).map_err(structure_status)?;
+    Ok(())
 }
 
 async fn guard_group(
@@ -406,18 +387,7 @@ async fn guard_group(
     let structure_key = structure_key(&defs, structure)?;
     let plan =
         plan_delete_group(&defs, &structure_key, group, move_to).map_err(structure_status)?;
-    let count = count_groups(state, &plan.removed).await?;
-    if count == 0 {
-        return Ok(());
-    }
-    let Some(target) = plan.move_to else {
-        return Err(Problem::occupied(
-            "group_occupied",
-            format!("{count} objects are in this group or a group under it"),
-            count,
-        ));
-    };
-    if apply {
+    if apply && let Some(target) = plan.move_to {
         state
             .store
             .reassign_members(actor, plan.structure_id, &plan.removed, target)

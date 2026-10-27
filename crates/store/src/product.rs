@@ -1036,6 +1036,22 @@ impl Store {
         Ok(())
     }
 
+    pub async fn delete_relation(
+        &self,
+        from_id: ObjectId,
+        to_id: ObjectId,
+        kind: &str,
+    ) -> Result<u64, Error> {
+        let client = self.pool().get().await?;
+        let removed = client
+            .execute(
+                "DELETE FROM relations WHERE from_id = $1 AND to_id = $2 AND kind = $3",
+                &[&from_id.as_uuid(), &to_id.as_uuid(), &kind],
+            )
+            .await?;
+        Ok(removed)
+    }
+
     pub async fn set_relation(
         &self,
         from_id: ObjectId,

@@ -540,6 +540,54 @@ fn registry() -> &'static [Operation] {
             permission: Role::Editor,
             needs_approval: true,
         },
+        Operation {
+            name: "model.delete_type",
+            title: "Delete type",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_attribute",
+            title: "Delete attribute",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_value_list",
+            title: "Delete value list",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_value_option",
+            title: "Delete value list option",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_unit_family",
+            title: "Delete unit family",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_unit",
+            title: "Delete unit",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "delete_object",
+            title: "Delete object",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "delete_relation",
+            title: "Delete link",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
     ]
 }
 
@@ -667,18 +715,35 @@ fn layout_snapshot(workspace: Uuid, document: &Value) -> Value {
 /// be offered it, and keep that name out of both tool lists.
 const AGENT_UI_EXCLUDED: &[&str] = &[];
 
-/// Commit operations. An agent may propose the effect, and a person saves it.
-/// The name stays out of the agent tool list and out of MCP.
-const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal", "discard_proposal"];
-
-/// Deletes stay available to a person. The agent is not offered them, and
-/// `propose` rejects the same steps if they arrive through `model.command`.
-const AGENT_DELETE_EXCLUDED: &[&str] = &["model.delete_group", "model.delete_structure"];
+/// Operations an agent must not be offered and must not run.
+///
+/// `accept_proposal` is a person's save. Every other name here deletes data or
+/// a definition that data hangs on. `propose` rejects those steps too.
+const AGENT_COMMIT_EXCLUDED: &[&str] = &[
+    "accept_proposal",
+    "discard_proposal",
+    "delete_object",
+    "delete_relation",
+    "model.delete_attribute",
+    "model.delete_group",
+    "model.delete_structure",
+    "model.delete_type",
+    "model.delete_unit",
+    "model.delete_unit_family",
+    "model.delete_value_list",
+    "model.delete_value_option",
+    "model.detach_attribute",
+    "model.remove_attribute",
+];
 
 fn exposed_to_agent(op: &Operation) -> bool {
-    !AGENT_UI_EXCLUDED.contains(&op.name)
-        && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
-        && !AGENT_DELETE_EXCLUDED.contains(&op.name)
+    !AGENT_UI_EXCLUDED.contains(&op.name) && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
+}
+
+/// True when the operation removes data or a definition that data hangs on.
+pub(crate) fn operation_deletes(name: &str) -> bool {
+    name.split(['.', '_'])
+        .any(|part| matches!(part, "delete" | "remove" | "discard" | "detach"))
 }
 
 #[cfg(test)]
@@ -1949,6 +2014,9 @@ async fn delete_workspace_state(
     Query(query): Query<StateQuery>,
 ) -> Result<StatusCode, Problem> {
     require(&identity, Role::Editor)?;
+    if !identity.may_commit() {
+        return Err(crate::auth::delete_forbidden());
+    }
     require_workspace(&state, id).await?;
     let environment = layout_environment(query.environment.as_deref());
     state
@@ -4372,6 +4440,19 @@ pub async fn execute(
     run_operation(state, identity, name, args, false).await
 }
 
+fn uuid_arg(args: &Value, key: &str) -> Result<Uuid, Problem> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| {
+            Problem::new(
+                StatusCode::BAD_REQUEST,
+                "missing_id",
+                format!("name the {key}"),
+            )
+        })
+}
+
 async fn run_operation(
     state: &AppState,
     identity: &Identity,
@@ -4404,6 +4485,9 @@ async fn run_operation(
     }
     if op.name == "discard_proposal" && (from_agent || !identity.may_commit()) {
         return Err(agent_cannot_discard());
+    }
+    if operation_deletes(op.name) && (from_agent || !identity.may_commit()) {
+        return Err(crate::auth::delete_forbidden());
     }
     let agent_write =
         from_agent && matches!(op.name, "create_object" | "patch_object" | "set_relation");
@@ -4703,6 +4787,45 @@ async fn run_operation(
                     AcceptReply::Sync(value) | AcceptReply::Job(value) => value,
                 },
             )
+        }
+        "delete_object" => {
+            let id = args
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .ok_or_else(|| {
+                    Problem::new(
+                        StatusCode::BAD_REQUEST,
+                        "missing_id",
+                        "name the object to delete",
+                    )
+                })?;
+            state
+                .store
+                .write_batch(
+                    &identity.actor,
+                    vec![ObjectOp::Delete {
+                        id: ObjectId::from_uuid(id),
+                        base_version: None,
+                    }],
+                )
+                .await
+                .map_err(store_status)?;
+            Ok(json!({ "ok": true }))
+        }
+        "delete_relation" => {
+            let from = uuid_arg(args, "from")?;
+            let to = uuid_arg(args, "to")?;
+            let kind = args
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("related");
+            state
+                .store
+                .delete_relation(ObjectId::from_uuid(from), ObjectId::from_uuid(to), kind)
+                .await
+                .map_err(store_status)?;
+            Ok(json!({ "ok": true }))
         }
         "discard_proposal" => {
             let id = args
@@ -5610,6 +5733,52 @@ mod tests {
             if exposed {
                 assert_eq!(operation_for_tool(&wire), Some(*name));
             }
+        }
+    }
+
+    #[test]
+    fn the_agent_is_offered_no_delete() {
+        let tools = responses_body("model", &[], &[])["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        let deleting = registry()
+            .iter()
+            .map(|op| op.name)
+            .filter(|name| operation_deletes(name))
+            .collect::<Vec<_>>();
+        for name in &deleting {
+            assert!(
+                AGENT_COMMIT_EXCLUDED.contains(name),
+                "{name} deletes and must be in AGENT_COMMIT_EXCLUDED"
+            );
+            let wire = tool_name(name);
+            assert!(
+                !tools.iter().any(|tool| tool == &wire),
+                "{wire} must not be offered to the agent"
+            );
+        }
+        for required in [
+            "model.delete_type",
+            "model.delete_attribute",
+            "model.delete_value_list",
+            "model.delete_value_option",
+            "model.delete_unit_family",
+            "model.delete_unit",
+            "model.delete_structure",
+            "model.delete_group",
+            "model.remove_attribute",
+            "model.detach_attribute",
+            "delete_object",
+            "delete_relation",
+            "discard_proposal",
+        ] {
+            assert!(
+                deleting.contains(&required),
+                "{required} is missing from the registry"
+            );
         }
     }
 

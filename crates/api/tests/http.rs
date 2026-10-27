@@ -650,7 +650,7 @@ async fn an_agent_or_import_cannot_commit_and_a_person_save_still_does() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{blocked}");
-    assert_eq!(blocked["code"], "needs_approval");
+    assert_eq!(blocked["code"], "agent_cannot_delete");
     let (status, _, still) = call(&app, "GET", &path, Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{still}");
     assert_eq!(still["version"], 3);
@@ -1734,16 +1734,28 @@ async fn structures_rename_move_and_delete_keep_parents_and_objects() {
     let (status, _, body) = call(
         &app,
         "DELETE",
-        "/v1/structures/yard/groups/leaf",
+        "/v1/structures/yard/groups/leaf?dry_run=true",
         Some(HUMAN),
         &[],
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["code"], "group_occupied");
-    assert_eq!(body["count"], 1);
-    assert!(body["detail"].as_str().unwrap().contains('1'));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["objects"], 1);
+    assert_eq!(body["destructive"], true);
+    assert!(
+        body["sentence"].as_str().unwrap().contains("will be"),
+        "{body}"
+    );
+    let (status, _, still) = call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    assert!(
+        still["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|group| group["key"] == "leaf")
+    );
 
     let (status, _, body) = call(
         &app,
@@ -1778,7 +1790,7 @@ async fn structures_rename_move_and_delete_keep_parents_and_objects() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 
     let (status, _, object) = call(
         &app,
@@ -1834,15 +1846,16 @@ async fn structures_rename_move_and_delete_keep_parents_and_objects() {
     let (status, _, body) = call(
         &app,
         "DELETE",
-        "/v1/structures/yard",
+        "/v1/structures/yard?dry_run=true",
         Some(HUMAN),
         &[],
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["code"], "structure_occupied");
-    assert_eq!(body["count"], 1);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["objects"].as_i64().unwrap() >= 1, "{body}");
+    let (status, _, still) = call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
 
     let (status, _, body) = call(
         &app,
@@ -1863,7 +1876,7 @@ async fn structures_rename_move_and_delete_keep_parents_and_objects() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (status, _, _) = call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
@@ -2356,7 +2369,7 @@ async fn an_agent_cannot_discard_a_proposal_and_a_person_can() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{blocked}");
-    assert_eq!(blocked["code"], "needs_approval");
+    assert_eq!(blocked["code"], "agent_cannot_delete");
     let (status, _, drafted) = call(
         &app,
         "POST",
@@ -2804,4 +2817,165 @@ async fn an_agent_rename_is_a_proposal_and_delete_is_refused() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{deleted}");
+}
+
+#[tokio::test]
+async fn deleting_a_type_counts_then_removes_objects_links_and_selections() {
+    let (db, app) = app().await;
+    let (status, _, first) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-DEL-1","active":true}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let (status, _, second) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-DEL-2"}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let first_id = first["id"].as_str().unwrap();
+    let second_id = second["id"].as_str().unwrap();
+    db.store()
+        .set_relation(
+            braian_model::ObjectId::from_uuid(uuid::Uuid::parse_str(first_id).unwrap()),
+            braian_model::ObjectId::from_uuid(uuid::Uuid::parse_str(second_id).unwrap()),
+            "related",
+        )
+        .await
+        .unwrap();
+    let user = db
+        .store()
+        .create_user("del@example.com", "x", "editor", "Del")
+        .await
+        .unwrap();
+    db.store()
+        .save_assortment(
+            uuid::Uuid::now_v7(),
+            user.id,
+            uuid::Uuid::parse_str("018f0000-0000-7000-8000-000000000200").unwrap(),
+            "Spring",
+            &json!({ "q": "sku" }),
+        )
+        .await
+        .unwrap();
+
+    let (status, _, dry) = call(
+        &app,
+        "DELETE",
+        "/v1/types/item?dry_run=true",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert_eq!(dry["objects"], 2, "{dry}");
+    assert_eq!(dry["values"], 3, "{dry}");
+    assert_eq!(dry["links"], 1, "{dry}");
+    assert_eq!(dry["selections"], 1, "{dry}");
+    assert_eq!(dry["destructive"], true);
+    assert!(
+        dry["sentence"]
+            .as_str()
+            .unwrap()
+            .contains("will be deleted"),
+        "{dry}"
+    );
+    let (status, _, still) = call(&app, "GET", "/v1/types/item", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    let (status, _, object) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{first_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{object}");
+
+    for token in [AGENT, IMPORT] {
+        let (status, _, body) = call(
+            &app,
+            "DELETE",
+            "/v1/types/item?dry_run=true",
+            Some(token),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["code"], "agent_cannot_delete");
+        let (status, _, body) =
+            call(&app, "DELETE", "/v1/types/item", Some(token), &[], None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/operations/model.delete_type",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(r#"{"type":"item"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let (status, _, body) = call(
+            &app,
+            "DELETE",
+            &format!("/v1/objects/{first_id}"),
+            Some(token),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/operations/delete_object",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(&format!(r#"{{"id":"{first_id}"}}"#)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/operations/delete_relation",
+            Some(token),
+            &[("content-type", "application/json")],
+            Some(&format!(
+                r#"{{"from":"{first_id}","to":"{second_id}","kind":"related"}}"#
+            )),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    let (status, _, body) = call(&app, "DELETE", "/v1/types/item", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, _, _) = call(&app, "GET", "/v1/types/item", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, gone) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{first_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::GONE, "{gone}");
+    let left = db.store().list_assortments(None).await.unwrap();
+    assert!(left.is_empty(), "{left:?}");
 }

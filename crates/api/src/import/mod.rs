@@ -536,6 +536,9 @@ async fn remove(
     Query(query): Query<DeleteQuery>,
 ) -> Result<StatusCode, Problem> {
     require(&identity, Role::Editor)?;
+    if !identity.may_commit() {
+        return Err(crate::auth::delete_forbidden());
+    }
     let session = load(&state, &identity, id).await?;
     if session.status == "saving" && !query.force.unwrap_or(false) {
         return Err(Problem::new(

@@ -9,6 +9,7 @@
 mod auth;
 mod bulk_gate;
 mod definitions;
+mod deletes;
 mod export;
 mod feedback;
 mod headers;

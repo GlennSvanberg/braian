@@ -16,8 +16,10 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   const [id, setId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [typed, setTyped] = useState('')
   useEffect(() => onProposal((proposal) => {
     setError('')
+    setTyped('')
     setId(proposal.id)
   }), [])
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), staleTime: 60_000 })
@@ -45,6 +47,11 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   const samples = (consequence.samples as Json[] | undefined) ?? []
   const jobs = (consequence.jobs as Json[] | undefined) ?? []
   const errors = (consequence.definition_errors as string[] | undefined) ?? []
+  const destructive = consequence.destructive === true
+  const confirmName = String(consequence.confirm_name ?? '')
+  const detail = (consequence.detail as string[] | undefined) ?? []
+  const sentence = String(consequence.sentence ?? '')
+  const nameMatches = !destructive || typed === confirmName
   const close = () => setId(null)
   const discard = () => {
     setBusy(true)
@@ -99,6 +106,27 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
         {warnings.map((warning) => (
           <p key={warning} className="error" role="status" data-testid="key-warning">{warning}</p>
         ))}
+        {destructive ? (
+          <div data-testid="delete-counts">
+            {detail.length > 0 ? detail.map((line) => <p key={line}>{line}</p>) : sentence ? <p>{sentence}</p> : null}
+            <label className="model-field">
+              {copy.typeNameToConfirm}
+              <input
+                data-testid="confirm-name"
+                autoFocus
+                value={typed}
+                aria-label={copy.typeNameToConfirm}
+                onChange={(event) => setTyped(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && nameMatches && !busy && errors.length === 0) {
+                    event.preventDefault()
+                    confirm()
+                  }
+                }}
+              />
+            </label>
+          </div>
+        ) : null}
         <div data-testid="impact-result">
           <p>
             {affectedLabel(((body?.rows as Json[] | undefined) ?? []).map((row) => String(row.type_key ?? '')), typeNames(defs.data))}: {String(consequence.affected_objects ?? 0)}
@@ -119,8 +147,14 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
         {error ? <p className="error">{error}</p> : null}
         <div className="toolbar">
           <button type="button" onClick={discard} disabled={busy}>{copy.cancel}</button>
-          <button type="button" className="primary" data-testid="confirm-model" onClick={confirm} disabled={busy || errors.length > 0}>
-            {copy.confirm}
+          <button
+            type="button"
+            className="primary"
+            data-testid={destructive ? 'confirm-delete' : 'confirm-model'}
+            onClick={confirm}
+            disabled={busy || errors.length > 0 || !nameMatches}
+          >
+            {destructive ? copy.delete : copy.confirm}
           </button>
         </div>
       </div>

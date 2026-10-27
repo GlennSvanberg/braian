@@ -87,12 +87,19 @@ export function DataModel({ view }: { view: View }) {
 
 function ModelNav({ defs }: { defs: Json | undefined }) {
   const { selection, choose: pick } = useModelSelection()
+  const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null)
   const types = objectTypes(defs, uiLanguage)
   useEffect(() => {
     if (selection || types.length === 0) return
     const first = types[0]
     if (first) pick({ kind: 'type', typeKey: first.key })
   }, [selection, types, pick])
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [menu])
   return (
     <div data-testid="data-model" className="model-nav">
       <section>
@@ -104,12 +111,22 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
             className={selection?.kind === 'type' && selection.typeKey === item.key ? 'model-node on' : 'model-node'}
             data-testid={`type-${item.key}`}
             onClick={() => pick({ kind: 'type', typeKey: item.key })}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              pick({ kind: 'type', typeKey: item.key })
+              setMenu({ x: event.clientX, y: event.clientY, key: item.key })
+            }}
           >
             {item.label}
           </button>
         ))}
       </section>
       <StructureSection defs={defs} selection={selection} onPick={pick} />
+      {menu ? (
+        <div className="menu" role="menu" data-testid="type-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" onClick={() => { setMenu(null); void propose('model.delete_type', { type: menu.key }) }}>{copy.deleteMenu}</button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -181,6 +198,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
                   : { structure: selection.structure, group: selection.group }),
               })
             }
+            onDelete={row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
           />
         ))}
         <AddRow
@@ -205,6 +223,7 @@ function AttributeLine({
   onUpdate,
   onRenameKey,
   onRemove,
+  onDelete,
 }: {
   row: AttributeRow
   families: string[]
@@ -213,6 +232,7 @@ function AttributeLine({
   onUpdate: (patch: Json) => void
   onRenameKey: (key: string) => void
   onRemove: () => void
+  onDelete?: () => void
 }) {
   if (row.inherited) {
     return (
@@ -286,6 +306,7 @@ function AttributeLine({
         onFilterable={(value) => onUpdate({ filterable: value })}
         onSortable={(value) => onUpdate({ sortable: value })}
         onRemove={locked ? undefined : onRemove}
+        onDelete={onDelete}
       />
     </div>
   )
@@ -434,12 +455,14 @@ function MoreMenu({
   onFilterable,
   onSortable,
   onRemove,
+  onDelete,
 }: {
   filterable: boolean
   sortable: boolean
   onFilterable: (value: boolean) => void
   onSortable: (value: boolean) => void
   onRemove?: () => void
+  onDelete?: () => void
 }) {
   return (
     <DropdownMenu>
@@ -454,6 +477,7 @@ function MoreMenu({
           {copy.sortable}{sortable ? ' · on' : ''}
         </DropdownMenuItem>
         {onRemove ? <DropdownMenuItem onSelect={onRemove}>{copy.removeFromHere}</DropdownMenuItem> : null}
+        {onDelete ? <DropdownMenuItem onSelect={onDelete}>{copy.deleteMenu}</DropdownMenuItem> : null}
       </DropdownMenuContent>
     </DropdownMenu>
   )

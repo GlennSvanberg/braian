@@ -39,7 +39,10 @@ pub enum ProposalWrite {
         name: String,
         query: Value,
     },
-    Definitions(DefinitionSet),
+    Definitions {
+        defs: DefinitionSet,
+        purge: Box<braian_model::DataPurge>,
+    },
 }
 
 struct CommittedProposalRow {
@@ -131,6 +134,34 @@ impl Store {
         self.remember(Arc::new(CachedDefs::from_groups(defs.clone(), groups)))
             .await;
         Ok(receipt)
+    }
+
+    /// Saves definitions and, in the same batch, removes the data the purge names.
+    pub async fn put_definitions_purging(
+        &self,
+        actor: &Actor,
+        defs: &DefinitionSet,
+        purge: &braian_model::DataPurge,
+    ) -> Result<WriteReceipt, Error> {
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let (mut receipt, groups) = self.write_definitions_in(&tx, actor, defs).await?;
+        let seq = crate::purge::apply(&tx, actor, receipt.batch_id, purge).await?;
+        if seq > receipt.last_seq {
+            receipt.last_seq = seq;
+        }
+        tx.commit().await?;
+        self.remember(Arc::new(CachedDefs::from_groups(defs.clone(), groups)))
+            .await;
+        Ok(receipt)
+    }
+
+    pub async fn measure_purge(
+        &self,
+        purge: &braian_model::DataPurge,
+    ) -> Result<braian_model::ConsequenceCounts, Error> {
+        let client = self.pool().get().await?;
+        crate::purge::measure(&client, purge).await
     }
 
     /// Locks the proposal until [`ProposalLock::release`]. Row writes use their own transactions.
@@ -267,8 +298,12 @@ impl Store {
                     versions: Vec::new(),
                 }
             }
-            ProposalWrite::Definitions(defs) => {
-                let (receipt, groups) = self.write_definitions_in(tx, actor, &defs).await?;
+            ProposalWrite::Definitions { defs, purge } => {
+                let (mut receipt, groups) = self.write_definitions_in(tx, actor, &defs).await?;
+                let seq = crate::purge::apply(tx, actor, receipt.batch_id, purge.as_ref()).await?;
+                if seq > receipt.last_seq {
+                    receipt.last_seq = seq;
+                }
                 return Ok(Some(CommittedProposalRow {
                     receipt,
                     definitions: Some((defs, groups)),
@@ -1558,7 +1593,7 @@ async fn insert_batch(tx: &Transaction<'_>, actor: &Actor) -> Result<BatchId, Er
     Ok(id)
 }
 
-async fn insert_change(
+pub(crate) async fn insert_change(
     tx: &Transaction<'_>,
     batch: BatchId,
     object: Option<ObjectId>,

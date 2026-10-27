@@ -32,12 +32,8 @@ pub async fn propose(
             "the draft has no steps",
         ));
     }
-    if identity.kind == braian_store::PrincipalKind::Agent && changes.iter().any(deletes_data) {
-        return Err(Problem::new(
-            StatusCode::FORBIDDEN,
-            "agent",
-            "the agent cannot delete",
-        ));
+    if !identity.may_commit() && changes.iter().any(deletes_data) {
+        return Err(crate::auth::delete_forbidden());
     }
     let (after, impact) = preview(&cached.defs, &changes).map_err(model_status)?;
     CompiledModel::compile(&after).map_err(Problem::definitions)?;
@@ -76,7 +72,7 @@ pub async fn propose(
         )
         .await
         .map_err(store_status)?;
-    let consequence = consequence(state, &cached.defs, &impact).await?;
+    let consequence = consequence(state, &cached.defs, &changes, &impact).await?;
     Ok(json!({
         "proposal_id": id,
         "id": id,
@@ -113,7 +109,7 @@ pub async fn attach(state: &AppState, body: &mut Value) -> Result<(), Problem> {
     let cached = state.models.get(&state.store).await?;
     match preview(&cached.defs, &changes) {
         Ok((after, impact)) => {
-            let mut consequence = consequence(state, &cached.defs, &impact).await?;
+            let mut consequence = consequence(state, &cached.defs, &changes, &impact).await?;
             if let Err(errors) = CompiledModel::compile(&after) {
                 consequence["definition_errors"] = json!(
                     errors
@@ -164,6 +160,7 @@ pub async fn apply_row(
             Err(error) => return Err(store_status(error)),
         };
         let current = defs.model_revision;
+        let purge = braian_model::purge_for(&defs, std::slice::from_ref(&change));
         apply_all(&mut defs, std::slice::from_ref(&change)).map_err(model_status)?;
         defs.model_revision = current + 1;
         CompiledModel::compile(&defs).map_err(Problem::definitions)?;
@@ -174,7 +171,10 @@ pub async fn apply_row(
                 proposal_id,
                 row_id,
                 "accepted",
-                ProposalWrite::Definitions(defs),
+                ProposalWrite::Definitions {
+                    defs,
+                    purge: Box::new(purge),
+                },
             )
             .await
         {
@@ -208,6 +208,7 @@ pub fn is_model_row(row: &Value) -> bool {
 async fn consequence(
     state: &AppState,
     defs: &braian_model::DefinitionSet,
+    changes: &[ModelChange],
     impact: &ChangeImpact,
 ) -> Result<Value, Problem> {
     let mut affected = 0i64;
@@ -265,6 +266,13 @@ async fn consequence(
             .await
             .map_err(store_status)?
     };
+    let purge = braian_model::purge_for(defs, changes);
+    let counts = state
+        .store
+        .measure_purge(&purge)
+        .await
+        .map_err(store_status)?;
+    let detail = braian_model::consequence_lines(&counts);
     Ok(json!({
         "lines": impact.lines,
         "warnings": impact.warnings,
@@ -272,6 +280,14 @@ async fn consequence(
         "affected_objects": affected,
         "samples": samples,
         "jobs": jobs,
+        "objects": counts.objects,
+        "links": counts.links,
+        "values": counts.values,
+        "selections": counts.selections,
+        "destructive": purge.destructive,
+        "confirm_name": purge.confirm_name,
+        "sentence": detail.first().cloned().unwrap_or_default(),
+        "detail": detail,
     }))
 }
 
@@ -485,6 +501,26 @@ fn changes_from(
             group: required_str(args, "group")?,
             move_to: optional_str(args, "move_to"),
         }]),
+        "model.delete_type" => Ok(vec![ModelChange::DeleteType {
+            key: required_str(args, "type")?,
+        }]),
+        "model.delete_attribute" => Ok(vec![ModelChange::DeleteAttribute {
+            key: required_str(args, "attribute")?,
+        }]),
+        "model.delete_value_list" => Ok(vec![ModelChange::DeleteValueList {
+            key: required_str(args, "value_list")?,
+        }]),
+        "model.delete_value_option" => Ok(vec![ModelChange::DeleteValueOption {
+            list: required_str(args, "value_list")?,
+            option: required_str(args, "option")?,
+        }]),
+        "model.delete_unit_family" => Ok(vec![ModelChange::DeleteUnitFamily {
+            key: required_str(args, "unit_family")?,
+        }]),
+        "model.delete_unit" => Ok(vec![ModelChange::DeleteUnit {
+            family: required_str(args, "unit_family")?,
+            unit: required_str(args, "unit")?,
+        }]),
         "model.duplicate_group" => Ok(vec![ModelChange::DuplicateGroup {
             structure: required_str(args, "structure")?,
             group: required_str(args, "group")?,
@@ -494,7 +530,7 @@ fn changes_from(
     }
 }
 
-fn model_status(error: ApplyError) -> Problem {
+pub(crate) fn model_status(error: ApplyError) -> Problem {
     match error {
         ApplyError::Structure(error) => {
             let status = match error.code {
@@ -505,7 +541,14 @@ fn model_status(error: ApplyError) -> Problem {
             };
             Problem::new(status, error.code.as_str(), error.message)
         }
-        ApplyError::Other(message) => Problem::new(StatusCode::BAD_REQUEST, "model", message),
+        ApplyError::Other(message) => {
+            let status = if message.starts_with("unknown") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            Problem::new(status, "model", message)
+        }
     }
 }
 
