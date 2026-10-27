@@ -41,7 +41,8 @@ pub use language::{LanguageTag, LanguageTagError};
 pub use link::explain_link;
 pub use model_change::{
     ApplyError, AttributeBounds, ChangeImpact, ModelChange, NamedOption, UnitSpec, apply_all,
-    change_needs_reindex, deletes_data, diff as model_diff, interpret, preview,
+    change_needs_reindex, deletes_data, diff as model_diff, groups_removed_by_structure_upserts,
+    interpret, preview,
 };
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};

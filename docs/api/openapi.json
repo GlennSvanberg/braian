@@ -1896,6 +1896,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "group_occupied when the replace drops a group that still holds objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "security": [

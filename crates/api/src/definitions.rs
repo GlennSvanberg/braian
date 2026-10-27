@@ -511,7 +511,10 @@ pub async fn get_structure(
         ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
     ),
     request_body(content = braian_model::Structure),
-    responses((status = 200, description = "Stored structure, or a dry run", body = braian_model::Structure)),
+    responses(
+        (status = 200, description = "Stored structure, or a dry run", body = braian_model::Structure),
+        (status = 422, description = "group_occupied when the replace drops a group that still holds objects", body = crate::problem::Problem)
+    ),
     security(("bearer" = []))
 )]
 pub async fn put_structure(
@@ -532,17 +535,6 @@ pub async fn put_structure(
     body["id"] = serde_json::json!(structure_id);
     let structure: Structure =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    if !query.dry_run
-        && let Some(previous) = defs.structures.iter().find(|item| item.id == structure_id)
-    {
-        let removed: Vec<_> = previous
-            .groups
-            .iter()
-            .filter(|group| !structure.groups.iter().any(|item| item.id == group.id))
-            .map(|group| group.id)
-            .collect();
-        crate::structures::reject_removed_groups(&state, &removed).await?;
-    }
     let saved = commit_model_change(
         &state,
         &identity,
