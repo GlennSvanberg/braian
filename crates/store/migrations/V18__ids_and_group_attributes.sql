@@ -283,25 +283,26 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION braian_translate_query(defs jsonb, query jsonb)
+CREATE OR REPLACE FUNCTION braian_translate_query(defs jsonb, source jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
 AS $$
 DECLARE
-    result jsonb := query;
+    result jsonb := source;
 BEGIN
-    IF query IS NULL OR jsonb_typeof(query) <> 'object' THEN
-        RETURN query;
+    -- The argument is not named query: RETURN query is the set-returning statement.
+    IF source IS NULL OR jsonb_typeof(source) <> 'object' THEN
+        RETURN source;
     END IF;
-    IF jsonb_typeof(query->'type') = 'string' THEN
-        result := jsonb_set(result, '{type}', to_jsonb(braian_ref_id(defs, 'type', query->>'type')));
+    IF jsonb_typeof(source->'type') = 'string' THEN
+        result := jsonb_set(result, '{type}', to_jsonb(braian_ref_id(defs, 'type', source->>'type')));
     END IF;
-    IF jsonb_typeof(query->'group') = 'string' THEN
-        result := jsonb_set(result, '{group}', to_jsonb(braian_group_token(defs, query->>'group')));
+    IF jsonb_typeof(source->'group') = 'string' THEN
+        result := jsonb_set(result, '{group}', to_jsonb(braian_group_token(defs, source->>'group')));
     END IF;
-    IF jsonb_typeof(query->'filter') = 'string' THEN
-        result := jsonb_set(result, '{filter}', to_jsonb(braian_translate_filter(defs, query->>'filter')));
+    IF jsonb_typeof(source->'filter') = 'string' THEN
+        result := jsonb_set(result, '{filter}', to_jsonb(braian_translate_filter(defs, source->>'filter')));
     END IF;
     RETURN result;
 END;
