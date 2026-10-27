@@ -30,6 +30,7 @@ import { FeedbackDialog } from './feedback-dialog'
 import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
 import { CommandPalette } from './palette'
+import { AppContextMenuHost } from './app-context-menu'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
@@ -738,6 +739,11 @@ export function Shell() {
       </footer>
       <ModelDraftHost />
       <ConsequenceHost session={session} />
+      <AppContextMenuHost
+        feedbackEnabled={feedbackEnabled}
+        onSearch={() => setPaletteMode('list')}
+        onFeedback={openFeedback}
+      />
       {feedbackEnabled ? (
         <FeedbackDialog
           open={feedbackOpen}

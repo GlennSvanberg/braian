@@ -21,6 +21,7 @@ import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
+import { handleAppContextMenu } from './app-context-menu'
 import {
   emptyDetail,
   emptyGraph,
@@ -1276,7 +1277,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   }, [session.objectId, session.language, object.data])
   if (!session.objectId) {
     return (
-      <div className="detail-empty" data-testid="detail-empty">
+      <div className="detail-empty" data-testid="detail-empty" onContextMenu={handleAppContextMenu}>
         <p>{emptyDetail(typeNames(defs.data, uiLanguage), session.listType)}</p>
         <ul>
           <li><kbd>↑</kbd><kbd>↓</kbd> {copy.detailKeysMove}</li>
@@ -1347,6 +1348,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     <form
       className={flashId === session.objectId ? 'detail-form form flash' : 'detail-form form'}
       data-testid="object-detail"
+      onContextMenu={handleAppContextMenu}
       onSubmit={(event) => {
         event.preventDefault()
         save()
