@@ -60,9 +60,13 @@ jobs:
         if: steps.changes.outputs.code == 'true'
       - run: cargo clippy --workspace --all-targets -- -D warnings
         if: steps.changes.outputs.code == 'true'
+      - uses: taiki-e/install-action@v2
+        if: steps.changes.outputs.code == 'true'
+        with:
+          tool: nextest
       - name: Test
         if: steps.changes.outputs.code == 'true'
-        run: cargo test --workspace
+        run: cargo nextest run --workspace --no-tests=pass
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
@@ -186,14 +190,15 @@ jobs:
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
           TYPESENSE_URL: http://localhost:8108
           TYPESENSE_API_KEY: ci
-      - uses: actions/setup-node@v4
-        if: steps.changes.outputs.code == 'true'
-        with:
-          node-version: 22
       - uses: pnpm/action-setup@v4
         if: steps.changes.outputs.code == 'true'
         with:
           version: 10.25.0
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.code == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
       - name: Install npm dependencies
         if: steps.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
@@ -236,12 +241,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: pnpm/action-setup@v4
         with:
           version: 10.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
       - name: English copy
         run: python3 scripts/check-english.py
       - name: Typecheck and unit tests
@@ -259,12 +265,13 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: pnpm/action-setup@v4
         with:
           version: 10.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
       - name: JavaScript licenses
         run: |
           pnpm install --frozen-lockfile
