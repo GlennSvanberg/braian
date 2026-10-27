@@ -23,5 +23,5 @@ it('chooses Net weight (value) from the keyboard', () => {
   fireEvent.keyDown(menu, { key: 'ArrowDown' })
   fireEvent.keyDown(menu, { key: 'Enter' })
   expect(picked).toEqual(['type:net_weight.value'])
-  expect(screen.getByRole('menuitem', { name: 'Net weight (value)' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Net weight (value)' })).toBeTruthy()
 })

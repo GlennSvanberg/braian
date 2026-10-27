@@ -59,12 +59,11 @@ export function TargetMenu({
         aria-label={copy.importSearchFields}
         onChange={(event) => setQuery(event.target.value)}
       />
-      <div className="import-menu-list" role="menu">
+      <div className="import-menu-list">
         {rows.map((row, index) => (
           <button
             key={row.id}
             type="button"
-            role="menuitem"
             className={index === active ? 'on' : undefined}
             onMouseEnter={() => setActive(index)}
             onClick={() => onPick(row.id)}
