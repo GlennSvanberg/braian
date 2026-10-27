@@ -552,6 +552,12 @@ fn registry() -> &'static [Operation] {
             needs_approval: false,
         },
         Operation {
+            name: "list_attribute_paths",
+            title: "List attribute paths",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
             name: "model.attribute_usage",
             title: "Attribute usage",
             permission: Role::Viewer,
@@ -1809,6 +1815,13 @@ async fn search(
     if let Some(seq) = query.wait_seq {
         wait_for_seq(&state.store, seq).await;
     }
+    let (filter_by, sort_by, group_by) = search_fields(
+        &state,
+        query.filter.unwrap_or_default(),
+        query.sort.unwrap_or_default(),
+        query.group.unwrap_or_default(),
+    )
+    .await?;
     let Some(search) = &state.search else {
         return Err(Problem::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1820,9 +1833,9 @@ async fn search(
         .search(&SearchQuery {
             text: query.q.unwrap_or_default(),
             language: query.lang.unwrap_or_else(|| "en".into()),
-            filter_by: query.filter.unwrap_or_default(),
-            sort_by: query.sort.unwrap_or_default(),
-            group_by: query.group.unwrap_or_default(),
+            filter_by,
+            sort_by,
+            group_by,
             page: query.page.unwrap_or(1),
             per_page: query.per_page.unwrap_or(50),
         })
@@ -1837,6 +1850,28 @@ async fn search(
         "groups": page.groups,
         "indexed_seq": state.store.indexer_seq().await.map_err(store_status)?,
     })))
+}
+
+async fn search_fields(
+    state: &AppState,
+    filter: String,
+    sort: String,
+    group: String,
+) -> Result<(String, String, String), Problem> {
+    let Ok(cached) = state.models.get(&state.store).await else {
+        return Ok((filter, sort, group));
+    };
+    let invalid =
+        |message: String| Problem::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_path", message);
+    let filter =
+        braian_model::translate_filter_expression(&filter, &cached.defs).map_err(invalid)?;
+    let sort = braian_model::translate_sort_expression(&sort, &cached.defs).map_err(invalid)?;
+    let group = if group.trim().is_empty() {
+        group
+    } else {
+        braian_model::translate_sort_expression(&group, &cached.defs).map_err(invalid)?
+    };
+    Ok((filter, sort, group))
 }
 
 async fn list_objects(
@@ -4895,6 +4930,19 @@ async fn run_operation(
     }
     match name {
         "model.list_attribute_definitions" => crate::attribute_catalog::list(state).await,
+        "list_attribute_paths" => {
+            let token = args
+                .get("type")
+                .or_else(|| args.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let cached = state.models.get(&state.store).await?;
+            let type_id = wire::resolve_type(&cached.model, token)?;
+            Ok(crate::definitions::attribute_path_list(
+                &cached.defs,
+                type_id,
+            ))
+        }
         "model.attribute_usage" => crate::attribute_catalog::usage(state, args).await,
         "model.undo" => crate::model_draft::undo_model(state, identity).await,
         "search" => {

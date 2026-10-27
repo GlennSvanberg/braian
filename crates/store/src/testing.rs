@@ -174,6 +174,7 @@ fn template_name() -> String {
         include_str!("../migrations/V21__attribute_definitions_view.sql"),
         include_str!("../migrations/V22__links.sql"),
         include_str!("../migrations/V23__links_replace_relations.sql"),
+        include_str!("../migrations/V24__attribute_paths.sql"),
         include_str!("../migrations/V25__proposal_claim.sql"),
     ];
     for sql in sqls {

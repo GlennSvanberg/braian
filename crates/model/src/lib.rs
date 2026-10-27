@@ -15,6 +15,7 @@ mod link;
 mod model_change;
 mod object;
 mod patch;
+pub mod path;
 pub mod refs;
 pub mod standard;
 pub mod structure;
@@ -46,6 +47,12 @@ pub use model_change::{
 };
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};
+pub use path::{
+    AttributePath, ListedPath, PathPart, PathSide, PathVia, extra_parts, format_path_id,
+    format_path_id_text, format_path_text, list_attribute_paths, parse_path, parse_path_id,
+    parse_path_text, part_fits, path_index_field, path_label, stored_field_as_path,
+    translate_filter_expression, translate_sort_expression, validate_path,
+};
 pub use refs::{
     RefKind, ResolvedRef, attribute_index_field, key_rename_warning, resolve,
     translate_assortment_query, translate_import_mapping, translate_view_state,

@@ -17,7 +17,8 @@ import { onFlash } from './flash'
 import { GraphMap } from './graph-map'
 import { exportPayload, runExport, saveWorkbook } from './export'
 import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, sourceLabel, suggestionLines, valuesFromKept } from './field-diff'
-import { formatCount, formatTimestamp } from './format'
+import { formatCount, formatMeasure, formatTimestamp } from './format'
+import { PathMenu, type ListedPath } from './path-picker'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import {
@@ -35,7 +36,7 @@ import { classSections } from './class-sections'
 import { LinkSections } from './link-section'
 import { RecordSection } from './record-section'
 import { labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
-import { objectTableFilter } from './table-filter'
+import { appendPathFilter, objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishColumns, publishSelection, publishTable } from './ui-context'
 
@@ -113,6 +114,10 @@ export function ObjectTable({
   const initial = savedTable(view)
   const [filter, setFilter] = useState(initial.filter)
   const [labelFilter, setLabelFilter] = useState('')
+  const [pathFilters, setPathFilters] = useState<string[]>([])
+  const [exportPaths, setExportPaths] = useState<Array<{ id: string; header: string }>>([])
+  const [picker, setPicker] = useState<null | 'filter' | 'export' | { text: string; label: string }>(null)
+  const [pathValue, setPathValue] = useState('')
   const [queryText, setQueryText] = useState(initial.filter)
   const [sort, setSort] = useState(initial.sort)
   const [groupBy, setGroupBy] = useState(initial.groupBy)
@@ -229,9 +234,14 @@ export function ObjectTable({
     window.addEventListener(SELECTION_APPLIED_EVENT, onApply)
     return () => window.removeEventListener(SELECTION_APPLIED_EVENT, onApply)
   }, [session, typeKey, bound?.id, defs.data])
-  const filterBy = [objectTableFilter(typeKey, session.group, defs.data), labelFilter]
+  const filterBy = [objectTableFilter(typeKey, session.group, defs.data), labelFilter, ...pathFilters]
     .filter(Boolean)
     .join(' && ')
+  const attributePaths = useQuery({
+    queryKey: ['attribute-paths', typeKey],
+    queryFn: () => api<{ paths: ListedPath[] }>(`/v1/types/${encodeURIComponent(typeKey)}/attribute-paths`),
+    enabled: Boolean(typeKey) && (picker === 'filter' || picker === 'export'),
+  })
   const sortBy = indexSort(sort, defs.data)
   const groupField = groupBy ? indexSort(groupBy, defs.data) : groupBy
   const probe = useQuery({
@@ -326,6 +336,10 @@ export function ObjectTable({
       ids: selected,
       lang: session.language,
     })
+    const known = new Set(body.columns.map((column) => column.id))
+    for (const column of exportPaths) {
+      if (!known.has(column.id)) body.columns.push(column)
+    }
     session.push(copy.exportStarted)
     void runExport(body)
       .then((blob) => {
@@ -384,7 +398,34 @@ export function ObjectTable({
       })
     }
     if (event.name === 'ui.export') exportVisible()
-  }), [filterBy, hidden, order, queryText, selected, session, sort])
+  }), [exportPaths, filterBy, hidden, order, queryText, selected, session, sort])
+  useEffect(() => {
+    const onFilter = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string; label?: string }>).detail
+      if (detail?.text) {
+        setPathValue('')
+        setPicker({ text: detail.text, label: detail.label || detail.text })
+      } else {
+        setPicker('filter')
+      }
+    }
+    const onExport = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string; label?: string }>).detail
+      if (detail?.text) {
+        const text = detail.text
+        const label = detail.label || text
+        setExportPaths((current) => current.some((item) => item.id === text) ? current : [...current, { id: text, header: label }])
+      } else {
+        setPicker('export')
+      }
+    }
+    window.addEventListener('braian-path-filter', onFilter)
+    window.addEventListener('braian-export-column', onExport)
+    return () => {
+      window.removeEventListener('braian-path-filter', onFilter)
+      window.removeEventListener('braian-export-column', onExport)
+    }
+  }, [])
 
   const applySelection = (row: ObjRow, index: number, anchor: number, extend: boolean) => {
     session.setObjectId(row.id)
@@ -642,6 +683,18 @@ export function ObjectTable({
             />
           </div>
         )}
+        <button type="button" onClick={() => setPicker('filter')}>{copy.filterBy}</button>
+        <button type="button" onClick={() => setPicker('export')}>{copy.exportColumns}</button>
+        {pathFilters.map((clause) => {
+          const [path, value = ''] = clause.split(':=')
+          const unit = path?.endsWith('.unit') ? value : undefined
+          const shown = path?.endsWith('.unit') ? value : formatMeasure(value, path?.endsWith('.value') ? undefined : undefined)
+          return (
+            <button key={clause} type="button" className="filter-chip on" onClick={() => setPathFilters((current) => current.filter((item) => item !== clause))}>
+              {path} {shown}{unit && path?.endsWith('.unit') ? '' : ''}
+            </button>
+          )
+        })}
         <NewObject session={session} typeKey={typeKey} singular={bound?.singular} />
         <span className="row-count" data-testid="row-count">{formatCount(found)} {copy.rows}</span>
       </div>
@@ -818,9 +871,45 @@ export function ObjectTable({
             <button key={id} type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.show_column', { column: id }); setMenu(null) }}>{copy.show} {columnHeader(id)}</button>
           ))}
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { mass.mutate(); setMenu(null) }}>{copy.massEdit}</button>
+          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setPicker('filter'); setMenu(null) }}>{copy.filterBy}</button>
+          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setPicker('export'); setMenu(null) }}>{copy.exportColumns}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { exportVisible(); setMenu(null) }}>{copy.export}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={closeMenu}>{copy.close} <Kbd>Esc</Kbd></button>
         </div>
+      ) : null}
+      {picker === 'filter' || picker === 'export' ? (
+        <PathMenu
+          paths={attributePaths.data?.paths ?? []}
+          onClose={() => setPicker(null)}
+          onPick={(path) => {
+            if (picker === 'export') {
+              setExportPaths((current) => current.some((item) => item.id === path.text) ? current : [...current, { id: path.text, header: path.label }])
+              setPicker(null)
+              return
+            }
+            setPathValue('')
+            setPicker({ text: path.text, label: path.label })
+          }}
+        />
+      ) : null}
+      {picker && typeof picker === 'object' ? (
+        <form
+          className="create-row"
+          data-testid="path-value"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const value = pathValue.trim()
+            if (!value) return
+            setPathFilters((current) => [...current, appendPathFilter('', picker.text, value)])
+            setPicker(null)
+          }}
+        >
+          <label>
+            {picker.label}
+            <input autoFocus aria-label={copy.pathValue} value={pathValue} onChange={(event) => setPathValue(event.target.value)} />
+          </label>
+          <button className="primary" type="submit">{copy.filter}</button>
+        </form>
       ) : null}
       {moving ? (
         <MoveToGroup

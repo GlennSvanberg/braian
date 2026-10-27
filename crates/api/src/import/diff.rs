@@ -464,6 +464,9 @@ fn apply_cell(
             "That field is not in the data model.",
         ));
     };
+    if let Some(part) = super::mapping::path_part(&target.id) {
+        return apply_part(attribute, part, text, values);
+    }
     let parsed = parse_cell(
         defs,
         attribute,
@@ -481,6 +484,43 @@ fn apply_cell(
     } else {
         values.insert(attribute.id, parsed);
     }
+    Ok(())
+}
+
+fn apply_part(
+    attribute: &Attribute,
+    part: &str,
+    text: &str,
+    values: &mut BTreeMap<AttributeId, Value>,
+) -> Result<(), Value> {
+    if part == "code" || part == "label" {
+        values.insert(attribute.id, Value::String(text.trim().to_owned()));
+        return Ok(());
+    }
+    let mut object = values
+        .get(&attribute.id)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    match part {
+        "unit" => {
+            object.insert("unit".into(), Value::String(text.trim().to_owned()));
+        }
+        "value" | "min" | "max" => {
+            let (number, unit) = parse_number_text(text)?;
+            object.insert(part.into(), Value::String(number));
+            if let Some(unit) = unit {
+                object.insert("unit".into(), Value::String(unit));
+            }
+        }
+        _ => {
+            return Err(err(
+                "unknown_target",
+                "That field is not in the data model.",
+            ));
+        }
+    }
+    values.insert(attribute.id, Value::Object(object));
     Ok(())
 }
 
@@ -1123,6 +1163,62 @@ mod tests {
             parse_cell(&defs, made, None, "31/12/2024", &mut |_type, _key| None).unwrap(),
             Value::String("2024-12-31".into())
         );
+    }
+
+    #[test]
+    fn net_weight_value_and_unit_land_in_one_number() {
+        let (model, defs) = model();
+        let targets = super::super::mapping::targets_for(&defs, "item");
+        let value = targets
+            .iter()
+            .find(|target| target.id == "type:weight.value")
+            .expect("value part");
+        let unit = targets
+            .iter()
+            .find(|target| target.id == "type:weight.unit")
+            .expect("unit part");
+        assert_eq!(value.label, "Vikt (value)");
+        assert_eq!(unit.label, "Vikt (unit)");
+        assert_eq!(
+            super::super::mapping::score_column("weight", value, &[]),
+            0.0
+        );
+        let whole = targets
+            .iter()
+            .find(|target| target.id == "type:weight")
+            .unwrap();
+        assert!((super::super::mapping::score_column("weight", whole, &[]) - 1.0).abs() < 1e-9);
+        let mut values = BTreeMap::new();
+        let mut languages = BTreeMap::new();
+        let mut groups = BTreeMap::new();
+        let mut links = Vec::new();
+        let mut resolve = |_type: &str, _key: &str| None;
+        apply_cell(
+            &model,
+            &defs,
+            value,
+            "500",
+            &mut values,
+            &mut languages,
+            &mut groups,
+            &mut links,
+            &mut resolve,
+        )
+        .unwrap();
+        apply_cell(
+            &model,
+            &defs,
+            unit,
+            "g",
+            &mut values,
+            &mut languages,
+            &mut groups,
+            &mut links,
+            &mut resolve,
+        )
+        .unwrap();
+        let weight = model.attribute_by_key("weight").unwrap().id;
+        assert_eq!(values[&weight], json!({"value": "500", "unit": "g"}));
     }
 
     #[test]
