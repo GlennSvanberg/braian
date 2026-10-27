@@ -1282,9 +1282,6 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             <MetaChip>{typeLabel(defs.data, String(object.data.type), uiLanguage)}</MetaChip>
             {status ? <MetaChip tone={statusTone(status)}>{optionLabel(defs.data, 'status', status, uiLanguage)}</MetaChip> : null}
             <MetaChip>{String(object.data.version ?? '')}</MetaChip>
-            {object.data.updated_by ? (
-              <MetaChip>{copy.updatedBy} {String((object.data.updated_by as Json).name ?? '')}</MetaChip>
-            ) : null}
             {suggestionCount > 0 ? <span className="suggestion-count" data-testid="suggestion-count">{suggestionCount} {copy.suggested}</span> : null}
           </div>
         </header>

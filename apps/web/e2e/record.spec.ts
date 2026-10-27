@@ -19,9 +19,12 @@ async function openCheddar(page: Page) {
   if ((await filter.inputValue()) !== '') await filter.fill('')
   const row = table.getByTestId('object-row').filter({ hasText: 'PROD-CHEDDAR' }).first()
   await expect(row).toBeVisible()
+  const objectId = ((await row.getAttribute('id')) ?? '').replace(/^object-row-/, '')
+  expect(objectId).not.toBe('')
   await row.click()
   await page.locator('[data-view-type="object_detail"]').first().click()
   await expect(page.getByTestId('record-section')).toBeVisible()
+  return objectId
 }
 
 async function createdLabel(page: Page) {
@@ -44,7 +47,7 @@ test('the detail pane shows a read-only Record section', async ({ page }) => {
   let renamed = false
   try {
     await login(page)
-    await openCheddar(page)
+    const objectId = await openCheddar(page)
 
     await page.locator('[data-view-type="object_detail"]').first().focus()
     let entered = false
@@ -72,27 +75,18 @@ test('the detail pane shows a read-only Record section', async ({ page }) => {
     const updatedIso = await updated.getAttribute('title')
     expect(createdIso).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(updatedIso).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-    const formatted = await page.evaluate(
-      ({ createdAt, updatedAt }) => {
-        const options: Intl.DateTimeFormatOptions = {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        }
-        const format = (iso: string) => new Intl.DateTimeFormat(undefined, options).format(new Date(iso))
-        return { created: format(createdAt), updated: format(updatedAt) }
-      },
-      { createdAt: createdIso ?? '', updatedAt: updatedIso ?? '' },
-    )
-    await expect(created).toHaveValue(formatted.created)
-    await expect(updated).toHaveValue(formatted.updated)
+    const stamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/
+    await expect(created).toHaveValue(stamp)
+    await expect(updated).toHaveValue(stamp)
+    const createdShown = await created.inputValue()
 
-    const chip = page.locator('.detail-head').getByText(/^Updated by /)
-    const who = ((await chip.innerText()) ?? '').replace(/^Updated by\s*/, '')
+    const loaded = await page.request.get(`/v1/objects/${objectId}`)
+    expect(loaded.ok()).toBeTruthy()
+    const body = (await loaded.json()) as { updated_by?: { name?: string } }
+    const who = body.updated_by?.name ?? ''
     expect(who).not.toBe('')
     await expect(record.getByTestId('record-updated_by')).toHaveValue(who)
+    await expect(page.locator('.detail-head')).not.toContainText('Updated by')
 
     await number.press('Control+a')
     const selected = await number.evaluate((node) => {
@@ -109,7 +103,7 @@ test('the detail pane shows a read-only Record section', async ({ page }) => {
     await page.locator('nav.tabs').getByRole('button', { name: /^Products/ }).click()
     await page.locator('[data-view-type="object_detail"]').first().click()
     await expect(page.getByTestId('record-section').getByText(next, { exact: true })).toBeVisible()
-    await expect(page.getByTestId('record-created_at')).toHaveValue(formatted.created)
+    await expect(page.getByTestId('record-created_at')).toHaveValue(createdShown)
   } finally {
     if (!renamed) return
     await renameCreated(page, 'Created').catch(() => undefined)

@@ -46,18 +46,18 @@ describe('record labels', () => {
 })
 
 describe('record values', () => {
-  it('formats timestamps in the requested time zone and keeps the ISO title', () => {
+  it('formats timestamps as YYYY-MM-DD HH:mm in the given time zone', () => {
     const iso = '2026-06-15T18:30:00.000Z'
-    const utc = formatRecordTime(iso, 'UTC')
+    const stockholm = formatRecordTime(iso, 'Europe/Stockholm')
     const york = formatRecordTime(iso, 'America/New_York')
-    expect(utc.title).toBe(iso)
-    expect(utc.text).toMatch(/18:30|6:30/)
-    expect(york.text).toMatch(/14:30|2:30/)
-    expect(utc.text).not.toBe(york.text)
+    expect(stockholm).toEqual({ text: '2026-06-15 20:30', title: iso })
+    expect(york).toEqual({ text: '2026-06-15 14:30', title: iso })
+    expect(stockholm.text).not.toMatch(/[A-Za-z\p{L}]/u)
+    expect(york.text).not.toMatch(/[A-Za-z\p{L}]/u)
     expect(formatRecordTime('not-a-date')).toEqual({ text: 'not-a-date', title: 'not-a-date' })
   })
 
-  it('reads number, name, and the principal the same way as the header chip', () => {
+  it('reads number, name, and the principal display name', () => {
     expect(principalName({ id: 'p', name: 'Demo Admin', kind: 'person' })).toBe('Demo Admin')
     expect(principalName({ id: 'a', name: 'Catalog agent', kind: 'agent' })).toBe('Catalog agent')
     expect(principalName(null)).toBe('')
@@ -100,6 +100,8 @@ describe('Record section', () => {
     expect(number.tabIndex).toBe(0)
     expect(number.value).toBe('PROD-1')
     expect(createdInput.title).toBe('2026-06-15T18:30:00.000Z')
+    expect(createdInput.value).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(createdInput.value).not.toMatch(/[A-Za-z\p{L}]/u)
     expect(screen.getByLabelText('Opened')).toBe(createdInput)
     expect((screen.getByTestId('record-updated_by') as HTMLInputElement).value).toBe('Demo Admin')
   })

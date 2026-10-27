@@ -22,19 +22,30 @@ export type RecordRow = {
 
 const timeOptions: Intl.DateTimeFormatOptions = {
   year: 'numeric',
-  month: 'short',
-  day: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
+  hourCycle: 'h23',
+  numberingSystem: 'latn',
 }
 
-/** Browser locale and time zone. `timeZone` is for tests. */
+function recordPart(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes, width: number) {
+  return (parts.find((part) => part.type === type)?.value ?? '').padStart(width, '0')
+}
+
+/** `YYYY-MM-DD HH:mm` in the browser time zone. `timeZone` is for tests. The title stays the ISO value. */
 export function formatRecordTime(iso: string, timeZone?: string): { text: string; title: string } {
   if (!iso) return { text: '', title: '' }
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return { text: iso, title: iso }
-  const options = timeZone ? { ...timeOptions, timeZone } : timeOptions
-  return { text: new Intl.DateTimeFormat(undefined, options).format(date), title: iso }
+  const parts = new Intl.DateTimeFormat(undefined, timeZone ? { ...timeOptions, timeZone } : timeOptions).formatToParts(date)
+  const year = recordPart(parts, 'year', 4)
+  const month = recordPart(parts, 'month', 2)
+  const day = recordPart(parts, 'day', 2)
+  const hour = recordPart(parts, 'hour', 2)
+  const minute = recordPart(parts, 'minute', 2)
+  return { text: `${year}-${month}-${day} ${hour}:${minute}`, title: iso }
 }
 
 /** Display name of the principal who last wrote the object. */
