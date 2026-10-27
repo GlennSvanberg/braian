@@ -1354,7 +1354,7 @@ async fn list_filters_before_limit_and_pages_with_a_cursor() {
         ("produkt", "zzz-3"),
     ] {
         let body = format!(
-            r#"{{"type":"{type_key}","groups":{{"catalog":"root","channel":"flat"}},"values":{{"sku":"{sku}"}}}}"#
+            r#"{{"type":"{type_key}","groups":{{"catalog":"root","channel":"flat"}},"values":{{"number":"{sku}","name":{{"sv":"Namn"}}}}}}"#
         );
         let (status, _, response) = call(
             &app,
@@ -4035,4 +4035,277 @@ async fn an_import_writes_a_value_list_and_is_refused_on_the_other_upserts() {
             .all(|item| item["key"] != "import_link" && item["key"] != "import_type"),
         "{defs}"
     );
+}
+
+#[tokio::test]
+async fn a_structure_dry_run_refuses_a_group_that_still_holds_objects() {
+    let (_db, app) = app().await;
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        "/v1/structures:create",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"yard","label":"Yard"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for key in ["kept", "bin"] {
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/structures/yard/groups",
+            Some(HUMAN),
+            &[("content-type", "application/json")],
+            Some(&json!({"key": key, "label": key}).to_string()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (status, _, object) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{
+                "type": "item",
+                "groups": { "catalog": "root", "channel": "flat", "yard": "bin" },
+                "values": { "sku": "YARD-1", "name": { "sv": "Kruka" }, "active": true }
+            }"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{object}");
+
+    let (status, _, before) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    let revision = before["model_revision"].clone();
+    let (status, _, mut structure) =
+        call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{structure}");
+    let groups = structure["groups"].as_array().unwrap().clone();
+    assert!(groups.iter().any(|group| group["key"] == "bin"));
+    structure["groups"] = json!(
+        groups
+            .into_iter()
+            .filter(|group| group["key"] != "bin")
+            .collect::<Vec<_>>()
+    );
+    let payload = structure.to_string();
+
+    let (dry_status, _, dry_body) = call(
+        &app,
+        "PUT",
+        "/v1/structures/yard?dry_run=true",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&payload),
+    )
+    .await;
+    assert_eq!(dry_status, StatusCode::UNPROCESSABLE_ENTITY, "{dry_body}");
+    assert_eq!(dry_body["code"], "group_occupied");
+
+    let (status, _, after_dry) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after_dry}");
+    assert_eq!(after_dry["model_revision"], revision);
+    let (status, _, still) = call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    assert!(
+        still["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|group| group["key"] == "bin"),
+        "{still}"
+    );
+
+    let (write_status, _, write_body) = call(
+        &app,
+        "PUT",
+        "/v1/structures/yard",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&payload),
+    )
+    .await;
+    assert_eq!(write_status, dry_status, "{write_body}");
+    assert_eq!(write_body["code"], dry_body["code"], "{write_body}");
+    assert_eq!(write_body["detail"], dry_body["detail"], "{write_body}");
+    let (status, _, still) = call(&app, "GET", "/v1/structures/yard", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    assert!(
+        still["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|group| group["key"] == "bin"),
+        "{still}"
+    );
+    let (status, _, after_write) =
+        call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after_write}");
+    assert_eq!(after_write["model_revision"], revision);
+}
+
+fn standard_attribute_ids(defs: &Value) -> Vec<String> {
+    ["number", "name", "created_at", "updated_at", "updated_by"]
+        .into_iter()
+        .map(|key| {
+            let matches: Vec<_> = defs["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|attribute| attribute["key"] == key)
+                .map(|attribute| attribute["id"].as_str().unwrap().to_owned())
+                .collect();
+            assert_eq!(matches.len(), 1, "{key} in {defs}");
+            matches[0].clone()
+        })
+        .collect()
+}
+
+fn type_attribute_ids(object_type: &Value) -> Vec<String> {
+    object_type["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_type_from_rest_gets_the_same_standard_attributes_as_the_draft() {
+    let (db, app) = app().await;
+    let principal = db
+        .store()
+        .principal_by_handle("ada")
+        .await
+        .unwrap()
+        .expect("ada");
+    db.store()
+        .attach_user(principal, "ada@example.com", "x", "admin", "Ada")
+        .await
+        .unwrap();
+
+    let (status, _, draft) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"steps":[{"op":"create_type","key":"recipe","label":"Recipe","plural":"Recipes"}]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    let (status, _, saved) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/save",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["applied"], true);
+
+    let (status, _, item) = call(&app, "GET", "/v1/types/item", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    let key_attribute = item["key_attribute"].as_str().unwrap();
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            &json!({
+                "key": "dish",
+                "labels": {"sv": "Dish"},
+                "key_attribute": key_attribute,
+                "attributes": []
+            })
+            .to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+
+    let fresh = "018f0000-0000-7000-8000-000000000777";
+    let (status, _, put_created) = call(
+        &app,
+        "PUT",
+        &format!("/v1/types/{fresh}"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            &json!({
+                "key": "pantry",
+                "labels": {"sv": "Pantry"},
+                "key_attribute": key_attribute,
+                "attributes": []
+            })
+            .to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{put_created}");
+
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    let standard = standard_attribute_ids(&defs);
+    let recipe = defs["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "recipe")
+        .expect("recipe");
+    let dish = defs["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "dish")
+        .expect("dish");
+    let pantry = defs["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "pantry")
+        .expect("pantry");
+    assert_eq!(type_attribute_ids(recipe), standard);
+    assert_eq!(type_attribute_ids(dish), standard);
+    assert_eq!(type_attribute_ids(pantry), standard);
+    assert_eq!(recipe["key_attribute"], standard[0]);
+    assert_eq!(dish["key_attribute"], standard[0]);
+    assert_eq!(pantry["key_attribute"], standard[0]);
+
+    let mut update = dish.clone();
+    update["labels"] = json!({"sv": "Dish updated"});
+    update["attributes"] = json!([standard[0], standard[0]]);
+    update["key_attribute"] = json!(standard[0]);
+    let (status, _, updated) = call(
+        &app,
+        "PUT",
+        "/v1/types/dish",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&update.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(type_attribute_ids(&updated), standard);
+    assert_eq!(updated["key_attribute"], standard[0]);
+    assert_eq!(updated["labels"]["sv"], "Dish updated");
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    assert_eq!(standard_attribute_ids(&defs), standard);
+    let dish = defs["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "dish")
+        .expect("dish");
+    assert_eq!(type_attribute_ids(dish), standard);
 }

@@ -363,12 +363,16 @@ pub enum ModelChange {
     /// Replaces one type document. A new id inserts it. The id is kept.
     ///
     /// A new key uses the same checks as [`ModelChange::CreateType`].
+    /// A new type receives the standard attributes from that same step.
+    /// An update keeps those ids and does not add a second copy.
     UpsertType {
         object_type: Box<ObjectType>,
     },
     /// Replaces one structure document, including its groups. The id is kept.
     ///
     /// Keys, parents and cycles use the same checks as creating a structure and its groups.
+    /// Groups this step drops are listed by [`groups_removed_by_structure_upserts`].
+    /// The save refuses the step, including a dry run, when those groups still hold objects.
     UpsertStructure {
         structure: Box<Structure>,
     },
@@ -2573,6 +2577,7 @@ fn upsert_posted_attribute(defs: &mut DefinitionSet, posted: &Attribute) -> Resu
 }
 
 fn upsert_posted_type(defs: &mut DefinitionSet, posted: &ObjectType) -> Result<(), ApplyError> {
+    let new_type = !defs.types.iter().any(|item| item.id == posted.id);
     if let Some(existing) = defs.types.iter().find(|item| item.id == posted.id).cloned() {
         if !eq_key(&existing.key, &posted.key) {
             rename_entity(
@@ -2602,8 +2607,59 @@ fn upsert_posted_type(defs: &mut DefinitionSet, posted: &ObjectType) -> Result<(
         crate::link::check_ends(defs, &spec.from_types, "from")?;
         crate::link::check_ends(defs, &spec.to_types, "to")?;
     }
-    crate::edit::upsert_type(defs, posted.clone());
+    let mut object_type = posted.clone();
+    if new_type {
+        // Same install as [`create_type`]: rows with the stable ids, then pinned on the type.
+        crate::standard::ensure_standard_rows(defs);
+        crate::standard::attach_standard_attributes(&mut object_type);
+    } else if standard_rows_present(defs) {
+        // The rows already have their ids. Pin them again so an update cannot drop or repeat them.
+        crate::standard::attach_standard_attributes(&mut object_type);
+    }
+    crate::edit::upsert_type(defs, object_type);
     Ok(())
+}
+
+fn standard_rows_present(defs: &DefinitionSet) -> bool {
+    let ids = crate::standard::standard_ids();
+    [
+        ids.number,
+        ids.name,
+        ids.created_at,
+        ids.updated_at,
+        ids.updated_by,
+    ]
+    .into_iter()
+    .all(|id| defs.attributes.iter().any(|attribute| attribute.id == id))
+}
+
+/// Groups a structure upsert removes from a structure that already exists.
+///
+/// Delete steps are omitted. Those unplace objects. The save path counts the
+/// groups returned here and refuses the upsert, dry run included, when any
+/// still hold objects.
+pub fn groups_removed_by_structure_upserts(
+    defs: &DefinitionSet,
+    changes: &[ModelChange],
+) -> Vec<GroupId> {
+    let mut removed = Vec::new();
+    for change in changes {
+        let ModelChange::UpsertStructure { structure } = change else {
+            continue;
+        };
+        let Some(previous) = defs.structures.iter().find(|item| item.id == structure.id) else {
+            continue;
+        };
+        for group in &previous.groups {
+            if structure.groups.iter().any(|item| item.id == group.id) {
+                continue;
+            }
+            if !removed.contains(&group.id) {
+                removed.push(group.id);
+            }
+        }
+    }
+    removed
 }
 
 fn upsert_posted_structure(defs: &mut DefinitionSet, posted: &Structure) -> Result<(), ApplyError> {
@@ -3594,5 +3650,161 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert_eq!(family_error, upsert_family);
+    }
+
+    #[test]
+    fn a_posted_type_gets_the_same_standard_attributes_as_create_type() {
+        let mut via_step = base();
+        apply_all(
+            &mut via_step,
+            &[ModelChange::CreateType {
+                key: "recipe".into(),
+                label: "Recipe".into(),
+                plural: Some("Recipes".into()),
+                structures: None,
+                defaults: None,
+            }],
+        )
+        .expect("create type");
+        let mut via_rest = base();
+        let posted = ObjectType {
+            id: TypeId::from_uuid(Uuid::from_u128(40)),
+            key: "dish".into(),
+            labels: BTreeMap::new(),
+            singular: BTreeMap::new(),
+            plural: BTreeMap::new(),
+            key_attribute: via_rest.attributes[0].id,
+            attributes: vec![],
+            structures: None,
+            defaults: BTreeMap::new(),
+            kind: Default::default(),
+            link: None,
+        };
+        apply_all(
+            &mut via_rest,
+            &[ModelChange::UpsertType {
+                object_type: Box::new(posted),
+            }],
+        )
+        .expect("upsert type");
+        let ids = crate::standard::standard_ids();
+        let pinned = vec![
+            ids.number,
+            ids.name,
+            ids.created_at,
+            ids.updated_at,
+            ids.updated_by,
+        ];
+        let recipe = via_step
+            .types
+            .iter()
+            .find(|item| item.key == "recipe")
+            .expect("recipe");
+        let dish = via_rest
+            .types
+            .iter()
+            .find(|item| item.key == "dish")
+            .expect("dish");
+        assert_eq!(recipe.attributes, pinned);
+        assert_eq!(dish.attributes, recipe.attributes);
+        assert_eq!(recipe.key_attribute, ids.number);
+        assert_eq!(dish.key_attribute, ids.number);
+        for id in &pinned {
+            assert_eq!(
+                via_step
+                    .attributes
+                    .iter()
+                    .filter(|attribute| attribute.id == *id)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                via_rest
+                    .attributes
+                    .iter()
+                    .filter(|attribute| attribute.id == *id)
+                    .count(),
+                1
+            );
+        }
+
+        let weight = via_rest
+            .attributes
+            .iter()
+            .find(|attribute| attribute.key == "weight")
+            .expect("weight")
+            .id;
+        let mut updated = dish.clone();
+        updated
+            .labels
+            .insert(LanguageTag::parse("en").expect("en"), "Dish".into());
+        updated.key_attribute = weight;
+        updated.attributes = vec![ids.number, ids.number, weight];
+        apply_all(
+            &mut via_rest,
+            &[ModelChange::UpsertType {
+                object_type: Box::new(updated),
+            }],
+        )
+        .expect("update type");
+        let dish = via_rest
+            .types
+            .iter()
+            .find(|item| item.key == "dish")
+            .expect("dish");
+        assert_eq!(dish.attributes, {
+            let mut kept = pinned.clone();
+            kept.push(weight);
+            kept
+        });
+        assert_eq!(dish.key_attribute, ids.number);
+        assert_eq!(
+            dish.attributes
+                .iter()
+                .filter(|id| **id == ids.number)
+                .count(),
+            1
+        );
+        for id in &pinned {
+            assert_eq!(
+                via_rest
+                    .attributes
+                    .iter()
+                    .filter(|attribute| attribute.id == *id)
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn a_structure_upsert_lists_only_the_groups_it_drops() {
+        let defs = base();
+        let timber = defs.structures[0].groups[1].id;
+        let mut posted = defs.structures[0].clone();
+        posted.groups.retain(|group| group.id != timber);
+        let removed = groups_removed_by_structure_upserts(
+            &defs,
+            &[ModelChange::UpsertStructure {
+                structure: Box::new(posted),
+            }],
+        );
+        assert_eq!(removed, vec![timber]);
+        let kept = groups_removed_by_structure_upserts(
+            &defs,
+            &[ModelChange::UpsertStructure {
+                structure: Box::new(defs.structures[0].clone()),
+            }],
+        );
+        assert!(kept.is_empty());
+        let deleted = groups_removed_by_structure_upserts(
+            &defs,
+            &[ModelChange::DeleteGroup {
+                structure: "assortment".into(),
+                group: "timber".into(),
+                move_to: None,
+            }],
+        );
+        assert!(deleted.is_empty());
     }
 }

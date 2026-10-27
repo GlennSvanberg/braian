@@ -11,8 +11,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use braian_model::{
-    DefinitionSet, ModelChange, ModelDraft, SharedValueList, change_removed_definitions, preview,
-    purge_for, restored_definitions, undo_purge,
+    DefinitionSet, ModelChange, ModelDraft, SharedValueList, change_removed_definitions,
+    groups_removed_by_structure_upserts, preview, purge_for, restored_definitions, undo_purge,
 };
 use braian_rules::CompiledModel;
 use braian_store::{Actor, BatchKind, Error, PrincipalKind};
@@ -382,6 +382,12 @@ pub(crate) async fn commit_steps(
             },
             Err(error) => return Err(store_status(error)),
         };
+        // One check for the write and for dry_run. A structure upsert that drops
+        // a group still holding objects fails here and leaves the model as it was.
+        let removed = groups_removed_by_structure_upserts(&defs, changes);
+        if !removed.is_empty() {
+            crate::structures::reject_removed_groups(state, &removed).await?;
+        }
         let (mut after, impact) = preview(&defs, changes).map_err(model_status)?;
         CompiledModel::compile(&after).map_err(Problem::definitions)?;
         let purge = purge_for(&defs, changes);
