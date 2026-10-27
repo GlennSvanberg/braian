@@ -133,8 +133,7 @@ mod tests {
             "legacy System row must be gone after merge: {rows:?}"
         );
         assert_eq!(
-            rows
-                .iter()
+            rows.iter()
                 .filter(|row| row.kind == "integration" && row.name == "System")
                 .count(),
             1,
@@ -178,7 +177,10 @@ mod tests {
         startup(db.store()).await.unwrap();
 
         let rows = principal_rows(&client).await;
-        let human = rows.iter().find(|row| row.id == person).expect("human System");
+        let human = rows
+            .iter()
+            .find(|row| row.id == person)
+            .expect("human System");
         assert_eq!(human.kind, "human");
         assert_eq!(human.name, "System");
         assert_eq!(human.handle.as_deref(), Some("nina"));
