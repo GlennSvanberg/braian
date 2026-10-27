@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
+mod maintain;
 mod seed;
 
 #[derive(Parser)]
@@ -153,8 +154,7 @@ async fn connect() -> anyhow::Result<Store> {
     let database_url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is not set"))?;
     let store = Store::connect(&database_url).await?;
-    store.upgrade_standard_attributes().await?;
-    store.upgrade_object_refs().await?;
+    maintain::startup(&store).await?;
     Ok(store)
 }
 

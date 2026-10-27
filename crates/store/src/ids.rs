@@ -37,6 +37,14 @@ macro_rules! id_type {
 }
 
 id_type!(PrincipalId, "A person, an agent or an integration.");
+
+/// Service principal used when a migration or a startup upgrade writes.
+///
+/// The bytes are `md5("principal:system")` with the UUID version nibble set to 3
+/// and the RFC 4122 variant. V23 stored the same value while it moved relations.
+pub const SYSTEM_PRINCIPAL: PrincipalId =
+    PrincipalId::from_uuid(Uuid::from_u128(0xc08766d6_3ee2_3ab0_8028_0738e61d0e4c));
+
 id_type!(
     BatchId,
     "One logical write. A bulk batch can span several transactions."

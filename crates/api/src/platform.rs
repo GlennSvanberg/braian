@@ -4692,20 +4692,17 @@ pub async fn execute(
     run_operation(state, identity, name, args, false).await
 }
 
-/// The stored `system` principal must not accept, discard or delete.
+/// The service principal must not accept, discard or delete.
 ///
-/// The kind is read from `principals`. A human row would pass `may_commit`.
+/// The row is [`braian_store::SYSTEM_PRINCIPAL`]. A person who has the handle
+/// `system` is a different row and is not what this checks. The kind is read
+/// from `principals`. A human row would pass `may_commit`.
 #[doc(hidden)]
 pub async fn stored_principal_cannot_approve_discard_or_delete(
     store: &Store,
 ) -> Result<(), String> {
-    let id = store
-        .principal_by_handle("system")
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or("system principal is missing")?;
     let record = store
-        .principal(id)
+        .principal(braian_store::SYSTEM_PRINCIPAL)
         .await
         .map_err(|error| error.to_string())?
         .ok_or("system principal is missing")?;
