@@ -2658,8 +2658,8 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// V23-shaped filters and import targets are rewritten on startup, then a
-    /// second seed does not duplicate the rows.
+    /// V23-shaped filters and import targets are rewritten when the database
+    /// opens, then startup and seed both run twice without adding rows.
     #[tokio::test]
     async fn old_shape_data_survives_startup_and_a_second_seed() {
         load_test_database_url();
@@ -2803,6 +2803,7 @@ mod tests {
             }
         };
         let store = braian_store::Store::connect(&url).await.expect("startup");
+        crate::maintain::startup(&store).await.expect("maintain");
         let mut read_config = braian_store::admin::parse_config(&url).unwrap();
         read_config.dbname(&name);
         let read = braian_store::admin::PgConn::connect(read_config)
@@ -2852,31 +2853,24 @@ mod tests {
         assert!(requested);
 
         run(&store, None).await.expect("first seed");
-        let objects_after_first: i64 = read
-            .client
-            .query_one("SELECT count(*) FROM objects", &[])
-            .await
-            .unwrap()
-            .get(0);
-        let views_after_first: i64 = read
+        let after_first = row_counts(&read.client).await;
+        let legacy_view: i64 = read
             .client
             .query_one("SELECT count(*) FROM views WHERE id = $1", &[&view])
             .await
             .unwrap()
             .get(0);
+        let legacy_state: Value = read
+            .client
+            .query_one("SELECT state FROM views WHERE id = $1", &[&view])
+            .await
+            .unwrap()
+            .get("state");
+        crate::maintain::startup(&store)
+            .await
+            .expect("second maintain");
         run(&store, None).await.expect("second seed");
-        let objects_after_second: i64 = read
-            .client
-            .query_one("SELECT count(*) FROM objects", &[])
-            .await
-            .unwrap()
-            .get(0);
-        let views_after_second: i64 = read
-            .client
-            .query_one("SELECT count(*) FROM views WHERE id = $1", &[&view])
-            .await
-            .unwrap()
-            .get(0);
+        let after_second = row_counts(&read.client).await;
         let imports: i64 = read
             .client
             .query_one(
@@ -2886,12 +2880,66 @@ mod tests {
             .await
             .unwrap()
             .get(0);
-        assert_eq!(views_after_first, 1);
-        assert_eq!(views_after_second, 1);
+        let legacy_view_after: i64 = read
+            .client
+            .query_one("SELECT count(*) FROM views WHERE id = $1", &[&view])
+            .await
+            .unwrap()
+            .get(0);
+        let legacy_state_after: Value = read
+            .client
+            .query_one("SELECT state FROM views WHERE id = $1", &[&view])
+            .await
+            .unwrap()
+            .get("state");
+        assert_eq!(legacy_view, 1);
+        assert_eq!(legacy_view_after, 1);
+        assert_eq!(legacy_state_after, legacy_state);
         assert_eq!(imports, 1);
-        assert_eq!(objects_after_first, objects_after_second);
-        assert!(objects_after_second > 0);
+        assert_eq!(
+            after_first, after_second,
+            "seed added rows on the second run"
+        );
+        assert!(after_second.objects > 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct RowCounts {
+        objects: i64,
+        object_values: i64,
+        links: i64,
+        views: i64,
+        workspaces: i64,
+        users: i64,
+        import_sessions: i64,
+        assortments: i64,
+        definition_revisions: i64,
+        principals: i64,
+        proposals: i64,
+    }
+
+    async fn row_counts(client: &tokio_postgres::Client) -> RowCounts {
+        async fn count(client: &tokio_postgres::Client, table: &str) -> i64 {
+            client
+                .query_one(&format!("SELECT count(*)::bigint FROM {table}"), &[])
+                .await
+                .unwrap()
+                .get(0)
+        }
+        RowCounts {
+            objects: count(client, "objects").await,
+            object_values: count(client, "object_values").await,
+            links: count(client, "links").await,
+            views: count(client, "views").await,
+            workspaces: count(client, "workspaces").await,
+            users: count(client, "users").await,
+            import_sessions: count(client, "import_sessions").await,
+            assortments: count(client, "assortments").await,
+            definition_revisions: count(client, "definition_revisions").await,
+            principals: count(client, "principals").await,
+            proposals: count(client, "proposals").await,
+        }
     }
 
     struct DbGuard {

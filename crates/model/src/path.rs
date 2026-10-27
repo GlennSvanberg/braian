@@ -556,11 +556,25 @@ pub fn stored_field_as_path(field: &str, defs: &DefinitionSet) -> String {
     if field.is_empty() || RESERVED_FIELDS.contains(&field) || field.starts_with("search_") {
         return field.to_owned();
     }
-    let body = field.strip_prefix("a_").unwrap_or(field);
-    if body.contains('>') {
+    if field.contains('>') {
         return field.to_owned();
     }
-    let (head, suffixes) = split_index_suffixes(body);
+    // The whole token wins before a suffix is split off, so a key such as
+    // `size__min` or `name__en` is that attribute.
+    if let Some(attribute) = attribute_from_head(defs, field) {
+        return format_path(
+            &AttributePath {
+                via: None,
+                attribute,
+                part: PathPart::Whole,
+                language: None,
+            },
+            defs,
+            true,
+        );
+    }
+    let body = field.strip_prefix("a_").unwrap_or(field);
+    let (head, suffixes) = split_index_suffixes(body, defs);
     let Some(attribute) = attribute_from_head(defs, head) else {
         return field.to_owned();
     };
@@ -943,13 +957,19 @@ fn underscore_uuid(text: &str) -> String {
     text.to_owned()
 }
 
-fn split_index_suffixes(body: &str) -> (&str, Vec<&str>) {
+fn split_index_suffixes<'a>(body: &'a str, defs: &DefinitionSet) -> (&'a str, Vec<&'a str>) {
+    if attribute_from_head(defs, body).is_some() {
+        return (body, Vec::new());
+    }
     let mut suffixes = Vec::new();
     let mut head = body;
     while let Some((prefix, suffix)) = head.rsplit_once("__") {
         if matches!(suffix, "unit" | "min" | "max") || is_language_suffix(suffix) {
             suffixes.insert(0, suffix);
             head = prefix;
+            if attribute_from_head(defs, head).is_some() {
+                break;
+            }
             continue;
         }
         break;
@@ -1147,6 +1167,74 @@ mod tests {
         assert_eq!(path, format!("{}.unit", weight.id.as_uuid()));
         assert_eq!(stored_field_as_path(&path, &defs), path);
         assert_eq!(stored_field_as_path("type_key", &defs), "type_key");
+    }
+
+    #[test]
+    fn a_key_containing_a_double_underscore_is_not_a_suffix() {
+        let mut defs = catalog();
+        for (id, key) in [
+            ("018f0000-0000-7000-8000-0000000001c1", "size__min"),
+            ("018f0000-0000-7000-8000-0000000001e1", "name__en"),
+        ] {
+            let attribute: Attribute = serde_json::from_value(json!({
+                "id": id,
+                "key": key,
+                "labels": { "en": key },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text", "max_length": 32 },
+                "index": { "searchable": false, "filterable": true, "sortable": false }
+            }))
+            .unwrap();
+            defs.attributes.push(attribute);
+        }
+        let size = defs
+            .attributes
+            .iter()
+            .find(|item| item.key == "size")
+            .unwrap();
+        let name = defs
+            .attributes
+            .iter()
+            .find(|item| item.key == "name")
+            .unwrap();
+        let size_min = defs
+            .attributes
+            .iter()
+            .find(|item| item.key == "size__min")
+            .unwrap();
+        let name_en = defs
+            .attributes
+            .iter()
+            .find(|item| item.key == "name__en")
+            .unwrap();
+        assert_eq!(
+            stored_field_as_path("size__min", &defs),
+            size_min.id.as_uuid().to_string()
+        );
+        assert_eq!(
+            stored_field_as_path("name__en", &defs),
+            name_en.id.as_uuid().to_string()
+        );
+        assert_eq!(
+            stored_field_as_path("name__en__sv", &defs),
+            format!("{}@sv", name_en.id.as_uuid())
+        );
+        assert_eq!(
+            stored_field_as_path(
+                &format!("{}__min", attribute_index_field(size.id, None)),
+                &defs
+            ),
+            format!("{}.min", size.id.as_uuid())
+        );
+        assert_eq!(
+            stored_field_as_path(
+                &format!("{}__en", attribute_index_field(name.id, None)),
+                &defs
+            ),
+            format!("{}@en", name.id.as_uuid())
+        );
+        assert_eq!(stored_field_as_path("retired_attr", &defs), "retired_attr");
     }
 
     #[test]

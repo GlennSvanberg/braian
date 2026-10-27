@@ -146,9 +146,19 @@ BEGIN
     THEN
         RETURN field;
     END IF;
+    -- A key is resolved whole before any suffix is split off. `size__min` and
+    -- `name__en` are attribute keys, not the min part or the English value.
+    attribute_id := braian_attr_id(defs, field);
+    IF attribute_id IS NOT NULL THEN
+        RETURN attribute_id;
+    END IF;
     work := field;
     IF left(work, 2) = 'a_' THEN
         work := substring(work from 3);
+        attribute_id := braian_attr_id(defs, work);
+        IF attribute_id IS NOT NULL THEN
+            RETURN attribute_id;
+        END IF;
     END IF;
     LOOP
         EXIT WHEN position('__' in work) = 0;
@@ -157,7 +167,7 @@ BEGIN
             IF part = '' THEN
                 part := suffix;
             END IF;
-        ELSIF suffix ~ '^[A-Za-z0-9_]{1,16}$' AND suffix NOT IN ('unit', 'min', 'max') THEN
+        ELSIF suffix ~ '^[A-Za-z0-9_]{1,16}$' THEN
             IF language = '' THEN
                 language := replace(suffix, '_', '-');
             END IF;
@@ -165,6 +175,9 @@ BEGIN
             EXIT;
         END IF;
         work := left(work, length(work) - length(suffix) - 2);
+        -- `name__en__sv` keeps the key `name__en` and the language `sv`.
+        attribute_id := braian_attr_id(defs, work);
+        EXIT WHEN attribute_id IS NOT NULL;
     END LOOP;
     IF position('@' in work) > 0 THEN
         language := split_part(work, '@', 2);
