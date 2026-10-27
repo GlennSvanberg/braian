@@ -54,10 +54,9 @@ test('structure tree proposes group changes and assortments are saved queries', 
   await expect(list.getByTestId('assortment-row').filter({ hasText: 'Cheese' })).toBeVisible()
   await expect(list.getByTestId('assortment-row').filter({ hasText: 'Organic' })).toHaveCount(0)
 
-  await page.keyboard.press('Control+k')
-  await page.getByTestId('palette-input').fill('Articles view')
-  await page.getByTestId('palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' }).first().click()
-  await expect(page.getByTestId('palette')).toHaveCount(0)
+  const articlesTab = page.locator('.tabs').getByRole('button', { name: 'Articles', exact: true })
+  await articlesTab.click()
+  await expect(articlesTab).toHaveClass(/active/)
   await page.locator('.pane-tab', { hasText: 'Selections' }).click()
   const articles = page.getByTestId('assortment-list')
   await expect(articles.getByTestId('assortment-row').filter({ hasText: 'Cheese' })).toBeVisible()
