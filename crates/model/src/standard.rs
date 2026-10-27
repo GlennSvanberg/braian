@@ -56,6 +56,22 @@ pub fn is_standard_attribute(id: AttributeId) -> bool {
         || id == ids.updated_by
 }
 
+/// A standard attribute that already carries its canonical key.
+///
+/// The fixed ids are also used by catalogs that have not been upgraded yet.
+/// Those rows keep their own keys, such as `sku`, until the upgrade renames them.
+pub fn is_locked_standard(defs: &DefinitionSet, id: AttributeId) -> bool {
+    let Some(attribute) = defs.attributes.iter().find(|item| item.id == id) else {
+        return false;
+    };
+    let ids = standard_ids();
+    (id == ids.number && attribute.key == "number")
+        || (id == ids.name && attribute.key == "name")
+        || (id == ids.created_at && attribute.key == "created_at")
+        || (id == ids.updated_at && attribute.key == "updated_at")
+        || (id == ids.updated_by && attribute.key == "updated_by")
+}
+
 fn id(text: &str) -> AttributeId {
     AttributeId::from_uuid(Uuid::parse_str(text).expect("standard attribute id"))
 }

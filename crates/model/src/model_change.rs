@@ -1167,7 +1167,7 @@ fn rename_entity(
     match kind {
         crate::refs::RefKind::Attribute => {
             let id = crate::refs::attribute_id(defs, token)?;
-            if crate::standard::is_standard_attribute(id) {
+            if crate::standard::is_locked_standard(defs, id) {
                 return Err(format!("attribute {token} is a standard attribute").into());
             }
             let attribute = defs
@@ -1492,11 +1492,11 @@ fn link_attribute(
     if type_key.is_none() && (structure_key.is_none() || group_key.is_none()) {
         return Err("name a type, or a structure and a group".into());
     }
+    if !attach && crate::standard::is_locked_standard(defs, attribute_id) && type_key.is_some() {
+        return Err(format!("attribute {attribute} is a standard attribute"));
+    }
     if let Some(type_key) = type_key {
         let object_type = type_mut(defs, type_key)?;
-        if !attach && crate::standard::is_standard_attribute(attribute_id) {
-            return Err(format!("attribute {attribute} is a standard attribute"));
-        }
         if !attach && object_type.key_attribute == attribute_id {
             return Err(format!(
                 "attribute {attribute} is the key of type {}",
@@ -1615,7 +1615,7 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
         .attributes
         .iter()
         .find(|item| eq_key(&item.key, key))
-        .map(|item| crate::standard::is_standard_attribute(item.id))
+        .map(|item| crate::standard::is_locked_standard(defs, item.id))
         .unwrap_or(false);
     if locked
         && (next_kind.is_some()
