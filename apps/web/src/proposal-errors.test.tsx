@@ -89,4 +89,26 @@ describe('proposal mutation errors', () => {
     await waitFor(() => expect(calls('/v1/proposals')).toBeGreaterThan(1))
     expect(calls('/v1/proposals/p1')).toBeGreaterThan(1)
   })
+
+  it('disables discard while accept is pending, and save while discard is pending', async () => {
+    let finishAccept: (error: Error) => void = () => undefined
+    api.mockImplementation((path: string) => {
+      const url = String(path)
+      if (url === '/v1/proposals') return Promise.resolve({ proposals: [proposal] })
+      if (url === '/v1/proposals/p1') return Promise.resolve(proposal)
+      if (url === '/v1/definitions') return Promise.resolve({ languages: ['en'], types: [], attributes: [], structures: [] })
+      if (url.endsWith('/accept')) return new Promise((_, reject) => { finishAccept = reject })
+      if (url.endsWith('/discard')) return new Promise(() => undefined)
+      return Promise.resolve({})
+    })
+    const push = vi.fn()
+    render(<Host push={push} />)
+    await screen.findAllByText('Proposal')
+    fireEvent.click(screen.getByTestId('save-all'))
+    await waitFor(() => expect(screen.getByTestId('discard-all')).toBeDisabled())
+    expect(screen.getByTestId('save-all')).toBeDisabled()
+    finishAccept(new Error('this proposal is no longer pending'))
+    await waitFor(() => expect(screen.getByTestId('discard-all')).not.toBeDisabled())
+  })
+
 })

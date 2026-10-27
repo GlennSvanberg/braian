@@ -2053,8 +2053,8 @@ export function ProposalView({ session }: { session: PanesSession }) {
         <strong>{String(proposal.data?.title ?? '')}</strong>
         {proposal.data ? <span className="chip" data-testid="source-badge">{sourceLabel(proposal.data)}</span> : null}
         {proposal.data?.status ? <MetaChip tone={statusTone(String(proposal.data.status))}>{String(proposal.data.status)}</MetaChip> : null}
-        <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending} onClick={saveAll}>{copy.saveAll}</button>
-        <button type="button" data-testid="discard-all" onClick={() => discard.mutate()}>{copy.discardAll}</button>
+        <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending || discard.isPending} onClick={saveAll}>{copy.saveAll}</button>
+        <button type="button" data-testid="discard-all" disabled={accept.isPending || discard.isPending} onClick={() => discard.mutate()}>{copy.discardAll}</button>
         {error ? <p className="error" data-testid="proposal-error">{error}</p> : null}
         {consequence.length > 0 && session.proposalId ? (
           <button type="button" onClick={() => publishProposal(session.proposalId ?? '')}>{copy.reviewChange}</button>
