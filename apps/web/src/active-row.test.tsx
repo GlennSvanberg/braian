@@ -350,6 +350,34 @@ describe('hide column', () => {
     await waitFor(() => expect(headers()).toEqual(['col-key', 'col-type', 'col-status', 'col-version']))
   })
 
+  it('hides the column from a right-clicked header', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    fireEvent.contextMenu(screen.getByTestId('col-name'))
+    const menu = await screen.findByTestId('context-menu')
+    expect(menu.getAttribute('aria-label')).toBe('Name')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Hide column' }))
+
+    await waitFor(() => expect(headers()).toEqual(['col-key', 'col-type', 'col-status', 'col-version']))
+  })
+
+  it('hides the right-clicked header column after the columns were moved', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+    act(() => {
+      dispatchUi('ui.move_column', { from: 'version', to: 'key' })
+    })
+    await waitFor(() => expect(headers()).toEqual(['col-version', 'col-key', 'col-name', 'col-type', 'col-status']))
+
+    fireEvent.contextMenu(screen.getByTestId('col-name'))
+    const menu = await screen.findByTestId('context-menu')
+    expect(menu.getAttribute('aria-label')).toBe('Name')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Hide column' }))
+
+    await waitFor(() => expect(headers()).toEqual(['col-version', 'col-key', 'col-type', 'col-status']))
+  })
+
   it('hides the right-clicked column after the columns were moved', async () => {
     render(<TableHarness />)
     await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
@@ -472,6 +500,30 @@ describe('keyboard context menu', () => {
     await waitFor(() => expect(headerIds()).toEqual(['col-name', 'col-type', 'col-status', 'col-version']))
     expect(screen.queryByTestId('context-menu')).toBeNull()
     await waitFor(() => expect(document.activeElement).toBe(grid()))
+  })
+
+  it('opens with Shift+F10 for the focused header column, not the active cell', async () => {
+    render(<TableHarness />)
+    await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
+
+    fireEvent.click(screen.getByText('Two'))
+    await waitFor(() => expect(screen.getByTestId('detail').textContent).toBe('id-2'))
+    expect(document.querySelector('.row.selected .active-cell')?.getAttribute('data-column')).toBe('name')
+
+    const header = screen.getByTestId('col-type')
+    fireEvent.click(header)
+    expect(document.querySelector('.row.selected .active-cell')?.getAttribute('data-column')).toBe('type')
+
+    fireEvent.click(screen.getByText('Two'))
+    expect(document.querySelector('.row.selected .active-cell')?.getAttribute('data-column')).toBe('name')
+
+    const label = within(header).getByRole('button', { name: 'Type' })
+    label.focus()
+    fireEvent.keyDown(label, { key: 'F10', shiftKey: true })
+
+    const menu = await screen.findByTestId('context-menu')
+    expect(menu.getAttribute('aria-label')).toBe('Type')
+    expect(within(menu).getByRole('menuitem', { name: 'Hide column' })).toBeTruthy()
   })
 })
 

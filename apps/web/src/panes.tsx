@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MoreHorizontal, Search } from 'lucide-react'
@@ -505,8 +505,34 @@ export function ObjectTable({
     setMenu({ x, y, id: row.id, column })
   }
 
-  // Shift+F10 or the ContextMenu key: the same menu, placed under the active cell.
-  const openMenuFromKeyboard = () => {
+  const onHeaderMenu = (column: string, event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setActiveColumn(column)
+    const row = active < 0 ? undefined : rowAt(active)
+    const box = event.currentTarget.getBoundingClientRect()
+    // A pointer right-click carries button 2; the ContextMenu key opens this event without one.
+    const byPointer = event.button === 2
+    setMenu({
+      x: byPointer ? event.clientX : box.left,
+      y: byPointer ? event.clientY : box.bottom,
+      id: row?.id ?? '',
+      column,
+    })
+  }
+
+  // Shift+F10 or the ContextMenu key: the same menu, placed under the active cell or the focused header.
+  const openMenuFromKeyboard = (target?: EventTarget | null) => {
+    const focused = target instanceof Element ? target : document.activeElement
+    const header = focused instanceof Element ? focused.closest('[data-testid^="col-"]') : null
+    const headerColumn = header?.getAttribute('data-column') ?? ''
+    if (header && headerColumn) {
+      const row = active < 0 ? undefined : rowAt(active)
+      const box = header.getBoundingClientRect()
+      setActiveColumn(headerColumn)
+      setMenu({ x: box.left, y: box.bottom, id: row?.id ?? '', column: headerColumn })
+      return
+    }
     const index = active < 0 ? 0 : active
     const row = rowAt(index)
     if (!row) return
@@ -560,7 +586,7 @@ export function ObjectTable({
     if (event.ctrlKey || event.altKey || event.metaKey) return
     if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
       event.preventDefault()
-      openMenuFromKeyboard()
+      openMenuFromKeyboard(event.target)
       return
     }
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -709,7 +735,7 @@ export function ObjectTable({
           // The ContextMenu key fires this on the grid itself; a row handles a pointer right-click.
           if (event.target !== event.currentTarget) return
           event.preventDefault()
-          if (!menu) openMenuFromKeyboard()
+          if (!menu) openMenuFromKeyboard(event.target)
         }}
       >
         <div className="head">
@@ -718,7 +744,15 @@ export function ObjectTable({
             if (!column) return null
             const width = sizes[id] ?? column.size
             return (
-              <div key={id} className="cell" style={{ width }} data-testid={`col-${id}`}>
+              <div
+                key={id}
+                className="cell"
+                style={{ width }}
+                data-testid={`col-${id}`}
+                data-column={id}
+                onClick={() => setActiveColumn(id)}
+                onContextMenu={(event) => onHeaderMenu(id, event)}
+              >
                 <button
                   className="icon-btn"
                   draggable
@@ -844,26 +878,30 @@ export function ObjectTable({
           aria-label={menu.column ? columnHeader(menu.column) : undefined}
           onKeyDown={onMenuKey}
         >
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
-          {((defs.data?.types as Json[]) ?? []).filter((item) => item.kind === 'link').map((item) => (
-            <button
-              key={String(item.key)}
-              type="button"
-              role="menuitem"
-              tabIndex={-1}
-              onClick={() => {
-                session.setObjectId(menu.id)
-                window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: String(item.key) } }))
-                setMenu(null)
-              }}
-            >
-              {copy.linkTo} {textValue((item.link as Json | undefined)?.to_label && ((item.link as Json).to_label as Json).labels, uiLanguage) || String(item.key)}
-            </button>
-          ))}
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setMoving(menu.id); setMenu(null) }}>{copy.moveToGroup}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
+          {menu.id ? (
+            <>
+              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
+              {((defs.data?.types as Json[]) ?? []).filter((item) => item.kind === 'link').map((item) => (
+                <button
+                  key={String(item.key)}
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  onClick={() => {
+                    session.setObjectId(menu.id)
+                    window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: String(item.key) } }))
+                    setMenu(null)
+                  }}
+                >
+                  {copy.linkTo} {textValue((item.link as Json | undefined)?.to_label && ((item.link as Json).to_label as Json).labels, uiLanguage) || String(item.key)}
+                </button>
+              ))}
+              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
+              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
+              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setMoving(menu.id); setMenu(null) }}>{copy.moveToGroup}</button>
+              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
+            </>
+          ) : null}
           {menu.column ? (
             <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.hide_column', { column: menu.column }); setMenu(null) }}>{copy.hideColumn}</button>
           ) : null}
