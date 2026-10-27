@@ -1073,19 +1073,52 @@ async fn a_full_bulk_pool_does_not_block_the_indexer_lane() {
         0,
         "the bulk pool opened indexer connections"
     );
-    let started = std::time::Instant::now();
-    let live = indexer.hold_connection().await.unwrap();
+    // The spawned checkout uses the bulk pool, so it stays parked until one of
+    // `held` is dropped. `send` and that checkout run in the same poll, and
+    // deadpool waits with no timeout, so the signal means the pool is full and
+    // a shared lane is blocked. The indexer lane has its own pool and must
+    // finish while that checkout is still parked. Five seconds only stops a
+    // hang if the lanes are no longer isolated.
+    let (queued_tx, queued_rx) = tokio::sync::oneshot::channel();
+    let bulk_lane = bulk.clone();
+    let mut bulk_checkout = tokio::spawn(async move {
+        let _ = queued_tx.send(());
+        bulk_lane.hold_connection().await
+    });
+    queued_rx.await.unwrap();
+    let live = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::select! {
+            biased;
+            result = &mut bulk_checkout => {
+                let _ = result;
+                panic!(
+                    "a checkout on the bulk lane finished while every bulk connection was held"
+                );
+            }
+            result = indexer.hold_connection() => result,
+        }
+    })
+    .await
+    .expect("the indexer lane waited on a full bulk pool")
+    .unwrap();
     assert!(
-        started.elapsed() < std::time::Duration::from_millis(200),
-        "the indexer lane waited on a full bulk pool"
+        !bulk_checkout.is_finished(),
+        "a checkout on the bulk lane finished while every bulk connection was held"
     );
     assert_eq!(indexer.pool_size(), 1);
     assert_eq!(bulk.pool_size(), bulk.pool_max());
+    assert_eq!(bulk.pool_available(), 0);
     assert_eq!(
         db.store().pool_size(),
         0,
         "the indexer lane took an API connection"
     );
+    drop(held.pop().unwrap());
+    tokio::time::timeout(std::time::Duration::from_secs(5), bulk_checkout)
+        .await
+        .expect("the bulk lane did not proceed after a connection was released")
+        .unwrap()
+        .unwrap();
     drop(live);
     drop(held);
 }
