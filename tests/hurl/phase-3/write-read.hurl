@@ -283,7 +283,7 @@ Authorization: Bearer {{agent}}
 If-Match: "1"
 HTTP 403
 [Asserts]
-jsonpath "$.code" == "needs_approval"
+jsonpath "$.code" == "agent_cannot_delete"
 
 DELETE {{host}}/v1/objects/{{agent_object}}
 Authorization: Bearer {{token}}
