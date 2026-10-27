@@ -2694,10 +2694,18 @@ mod tests {
         for entry in std::fs::read_dir(&source).unwrap() {
             let entry = entry.unwrap();
             let file = entry.file_name().into_string().unwrap();
-            if file.starts_with("V24") || !file.ends_with(".sql") {
+            // V23 is the last shape this fixture inserts. Later files, including
+            // the claim lease, have to stay out or they apply ahead of V24.
+            let Some(version) = file
+                .strip_prefix('V')
+                .and_then(|rest| rest.split_once('_'))
+                .and_then(|(number, _)| number.parse::<u32>().ok())
+            else {
                 continue;
+            };
+            if version <= 23 {
+                std::fs::copy(entry.path(), dir.join(file)).unwrap();
             }
-            std::fs::copy(entry.path(), dir.join(file)).unwrap();
         }
         let migrations = refinery::load_sql_migrations(&dir).unwrap();
         refinery::Runner::new(&migrations)
