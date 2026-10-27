@@ -364,6 +364,71 @@ fn subtree_ids(groups: &[Group], root: GroupId) -> Vec<GroupId> {
     out
 }
 
+/// Checks a posted structure the same way creating its key and groups would.
+///
+/// A key with a space or `:` is `invalid_key`. A repeated group key is
+/// `duplicate_key`. A parent that is not in the document is `unknown_group`.
+/// A parent loop is `cycle`.
+pub fn check_posted_structure(structure: &Structure) -> Result<(), StructureError> {
+    check_key(&structure.key)?;
+    let mut keys = HashSet::new();
+    let ids: HashSet<GroupId> = structure.groups.iter().map(|group| group.id).collect();
+    for group in &structure.groups {
+        check_key(&group.key)?;
+        if !keys.insert(group.key.to_ascii_lowercase()) {
+            return Err(StructureError::new(
+                StructureErrorCode::DuplicateKey,
+                format!("group {} already exists in {}", group.key, structure.key),
+            ));
+        }
+        if let Some(parent) = group.parent
+            && !ids.contains(&parent)
+        {
+            return Err(StructureError::new(
+                StructureErrorCode::UnknownGroup,
+                format!("unknown group {parent}"),
+            ));
+        }
+    }
+    if group_cycle(&structure.groups) {
+        return Err(StructureError::new(
+            StructureErrorCode::Cycle,
+            format!("groups in {} contain a cycle", structure.key),
+        ));
+    }
+    for class in &structure.classes {
+        check_key(&class.key)?;
+        if !ids.contains(&class.group) {
+            return Err(StructureError::new(
+                StructureErrorCode::UnknownGroup,
+                format!("unknown group {}", class.group),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn group_cycle(groups: &[Group]) -> bool {
+    let parent: BTreeMap<GroupId, GroupId> = groups
+        .iter()
+        .filter_map(|group| group.parent.map(|parent| (group.id, parent)))
+        .collect();
+    for group in groups {
+        let mut seen = HashSet::new();
+        let mut current = group.id;
+        loop {
+            if !seen.insert(current) {
+                return true;
+            }
+            match parent.get(&current) {
+                Some(next) => current = *next,
+                None => break,
+            }
+        }
+    }
+    false
+}
+
 fn check_key(key: &str) -> Result<(), StructureError> {
     if key.trim().is_empty() {
         return Err(StructureError::new(

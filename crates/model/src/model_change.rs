@@ -11,7 +11,7 @@ use rust_decimal::Decimal;
 
 use crate::definition::{
     Attribute, AttributeKind, Class, DefinitionSet, Group, ObjectType, Structure, TextForm, Unit,
-    ValueOption,
+    UnitFamily, ValueOption,
 };
 use crate::id::{AttributeId, ClassId, GroupId, StructureId, UnitFamilyId};
 use crate::language::LanguageTag;
@@ -352,6 +352,31 @@ pub enum ModelChange {
         #[serde(alias = "id")]
         type_key: String,
         structures: Vec<String>,
+    },
+    /// Replaces one attribute document. A new id inserts it. The id is kept.
+    ///
+    /// Rule changes use the same checks as [`ModelChange::UpdateAttribute`] and
+    /// [`ModelChange::RenameAttributeKey`].
+    UpsertAttribute {
+        attribute: Box<Attribute>,
+    },
+    /// Replaces one type document. A new id inserts it. The id is kept.
+    ///
+    /// A new key uses the same checks as [`ModelChange::CreateType`].
+    UpsertType {
+        object_type: Box<ObjectType>,
+    },
+    /// Replaces one structure document, including its groups. The id is kept.
+    ///
+    /// Keys, parents and cycles use the same checks as creating a structure and its groups.
+    UpsertStructure {
+        structure: Box<Structure>,
+    },
+    /// Replaces one unit family document. The id is kept.
+    ///
+    /// The base unit and unit rows use the same checks as [`ModelChange::CreateUnitFamily`].
+    UpsertUnitFamily {
+        family: Box<UnitFamily>,
     },
 }
 
@@ -1266,6 +1291,10 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             type_key,
             structures,
         } => set_structures(defs, type_key, structures).map_err(ApplyError::from),
+        ModelChange::UpsertAttribute { attribute } => upsert_posted_attribute(defs, attribute),
+        ModelChange::UpsertType { object_type } => upsert_posted_type(defs, object_type),
+        ModelChange::UpsertStructure { structure } => upsert_posted_structure(defs, structure),
+        ModelChange::UpsertUnitFamily { family } => upsert_posted_family(defs, family),
         ModelChange::UpdateAttribute {
             key,
             label,
@@ -1502,7 +1531,7 @@ fn rename_entity(
         crate::refs::RefKind::Attribute => {
             let id = crate::refs::attribute_id(defs, token)?;
             if crate::standard::is_locked_standard(defs, id) {
-                return Err(format!("attribute {token} is a standard attribute").into());
+                return Err(locked_attribute(token).into());
             }
             let attribute = defs
                 .attributes
@@ -1977,7 +2006,7 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
             || multiple.is_some()
             || bounds_set)
     {
-        return Err(format!("attribute {key} is a standard attribute"));
+        return Err(locked_attribute(key));
     }
     let attribute = defs
         .attributes
@@ -2430,9 +2459,7 @@ fn create_unit_family(
         return Ok(());
     }
     let base_unit = base_unit.trim();
-    if base_unit.is_empty() {
-        return Err("base unit is empty".into());
-    }
+    reject_empty_base(base_unit)?;
     defs.unit_families.push(crate::definition::UnitFamily {
         id: UnitFamilyId::from_uuid(stable_uuid(&format!("unit_family:{key}"))),
         key: key.to_owned(),
@@ -2486,6 +2513,166 @@ fn update_unit_family(
             },
         );
     }
+    Ok(())
+}
+
+fn locked_attribute(key: &str) -> String {
+    format!("attribute {key} is a standard attribute")
+}
+
+fn reject_empty_base(base_unit: &str) -> Result<(), ApplyError> {
+    if base_unit.trim().is_empty() {
+        Err("base unit is empty".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn duplicate_key_message(kind: crate::refs::RefKind, key: &str) -> String {
+    format!("{} key {key} already exists", kind_word(kind))
+}
+
+fn rules_changed(before: &Attribute, after: &Attribute) -> bool {
+    before.required != after.required
+        || before.multiple != after.multiple
+        || before.language_dependent != after.language_dependent
+        || before.index != after.index
+        || before.kind != after.kind
+}
+
+fn upsert_posted_attribute(defs: &mut DefinitionSet, posted: &Attribute) -> Result<(), ApplyError> {
+    if let Some(existing) = defs
+        .attributes
+        .iter()
+        .find(|item| item.id == posted.id)
+        .cloned()
+    {
+        if !eq_key(&existing.key, &posted.key) {
+            rename_entity(
+                defs,
+                crate::refs::RefKind::Attribute,
+                &existing.key,
+                &posted.key,
+                None,
+            )?;
+        }
+        if rules_changed(&existing, posted)
+            && crate::standard::is_locked_standard(defs, existing.id)
+        {
+            return Err(locked_attribute(&existing.key).into());
+        }
+    } else if defs
+        .attributes
+        .iter()
+        .any(|item| eq_key(&item.key, &posted.key))
+    {
+        return Err(duplicate_key_message(crate::refs::RefKind::Attribute, &posted.key).into());
+    }
+    crate::edit::upsert_attribute(defs, posted.clone());
+    Ok(())
+}
+
+fn upsert_posted_type(defs: &mut DefinitionSet, posted: &ObjectType) -> Result<(), ApplyError> {
+    if let Some(existing) = defs.types.iter().find(|item| item.id == posted.id).cloned() {
+        if !eq_key(&existing.key, &posted.key) {
+            rename_entity(
+                defs,
+                crate::refs::RefKind::Type,
+                &existing.key,
+                &posted.key,
+                None,
+            )?;
+        }
+    } else {
+        crate::refs::check_new_key(&posted.key)?;
+        if defs.types.iter().any(|item| eq_key(&item.key, &posted.key)) {
+            return Err(duplicate_key_message(crate::refs::RefKind::Type, &posted.key).into());
+        }
+    }
+    if posted.is_link() {
+        let spec = posted
+            .link
+            .as_ref()
+            .ok_or_else(|| format!("link type {} has no ends", posted.key))?;
+        if spec.from_label.key.eq_ignore_ascii_case(&spec.to_label.key) {
+            return Err("the two side keys have to differ".into());
+        }
+        side_key(&spec.from_label.key)?;
+        side_key(&spec.to_label.key)?;
+        crate::link::check_ends(defs, &spec.from_types, "from")?;
+        crate::link::check_ends(defs, &spec.to_types, "to")?;
+    }
+    crate::edit::upsert_type(defs, posted.clone());
+    Ok(())
+}
+
+fn upsert_posted_structure(defs: &mut DefinitionSet, posted: &Structure) -> Result<(), ApplyError> {
+    crate::structure::check_posted_structure(posted)?;
+    if let Some(existing) = defs
+        .structures
+        .iter()
+        .find(|item| item.id == posted.id)
+        .cloned()
+    {
+        if !eq_key(&existing.key, &posted.key) {
+            rename_entity(
+                defs,
+                crate::refs::RefKind::Structure,
+                &existing.key,
+                &posted.key,
+                None,
+            )?;
+        }
+    } else if defs
+        .structures
+        .iter()
+        .any(|item| eq_key(&item.key, &posted.key))
+    {
+        return Err(duplicate_key_message(crate::refs::RefKind::Structure, &posted.key).into());
+    }
+    crate::edit::upsert_structure(defs, posted.clone());
+    Ok(())
+}
+
+fn upsert_posted_family(defs: &mut DefinitionSet, posted: &UnitFamily) -> Result<(), ApplyError> {
+    if let Some(existing) = defs
+        .unit_families
+        .iter()
+        .find(|item| item.id == posted.id)
+        .cloned()
+    {
+        if !eq_key(&existing.key, &posted.key) {
+            rename_entity(
+                defs,
+                crate::refs::RefKind::UnitFamily,
+                &existing.key,
+                &posted.key,
+                None,
+            )?;
+        }
+    } else {
+        crate::refs::check_new_key(&posted.key)?;
+        if defs
+            .unit_families
+            .iter()
+            .any(|item| eq_key(&item.key, &posted.key))
+        {
+            return Err(
+                duplicate_key_message(crate::refs::RefKind::UnitFamily, &posted.key).into(),
+            );
+        }
+    }
+    reject_empty_base(&posted.base_unit)?;
+    let specs = posted
+        .units
+        .iter()
+        .map(|unit| UnitSpec {
+            code: unit.code.clone(),
+            factor: unit.factor.to_string(),
+        })
+        .collect::<Vec<_>>();
+    unit_specs(posted.base_unit.trim(), &specs)?;
+    crate::edit::upsert_unit_family(defs, posted.clone());
     Ok(())
 }
 
@@ -3281,5 +3468,131 @@ mod tests {
         let entity = defs.types.iter().find(|item| item.key == "item").unwrap();
         assert!(!entity.is_link());
         assert_eq!(entity.attributes.len(), 1);
+    }
+
+    #[test]
+    fn a_posted_document_fails_the_same_check_as_the_step() {
+        let mut defs = base();
+        crate::standard::install_standard_attributes(&mut defs);
+        let update: ModelChange = serde_json::from_value(serde_json::json!({
+            "op": "update_attribute",
+            "key": "name",
+            "kind": "number"
+        }))
+        .unwrap();
+        let update_error = preview(&defs, std::slice::from_ref(&update))
+            .unwrap_err()
+            .to_string();
+        let mut name = defs
+            .attributes
+            .iter()
+            .find(|item| item.key == "name")
+            .unwrap()
+            .clone();
+        name.kind = AttributeKind::Number {
+            unit_family: None,
+            min: None,
+            max: None,
+            integer: false,
+        };
+        let upsert_error = preview(
+            &defs,
+            &[ModelChange::UpsertAttribute {
+                attribute: Box::new(name),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(update_error, upsert_error);
+
+        let key = "018f0000-0000-7000-8000-000000000999";
+        let create_error = preview(
+            &defs,
+            &[ModelChange::CreateType {
+                key: key.into(),
+                label: "Nope".into(),
+                plural: None,
+                structures: None,
+                defaults: None,
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        let posted = ObjectType {
+            id: TypeId::from_uuid(Uuid::from_u128(99)),
+            key: key.into(),
+            labels: BTreeMap::new(),
+            singular: BTreeMap::new(),
+            plural: BTreeMap::new(),
+            key_attribute: defs.attributes[0].id,
+            attributes: vec![],
+            structures: None,
+            defaults: BTreeMap::new(),
+            kind: Default::default(),
+            link: None,
+        };
+        let upsert_type = preview(
+            &defs,
+            &[ModelChange::UpsertType {
+                object_type: Box::new(posted),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(create_error, upsert_type);
+
+        let structure_error = preview(
+            &defs,
+            &[ModelChange::CreateStructure {
+                key: "bad key".into(),
+                label: "Bad".into(),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        let posted_structure = Structure {
+            id: StructureId::from_uuid(Uuid::from_u128(50)),
+            key: "bad key".into(),
+            labels: BTreeMap::new(),
+            groups: Vec::new(),
+            classes: Vec::new(),
+        };
+        let upsert_structure = preview(
+            &defs,
+            &[ModelChange::UpsertStructure {
+                structure: Box::new(posted_structure),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(structure_error, upsert_structure);
+
+        let family_error = preview(
+            &defs,
+            &[ModelChange::CreateUnitFamily {
+                key: "portion".into(),
+                dimension: None,
+                base_unit: String::new(),
+                units: Vec::new(),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        let posted_family = UnitFamily {
+            id: UnitFamilyId::from_uuid(Uuid::from_u128(51)),
+            key: "portion".into(),
+            dimension: None,
+            base_unit: String::new(),
+            units: Vec::new(),
+        };
+        let upsert_family = preview(
+            &defs,
+            &[ModelChange::UpsertUnitFamily {
+                family: Box::new(posted_family),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(family_error, upsert_family);
     }
 }

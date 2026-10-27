@@ -4,9 +4,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use braian_model::{
-    Attribute, AttributeId, DefinitionSet, ObjectType, Structure, StructureId, TypeId, UnitFamily,
-    UnitFamilyId, Uuid, set_languages, upsert_attribute, upsert_structure, upsert_type,
-    upsert_unit_family,
+    Attribute, AttributeId, DefinitionSet, ModelChange, ObjectType, Structure, StructureId, TypeId,
+    UnitFamily, UnitFamilyId, Uuid, set_languages,
 };
 use braian_rules::CompiledModel;
 use braian_store::{Actor, Error, WriteReceipt};
@@ -14,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::auth::{Auth, Role};
+use crate::auth::{Auth, Identity, Role};
 use crate::headers::{etag, if_match};
 use crate::keys::DryQuery;
 use crate::platform::require;
@@ -130,6 +129,8 @@ pub async fn put_definitions(
         }))
         .into_response());
     }
+    // A whole definition file is one snapshot, not one model step. Attribute,
+    // type, structure and unit-family upserts go through `commit_model_change`.
     defs.model_revision = current + 1;
     CompiledModel::compile(&defs).map_err(Problem::definitions)?;
     let receipt = match state.store.put_definitions(&identity.actor, &defs).await {
@@ -151,9 +152,11 @@ pub async fn put_definitions(
     post,
     path = "/v1/attributes",
     tag = "definitions",
+    params(("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")),
     request_body(content = braian_model::Attribute, description = "Id is optional"),
     responses(
-        (status = 200, description = "Stored attribute", body = braian_model::Attribute),
+        (status = 200, description = "Stored attribute, or a dry run", body = braian_model::Attribute),
+        (status = 400, description = "The model step rejected the attribute", body = crate::problem::Problem),
         (status = 422, description = "The set does not compile", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -161,16 +164,25 @@ pub async fn put_definitions(
 pub async fn post_attribute(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<Attribute>, Problem> {
+) -> Result<Response, Problem> {
     ensure_id(&mut body);
     let attribute: Attribute =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_attribute(defs, attribute.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertAttribute {
+            attribute: Box::new(attribute.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
     let stored = defs
         .attributes
         .into_iter()
@@ -182,7 +194,7 @@ pub async fn post_attribute(
                 "attribute missing",
             )
         })?;
-    Ok(Json(stored))
+    Ok(Json(stored).into_response())
 }
 
 #[utoipa::path(
@@ -213,10 +225,14 @@ pub async fn get_attribute(
     put,
     path = "/v1/attributes/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Attribute key or id")),
+    params(
+        ("id" = String, Path, description = "Attribute key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     request_body(content = braian_model::Attribute),
     responses(
-        (status = 200, description = "Stored attribute", body = braian_model::Attribute),
+        (status = 200, description = "Stored attribute, or a dry run", body = braian_model::Attribute),
+        (status = 400, description = "The model step rejected the attribute", body = crate::problem::Problem),
         (status = 422, description = "The set does not compile", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -225,8 +241,9 @@ pub async fn put_attribute(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<Attribute>, Problem> {
+) -> Result<Response, Problem> {
     let defs = state.store.definition_set().await.map_err(store_status)?;
     let existing = defs
         .attributes
@@ -239,11 +256,19 @@ pub async fn put_attribute(
     body["id"] = serde_json::json!(attribute_id);
     let attribute: Attribute =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_attribute(defs, attribute.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertAttribute {
+            attribute: Box::new(attribute.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
     Ok(Json(
         defs.attributes
             .into_iter()
@@ -255,7 +280,8 @@ pub async fn put_attribute(
                     "attribute missing",
                 )
             })?,
-    ))
+    )
+    .into_response())
 }
 
 #[utoipa::path(
@@ -293,24 +319,34 @@ pub async fn delete_attribute_route(
     post,
     path = "/v1/types",
     tag = "definitions",
+    params(("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")),
     request_body(content = braian_model::ObjectType, description = "Id is optional"),
-    responses((status = 200, description = "Stored type", body = braian_model::ObjectType)),
+    responses((status = 200, description = "Stored type, or a dry run", body = braian_model::ObjectType)),
     security(("bearer" = []))
 )]
 pub async fn post_type(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<ObjectType>, Problem> {
+) -> Result<Response, Problem> {
     ensure_id(&mut body);
     let object_type: ObjectType =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_type(defs, object_type.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertType {
+            object_type: Box::new(object_type.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
-    Ok(Json(find_type(defs, object_type.id)?))
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
+    Ok(Json(find_type(defs, object_type.id)?).into_response())
 }
 
 #[utoipa::path(
@@ -338,17 +374,21 @@ pub async fn get_type(
     put,
     path = "/v1/types/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Type key or id")),
+    params(
+        ("id" = String, Path, description = "Type key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     request_body(content = braian_model::ObjectType),
-    responses((status = 200, description = "Stored type", body = braian_model::ObjectType)),
+    responses((status = 200, description = "Stored type, or a dry run", body = braian_model::ObjectType)),
     security(("bearer" = []))
 )]
 pub async fn put_type(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<ObjectType>, Problem> {
+) -> Result<Response, Problem> {
     let defs = state.store.definition_set().await.map_err(store_status)?;
     let type_id = defs
         .types
@@ -360,12 +400,20 @@ pub async fn put_type(
     body["id"] = serde_json::json!(type_id);
     let object_type: ObjectType =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_type(defs, object_type.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertType {
+            object_type: Box::new(object_type.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
-    Ok(Json(find_type(defs, object_type.id)?))
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
+    Ok(Json(find_type(defs, object_type.id)?).into_response())
 }
 
 #[utoipa::path(
@@ -403,24 +451,34 @@ pub async fn delete_type_route(
     post,
     path = "/v1/structures",
     tag = "definitions",
+    params(("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")),
     request_body(content = braian_model::Structure, description = "Id is optional. Groups and classes belong to the structure."),
-    responses((status = 200, description = "Stored structure", body = braian_model::Structure)),
+    responses((status = 200, description = "Stored structure, or a dry run", body = braian_model::Structure)),
     security(("bearer" = []))
 )]
 pub async fn post_structure(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<Structure>, Problem> {
+) -> Result<Response, Problem> {
     ensure_id(&mut body);
     let structure: Structure =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_structure(defs, structure.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertStructure {
+            structure: Box::new(structure.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
-    Ok(Json(find_structure(defs, structure.id)?))
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
+    Ok(Json(find_structure(defs, structure.id)?).into_response())
 }
 
 #[utoipa::path(
@@ -448,17 +506,21 @@ pub async fn get_structure(
     put,
     path = "/v1/structures/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Structure key or id")),
+    params(
+        ("id" = String, Path, description = "Structure key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     request_body(content = braian_model::Structure),
-    responses((status = 200, description = "Stored structure", body = braian_model::Structure)),
+    responses((status = 200, description = "Stored structure, or a dry run", body = braian_model::Structure)),
     security(("bearer" = []))
 )]
 pub async fn put_structure(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<Structure>, Problem> {
+) -> Result<Response, Problem> {
     let defs = state.store.definition_set().await.map_err(store_status)?;
     let structure_id = defs
         .structures
@@ -470,7 +532,9 @@ pub async fn put_structure(
     body["id"] = serde_json::json!(structure_id);
     let structure: Structure =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    if let Some(previous) = defs.structures.iter().find(|item| item.id == structure_id) {
+    if !query.dry_run
+        && let Some(previous) = defs.structures.iter().find(|item| item.id == structure_id)
+    {
         let removed: Vec<_> = previous
             .groups
             .iter()
@@ -479,12 +543,20 @@ pub async fn put_structure(
             .collect();
         crate::structures::reject_removed_groups(&state, &removed).await?;
     }
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_structure(defs, structure.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertStructure {
+            structure: Box::new(structure.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
-    Ok(Json(find_structure(defs, structure.id)?))
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
+    Ok(Json(find_structure(defs, structure.id)?).into_response())
 }
 
 #[utoipa::path(
@@ -522,24 +594,34 @@ pub async fn delete_structure_route(
     post,
     path = "/v1/unit-families",
     tag = "definitions",
+    params(("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")),
     request_body(content = braian_model::UnitFamily, description = "Id is optional"),
-    responses((status = 200, description = "Stored unit family", body = braian_model::UnitFamily)),
+    responses((status = 200, description = "Stored unit family, or a dry run", body = braian_model::UnitFamily)),
     security(("bearer" = []))
 )]
 pub async fn post_unit_family(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<UnitFamily>, Problem> {
+) -> Result<Response, Problem> {
     ensure_id(&mut body);
     let family: UnitFamily =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_unit_family(defs, family.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertUnitFamily {
+            family: Box::new(family.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
-    Ok(Json(find_family(defs, family.id)?))
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
+    Ok(Json(find_family(defs, family.id)?).into_response())
 }
 
 #[utoipa::path(
@@ -567,17 +649,21 @@ pub async fn get_unit_family(
     put,
     path = "/v1/unit-families/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Unit family key or id")),
+    params(
+        ("id" = String, Path, description = "Unit family key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     request_body(content = braian_model::UnitFamily),
-    responses((status = 200, description = "Stored unit family", body = braian_model::UnitFamily)),
+    responses((status = 200, description = "Stored unit family, or a dry run", body = braian_model::UnitFamily)),
     security(("bearer" = []))
 )]
 pub async fn put_unit_family(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
+    Query(query): Query<crate::deletes::DryRun>,
     Json(mut body): Json<Value>,
-) -> Result<Json<UnitFamily>, Problem> {
+) -> Result<Response, Problem> {
     let defs = state.store.definition_set().await.map_err(store_status)?;
     let family_id = defs
         .unit_families
@@ -589,12 +675,20 @@ pub async fn put_unit_family(
     body["id"] = serde_json::json!(family_id);
     let family: UnitFamily =
         serde_json::from_value(body).map_err(|error| bad_body(error.to_string()))?;
-    let (defs, _) = commit(&state, &identity.actor, |defs| {
-        upsert_unit_family(defs, family.clone());
-        Ok(())
-    })
+    let saved = commit_model_change(
+        &state,
+        &identity,
+        ModelChange::UpsertUnitFamily {
+            family: Box::new(family.clone()),
+        },
+        query.dry_run,
+    )
     .await?;
-    Ok(Json(find_family(defs, family.id)?))
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
+    let defs = state.store.definition_set().await.map_err(store_status)?;
+    Ok(Json(find_family(defs, family.id)?).into_response())
 }
 
 #[utoipa::path(
@@ -650,6 +744,29 @@ pub async fn put_languages(
         model_revision: defs.model_revision,
         seq: receipt.last_seq,
     }))
+}
+
+/// One model step, saved by the same function as Review and save.
+///
+/// `dry_run` returns the consequence and writes nothing. An agent can dry-run.
+/// A write still requires a person. Deletes stay on [`crate::deletes::delete_model`].
+pub(crate) async fn commit_model_change(
+    state: &AppState,
+    identity: &Identity,
+    change: ModelChange,
+    dry_run: bool,
+) -> Result<Value, Problem> {
+    if !dry_run {
+        ensure_person(state, &identity.actor).await?;
+    }
+    crate::model_draft::commit_steps(
+        state,
+        &identity.actor,
+        std::slice::from_ref(&change),
+        dry_run,
+        None,
+    )
+    .await
 }
 
 pub(crate) async fn commit(
@@ -889,11 +1006,7 @@ pub async fn put_type_structures(
         .await?;
         return Ok((StatusCode::ACCEPTED, Json(response)).into_response());
     }
-    let (_defs, _receipt) = commit(&state, &identity.actor, |defs| {
-        braian_model::apply_all(defs, std::slice::from_ref(&change))
-            .map_err(|error| Problem::new(StatusCode::BAD_REQUEST, "model", error.to_string()))
-    })
-    .await?;
+    commit_model_change(&state, &identity, change, false).await?;
     if impact
         .lines
         .iter()

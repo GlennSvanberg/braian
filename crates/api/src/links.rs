@@ -1,7 +1,7 @@
 //! Link types and the links between two objects.
 //!
-//! A person writes directly. An agent files a proposal. Deletes are refused
-//! for an agent, including a dry run.
+//! A person saves a link type through the same model step as Review and save.
+//! An agent files a proposal for a link, and cannot save or delete a link type.
 
 use std::collections::BTreeMap;
 
@@ -15,10 +15,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::ToSchema;
 
-use crate::auth::{Auth, Identity, delete_forbidden};
+use crate::auth::{Auth, delete_forbidden};
 use crate::deletes::{ConsequenceReport, DryRun};
 use crate::headers::require_if_match;
-use crate::model_proposal::model_status;
 use crate::objects::{
     SuggestionDraft, file_suggestion, load_object, note_write, object_response, version_of,
 };
@@ -394,19 +393,30 @@ pub async fn delete_link(
     post,
     path = "/v1/link-types",
     tag = "definitions",
+    params(("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")),
     request_body(content = LinkTypeBody),
-    responses((status = 204, description = "Link type saved")),
+    responses(
+        (status = 204, description = "Link type saved"),
+        (status = 200, description = "Consequence analysis")
+    ),
     security(("bearer" = []))
 )]
 pub async fn post_link_type(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<DryRun>,
     Json(body): Json<LinkTypeBody>,
 ) -> Result<Response, Problem> {
-    if !identity.may_commit() {
-        return Err(delete_forbidden());
+    let saved = crate::definitions::commit_model_change(
+        &state,
+        &identity,
+        create_change(&body)?,
+        query.dry_run,
+    )
+    .await?;
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
     }
-    save_change(&state, &identity, create_change(&body)?).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -414,21 +424,25 @@ pub async fn post_link_type(
     patch,
     path = "/v1/link-types/{key}",
     tag = "definitions",
-    params(("key" = String, Path, description = "Link type key")),
+    params(
+        ("key" = String, Path, description = "Link type key"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     request_body(content = LinkTypePatch),
-    responses((status = 204, description = "Link type updated")),
+    responses(
+        (status = 204, description = "Link type updated"),
+        (status = 200, description = "Consequence analysis")
+    ),
     security(("bearer" = []))
 )]
 pub async fn patch_link_type(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(key): Path<String>,
+    Query(query): Query<DryRun>,
     Json(body): Json<LinkTypePatch>,
 ) -> Result<Response, Problem> {
-    if !identity.may_commit() {
-        return Err(delete_forbidden());
-    }
-    save_change(
+    let saved = crate::definitions::commit_model_change(
         &state,
         &identity,
         ModelChange::UpdateLinkType {
@@ -444,8 +458,12 @@ pub async fn patch_link_type(
             to_cardinality: body.to_cardinality,
             attributes: body.attributes,
         },
+        query.dry_run,
     )
     .await?;
+    if query.dry_run {
+        return Ok(Json(saved).into_response());
+    }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -552,19 +570,6 @@ fn create_change(body: &LinkTypeBody) -> Result<ModelChange, Problem> {
         to_cardinality: body.to_cardinality.clone(),
         attributes: body.attributes.clone(),
     })
-}
-
-async fn save_change(
-    state: &AppState,
-    identity: &Identity,
-    change: ModelChange,
-) -> Result<(), Problem> {
-    crate::definitions::commit(state, &identity.actor, |defs| {
-        braian_model::apply_all(defs, std::slice::from_ref(&change)).map_err(model_status)
-    })
-    .await?;
-    state.models.invalidate().await;
-    Ok(())
 }
 
 fn link_json(body: &CreateLink) -> Value {
