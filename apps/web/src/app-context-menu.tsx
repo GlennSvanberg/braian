@@ -62,11 +62,40 @@ export function AppContextMenu({
       role="menu"
       aria-label={copy.contextMenu}
       style={{ left: point.x, top: point.y }}
+      onKeyDown={(event) => {
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        const at = items.findIndex((item) => item === document.activeElement)
+        if (event.key === 'Escape' || event.key === 'Tab') {
+          event.preventDefault()
+          event.stopPropagation()
+          onClose()
+          return
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          items[at]?.click()
+          return
+        }
+        const next =
+          event.key === 'ArrowDown'
+            ? (at + 1) % Math.max(items.length, 1)
+            : event.key === 'ArrowUp'
+              ? (at <= 0 ? items.length - 1 : at - 1)
+              : event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? items.length - 1
+                  : -1
+        if (next < 0 || items.length === 0) return
+        event.preventDefault()
+        items[next]?.focus()
+      }}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <button
         type="button"
         role="menuitem"
+        tabIndex={-1}
         onClick={() => {
           onClose()
           onSearch()
@@ -78,6 +107,7 @@ export function AppContextMenu({
         <button
           type="button"
           role="menuitem"
+          tabIndex={-1}
           onClick={() => {
             onClose()
             onFeedback()

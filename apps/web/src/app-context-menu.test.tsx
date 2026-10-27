@@ -87,4 +87,27 @@ describe('app context menu fallback', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('app-context-menu')).toBeNull()
   })
+
+  it('moves between items with arrow keys', () => {
+    renderHost(true)
+    contextMenu(screen.getByTestId('surface'))
+    const menu = screen.getByTestId('app-context-menu')
+    const items = () => Array.from(menu.querySelectorAll('[role="menuitem"]'))
+    items()[0]?.focus()
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items()[1])
+    fireEvent.keyDown(menu, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(items()[0])
+  })
+
+  it('opens the palette from Search on an empty surface', () => {
+    const { onSearch } = renderHost()
+    const event = contextMenu(screen.getByTestId('surface'))
+    expect(event.defaultPrevented).toBe(true)
+    expect(screen.getByTestId('app-context-menu')).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Search…' }))
+    expect(onSearch).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('app-context-menu')).toBeNull()
+  })
+
 })
