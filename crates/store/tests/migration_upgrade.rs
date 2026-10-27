@@ -250,7 +250,7 @@ async fn branch_migrations_apply_after_main() {
     assert_eq!(latest, max_migration_version(&branch_set));
 }
 
-/// V17 reads `query.type` when it is set, and otherwise assigns the type with
+/// V16 reads `query.type` when it is set, and otherwise assigns the type with
 /// the most matching live objects. A selection that already names a type keeps it.
 #[tokio::test]
 async fn selection_type_comes_from_the_query_or_the_most_hits() {
@@ -260,7 +260,7 @@ async fn selection_type_comes_from_the_query_or_the_most_hits() {
     for entry in fs::read_dir(&source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy().starts_with("V17") {
+        if name.to_string_lossy().starts_with("V16") {
             continue;
         }
         fs::copy(entry.path(), dir.join(&name)).unwrap();
@@ -368,8 +368,8 @@ async fn selection_type_comes_from_the_query_or_the_most_hits() {
         .unwrap();
 
     fs::copy(
-        source.join("V17__selection_type.sql"),
-        dir.join("V17__selection_type.sql"),
+        source.join("V16__selection_type.sql"),
+        dir.join("V16__selection_type.sql"),
     )
     .unwrap();
     migrate(&mut conn.client, &dir).await;
