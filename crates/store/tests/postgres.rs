@@ -1222,9 +1222,9 @@ async fn a_link_is_visible_from_both_ends_and_dies_with_its_object() {
     let article = defs
         .types
         .iter()
-        .find(|item| item.key == "article")
+        .find(|item| item.key == "item")
         .map(|item| item.id)
-        .expect("article");
+        .expect("item");
     let sample: Vec<_> = objects_iter(&defs, Tier::Light, 11, 0..8)
         .filter(|object| object.type_id == article)
         .take(3)
@@ -1241,8 +1241,8 @@ async fn a_link_is_visible_from_both_ends_and_dies_with_its_object() {
         &[braian_model::ModelChange::CreateLinkType {
             key: "pairs_with".into(),
             label: "Pairs with".into(),
-            from_types: vec!["article".into()],
-            to_types: vec!["article".into()],
+            from_types: vec!["item".into()],
+            to_types: vec!["item".into()],
             from_key: "pairs_with".into(),
             from_label: "Pairs with".into(),
             to_key: "paired_with".into(),
