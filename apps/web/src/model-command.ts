@@ -8,13 +8,6 @@ const review = 'Proposal · review before it is saved'
 export function modelCommandTitle(query: string): ModelHint | null {
   const text = query.trim()
   if (!text) return null
-  const lower = text.toLowerCase()
-  if (
-    lower.includes('power tool') &&
-    (lower.includes('model') || lower.includes('set up') || lower.includes('setup') || lower.includes('draft'))
-  ) {
-    return { title: 'Draft a model for power tools', subtitle: review }
-  }
   const add = text.match(/^add attribute\s+(.+?)\s+to\s+(.+)$/i)
   if (add) return { title: `Add attribute ${add[1]} to ${add[2]}`, subtitle: review }
   const remove = text.match(/^remove attribute\s+(.+?)\s+from\s+(.+)$/i)

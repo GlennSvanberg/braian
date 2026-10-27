@@ -580,7 +580,7 @@ fn sort_order(sort: Option<&str>) -> ExportOrder {
     match (field, desc) {
         ("version", true) => ExportOrder::VersionDesc,
         ("version", false) => ExportOrder::VersionAsc,
-        ("key" | "a_nummer" | "", true) => ExportOrder::KeyDesc,
+        ("key" | "", true) => ExportOrder::KeyDesc,
         _ => ExportOrder::KeyAsc,
     }
 }
@@ -1504,12 +1504,12 @@ mod tests {
         assert_eq!(search_text(Some("*")), (None, false));
         assert_eq!(search_text(Some("=SKU-1")), (Some("SKU-1".into()), true));
         assert_eq!(search_text(Some("100%_")), (Some("100%_".into()), false));
-        let (pattern, exact) = search_text(Some("tält"));
+        let (pattern, exact) = search_text(Some("tent"));
         assert!(!exact);
-        assert_eq!(pattern.as_deref(), Some("tält"));
+        assert_eq!(pattern.as_deref(), Some("tent"));
         assert_eq!(
-            split_group_filter("groups:=sortiment:friluft").unwrap(),
-            Some((Some("sortiment".into()), "friluft".into()))
+            split_group_filter("groups:=food:cheese").unwrap(),
+            Some((Some("food".into()), "cheese".into()))
         );
         assert!(split_group_filter("color:=red").is_err());
     }

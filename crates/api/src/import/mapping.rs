@@ -270,7 +270,7 @@ fn attribute_targets(
     for language in &defs.languages {
         // The unsuffixed target already writes the default language, and it
         // carries the same label. A second `@sv` row is the duplicate the
-        // picker showed as "Beskrivning (sv)" twice.
+        // picker showed as "Description (sv)" twice.
         if language.as_str() == default_lang {
             continue;
         }
@@ -388,7 +388,7 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
         return 0.0;
     }
     if target.id == "action" {
-        return if is_synonym(&name, &["action", "op", "operation", "atgard"]) {
+        return if is_synonym(&name, &["action", "op", "operation"]) {
             0.95
         } else {
             jw_score(&name, "action")
@@ -408,7 +408,7 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
     };
     let key_norm = normalize_header(key);
     let label_norm = normalize_header(&target.label);
-    // "Namn (sv)" is the same field as a header "Namn".
+    // "Name (en)" is the same field as a header "Name".
     let bare_norm = normalize_header(label_without_language(&target.label));
     let exact_labels = match &target.language {
         Some(language) if target.id.contains('@') => {
@@ -438,19 +438,7 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
     {
         return 0.97;
     }
-    if target.key_attribute
-        && is_synonym(
-            &name,
-            &[
-                "sku",
-                "artnr",
-                "artikelnummer",
-                "article_no",
-                "item_no",
-                "part_no",
-            ],
-        )
-    {
+    if target.key_attribute && is_synonym(&name, &["sku", "article_no", "item_no", "part_no"]) {
         return 0.95;
     }
     if key_norm == "gtin" && is_synonym(&name, &["ean", "gtin", "barcode"]) {
@@ -458,8 +446,8 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
     }
     if target.id.contains('@') {
         let lang = target.language.as_deref().unwrap_or("");
-        // "Beskrivning" is the attribute, not evidence for every language.
-        // Jaro otherwise scores `beskrivning` against `beskrivning_en` at
+        // "Description" is the attribute, not evidence for every language.
+        // Jaro otherwise scores `description` against `description_en` at
         // about 0.86 and the column looks certain while listing rivals.
         if name == key_norm {
             return 0.0;
@@ -1721,15 +1709,15 @@ mod tests {
         let defs = defs();
         let targets = targets_for(&defs, "item");
         let units = unit_codes(&defs);
-        let sku = rank_targets("Artnr", &targets, &units);
+        let sku = rank_targets("article_no", &targets, &units);
         assert_eq!(sku[0].target, "type:sku");
         assert!((sku[0].score - 0.95).abs() < 1e-9);
         assert!(decided(&sku).is_some());
         let name = rank_targets("name_sv", &targets, &units);
         assert_eq!(name[0].target, "type:name");
-        let namn = rank_targets("Namn", &targets, &units);
-        assert_eq!(namn[0].target, "type:name");
-        let rival = namn.get(1).map(|item| item.score).unwrap_or(0.0);
+        let bare = rank_targets("Name", &targets, &units);
+        assert_eq!(bare[0].target, "type:name");
+        let rival = bare.get(1).map(|item| item.score).unwrap_or(0.0);
         assert!(
             rival < 0.5,
             "a bare header must not grow a language rival, got {rival}"
@@ -1737,7 +1725,7 @@ mod tests {
         let weight = rank_targets("weight_kg", &targets, &units);
         assert_eq!(weight[0].target, "type:weight");
         assert!((weight[0].score - 0.97).abs() < 1e-9);
-        let action = rank_targets("Åtgärd", &targets, &units);
+        let action = rank_targets("operation", &targets, &units);
         assert_eq!(action[0].target, "action");
         assert!((action[0].score - 0.95).abs() < 1e-9);
     }
@@ -1745,26 +1733,26 @@ mod tests {
     #[test]
     fn bare_header_is_not_a_near_match_for_every_language() {
         let bare = sample_target(
-            "type:beskrivning",
-            "Beskrivning (sv)",
+            "type:description",
+            "Description (sv)",
             Some("sv"),
-            "beskrivning",
+            "description",
         );
         let swedish = sample_target(
-            "type:beskrivning@sv",
-            "Beskrivning (sv)",
+            "type:description@sv",
+            "Description (sv)",
             Some("sv"),
-            "beskrivning",
+            "description",
         );
         let english = sample_target(
-            "type:beskrivning@en",
+            "type:description@en",
             "Description (en)",
             Some("en"),
-            "beskrivning",
+            "description",
         );
-        assert!((score_column("Beskrivning", &bare, &[]) - 1.0).abs() < 1e-9);
-        assert_eq!(score_column("Beskrivning", &swedish, &[]), 0.0);
-        assert_eq!(score_column("Beskrivning", &english, &[]), 0.0);
+        assert!((score_column("Description", &bare, &[]) - 1.0).abs() < 1e-9);
+        assert_eq!(score_column("Description", &swedish, &[]), 0.0);
+        assert_eq!(score_column("Description", &english, &[]), 0.0);
         assert!((super::cap_confidence(1.0, 0.86) - 0.57).abs() < 1e-9);
         assert!((super::cap_confidence(1.0, 0.2) - 1.0).abs() < 1e-9);
     }

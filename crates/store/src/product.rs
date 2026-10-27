@@ -1002,6 +1002,17 @@ impl Store {
         Ok(())
     }
 
+    pub async fn set_proposal_source(&self, id: Uuid, source: &str) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "UPDATE proposals SET source = $2 WHERE id = $1",
+                &[&id, &source],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_relation(
         &self,
         from_id: ObjectId,
@@ -1411,7 +1422,7 @@ mod tests {
 
     #[test]
     fn key_search_escapes_like_metacharacters() {
-        assert_eq!(like_contains("talt"), "%talt%");
+        assert_eq!(like_contains("tent"), "%tent%");
         assert_eq!(like_contains("100%_"), "%100\\%\\_%");
         assert_eq!(like_contains("a\\b"), "%a\\\\b%");
     }

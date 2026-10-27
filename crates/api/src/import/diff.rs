@@ -574,7 +574,7 @@ fn canonicalize_number(text: &str) -> Option<String> {
 
 fn parse_bool(text: &str) -> Result<bool, Value> {
     match text.trim().to_lowercase().as_str() {
-        "true" | "yes" | "ja" | "1" | "x" => Ok(true),
+        "true" | "yes" | "1" | "x" => Ok(true),
         "false" | "no" | "nej" | "0" => Ok(false),
         _ => Err(err("invalid_boolean", "Not a boolean")),
     }
@@ -917,11 +917,11 @@ mod tests {
         );
         let (model, defs) = model();
         let color = model.attribute_by_key("color").unwrap();
-        let parsed = parse_cell(&defs, color, None, "Röd", &mut |_type, _key| None).unwrap();
+        let parsed = parse_cell(&defs, color, None, "Red", &mut |_type, _key| None).unwrap();
         assert_eq!(parsed, Value::String("red".into()));
         let active = model.attribute_by_key("active").unwrap();
         assert_eq!(
-            parse_cell(&defs, active, None, "ja", &mut |_type, _key| None).unwrap(),
+            parse_cell(&defs, active, None, "yes", &mut |_type, _key| None).unwrap(),
             Value::Bool(true)
         );
         let made = model.attribute_by_key("made").unwrap();
@@ -1097,7 +1097,7 @@ mod tests {
                 Some("A-1".into()),
                 Some("Old".into()),
                 Some("2024-01-02".into()),
-                Some("ja".into()),
+                Some("yes".into()),
             ],
             None,
             None,
@@ -1122,7 +1122,7 @@ mod tests {
                 Some("A-1".into()),
                 Some("New".into()),
                 Some("2025-13-45".into()),
-                Some("ja".into()),
+                Some("yes".into()),
             ],
             Some(&existing),
             None,

@@ -16,8 +16,8 @@ describe('exportPayload', () => {
       hidden: ['status'],
       order: ['name', 'key', 'type', 'status', 'version'],
       q: 'cheddar',
-      filter: 'groups:=sortiment:friluft',
-      sort: 'a_nummer:asc',
+      filter: 'groups:=food:cheese',
+      sort: 'key:asc',
       ids: [],
       lang: 'sv',
     })
@@ -29,9 +29,9 @@ describe('exportPayload', () => {
         { id: 'version', header: 'Version' },
       ],
       lang: 'sv',
-      sort: 'a_nummer:asc',
+      sort: 'key:asc',
       q: 'cheddar',
-      filter: 'groups:=sortiment:friluft',
+      filter: 'groups:=food:cheese',
     })
     expect(body).not.toHaveProperty('format')
   })
@@ -42,7 +42,7 @@ describe('exportPayload', () => {
       hidden: [],
       order: [],
       q: 'ignored',
-      filter: 'groups:=sortiment:friluft',
+      filter: 'groups:=food:cheese',
       sort: 'version:desc',
       ids: ['018f0000-0000-7000-8000-000000000001'],
       lang: '  ',

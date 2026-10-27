@@ -17,18 +17,18 @@ describe('copy', () => {
       workspace: { id: 'ws', name: 'Enrich objects' },
       panes: [{ id: 'table', type: 'object_table', title: 'Objects', focused: true }],
       focused: 'table',
-      language: 'sv',
+      language: 'en',
     })
     publishSelection('table', [{
       id: '018f1000-0000-7000-8000-000000000011',
       key: 'SYN-000001',
       name: 'Insulation 2',
-      type: 'artikel',
+      type: 'article',
     }])
-    const body = agentRequestBody([{ role: 'user', content: 'Vilken produkt är markerad?' }])
+    const body = agentRequestBody([{ role: 'user', content: 'Which product is selected?' }])
     expect(body.stream).toBe(true)
     expect(body.context.selection[0]?.key).toBe('SYN-000001')
     expect(body.context.selection[0]?.name).toBe('Insulation 2')
-    expect(body.context.language).toBe('sv')
+    expect(body.context.language).toBe('en')
   })
 })

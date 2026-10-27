@@ -1,9 +1,7 @@
 {
   "model_revision": 1,
   "languages": [
-    "sv",
-    "en",
-    "de"
+    "en"
   ],
   "unit_families": [
     {

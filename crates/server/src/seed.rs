@@ -201,7 +201,7 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
     store
         .delete_view(Uuid::parse_str("018f2000-0000-7000-8000-000000000404")?)
         .await?;
-    store.delete_view_type("leverantor").await?;
+    store.delete_view_type("leverantor").await?; // english-check: allow-line
     save_views(store).await?;
     store
         .save_assortment(
@@ -1250,6 +1250,7 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
     let id = Uuid::parse_str("018f2000-0000-7000-8000-0000000000c1")?;
     if store.proposal(id).await?.is_some() {
         store.set_proposal_title(id, "Accept ART-CHED-400").await?;
+        store.set_proposal_source(id, "agent").await?;
         return Ok(());
     }
     let object_id = ObjectId::from_uuid(Uuid::parse_str("018f1000-0000-7000-8000-000000000023")?);
@@ -1261,7 +1262,7 @@ async fn seed_proposal(store: &Store, actor: PrincipalId) -> anyhow::Result<()> 
         .create_proposal(
             id,
             "Accept ART-CHED-400",
-            "user",
+            "agent",
             actor,
             None,
             false,
@@ -1294,6 +1295,43 @@ mod tests {
     }
 
     #[test]
+    fn demo_model_and_labels_are_english_only() {
+        let raw: Value = serde_json::from_str(DEFINITIONS).expect("definitions");
+        assert_eq!(raw["languages"], json!(["en"]));
+        let mut foreign = Vec::new();
+        collect_foreign_languages(&raw, "definitions", &mut foreign);
+        assert!(
+            foreign.is_empty(),
+            "demo labels must use en only: {}",
+            foreign.join(", ")
+        );
+    }
+
+    fn collect_foreign_languages(value: &Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                let name = path.rsplit(['.', '[']).next().unwrap_or("");
+                if matches!(name, "labels" | "singular" | "plural") {
+                    for key in map.keys() {
+                        if key != "en" && !key.starts_with("en-") {
+                            found.push(format!("{path}.{key}"));
+                        }
+                    }
+                }
+                for (key, child) in map {
+                    collect_foreign_languages(child, &format!("{path}.{key}"), found);
+                }
+            }
+            Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    collect_foreign_languages(child, &format!("{path}[{index}]"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
     fn food_catalog_compiles_without_the_outdoor_model() {
         let (defs, _) = model();
         assert!(defs.types.iter().any(|item| item.key == "product"));
@@ -1319,7 +1357,11 @@ mod tests {
                 .any(|family| family.key == "energy")
         );
         assert!(defs.value_lists.iter().any(|list| list.key == "allergens"));
-        assert!(defs.value_lists.iter().all(|list| list.key != "farg"));
+        assert!(defs.value_lists.iter().all(|list| {
+            list.key
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        }));
         assert!(defs.value_lists.iter().all(|list| list.key != "eco_label"));
         assert!(
             defs.attributes
@@ -1491,6 +1533,7 @@ mod tests {
             .expect("proposal query")
             .expect("proposal after the first seed");
         assert_eq!(proposal["title"], "Accept ART-CHED-400");
+        assert_eq!(proposal["source"], "agent");
         let rows = proposal["rows"].as_array().expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["object_key"], "ART-CHED-400");
@@ -1504,6 +1547,7 @@ mod tests {
             .expect("proposal query")
             .expect("proposal after the second seed");
         assert_eq!(again["title"], "Accept ART-CHED-400");
+        assert_eq!(again["source"], "agent");
         assert_eq!(matching_proposals(db.store()).await, 1);
     }
 

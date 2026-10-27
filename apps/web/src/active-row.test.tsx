@@ -144,9 +144,9 @@ beforeEach(() => {
             document: {
               id: `id-${index}`,
               key: `ART-${index}`,
-              type_key: 'artikel',
+              type_key: 'article',
               version: '1',
-              a_namn__sv: name,
+              a_name__en: name,
               a_status: 'ok',
             },
           })),
@@ -243,7 +243,7 @@ describe('active row', () => {
     expect(screen.getByTestId('detail').textContent).toBe('id-4')
     expect(rows()[0]?.getAttribute('aria-selected')).toBe('false')
     expect(scrollToIndex).toHaveBeenLastCalledWith(4)
-    expect(readUiContext().selection).toEqual([{ id: 'id-4', key: 'ART-4', name: 'Four', type: 'artikel' }])
+    expect(readUiContext().selection).toEqual([{ id: 'id-4', key: 'ART-4', name: 'Four', type: 'article' }])
   })
 
   it('keeps one selected style after a click and three ArrowDowns', async () => {

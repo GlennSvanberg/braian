@@ -242,6 +242,8 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.25.0
+      - name: English copy
+        run: python3 scripts/check-english.py
       - name: Typecheck and unit tests
         run: |
           pnpm install --frozen-lockfile

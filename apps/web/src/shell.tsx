@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { barY, defineChart } from '@tanstack/charts'
-import { scaleBand } from '@tanstack/charts/scales/band'
-import { scaleLinear } from '@tanstack/charts/scales/linear'
-import { Chart } from '@tanstack/react-charts'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
 import { api, recordTitle, textValue, type Json } from './api'
 import { AssortmentList } from './assortments'
@@ -841,7 +837,6 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'history') return <HistoryView session={session} />
   if (view.type === 'class_attributes') return <ClassAttributes session={session} />
   if (view.type === 'data_model') return <DataModel view={view} />
-  if (view.type === 'dashboard') return <Dashboard />
   if (view.type === 'proposal') return <ProposalView session={session} />
   if (view.type === 'batch_log') return <BatchLog />
   if (view.type === 'job_history') return <JobHistory view={view} />
@@ -1183,31 +1178,6 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   )
 }
 
-
-function Dashboard() {
-  const stats = useQuery({ queryKey: ['stats'], queryFn: () => api<Json>('/v1/stats') })
-  const rows = ((stats.data?.by_type as Json[]) ?? []).map((row) => ({
-    type: String(row.type),
-    count: Number(row.count ?? 0),
-  }))
-  const definition = useMemo(
-    () =>
-      defineChart({
-        marks: [barY(rows, { x: 'type', y: 'count' })],
-        scales: {
-          x: { scale: () => scaleBand().padding(0.2) },
-          y: { scale: scaleLinear, nice: true },
-        },
-      }),
-    [rows],
-  )
-  return (
-    <div data-testid="dashboard">
-      <p>{copy.dashboard}: {String(stats.data?.objects ?? 0)}</p>
-      {rows.length > 0 ? <Chart definition={definition} height={220} ariaLabel={copy.dashboard} /> : <p>{copy.empty}</p>}
-    </div>
-  )
-}
 
 function BatchLog() {
   const history = useQuery({ queryKey: ['batches'], queryFn: () => api<Json>('/v1/history?limit=50') })

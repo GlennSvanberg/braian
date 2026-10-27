@@ -29,8 +29,7 @@ pub use id::{
 };
 pub use language::{LanguageTag, LanguageTagError};
 pub use model_change::{
-    ApplyError, ChangeImpact, ModelChange, apply_all, diff as model_diff, interpret, power_tools,
-    preview,
+    ApplyError, ChangeImpact, ModelChange, apply_all, diff as model_diff, interpret, preview,
 };
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};

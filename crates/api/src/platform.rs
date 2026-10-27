@@ -1349,6 +1349,7 @@ UI snapshot: {snapshot}"
     )
 }
 
+// english-check: allow
 fn asks_which_is_selected(text: &str) -> bool {
     let lower = text.to_lowercase();
     const PHRASES: &[&str] = &[
@@ -1415,6 +1416,7 @@ fn asks_for_field(text: &str) -> bool {
     .iter()
     .any(|needle| text.contains(needle))
 }
+// english-check: end
 
 fn selection_items(context: &Value) -> Vec<Value> {
     context
@@ -2327,8 +2329,8 @@ fn key_attribute_name(
 
 /// Business key for a bulk error or an agent proposal.
 ///
-/// The name comes from the type's key attribute. `number`, then the older
-/// `nummer` and `sku` names, are only used when that type is not in the model.
+/// The name comes from the type's key attribute. `number` is only used when
+/// that type is not in the model.
 fn labeled_key_from<'a>(
     model: &braian_rules::CompiledModel,
     type_key: Option<&str>,
@@ -2336,9 +2338,7 @@ fn labeled_key_from<'a>(
 ) -> Option<&'a Value> {
     match key_attribute_name(model, type_key) {
         Some(name) => get(&name),
-        None => get("number")
-            .or_else(|| get("nummer"))
-            .or_else(|| get("sku")),
+        None => get("number"),
     }
 }
 
@@ -3528,7 +3528,7 @@ async fn object_names(
         }
     }
     let cached = state.models.get(&state.store).await?;
-    let name_ids: Vec<_> = ["name", "company_name", "namn"]
+    let name_ids: Vec<_> = ["name", "company_name"]
         .into_iter()
         .filter_map(|key| {
             cached
@@ -4445,12 +4445,7 @@ async fn propose_operation(
                 .map(str::to_owned),
                 None => args
                     .get("values")
-                    .and_then(|values| {
-                        values
-                            .get("number")
-                            .or_else(|| values.get("nummer"))
-                            .or_else(|| values.get("sku"))
-                    })
+                    .and_then(|values| values.get("number"))
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             };
@@ -4924,16 +4919,17 @@ mod tests {
     fn business_key_follows_the_type_key_attribute() {
         let defs: DefinitionSet = serde_json::from_str(ANCESTOR_DEFS).expect("defs");
         let model = braian_rules::CompiledModel::compile(&defs).expect("compile");
-        let values = json!({"number": "ART-1", "nummer": "OLD"});
+        let values = json!({"number": "ART-1", "sku": "OLD"});
         let found = labeled_key_from(&model, Some("article"), |key| values.get(key));
         assert_eq!(found.and_then(Value::as_str), Some("ART-1"));
-        let only_old = json!({"nummer": "OLD"});
+        let only_old = json!({"sku": "OLD"});
         assert!(labeled_key_from(&model, Some("article"), |key| only_old.get(key)).is_none());
-        let unknown = json!({"nummer": "OLD"});
+        assert!(labeled_key_from(&model, Some("missing"), |key| only_old.get(key)).is_none());
+        let numbered = json!({"number": "ART-9"});
         assert_eq!(
-            labeled_key_from(&model, Some("missing"), |key| unknown.get(key))
+            labeled_key_from(&model, Some("missing"), |key| numbered.get(key))
                 .and_then(Value::as_str),
-            Some("OLD")
+            Some("ART-9")
         );
     }
 
@@ -5005,12 +5001,12 @@ mod tests {
     #[test]
     fn display_name_prefers_english_and_skips_measurements() {
         assert_eq!(
-            display_name_text(&json!({"sv": "Tält 2 grön", "en": "Tent 2 green"})),
+            display_name_text(&json!({"sv": "Canvas 2 green", "en": "Tent 2 green"})),
             "Tent 2 green"
         );
         assert_eq!(
-            display_name_text(&json!({"sv": "Tält 2 grön", "en": "  "})),
-            "Tält 2 grön"
+            display_name_text(&json!({"sv": "Canvas 2 green", "en": "  "})),
+            "Canvas 2 green"
         );
         assert_eq!(display_name_text(&json!("Plain")), "Plain");
         assert_eq!(
@@ -5102,10 +5098,10 @@ mod tests {
     fn ui_filter_tool_name_maps_back_and_echoes_args() {
         assert_eq!(tool_name("ui.filter"), "ui_filter");
         assert_eq!(operation_for_tool("ui_filter"), Some("ui.filter"));
-        let value = ui_command("ui.filter", &json!({ "q": "tält" }));
+        let value = ui_command("ui.filter", &json!({ "q": "tent" }));
         assert_eq!(value["ui"], true);
         assert_eq!(value["name"], "ui.filter");
-        assert_eq!(value["args"]["q"], "tält");
+        assert_eq!(value["args"]["q"], "tent");
         assert_eq!(value["applied"], false);
     }
 
@@ -5158,10 +5154,10 @@ mod tests {
                 "id": "018f1000-0000-7000-8000-000000000011",
                 "key": "SYN-000001",
                 "name": "Insulation 2",
-                "type": "artikel"
+                "type": "article"
             }],
             "filter": "",
-            "sort": "a_nummer:asc",
+            "sort": "key:asc",
             "columns": [
                 { "id": "name", "header": "Name", "hidden": false },
                 { "id": "status", "header": "Status", "hidden": true }
@@ -5173,6 +5169,7 @@ mod tests {
     #[test]
     fn selection_question_resolves_to_the_marked_object() {
         let context = marked_product();
+        // english-check: allow
         let messages = vec![json!({ "role": "user", "content": "Vilken produkt är markerad?" })];
         let reply = selection_reply(&messages, &context).expect("answer");
         assert!(reply.contains("SYN-000001"), "{reply}");
@@ -5181,6 +5178,7 @@ mod tests {
         assert!(selection_reply(&messages, &Value::Null).is_none());
 
         let prompt = agent_system_prompt(&context, "Vilken produkt är markerad?");
+        // english-check: end
         assert!(prompt.contains("SYN-000001"), "{prompt}");
         assert!(prompt.contains("Insulation 2"), "{prompt}");
         assert!(prompt.contains("Answer in English"), "{prompt}");
@@ -5276,7 +5274,7 @@ mod tests {
                 "type": "function_call",
                 "name": "ui_filter",
                 "call_id": "call_1",
-                "arguments": "{\"q\":\"tält\"}"
+                "arguments": "{\"q\":\"tent\"}"
             }]
         });
         let calls = function_calls(&payload);

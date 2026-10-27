@@ -105,12 +105,12 @@ describe('graph detail summary', () => {
           kindLabel: 'Object',
           properties: [
             { label: 'Type', value: 'Article' },
-            { label: 'Number', value: 'ART-TALT-2' },
+            { label: 'Number', value: 'ART-TENT-2' },
           ],
         },
         { type: 'Type', number: 'Number' },
       ),
-    ).toEqual({ name: '2-person tent', type: 'Article', detail: 'ART-TALT-2' })
+    ).toEqual({ name: '2-person tent', type: 'Article', detail: 'ART-TENT-2' })
   })
 
   it('uses the value text when a node has no number', () => {

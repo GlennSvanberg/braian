@@ -5,7 +5,6 @@ import {
   FileText,
   History,
   Layers,
-  LayoutDashboard,
   ListChecks,
   ListTree,
   ScrollText,
@@ -20,9 +19,9 @@ export type ChipTone = 'neutral' | 'ok' | 'warn' | 'danger' | 'info'
 
 export function statusTone(value: string): ChipTone {
   const text = value.trim().toLowerCase()
-  if (['ok', 'active', 'published', 'done', 'accepted', 'complete', 'succeeded', 'valid', 'giltig'].includes(text)) return 'ok'
-  if (['utkast', 'draft', 'pending', 'warn', 'warning', 'review'].includes(text)) return 'warn'
-  if (['slut', 'error', 'failed', 'danger', 'rejected', 'invalid', 'conflict', 'discontinued', 'deleted'].includes(text)) return 'danger'
+  if (['ok', 'active', 'published', 'done', 'accepted', 'complete', 'succeeded', 'valid'].includes(text)) return 'ok'
+  if (['draft', 'pending', 'warn', 'warning', 'review'].includes(text)) return 'warn'
+  if (['error', 'failed', 'danger', 'rejected', 'invalid', 'conflict', 'discontinued', 'deleted'].includes(text)) return 'danger'
   if (['info', 'running', 'queued', 'open'].includes(text)) return 'info'
   return 'neutral'
 }
@@ -51,7 +50,6 @@ export function ViewGlyph({ type }: { type: string }) {
   if (type === 'history') return <History {...props} />
   if (type === 'class_attributes') return <Layers {...props} />
   if (type === 'data_model') return <Boxes {...props} />
-  if (type === 'dashboard') return <LayoutDashboard {...props} />
   if (type === 'proposal') return <ScrollText {...props} />
   if (type === 'batch_log') return <ScrollText {...props} />
   if (type === 'job_history') return <ListChecks {...props} />

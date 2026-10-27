@@ -452,8 +452,8 @@ pub async fn delete_object(
 
 /// Business key shown on a create suggestion.
 ///
-/// The name comes from the type's key attribute. `number`, then the older
-/// `nummer` and `sku` names, are only used when that type is not in the model.
+/// The name comes from the type's key attribute. `number` is only used when
+/// that type is not in the model.
 fn wire_key(
     model: &braian_rules::CompiledModel,
     type_key: &str,
@@ -465,9 +465,10 @@ fn wire_key(
             let name = model.attribute(attribute_id)?.key.as_str();
             values.get(name).and_then(Value::as_str).map(str::to_owned)
         }
-        None => ["number", "nummer", "sku"]
-            .into_iter()
-            .find_map(|key| values.get(key).and_then(Value::as_str).map(str::to_owned)),
+        None => values
+            .get("number")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 
@@ -483,17 +484,19 @@ mod tests {
         let model = braian_rules::CompiledModel::compile(&defs).expect("compile");
         let values = BTreeMap::from([
             ("number".into(), Value::String("ART-1".into())),
-            ("nummer".into(), Value::String("OLD".into())),
+            ("sku".into(), Value::String("OLD".into())),
         ]);
         assert_eq!(
             wire_key(&model, "article", &values).as_deref(),
             Some("ART-1")
         );
-        let only_old = BTreeMap::from([("nummer".into(), Value::String("OLD".into()))]);
+        let only_old = BTreeMap::from([("sku".into(), Value::String("OLD".into()))]);
         assert_eq!(wire_key(&model, "article", &only_old), None);
+        assert_eq!(wire_key(&model, "missing", &only_old), None);
+        let numbered = BTreeMap::from([("number".into(), Value::String("ART-9".into()))]);
         assert_eq!(
-            wire_key(&model, "missing", &only_old).as_deref(),
-            Some("OLD")
+            wire_key(&model, "missing", &numbered).as_deref(),
+            Some("ART-9")
         );
     }
 }

@@ -4,31 +4,31 @@ import type { Json } from './api'
 import { buildScene, capScene, mergeScene, nodeMark, nodeRadius, relationLabel, structureCaption, visibleLabelIds } from './graph-scene'
 
 const defs: Json = {
-  types: [{ key: 'artikel', labels: { en: 'Article', sv: 'Artikel' } }, { key: 'produkt', labels: { en: 'Product' } }],
+  types: [{ key: 'article', labels: { en: 'Article' } }, { key: 'product', labels: { en: 'Product' } }],
   value_lists: [
     {
       key: 'status',
-      options: [{ code: 'ok', labels: { en: 'OK', sv: 'OK' } }],
+      options: [{ code: 'ok', labels: { en: 'OK' } }],
     },
     {
-      key: 'farg',
-      options: [{ code: 'gron', labels: { en: 'Green', sv: 'Grön', de: 'Grün' } }],
+      key: 'colour',
+      options: [{ code: 'green', labels: { en: 'Green' } }],
     },
   ],
   attributes: [
-    { key: 'nummer', labels: { en: 'Number', sv: 'Nummer' }, kind: { type: 'text' } },
-    { key: 'namn', labels: { en: 'Name', sv: 'Namn' }, kind: { type: 'text' } },
-    { key: 'beskrivning', labels: { en: 'Description', de: 'Beschreibung' }, kind: { type: 'text' } },
-    { key: 'farg', labels: { en: 'Colour', de: 'Farbe', sv: 'Färg' }, kind: { type: 'value_list', list: 'farg' } },
-    { key: 'vikt', labels: { en: 'Weight' }, kind: { type: 'number' } },
+    { key: 'number', labels: { en: 'Number' }, kind: { type: 'text' } },
+    { key: 'name', labels: { en: 'Name' }, kind: { type: 'text' } },
+    { key: 'description', labels: { en: 'Description' }, kind: { type: 'text' } },
+    { key: 'colour', labels: { en: 'Colour' }, kind: { type: 'value_list', list: 'colour' } },
+    { key: 'weight', labels: { en: 'Weight' }, kind: { type: 'number' } },
   ],
   structures: [
     {
-      key: 'sortiment',
-      labels: { en: 'eCom', sv: 'eCom' },
+      key: 'assortment',
+      labels: { en: 'eCom' },
       groups: [
-        { id: 'outdoor', key: 'friluft', labels: { en: 'Outdoor' } },
-        { id: 'tents', key: 'talt', parent: 'outdoor', labels: { en: 'Tents' } },
+        { id: 'outdoor', key: 'outdoor', labels: { en: 'Outdoor' } },
+        { id: 'tents', key: 'tents', parent: 'outdoor', labels: { en: 'Tents' } },
       ],
     },
   ],
@@ -36,35 +36,35 @@ const defs: Json = {
 
 const graph: Json = {
   id: 'tent',
-  key: 'ART-TALT-2',
-  type: 'artikel',
-  groups: { sortiment: 'talt' },
-  relations: [{ kind: 'article_of', object_id: 'prod', key: 'PROD-TALT', type_id: 'ignored' }],
+  key: 'ART-TENT-2',
+  type: 'article',
+  groups: { assortment: 'tents' },
+  relations: [{ kind: 'article_of', object_id: 'prod', key: 'PROD-TENT', type_id: 'ignored' }],
   attributes: [
-    { key: 'namn', label: 'Name', sources: [{ from: 'type' }] },
-    { key: 'nummer', label: 'Number', sources: [{ from: 'type' }] },
-    { key: 'beskrivning', label: 'Description', sources: [{ from: 'type' }] },
-    { key: 'farg', label: 'Colour', sources: [{ from: 'type' }] },
+    { key: 'name', label: 'Name', sources: [{ from: 'type' }] },
+    { key: 'number', label: 'Number', sources: [{ from: 'type' }] },
+    { key: 'description', label: 'Description', sources: [{ from: 'type' }] },
+    { key: 'colour', label: 'Colour', sources: [{ from: 'type' }] },
     {
-      key: 'vikt',
+      key: 'weight',
       label: 'Weight',
-      sources: [{ from: 'group', structure: 'sortiment', class: 'friluft', group: 'friluft', inherited: true }],
+      sources: [{ from: 'group', structure: 'assortment', class: 'outdoor', group: 'outdoor', inherited: true }],
     },
   ],
 }
 
 const values: Json = {
-  namn: { sv: 'Tält 2 personer', en: '2-person tent', de: 'Zelt 2 Personen' },
-  nummer: 'ART-TALT-2',
-  beskrivning: { en: 'Light 2-layer hiking tent.', sv: 'Lätt tält.' },
-  farg: ['gron'],
-  vikt: { value: '2.4', unit: 'kg' },
+  name: { sv: 'Two-person tent', en: '2-person tent' },
+  number: 'ART-TENT-2',
+  description: { en: 'Light 2-layer hiking tent.' },
+  colour: ['green'],
+  weight: { value: '2.4', unit: 'kg' },
 }
 
 describe('graph marks', () => {
   it('puts a short mark inside and keeps the full name for the caption', () => {
     expect(nodeMark('2-person tent')).toBe('2T')
-    expect(nodeMark('Fjäll tents')).toBe('FT')
+    expect(nodeMark('Ridge tents')).toBe('RT')
     expect(nodeMark('Colour')).toBe('C')
     expect(nodeMark('OK')).toBe('OK')
     expect(nodeMark('Description').includes('…')).toBe(false)
@@ -104,9 +104,9 @@ describe('graph scene', () => {
     expect(captions).toContain('Outdoor')
     expect(captions).toContain('Tents')
     expect(captions).toContain('eCom')
-    expect(scene.nodes.some((node) => node.id === 'structure:sortiment' && node.kind === 'structure')).toBe(true)
-    expect(scene.edges.some((edge) => edge.label === 'In structure' && edge.target === 'structure:sortiment')).toBe(true)
-    expect(captions.some((caption) => ['farg', 'namn', 'friluft', 'nummer', 'Nummer', 'Farbe', 'Beschreibung'].includes(caption))).toBe(false)
+    expect(scene.nodes.some((node) => node.id === 'structure:assortment' && node.kind === 'structure')).toBe(true)
+    expect(scene.edges.some((edge) => edge.label === 'In structure' && edge.target === 'structure:assortment')).toBe(true)
+    expect(captions.some((caption) => ['colour', 'name', 'outdoor', 'number'].includes(caption))).toBe(false)
 
     const colour = scene.nodes.find((node) => node.caption === 'Colour')
     expect(colour?.subtitle).toBe('Green')
@@ -114,51 +114,51 @@ describe('graph scene', () => {
 
     const weight = scene.nodes.find((node) => node.caption === 'Weight')
     expect(weight?.subtitle).toContain('2.4')
-    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'class:sortiment:friluft')).toBe(true)
-    expect(scene.edges.some((edge) => edge.label === 'Applies in' && edge.source === 'class:sortiment:friluft' && edge.target === 'group:sortiment:friluft')).toBe(true)
+    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'class:assortment:outdoor')).toBe(true)
+    expect(scene.edges.some((edge) => edge.label === 'Applies in' && edge.source === 'class:assortment:outdoor' && edge.target === 'group:assortment:outdoor')).toBe(true)
     expect(weight?.properties.some((property) => property.label === 'Origin' && property.value === 'Inherited: Outdoor')).toBe(true)
     expect(scene.edges.some((edge) => edge.label === 'Article of' && edge.target === 'object:prod')).toBe(true)
     const unresolved = scene.nodes.find((node) => node.id === 'object:prod')
     expect(unresolved?.caption).toBe('Object')
     expect(unresolved?.rawCaption).toBe(true)
-    expect(unresolved?.properties.some((property) => property.value === 'PROD-TALT')).toBe(true)
-    expect(unresolved?.caption.includes('PROD-TALT')).toBe(false)
+    expect(unresolved?.properties.some((property) => property.value === 'PROD-TENT')).toBe(true)
+    expect(unresolved?.caption.includes('PROD-TENT')).toBe(false)
     const named = buildScene({
       graph,
       values,
       defs,
-      known: { prod: { name: 'Fjäll tents', typeKey: 'produkt' } },
+      known: { prod: { name: 'Ridge tents', typeKey: 'product' } },
     })
     const resolved = named.nodes.find((node) => node.id === 'object:prod')
-    expect(resolved?.caption).toBe('Fjäll tents')
+    expect(resolved?.caption).toBe('Ridge tents')
     expect(resolved?.rawCaption).toBe(false)
-    expect(resolved?.properties.some((property) => property.value === 'PROD-TALT')).toBe(true)
+    expect(resolved?.properties.some((property) => property.value === 'PROD-TENT')).toBe(true)
     expect(relationLabel('variant_of')).toBe('Variant of')
-    expect(structureCaption('sovsack')).toBe('sovsack')
-    expect(structureCaption('talt', defs)).toBe('Tents')
+    expect(structureCaption('bag')).toBe('bag')
+    expect(structureCaption('tents', defs)).toBe('Tents')
   })
 
   it('draws an ancestor group attribute as inherited when it has no class', () => {
     const scene = buildScene({
       graph: {
         id: 'tent',
-        key: 'ART-TALT-2',
-        type: 'artikel',
-        groups: { sortiment: 'talt' },
+        key: 'ART-TENT-2',
+        type: 'article',
+        groups: { assortment: 'tents' },
         relations: [],
         attributes: [
           {
-            key: 'vikt',
+            key: 'weight',
             label: 'Weight',
-            sources: [{ from: 'group', structure: 'sortiment', group: 'friluft', inherited: true }],
+            sources: [{ from: 'group', structure: 'assortment', group: 'outdoor', inherited: true }],
           },
         ],
       },
-      values: { vikt: { value: '2.4', unit: 'kg' } },
+      values: { weight: { value: '2.4', unit: 'kg' } },
       defs,
     })
     const weight = scene.nodes.find((node) => node.caption === 'Weight')
-    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'group:sortiment:friluft')).toBe(true)
+    expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'Inherited' && edge.target === 'group:assortment:outdoor')).toBe(true)
     expect(scene.edges.some((edge) => edge.source === weight?.id && edge.label === 'From type')).toBe(false)
     expect(weight?.properties.some((property) => property.value === 'Inherited: Outdoor')).toBe(true)
   })
@@ -166,14 +166,14 @@ describe('graph scene', () => {
   it('upgrades a key to a human name without duplicating the node', () => {
     const first = buildScene({ graph, values, defs })
     const second = buildScene({
-      graph: { id: 'prod', key: 'PROD-TALT', type: 'produkt', groups: {}, relations: [], attributes: [] },
-      values: { namn: { en: 'Fjäll tents', sv: 'Fjäll tält' }, nummer: 'PROD-TALT' },
+      graph: { id: 'prod', key: 'PROD-TENT', type: 'product', groups: {}, relations: [], attributes: [] },
+      values: { name: { en: 'Ridge tents' }, number: 'PROD-TENT' },
       defs,
     })
     const merged = mergeScene(first, second)
     const matches = merged.nodes.filter((node) => node.id === 'object:prod')
     expect(matches).toHaveLength(1)
-    expect(matches[0]?.caption).toBe('Fjäll tents')
+    expect(matches[0]?.caption).toBe('Ridge tents')
     expect(matches[0]?.subtitle).toBe('Product')
     const again = mergeScene(merged, second)
     expect(again.nodes.filter((node) => node.id === 'object:prod')).toHaveLength(1)

@@ -2,8 +2,7 @@
 
 use axum::http::StatusCode;
 use braian_model::{
-    ApplyError, ChangeImpact, ModelChange, StructureErrorCode, apply_all, interpret, power_tools,
-    preview,
+    ApplyError, ChangeImpact, ModelChange, StructureErrorCode, apply_all, interpret, preview,
 };
 use braian_rules::CompiledModel;
 use braian_store::{Error, ProposalRow, ProposalWrite};
@@ -34,7 +33,7 @@ pub async fn propose(
     }
     let (after, impact) = preview(&cached.defs, &changes).map_err(model_status)?;
     CompiledModel::compile(&after).map_err(Problem::definitions)?;
-    let title = title_for(name, args, &impact.lines);
+    let title = title_for(args, &impact.lines);
     let source = match identity.kind {
         braian_store::PrincipalKind::Agent => "agent",
         braian_store::PrincipalKind::Integration => "import",
@@ -283,11 +282,6 @@ fn changes_from(
             interpret(text, defs).ok_or_else(|| bad(format!("unknown command: {text}")))
         }
         "model.draft" => {
-            if args.get("preset").and_then(Value::as_str) == Some("power_tools")
-                || text_arg(args).to_lowercase().contains("power tool")
-            {
-                return Ok(power_tools(defs));
-            }
             if let Some(text) = args.get("text").and_then(Value::as_str) {
                 return interpret(text, defs)
                     .ok_or_else(|| bad(format!("unknown command: {text}")));
@@ -491,17 +485,11 @@ fn required_str(args: &Value, key: &str) -> Result<String, Problem> {
         .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "model", format!("missing {key}")))
 }
 
-fn title_for(name: &str, args: &Value, lines: &[String]) -> String {
+fn title_for(args: &Value, lines: &[String]) -> String {
     if let Some(title) = args.get("title").and_then(Value::as_str)
         && !title.is_empty()
     {
         return title.to_owned();
-    }
-    if text_arg(args).to_lowercase().contains("power tool")
-        || name == "model.draft"
-            && args.get("preset").and_then(Value::as_str) == Some("power_tools")
-    {
-        return "Power tools".into();
     }
     if let Some(text) = args.get("text").and_then(Value::as_str)
         && !text.is_empty()

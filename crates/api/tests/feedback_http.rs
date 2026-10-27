@@ -101,7 +101,7 @@ fn context() -> Value {
         "route": "/objects",
         "view": { "id": "view-1", "type": "table", "title": "Articles" },
         "workspace": { "id": "ws-1", "name": "Articles" },
-        "object": { "id": "obj-1", "type": "artikel", "title": "Tält" },
+        "object": { "id": "obj-1", "type": "article", "title": "Tent" },
         "search": { "filter": "status:draft", "sort": "name" },
         "build": "abc123"
     })
@@ -212,7 +212,7 @@ async fn feedback_relays_paths_and_a_full_header_line() {
     assert_eq!(body["workspace"]["name"], "Articles");
     assert_eq!(body["object"]["id"], "obj-1");
     assert_eq!(body["object"]["type"], "artikel");
-    assert_eq!(body["object"]["title"], "Tält");
+    assert_eq!(body["object"]["title"], "Tent");
     assert_eq!(body["filter"], "status:draft");
     assert_eq!(body["build"], "abc123");
     assert_eq!(body["user"]["handle"], "ada");
