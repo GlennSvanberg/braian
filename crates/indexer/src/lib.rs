@@ -270,18 +270,20 @@ impl Shared {
             .get_objects(&ids)
             .instrument(build.span())
             .await?;
-        let docs = build
+        let prepared = build
             .span()
             .in_scope(|| documents(&cached.model, &cached.defs, &stored, pending));
-        build.arm(docs.len());
+        build.arm(prepared.docs.len());
         drop(build);
-        if !docs.is_empty() {
+        let writer = self.search.interactive_writer();
+        forget_documents(&writer, &prepared.drop_ids).await?;
+        if !prepared.docs.is_empty() {
             let mut import = Stage::start(pace.kind, "import");
-            import.arm(docs.len());
+            import.arm(prepared.docs.len());
             import_batched(
-                &self.search.interactive_writer(),
+                &writer,
                 self.search.alias(),
-                &docs,
+                &prepared.docs,
                 pace.import_batch,
                 pace.import_concurrency,
             )
@@ -862,6 +864,8 @@ async fn run_lane(
 struct BuiltBatch {
     claims: Vec<i64>,
     docs: Vec<Value>,
+    /// Link ids removed from the index instead of upserted.
+    drop_ids: Vec<String>,
     max_seq: i64,
     /// Coalesced events in this read.
     events: usize,
@@ -958,6 +962,7 @@ async fn import_built(
     tune: &mut WaveTune,
     pace: &LanePace,
 ) -> anyhow::Result<()> {
+    forget_documents(&shared.search, &batch.drop_ids).await?;
     if !batch.docs.is_empty() {
         let mut import = Stage::start(pace.kind, "import");
         import.arm(batch.docs.len());
@@ -1063,6 +1068,7 @@ async fn build_batch(
         return Ok(Some(BuiltBatch {
             claims,
             docs: Vec::new(),
+            drop_ids: Vec::new(),
             max_seq,
             events,
             offered: batch_size,
@@ -1076,14 +1082,15 @@ async fn build_batch(
         .get_objects(&ids)
         .instrument(build.span())
         .await?;
-    let docs = build
+    let prepared = build
         .span()
         .in_scope(|| documents(&cached.model, &cached.defs, &stored, &pending));
-    build.arm(docs.len());
+    build.arm(prepared.docs.len());
     drop(build);
     Ok(Some(BuiltBatch {
         claims,
-        docs,
+        docs: prepared.docs,
+        drop_ids: prepared.drop_ids,
         max_seq,
         events,
         offered: batch_size,
@@ -1164,20 +1171,39 @@ fn object_ids(events: impl IntoIterator<Item = ChangeEvent>) -> Vec<ObjectId> {
     ids
 }
 
+struct PreparedDocs {
+    docs: Vec<Value>,
+    /// Ids of link objects. A document already stored under one of these is deleted.
+    drop_ids: Vec<String>,
+}
+
+fn is_link(defs: &braian_model::DefinitionSet, row: &StoredObject) -> bool {
+    defs.types
+        .iter()
+        .any(|object_type| object_type.id == row.object.type_id && object_type.is_link())
+}
+
 fn documents(
     model: &CompiledModel,
     defs: &braian_model::DefinitionSet,
     stored: &[StoredObject],
     pending: &HashMap<String, ChangeEvent>,
-) -> Vec<Value> {
+) -> PreparedDocs {
     let type_keys: HashMap<_, _> = defs
         .types
         .iter()
         .map(|object_type| (object_type.id, object_type.key.as_str()))
         .collect();
     let mut docs = Vec::with_capacity(stored.len());
+    let mut drop_ids = Vec::new();
     for row in stored {
         let key = row.object.id.as_uuid().to_string();
+        // Link types are records in Postgres and events in the change log.
+        // They are not searchable objects. Drop a document left by an older index.
+        if is_link(defs, row) {
+            drop_ids.push(key);
+            continue;
+        }
         let seq = pending.get(&key).map(|event| event.seq).unwrap_or(0);
         let type_key = type_keys.get(&row.object.type_id).copied().unwrap_or("");
         docs.push(document(
@@ -1191,7 +1217,27 @@ fn documents(
             row.deleted_at.is_some(),
         ));
     }
-    docs
+    PreparedDocs { docs, drop_ids }
+}
+
+async fn forget_documents(search: &Typesense, ids: &[String]) -> anyhow::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    futures::stream::iter(ids.iter().cloned())
+        .map(|id| {
+            let search = search.clone();
+            async move {
+                search
+                    .delete_document(&id)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("typesense delete {id}: {error}"))
+            }
+        })
+        .buffer_unordered(8)
+        .try_collect::<Vec<()>>()
+        .await?;
+    Ok(())
 }
 
 async fn import_batched(
@@ -1353,7 +1399,7 @@ async fn reindex_with(
             .collect();
         let docs: Vec<Value> = stored
             .iter()
-            .filter(|row| row.deleted_at.is_none())
+            .filter(|row| row.deleted_at.is_none() && !is_link(&defs, row))
             .map(|row| {
                 let type_key = type_keys.get(&row.object.type_id).copied().unwrap_or("");
                 document(
@@ -1445,16 +1491,17 @@ async fn index_objects_in(
         );
     }
     let config = IndexerConfig::from_env();
-    let docs = documents(&model, &defs, &stored, &pending);
+    let prepared = documents(&model, &defs, &stored, &pending);
     let writer = if interactive {
         search.interactive_writer()
     } else {
         search.clone()
     };
+    forget_documents(&writer, &prepared.drop_ids).await?;
     import_batched(
         &writer,
         writer.alias(),
-        &docs,
+        &prepared.docs,
         config.import_batch,
         config.import_concurrency,
     )
