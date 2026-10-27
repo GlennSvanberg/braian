@@ -158,6 +158,11 @@ export function CommandPalette({
           }]
         : []),
       { id: 'model:new-type', group: 'object' as const, title: copy.newType, subtitle: copy.dataModel, keywords: ['create', 'type'] },
+      { id: 'model:new-link-type', group: 'object' as const, title: copy.newLinkType, subtitle: copy.dataModel, keywords: ['create', 'link', 'type'] },
+      { id: 'link:to', group: 'object' as const, title: `${copy.linkTo} ›`, subtitle: copy.addLink, keywords: ['link', 'relation'] },
+      { id: 'link:add', group: 'object' as const, title: copy.addLink, subtitle: copy.linkTypes, keywords: ['link', 'add'] },
+      { id: 'link:remove', group: 'object' as const, title: copy.removeLink, subtitle: copy.linkTypes, keywords: ['link', 'remove'] },
+      { id: 'model:delete-link-type', group: 'object' as const, title: copy.deleteLinkType, subtitle: copy.dataModel, keywords: ['delete', 'link', 'type'] },
       { id: 'model:new-list', group: 'object' as const, title: copy.newValueList, subtitle: copy.dataModel, keywords: ['create', 'list', 'option'] },
       { id: 'model:new-family', group: 'object' as const, title: copy.newUnitFamily, subtitle: copy.dataModel, keywords: ['create', 'unit'] },
       { id: 'model:new-tree', group: 'object' as const, title: copy.newTree, subtitle: copy.dataModel, keywords: ['create', 'structure', 'tree'] },
@@ -239,9 +244,47 @@ export function CommandPalette({
       onClose()
       return
     }
-    if (id === 'model:new-type' || id === 'model:new-list' || id === 'model:new-family' || id === 'model:new-tree') {
-      const kind = id === 'model:new-type' ? 'type' : id === 'model:new-list' ? 'list' : id === 'model:new-family' ? 'family' : 'tree'
+    if (id === 'model:new-type' || id === 'model:new-list' || id === 'model:new-family' || id === 'model:new-tree' || id === 'model:new-link-type') {
+      const kind = id === 'model:new-type' ? 'type' : id === 'model:new-list' ? 'list' : id === 'model:new-family' ? 'family' : id === 'model:new-link-type' ? 'link' : 'tree'
       openModelDialog(kind)
+      onClose()
+      return
+    }
+    if (id === 'link:to') {
+      const rows = ((defs.data?.types as Json[]) ?? [])
+        .filter((item) => item.kind === 'link')
+        .map((item) => ({
+          id: `link:type:${String(item.key)}`,
+          sourceId: `link:type:${String(item.key)}`,
+          group: 'object' as const,
+          title: String(item.key),
+          subtitle: copy.linkTo,
+        }))
+      setStack((current) => [...current, { label: copy.linkTo, rows }])
+      setQuery('')
+      setActive(0)
+      return
+    }
+    if (id.startsWith('link:type:')) {
+      window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: id.slice('link:type:'.length) } }))
+      onClose()
+      return
+    }
+    if (id === 'link:add') {
+      window.dispatchEvent(new CustomEvent('braian-add-link', { detail: {} }))
+      onClose()
+      return
+    }
+    if (id === 'link:remove') {
+      window.dispatchEvent(new Event('braian-remove-link'))
+      onClose()
+      return
+    }
+    if (id === 'model:delete-link-type') {
+      const target = modelFocus()
+      if (target?.kind === 'type') {
+        void stageModel('model.delete_link_type', { key: target.key }).catch(() => undefined)
+      }
       onClose()
       return
     }

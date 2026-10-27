@@ -9,6 +9,7 @@ mod error;
 mod gauge;
 mod ids;
 mod imports;
+mod links;
 mod log;
 mod ops;
 mod pressure;
@@ -36,8 +37,8 @@ pub mod admin {
     pub use crate::session::{PgConn, create_database, drop_database, parse_config};
 }
 pub use types::{
-    BulkReport, BulkRowError, ChangeRow, ObjectAudit, ObjectOp, ObjectProjection, PrincipalRecord,
-    StoredObject, WriteReceipt,
+    BulkReport, BulkRowError, ChangeRow, LinkView, ObjectAudit, ObjectOp, ObjectProjection,
+    PrincipalRecord, StoredObject, WriteReceipt,
 };
 
 /// Form used by [`Store::connect`].

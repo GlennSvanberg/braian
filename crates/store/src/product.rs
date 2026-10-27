@@ -1524,7 +1524,7 @@ impl Store {
         let rows = client
             .query(
                 "SELECT id, key, type_id, version FROM objects
-                 WHERE deleted_at IS NULL
+                 WHERE deleted_at IS NULL AND key IS NOT NULL
                  ORDER BY key
                  LIMIT $1",
                 &[&limit],
@@ -1550,8 +1550,9 @@ impl Store {
     ) -> Result<Vec<(Uuid, String, Uuid, i64)>, Error> {
         let client = self.interactive_pool().get().await?;
         let pattern = key_contains.map(like_contains);
-        let mut sql =
-            String::from("SELECT id, key, type_id, version FROM objects WHERE deleted_at IS NULL");
+        let mut sql = String::from(
+            "SELECT id, key, type_id, version FROM objects WHERE deleted_at IS NULL AND key IS NOT NULL",
+        );
         let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new();
         if let Some(type_id) = type_id.as_ref() {
             push_pred(&mut sql, params.len(), " AND type_id = $");

@@ -76,7 +76,10 @@ impl CompiledModel {
             }
         }
 
-        if !object.values.contains_key(&key_attribute) {
+        let is_link = self
+            .type_info(object.type_id)
+            .is_some_and(|info| info.kind.is_link());
+        if !is_link && !object.values.contains_key(&key_attribute) {
             let key = self
                 .attribute(key_attribute)
                 .map(|attribute| attribute.key.as_str())
@@ -111,7 +114,8 @@ impl CompiledModel {
             }
         }
         let name = braian_model::name_id();
-        if has_name
+        if !is_link
+            && has_name
             && self
                 .attribute(name)
                 .is_some_and(|attribute| attribute.required)

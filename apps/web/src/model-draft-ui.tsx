@@ -4,9 +4,9 @@ import { ApiError, api, type Json } from './api'
 import { formatCount, formatTimestamp } from './format'
 import { copy } from './i18n'
 import { attributeKey } from './model-view'
-import { onDraftChange, requestDiscardDraft, stageModel } from './model-stage'
+import { onDraftChange, requestDiscardDraft, setModelFocus, stageModel } from './model-stage'
 
-type DialogKind = 'type' | 'list' | 'family' | 'tree'
+type DialogKind = 'type' | 'list' | 'family' | 'tree' | 'link'
 
 export function ModelDraftHost() {
   const queryClient = useQueryClient()
@@ -175,8 +175,20 @@ function ReviewDialog({ body, onClose, onSaved }: { body: Json; onClose: () => v
 function CreateDialog({ kind, onClose }: { kind: DialogKind; onClose: () => void }) {
   const [label, setLabel] = useState('')
   const [extra, setExtra] = useState('')
+  const [fromType, setFromType] = useState('')
+  const [toType, setToType] = useState('')
   const [error, setError] = useState('')
-  const title = kind === 'type' ? copy.newType : kind === 'list' ? copy.newValueList : kind === 'family' ? copy.newUnitFamily : copy.newTree
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), enabled: kind === 'link' })
+  const entities = ((defs.data?.types as Json[] | undefined) ?? [])
+    .filter((item) => item.kind !== 'link')
+    .map((item) => String(item.key ?? ''))
+    .filter(Boolean)
+  useEffect(() => {
+    if (kind !== 'link') return
+    if (!fromType && entities[0]) setFromType(entities[0])
+    if (!toType && entities[0]) setToType(entities[0])
+  }, [kind, fromType, toType, entities])
+  const title = kind === 'link' ? copy.newLinkType : kind === 'type' ? copy.newType : kind === 'list' ? copy.newValueList : kind === 'family' ? copy.newUnitFamily : copy.newTree
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -191,7 +203,23 @@ function CreateDialog({ kind, onClose }: { kind: DialogKind; onClose: () => void
     const name = label.trim()
     const key = attributeKey(name)
     if (!key) return
-    const work = kind === 'type'
+    const side = attributeKey(name)
+    if (kind === 'link') setModelFocus({ kind: 'type', key })
+    const work = kind === 'link'
+      ? stageModel('model.create_link_type', {
+          key,
+          label: name,
+          from_types: [fromType],
+          to_types: [toType],
+          from_key: side,
+          from_label: name,
+          to_key: `${side}_to`,
+          to_label: name,
+          from_cardinality: 'many',
+          to_cardinality: 'many',
+          attributes: extra.split(',').map((item) => attributeKey(item)).filter(Boolean),
+        })
+      : kind === 'type'
       ? stageModel('model.create_type', { key, label: name })
       : kind === 'list'
         ? stageModel('model.create_value_list', {
@@ -231,6 +259,26 @@ function CreateDialog({ kind, onClose }: { kind: DialogKind; onClose: () => void
           {copy.attributeName}
           <input data-testid="model-dialog-name" autoFocus aria-label={copy.attributeName} value={label} onChange={(event) => setLabel(event.target.value)} />
         </label>
+        {kind === 'link' ? (
+          <>
+            <label className="model-field">
+              {copy.fromType}
+              <select data-testid="link-type-from" aria-label={copy.fromType} value={fromType} onChange={(event) => setFromType(event.target.value)}>
+                {entities.map((key) => <option key={key} value={key}>{key}</option>)}
+              </select>
+            </label>
+            <label className="model-field">
+              {copy.toType}
+              <select data-testid="link-type-to" aria-label={copy.toType} value={toType} onChange={(event) => setToType(event.target.value)}>
+                {entities.map((key) => <option key={key} value={key}>{key}</option>)}
+              </select>
+            </label>
+            <label className="model-field">
+              {copy.linkAttribute}
+              <input data-testid="link-type-attribute" aria-label={copy.linkAttribute} value={extra} onChange={(event) => setExtra(event.target.value)} />
+            </label>
+          </>
+        ) : null}
         {kind === 'list' ? (
           <label className="model-field">
             {copy.options}

@@ -528,6 +528,7 @@ impl Store {
         let diff = definition_diff(previous.as_ref(), defs);
         let seq = insert_change(tx, batch, None, None, ChangeOp::Definitions, actor, &diff).await?;
         let groups = sync_attribute_parts(tx, defs).await?;
+        crate::links::sync_cardinality(tx, defs).await?;
         Ok((
             WriteReceipt {
                 batch_id: batch,
@@ -1243,7 +1244,7 @@ impl Store {
                     .collect(),
                 values,
             },
-            key: row.get("key"),
+            key: row.get::<_, Option<String>>("key").unwrap_or_default(),
             version: u64_from_i64(version)?,
             deleted_at: row.get("deleted_at"),
         })
@@ -1277,7 +1278,7 @@ impl Store {
                     .collect(),
                 values,
             },
-            key: row.get("key"),
+            key: row.get::<_, Option<String>>("key").unwrap_or_default(),
             version: u64_from_i64(version)?,
             deleted_at: row.get("deleted_at"),
         })
@@ -1400,6 +1401,39 @@ async fn apply_ops(
                 let (version, seq) = delete_object(tx, batch, actor, *id, *base_version).await?;
                 (*id, version, seq)
             }
+            ObjectOp::CreateLink {
+                object,
+                from_id,
+                to_id,
+            } => {
+                let (version, seq) =
+                    insert_link(tx, form, defs, batch, actor, object, *from_id, *to_id).await?;
+                (object.id, version, seq)
+            }
+            ObjectOp::UpdateLink {
+                id,
+                patch,
+                base_version,
+                read_version,
+                from_id,
+                to_id,
+            } => {
+                let (version, seq) = update_link(
+                    tx,
+                    form,
+                    defs,
+                    batch,
+                    actor,
+                    *id,
+                    patch,
+                    *base_version,
+                    *read_version,
+                    *from_id,
+                    *to_id,
+                )
+                .await?;
+                (*id, version, seq)
+            }
         };
         versions.push((id, version));
         last_seq = seq;
@@ -1420,19 +1454,7 @@ async fn insert_object(
     object: &Object,
 ) -> Result<(u64, i64), Error> {
     let key = defs.key_of(object)?;
-    let revision = as_i64(object.model_revision)?;
-    tx.execute(
-        "INSERT INTO objects (id, type_id, key, version, model_revision, updated_by) VALUES ($1, $2, $3, 1, $4, $5)",
-        &[
-            &object.id.as_uuid(),
-            &object.type_id.as_uuid(),
-            &key,
-            &revision,
-            &actor.actor.as_uuid(),
-        ],
-    )
-    .await
-    .map_err(|error| map_unique(error, object.type_id, &key))?;
+    insert_head(tx, actor, object, Some(key)).await?;
     let parts = defs.split.split(form, &object.values);
     for (part, document) in &parts {
         let value = Value::Object(document.clone());
@@ -1457,6 +1479,258 @@ async fn insert_object(
     )
     .await?;
     Ok((1, seq))
+}
+
+async fn insert_head(
+    tx: &Transaction<'_>,
+    actor: &Actor,
+    object: &Object,
+    key: Option<String>,
+) -> Result<(), Error> {
+    let revision = as_i64(object.model_revision)?;
+    tx.execute(
+        "INSERT INTO objects (id, type_id, key, version, model_revision, updated_by) VALUES ($1, $2, $3, 1, $4, $5)",
+        &[
+            &object.id.as_uuid(),
+            &object.type_id.as_uuid(),
+            &key,
+            &revision,
+            &actor.actor.as_uuid(),
+        ],
+    )
+    .await
+    .map_err(|error| map_unique(error, object.type_id, key.as_deref().unwrap_or("")))?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_link(
+    tx: &Transaction<'_>,
+    form: crate::split::StorageForm,
+    defs: &CachedDefs,
+    batch: BatchId,
+    actor: &Actor,
+    object: &Object,
+    from_id: ObjectId,
+    to_id: ObjectId,
+) -> Result<(u64, i64), Error> {
+    let link_type = defs
+        .set
+        .types
+        .iter()
+        .find(|item| item.id == object.type_id)
+        .ok_or(Error::UnknownType(object.type_id))?;
+    if !link_type.is_link() {
+        return Err(Error::LinkRejected(format!(
+            "{} is not a link type",
+            link_type.key
+        )));
+    }
+    let spec = link_type
+        .link
+        .as_ref()
+        .ok_or_else(|| Error::LinkRejected(format!("link type {} has no ends", link_type.key)))?;
+    if from_id == to_id {
+        return Err(Error::LinkRejected(
+            "a link cannot point at itself".to_owned(),
+        ));
+    }
+    let from_type = crate::links::endpoint_type(tx, from_id).await?;
+    let to_type = crate::links::endpoint_type(tx, to_id).await?;
+    let from_key = type_key(&defs.set, from_type)?;
+    let to_key = type_key(&defs.set, to_type)?;
+    let (from_count, to_count) =
+        crate::links::existing_counts(tx, link_type.id, from_id, to_id, None).await?;
+    braian_model::explain_link(
+        &defs.set,
+        &link_type.key,
+        &from_key,
+        &to_key,
+        from_count,
+        to_count,
+    )
+    .map_err(Error::LinkRejected)?;
+    insert_head(tx, actor, object, None).await?;
+    let parts = defs.split.split(form, &object.values);
+    for (part, document) in &parts {
+        let value = Value::Object(document.clone());
+        insert_part_version(tx, object.id.as_uuid(), part, 1, &value).await?;
+    }
+    let diff = split::create_marker(&object.groups);
+    let seq = insert_change(
+        tx,
+        batch,
+        Some(object.id),
+        Some(1),
+        ChangeOp::Create,
+        actor,
+        &diff,
+    )
+    .await?;
+    let from_one = spec.from_cardinality == braian_model::Cardinality::One;
+    let to_one = spec.to_cardinality == braian_model::Cardinality::One;
+    tx.execute(
+        "INSERT INTO links (object_id, link_type_id, from_id, to_id, from_one, to_one) VALUES ($1, $2, $3, $4, $5, $6)",
+        &[
+            &object.id.as_uuid(),
+            &link_type.id.as_uuid(),
+            &from_id.as_uuid(),
+            &to_id.as_uuid(),
+            &from_one,
+            &to_one,
+        ],
+    )
+    .await
+    .map_err(|error| crate::links::map_cardinality(error, &link_type.key))?;
+    Ok((1, seq))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn update_link(
+    tx: &Transaction<'_>,
+    form: crate::split::StorageForm,
+    defs: &CachedDefs,
+    batch: BatchId,
+    actor: &Actor,
+    id: ObjectId,
+    patch: &braian_model::ObjectPatch,
+    base_version: u64,
+    read_version: u64,
+    from_id: Option<ObjectId>,
+    to_id: Option<ObjectId>,
+) -> Result<(u64, i64), Error> {
+    let (version, seq) = update_object(
+        tx,
+        form,
+        defs,
+        batch,
+        actor,
+        id,
+        patch,
+        base_version,
+        read_version,
+    )
+    .await?;
+    if from_id.is_none() && to_id.is_none() {
+        return Ok((version, seq));
+    }
+    let row = tx
+        .query_opt(
+            "SELECT link_type_id, from_id, to_id FROM links WHERE object_id = $1",
+            &[&id.as_uuid()],
+        )
+        .await?;
+    let Some(row) = row else {
+        return Err(Error::LinkRejected(format!("{id} is not a link")));
+    };
+    let link_type_id = TypeId::from_uuid(row.get("link_type_id"));
+    let current_from = ObjectId::from_uuid(row.get("from_id"));
+    let current_to = ObjectId::from_uuid(row.get("to_id"));
+    let next_from = from_id.unwrap_or(current_from);
+    let next_to = to_id.unwrap_or(current_to);
+    if next_from == current_from && next_to == current_to {
+        return Ok((version, seq));
+    }
+    let link_type = defs
+        .set
+        .types
+        .iter()
+        .find(|item| item.id == link_type_id)
+        .ok_or(Error::UnknownType(link_type_id))?;
+    let spec = link_type
+        .link
+        .as_ref()
+        .ok_or_else(|| Error::LinkRejected(format!("link type {} has no ends", link_type.key)))?;
+    if next_from == next_to {
+        return Err(Error::LinkRejected(
+            "a link cannot point at itself".to_owned(),
+        ));
+    }
+    let from_type = crate::links::endpoint_type(tx, next_from).await?;
+    let to_type = crate::links::endpoint_type(tx, next_to).await?;
+    let (from_count, to_count) =
+        crate::links::existing_counts(tx, link_type.id, next_from, next_to, Some(id)).await?;
+    braian_model::explain_link(
+        &defs.set,
+        &link_type.key,
+        &type_key(&defs.set, from_type)?,
+        &type_key(&defs.set, to_type)?,
+        from_count,
+        to_count,
+    )
+    .map_err(Error::LinkRejected)?;
+    let from_one = spec.from_cardinality == braian_model::Cardinality::One;
+    let to_one = spec.to_cardinality == braian_model::Cardinality::One;
+    tx.execute(
+        "UPDATE links SET from_id = $2, to_id = $3, from_one = $4, to_one = $5 WHERE object_id = $1",
+        &[
+            &id.as_uuid(),
+            &next_from.as_uuid(),
+            &next_to.as_uuid(),
+            &from_one,
+            &to_one,
+        ],
+    )
+    .await
+    .map_err(|error| crate::links::map_cardinality(error, &link_type.key))?;
+    Ok((version, seq))
+}
+
+async fn cascade_links(
+    tx: &Transaction<'_>,
+    batch: BatchId,
+    actor: &Actor,
+    id: ObjectId,
+) -> Result<(), Error> {
+    let ids = crate::links::touching_ids(tx, id).await?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    crate::links::delete_rows(tx, &ids).await?;
+    for link_id in ids {
+        if link_id == id.as_uuid() {
+            continue;
+        }
+        let row = tx
+            .query_opt(
+                "SELECT version, deleted_at FROM objects WHERE id = $1 FOR UPDATE",
+                &[&link_id],
+            )
+            .await?;
+        let Some(row) = row else {
+            continue;
+        };
+        let deleted_at: Option<chrono::DateTime<chrono::Utc>> = row.get("deleted_at");
+        if deleted_at.is_some() {
+            continue;
+        }
+        let version_row = tx
+            .query_one(
+                "UPDATE objects SET version = version + 1, updated_at = now(), deleted_at = now(), updated_by = $2 WHERE id = $1 RETURNING version",
+                &[&link_id, &actor.actor.as_uuid()],
+            )
+            .await?;
+        let version = u64_from_i64(version_row.get(0))?;
+        insert_change(
+            tx,
+            batch,
+            Some(ObjectId::from_uuid(link_id)),
+            Some(as_i64(version)?),
+            ChangeOp::Delete,
+            actor,
+            &serde_json::json!({ "link_removed": true }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn type_key(defs: &braian_model::DefinitionSet, id: TypeId) -> Result<String, Error> {
+    defs.types
+        .iter()
+        .find(|item| item.id == id)
+        .map(|item| item.key.clone())
+        .ok_or(Error::UnknownType(id))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1522,14 +1796,15 @@ async fn update_object(
     }
     let placed = apply_groups(tx, id, patch).await?;
     let revision = as_i64(defs.set.model_revision)?;
-    let key_attribute = defs
+    let object_type = defs
         .set
         .types
         .iter()
-        .find(|object_type| object_type.id == type_id)
-        .map(|object_type| object_type.key_attribute);
-    let version_row = if key_attribute
-        .is_some_and(|attribute| patch.values.attributes.contains_key(&attribute))
+        .find(|object_type| object_type.id == type_id);
+    let is_link = object_type.is_some_and(|object_type| object_type.is_link());
+    let key_attribute = object_type.map(|object_type| object_type.key_attribute);
+    let version_row = if !is_link
+        && key_attribute.is_some_and(|attribute| patch.values.attributes.contains_key(&attribute))
     {
         let key = new_key(id, patch, key_attribute.expect("checked above"))?;
         tx.query_one(
@@ -1586,6 +1861,7 @@ async fn delete_object(
         return Err(Error::Deleted(id));
     }
     let current_version = u64_from_i64(row.get("version"))?;
+    cascade_links(tx, batch, actor, id).await?;
     if let Some(base_version) = base_version {
         if base_version > current_version {
             return Err(Error::BaseAhead { current_version });

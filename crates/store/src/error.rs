@@ -35,6 +35,10 @@ pub enum Error {
     UnknownPrincipal(PrincipalId),
     #[error("duplicate key {key} for type {type_id}")]
     DuplicateKey { type_id: TypeId, key: String },
+    #[error("{0}")]
+    LinkRejected(String),
+    #[error("{0}")]
+    LinkCardinality(String),
     #[error("object {0} was not found")]
     NotFound(ObjectId),
     #[error("object {0} is deleted")]

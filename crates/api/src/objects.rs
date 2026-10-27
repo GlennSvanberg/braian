@@ -91,6 +91,8 @@ pub struct ObjectResponse {
     pub updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_by: Option<UpdatedBy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<crate::links::LinkSide>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -200,7 +202,7 @@ pub async fn create_object(
         deleted_at: None,
         object,
     };
-    note(
+    note_write(
         &state,
         "create",
         stored.object.id.as_uuid(),
@@ -234,7 +236,7 @@ pub async fn get_object(
 ) -> Result<Response, Problem> {
     let cached = state.models.get(&state.store).await?;
     let id = ObjectId::from_uuid(id);
-    let stored = load(&state, id).await?;
+    let stored = load_object(&state, id).await?;
     let seq = state.store.latest_seq(id).await.map_err(store_status)?;
     Ok(object_response(
         &state,
@@ -301,6 +303,7 @@ pub async fn batch_get(
             include,
             full_values,
             audits.get(&stored.object.id),
+            Vec::new(),
         ));
     }
     Ok(Json(BatchGetResponse { objects }))
@@ -335,7 +338,7 @@ pub async fn patch_object(
     let id = ObjectId::from_uuid(id);
     for _ in 0..3 {
         let cached = state.models.get(&state.store).await?;
-        let stored = load(&state, id).await?;
+        let stored = load_object(&state, id).await?;
         let patch = patch_from_wire(&cached.model, &cached.defs, &body.values, &body.groups)?;
         let report = cached.model.validate_patch(&stored.object, &patch);
         if !report.errors.is_empty() {
@@ -378,7 +381,7 @@ pub async fn patch_object(
                     deleted_at: None,
                     object,
                 };
-                note(
+                note_write(
                     &state,
                     "update",
                     id.as_uuid(),
@@ -433,12 +436,34 @@ pub async fn delete_object(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<Uuid>,
+    Query(query): Query<crate::deletes::DryRun>,
     headers: HeaderMap,
-) -> Result<Json<DeletedResponse>, Problem> {
+) -> Result<Response, Problem> {
     if !identity.may_commit() {
         return Err(crate::auth::delete_forbidden());
     }
     let id = ObjectId::from_uuid(id);
+    if query.dry_run {
+        let stored = load_object(&state, id).await?;
+        let (rows, extra) = state
+            .store
+            .link_delete_counts(id)
+            .await
+            .map_err(store_status)?;
+        let objects = 1 + extra;
+        let sentence = format!("Removes {objects} objects and {rows} links");
+        let report = crate::deletes::ConsequenceReport {
+            objects,
+            links: rows,
+            values: 0,
+            selections: 0,
+            destructive: true,
+            confirm_name: stored.key,
+            sentence: sentence.clone(),
+            detail: vec![sentence],
+        };
+        return Ok(Json(report).into_response());
+    }
     let base = if_match(&headers)?;
     let receipt = match state
         .store
@@ -462,7 +487,7 @@ pub async fn delete_object(
         Err(error) => return Err(store_status(error)),
     };
     let version = version_of(&receipt, id);
-    note(
+    note_write(
         &state,
         "delete",
         id.as_uuid(),
@@ -473,7 +498,8 @@ pub async fn delete_object(
     Ok(Json(DeletedResponse {
         version,
         seq: receipt.last_seq,
-    }))
+    })
+    .into_response())
 }
 
 /// Business key shown on a create suggestion.
@@ -527,16 +553,16 @@ mod tests {
     }
 }
 
-struct SuggestionDraft {
-    title: &'static str,
-    object_id: Option<Uuid>,
-    object_key: Option<String>,
-    type_key: Option<String>,
-    base_version: Option<i64>,
-    patch: Value,
+pub(crate) struct SuggestionDraft {
+    pub(crate) title: &'static str,
+    pub(crate) object_id: Option<Uuid>,
+    pub(crate) object_key: Option<String>,
+    pub(crate) type_key: Option<String>,
+    pub(crate) base_version: Option<i64>,
+    pub(crate) patch: Value,
 }
 
-async fn file_suggestion(
+pub(crate) async fn file_suggestion(
     state: &AppState,
     identity: &Identity,
     draft: SuggestionDraft,
@@ -578,7 +604,14 @@ async fn file_suggestion(
         .into_response())
 }
 
-fn note(state: &AppState, op: &str, id: Uuid, version: u64, seq: i64, type_key: &str) {
+pub(crate) fn note_write(
+    state: &AppState,
+    op: &str,
+    id: Uuid,
+    version: u64,
+    seq: i64,
+    type_key: &str,
+) {
     state.emit(serde_json::json!({
         "seq": seq,
         "op": op,
@@ -643,7 +676,7 @@ pub async fn object_changes(
     Ok(Json(changes))
 }
 
-async fn object_response(
+pub(crate) async fn object_response(
     state: &AppState,
     cached: &CachedModel,
     stored: &StoredObject,
@@ -657,6 +690,9 @@ async fn object_response(
         .await
         .ok()
         .and_then(|rows| rows.into_iter().next());
+    let links = crate::links::load_sides(state, &cached.defs, stored.object.id)
+        .await
+        .unwrap_or_else(|_| Vec::new());
     let body = object_body(
         cached,
         stored,
@@ -664,6 +700,7 @@ async fn object_response(
         include_inapplicable,
         validate,
         audit.as_ref(),
+        links,
     );
     (
         StatusCode::OK,
@@ -673,7 +710,7 @@ async fn object_response(
         .into_response()
 }
 
-async fn load(state: &AppState, id: ObjectId) -> Result<StoredObject, Problem> {
+pub(crate) async fn load_object(state: &AppState, id: ObjectId) -> Result<StoredObject, Problem> {
     match state.store.get_object(id).await.map_err(store_status)? {
         Some(stored) if stored.deleted_at.is_some() => Err(store_status(Error::Deleted(id))),
         Some(stored) => Ok(stored),
@@ -688,6 +725,7 @@ fn object_body(
     include_inapplicable: bool,
     validate: bool,
     audit: Option<&braian_store::ObjectAudit>,
+    links: Vec<crate::links::LinkSide>,
 ) -> ObjectResponse {
     let applicable = cached
         .model
@@ -723,6 +761,7 @@ fn object_body(
                 kind: audit.updated_by_kind?.as_str().to_owned(),
             })
         }),
+        links,
     }
 }
 
@@ -764,7 +803,7 @@ async fn projection_for(
     })
 }
 
-fn version_of(receipt: &WriteReceipt, id: ObjectId) -> u64 {
+pub(crate) fn version_of(receipt: &WriteReceipt, id: ObjectId) -> u64 {
     receipt
         .versions
         .iter()

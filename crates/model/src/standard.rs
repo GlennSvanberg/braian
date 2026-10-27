@@ -136,7 +136,13 @@ pub fn ensure_standard_rows(defs: &mut DefinitionSet) {
 }
 
 /// Pins number, name and the timestamps on one type. The key attribute becomes number.
+///
+/// A link type keeps the timestamps and updated by, and does not receive number or name.
 pub fn attach_standard_attributes(object_type: &mut ObjectType) {
+    if object_type.is_link() {
+        attach_link_record(object_type);
+        return;
+    }
     let ids = standard_ids();
     object_type.key_attribute = ids.number;
     let order = [
@@ -146,6 +152,28 @@ pub fn attach_standard_attributes(object_type: &mut ObjectType) {
         ids.updated_at,
         ids.updated_by,
     ];
+    let mut attributes = Vec::with_capacity(object_type.attributes.len() + order.len());
+    for id in order {
+        if !attributes.contains(&id) {
+            attributes.push(id);
+        }
+    }
+    for id in &object_type.attributes {
+        if !attributes.contains(id) {
+            attributes.push(*id);
+        }
+    }
+    object_type.attributes = attributes;
+}
+
+/// Timestamps on a link. Number and name stay off the type so a link is not a numbered record.
+fn attach_link_record(object_type: &mut ObjectType) {
+    let ids = standard_ids();
+    object_type.key_attribute = ids.created_at;
+    object_type
+        .attributes
+        .retain(|id| *id != ids.number && *id != ids.name);
+    let order = [ids.created_at, ids.updated_at, ids.updated_by];
     let mut attributes = Vec::with_capacity(object_type.attributes.len() + order.len());
     for id in order {
         if !attributes.contains(&id) {
@@ -362,6 +390,9 @@ mod tests {
                 attributes: vec![sku],
                 structures: None,
                 defaults: BTreeMap::new(),
+
+                kind: Default::default(),
+                link: None,
             }],
             structures: vec![],
         }

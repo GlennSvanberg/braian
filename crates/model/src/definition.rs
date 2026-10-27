@@ -217,6 +217,89 @@ pub struct NumberValue {
     pub unit: Option<String>,
 }
 
+/// An object type is either a normal record or a link between two records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TypeKind {
+    #[default]
+    Entity,
+    Link,
+}
+
+impl TypeKind {
+    pub fn is_entity(&self) -> bool {
+        matches!(self, Self::Entity)
+    }
+
+    pub fn is_link(&self) -> bool {
+        matches!(self, Self::Link)
+    }
+}
+
+/// How many links one object may have on this side of a link type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Cardinality {
+    One,
+    Many,
+}
+
+impl Cardinality {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "one" => Some(Self::One),
+            "many" => Some(Self::Many),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::One => "one",
+            Self::Many => "many",
+        }
+    }
+
+    /// `one` allows a single existing link. `many` does not cap the count.
+    pub fn allows(self, existing: i64) -> bool {
+        match self {
+            Self::Many => true,
+            Self::One => existing < 1,
+        }
+    }
+}
+
+/// The name shown on one side of a link, and the key used later in an attribute path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
+pub struct LinkLabel {
+    pub key: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = BTreeMap<String, String>))]
+    pub labels: BTreeMap<LanguageTag, String>,
+}
+
+impl LinkLabel {
+    pub fn text(&self, language: &str) -> String {
+        stored_label(&self.labels, language).unwrap_or_else(|| self.key.clone())
+    }
+}
+
+/// Ends of a link type. `from_label` is what the target shows. `to_label` is what the source shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
+pub struct LinkSpec {
+    pub from_types: Vec<TypeId>,
+    pub to_types: Vec<TypeId>,
+    pub from_label: LinkLabel,
+    pub to_label: LinkLabel,
+    pub from_cardinality: Cardinality,
+    pub to_cardinality: Cardinality,
+}
+
 /// An object type. There are no built-in types such as article or product.
 ///
 /// `key_attribute` is the value copied into `objects.key`. On a type that has
@@ -252,9 +335,19 @@ pub struct ObjectType {
     /// Keys are attribute keys, for example `status` = `draft`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub defaults: BTreeMap<String, String>,
+    /// Missing means a normal type. Stored sets from before link types stay entities.
+    #[serde(default, skip_serializing_if = "TypeKind::is_entity")]
+    pub kind: TypeKind,
+    /// Present only when `kind` is `link`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<LinkSpec>,
 }
 
 impl ObjectType {
+    pub fn is_link(&self) -> bool {
+        self.kind.is_link()
+    }
+
     /// Singular name for `language`, then English, then any stored name, then the key.
     pub fn singular_label(&self, language: &str) -> String {
         stored_label(&self.singular, language)
@@ -436,6 +529,8 @@ mod label_tests {
             attributes: vec![],
             structures: None,
             defaults: BTreeMap::new(),
+            kind: Default::default(),
+            link: None,
         }
     }
 

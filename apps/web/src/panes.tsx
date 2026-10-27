@@ -32,6 +32,7 @@ import {
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
+import { LinkSections } from './link-section'
 import { RecordSection } from './record-section'
 import { labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
 import { objectTableFilter } from './table-filter'
@@ -791,6 +792,21 @@ export function ObjectTable({
           onKeyDown={onMenuKey}
         >
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
+          {((defs.data?.types as Json[]) ?? []).filter((item) => item.kind === 'link').map((item) => (
+            <button
+              key={String(item.key)}
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              onClick={() => {
+                session.setObjectId(menu.id)
+                window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: String(item.key) } }))
+                setMenu(null)
+              }}
+            >
+              {copy.linkTo} {textValue((item.link as Json | undefined)?.to_label && ((item.link as Json).to_label as Json).labels, uiLanguage) || String(item.key)}
+            </button>
+          ))}
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setMoving(menu.id); setMenu(null) }}>{copy.moveToGroup}</button>
@@ -1286,6 +1302,13 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             {suggestionCount > 0 ? <span className="suggestion-count" data-testid="suggestion-count">{formatCount(suggestionCount)} {copy.suggested}</span> : null}
           </div>
         </header>
+        <LinkSections
+          objectId={session.objectId}
+          typeKey={String(object.data.type ?? '')}
+          defs={defs.data}
+          links={(object.data.links as never) ?? []}
+          onOpen={(id) => session.setObjectId(id)}
+        />
         {fieldSections(valueKeys).map((section) => (
           <section key={section.id} className="field-card">
             <h3>{section.title}</h3>

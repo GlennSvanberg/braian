@@ -94,6 +94,7 @@ export function DataModel({ view }: { view: View }) {
 
 type NavMenu =
   | { x: number; y: number; kind: 'type'; key: string }
+  | { x: number; y: number; kind: 'link'; key: string }
   | { x: number; y: number; kind: 'list'; key: string }
   | { x: number; y: number; kind: 'option'; list: string; code: string }
   | { x: number; y: number; kind: 'family'; key: string }
@@ -102,7 +103,9 @@ type NavMenu =
 function ModelNav({ defs }: { defs: Json | undefined }) {
   const { selection, choose: pick } = useModelSelection()
   const [menu, setMenu] = useState<NavMenu | null>(null)
-  const types = objectTypes(defs, uiLanguage)
+  const rawTypes = (defs?.types as Json[]) ?? []
+  const types = objectTypes({ ...defs, types: rawTypes.filter((item) => item.kind !== 'link') }, uiLanguage)
+  const linkRows = objectTypes({ ...defs, types: rawTypes.filter((item) => item.kind === 'link') }, uiLanguage)
   const lists = ((defs?.value_lists as Json[]) ?? [])
   const families = ((defs?.unit_families as Json[]) ?? [])
   useEffect(() => {
@@ -138,6 +141,36 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
               event.preventDefault()
               pick({ kind: 'type', typeKey: item.key })
               setMenu({ x: event.clientX, y: event.clientY, kind: 'type', key: item.key })
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </section>
+      <section>
+        <h2
+          onContextMenu={(event) => {
+            event.preventDefault()
+            setMenu({ x: event.clientX, y: event.clientY, kind: 'link', key: '' })
+          }}
+        >
+          {copy.linkTypes}
+        </h2>
+        {linkRows.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={selection?.kind === 'type' && selection.typeKey === item.key ? 'model-node on' : 'model-node'}
+            data-testid={`link-type-${item.key}`}
+            onClick={() => {
+              setModelFocus({ kind: 'type', key: item.key })
+              pick({ kind: 'type', typeKey: item.key })
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              setModelFocus({ kind: 'type', key: item.key })
+              pick({ kind: 'type', typeKey: item.key })
+              setMenu({ x: event.clientX, y: event.clientY, kind: 'link', key: item.key })
             }}
           >
             {item.label}
@@ -234,6 +267,12 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
       <StructureSection defs={defs} selection={selection} onPick={pick} />
       {menu ? (
         <div className="menu" role="menu" data-testid="type-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          {menu.kind === 'link' ? (
+            <>
+              <button type="button" onClick={() => { setMenu(null); openModelDialog('link') }}>{copy.newLinkType}</button>
+              {menu.key ? <button type="button" onClick={() => { setMenu(null); void propose('model.delete_link_type', { key: menu.key }) }}>{copy.deleteMenu}</button> : null}
+            </>
+          ) : null}
           {menu.kind === 'type' ? (
             <>
               <button type="button" onClick={() => { setMenu(null); openModelDialog('type') }}>{copy.newType}</button>

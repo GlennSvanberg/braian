@@ -127,6 +127,9 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
         attributes: vec![key_attribute],
         structures: None,
         defaults: BTreeMap::new(),
+
+        kind: Default::default(),
+        link: None,
     });
     defs.model_revision = 2;
     db.store().put_definitions(&who, &defs).await.unwrap();
@@ -1211,6 +1214,119 @@ fn clear_language(id: AttributeId, language: &braian_model::LanguageTag) -> Valu
     ValuePatch {
         attributes: BTreeMap::from([(id, AttributePatch::Languages { values })]),
     }
+}
+
+#[tokio::test]
+async fn a_link_is_visible_from_both_ends_and_dies_with_its_object() {
+    let (db, mut defs, who) = setup(Tier::Light, 11).await;
+    let article = defs
+        .types
+        .iter()
+        .find(|item| item.key == "item")
+        .map(|item| item.id)
+        .expect("item");
+    let sample: Vec<_> = objects_iter(&defs, Tier::Light, 11, 0..8)
+        .filter(|object| object.type_id == article)
+        .take(3)
+        .collect();
+    assert!(sample.len() == 3, "need three articles");
+    for object in &sample {
+        db.store()
+            .write_batch(&who, vec![ObjectOp::Create(object.clone())])
+            .await
+            .unwrap();
+    }
+    braian_model::apply_all(
+        &mut defs,
+        &[braian_model::ModelChange::CreateLinkType {
+            key: "pairs_with".into(),
+            label: "Pairs with".into(),
+            from_types: vec!["item".into()],
+            to_types: vec!["item".into()],
+            from_key: "pairs_with".into(),
+            from_label: "Pairs with".into(),
+            to_key: "paired_with".into(),
+            to_label: "Pairs with".into(),
+            from_cardinality: "one".into(),
+            to_cardinality: "many".into(),
+            attributes: vec!["note".into()],
+        }],
+    )
+    .unwrap();
+    defs.model_revision += 1;
+    db.store().put_definitions(&who, &defs).await.unwrap();
+    let link_type = defs
+        .types
+        .iter()
+        .find(|item| item.key == "pairs_with")
+        .unwrap()
+        .id;
+    let link = braian_model::Object {
+        id: braian_model::ObjectId::from_uuid(Uuid::now_v7()),
+        type_id: link_type,
+        model_revision: defs.model_revision,
+        groups: BTreeMap::new(),
+        values: BTreeMap::new(),
+    };
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::CreateLink {
+                object: link.clone(),
+                from_id: sample[0].id,
+                to_id: sample[1].id,
+            }],
+        )
+        .await
+        .unwrap();
+    let from_left = db.store().links_for(sample[0].id).await.unwrap();
+    let from_right = db.store().links_for(sample[1].id).await.unwrap();
+    assert!(
+        from_left
+            .iter()
+            .any(|view| view.outgoing && view.peer_id == sample[1].id)
+    );
+    assert!(
+        from_right
+            .iter()
+            .any(|view| !view.outgoing && view.peer_id == sample[0].id)
+    );
+    let second = braian_model::Object {
+        id: braian_model::ObjectId::from_uuid(Uuid::now_v7()),
+        type_id: link_type,
+        model_revision: defs.model_revision,
+        groups: BTreeMap::new(),
+        values: BTreeMap::new(),
+    };
+    let rejected = db
+        .store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::CreateLink {
+                object: second,
+                from_id: sample[0].id,
+                to_id: sample[2].id,
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(rejected, braian_store::Error::LinkRejected(_)),
+        "{rejected}"
+    );
+    db.store()
+        .write_batch(
+            &who,
+            vec![ObjectOp::Delete {
+                id: sample[0].id,
+                base_version: None,
+            }],
+        )
+        .await
+        .unwrap();
+    let gone = db.store().get_object(link.id).await.unwrap().unwrap();
+    assert!(gone.deleted_at.is_some());
+    assert!(db.store().links_for(sample[1].id).await.unwrap().is_empty());
 }
 
 fn parts_containing(parts: &BTreeMap<String, serde_json::Value>, id: AttributeId) -> Vec<String> {

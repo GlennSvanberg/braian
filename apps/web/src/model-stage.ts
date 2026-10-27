@@ -55,7 +55,7 @@ export async function stageModel(name: string, args: Json = {}) {
   return draft
 }
 
-export function openModelDialog(kind: 'type' | 'list' | 'family' | 'tree') {
+export function openModelDialog(kind: 'type' | 'list' | 'family' | 'tree' | 'link') {
   window.dispatchEvent(new CustomEvent('braian-model-dialog', { detail: kind }))
 }
 
