@@ -4,6 +4,7 @@
 //! the global attribute pool, unit families and structures. An [`Object`]
 //! carries values keyed by attribute id. Validation lives in `braian-rules`.
 
+mod consequence;
 mod definition;
 mod edit;
 mod error;
@@ -15,6 +16,10 @@ mod patch;
 pub mod refs;
 pub mod structure;
 
+pub use consequence::{
+    ConsequenceCounts, DataPurge, UsageFixture, ValueMatch, consequence_lines,
+    consequence_sentence, grouped, purge_for, tally,
+};
 pub use definition::{
     Attribute, AttributeKind, Class, DefinitionSet, Group, IndexFlags, NumberValue, ObjectType,
     SharedValueList, Structure, TextForm, Unit, UnitFamily, ValueOption, default_plural,

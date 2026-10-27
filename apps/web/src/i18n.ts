@@ -64,6 +64,8 @@ export const copy = {
   duplicate: 'Duplicate',
   rename: 'Rename',
   deleteGroup: 'Delete',
+  deleteMenu: 'Delete…',
+  typeNameToConfirm: 'Type the name to confirm',
   deleteGroupConfirm: 'Delete this group?',
   affectedObjects: 'objects in this group',
   saveAssortment: 'Save selection',

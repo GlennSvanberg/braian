@@ -876,7 +876,6 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   const [openKeys, setOpenKeys] = useState<string[]>(() => (view.state.expanded as string[] | undefined) ?? [])
   const [menu, setMenu] = useState<{ x: number; y: number; row: TreeEntry } | null>(null)
   const [editing, setEditing] = useState<{ row: TreeEntry; mode: 'rename' | 'child' | 'sibling'; value: string } | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
   const structures = (defs.data?.structures as Json[] | undefined) ?? []
   const countOf = (structure: string, key: string) => {
@@ -939,7 +938,6 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   const propose = async (name: string, args: Json) => {
     setMenu(null)
     setEditing(null)
-    setPendingDelete(null)
     try {
       const result = await api<Json>(`/v1/operations/${name}`, { method: 'POST', body: JSON.stringify(args) })
       const id = String(result.proposal_id ?? result.id ?? '')
@@ -954,7 +952,6 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   }
   const startEdit = (row: TreeEntry, mode: 'rename' | 'child' | 'sibling') => {
     setMenu(null)
-    setPendingDelete(null)
     if (mode === 'child' && !openKeys.includes(row.key)) setOpenKeys((current) => [...current, row.key])
     setEditing({ row, mode, value: mode === 'rename' ? structureCaption(row.key, defs.data, row.structureKey) : '' })
   }
@@ -981,7 +978,6 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   }
   const openMenu = (row: TreeEntry, x: number, y: number) => {
     session.setGroup(`${row.structureKey}:${row.key}`)
-    setPendingDelete(null)
     setMenu({
       row,
       x: Math.max(8, Math.min(x, window.innerWidth - 220)),
@@ -1007,7 +1003,6 @@ export function StructureTree({ session, view }: { session: Session; view: View 
         if (event.key === 'Escape') {
           setMenu(null)
           setEditing(null)
-          setPendingDelete(null)
           return
         }
         if (event.key === 'F2' && activeRow) {
@@ -1020,10 +1015,10 @@ export function StructureTree({ session, view }: { session: Session; view: View 
           startEdit(activeRow, 'child')
           return
         }
-        if ((event.key === 'Delete' || event.key === 'Backspace') && activeRow && !pendingDelete) {
+        if ((event.key === 'Delete' || event.key === 'Backspace') && activeRow) {
           event.preventDefault()
           setMenu(null)
-          setPendingDelete(activeRow)
+          void propose('model.delete_group', { structure: activeRow.structureKey, group: activeRow.key })
           return
         }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) return
@@ -1143,7 +1138,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
           </div>
         )
       })}
-      {menu && !pendingDelete ? (
+      {menu ? (
         <div
           className="menu"
           data-testid="context-menu"
@@ -1173,21 +1168,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
           >
             {copy.duplicate}
           </button>
-          <button type="button" className="danger" onClick={() => setPendingDelete(menu.row)}>{copy.deleteGroup}<kbd>Del</kbd></button>
-        </div>
-      ) : null}
-      {pendingDelete ? (
-        <div className="menu" data-testid="delete-group" role="dialog" style={{ left: menu?.x ?? 24, top: menu?.y ?? 24 }} onPointerDown={(event) => event.stopPropagation()}>
-          <p className="menu-note">{copy.deleteGroupConfirm}</p>
-          <p className="menu-note">{pendingDelete.count} {copy.affectedObjects}</p>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => void propose('model.delete_group', { structure: pendingDelete.structureKey, group: pendingDelete.key })}
-          >
-            {copy.deleteGroup}
-          </button>
-          <button type="button" onClick={() => { setPendingDelete(null); setMenu(null) }}>{copy.cancel}</button>
+          <button type="button" className="danger" onClick={() => void propose('model.delete_group', { structure: menu.row.structureKey, group: menu.row.key })}>{copy.deleteMenu}<kbd>Del</kbd></button>
         </div>
       ) : null}
     </div>

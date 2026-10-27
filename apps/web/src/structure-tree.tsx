@@ -120,23 +120,6 @@ export function StructureSection({
     setExpanded((current) => (current.includes(node.id) ? current : [...current, node.id]))
   }
 
-  const openDelete = (next: DialogState) => {
-    setNotice('')
-    setDialog(next)
-    const path = next.kind === 'delete-structure'
-      ? `/v1/structures/${encodeURIComponent(next.structure)}/usage`
-      : `/v1/structures/${encodeURIComponent(next.structure)}/groups/${encodeURIComponent(next.group ?? '')}/usage`
-    void api<{ count: number }>(path)
-      .then((body) => {
-        setDialog((current) => (current && current.kind === next.kind && current.structure === next.structure && current.group === next.group
-          ? { ...current, count: body.count }
-          : current))
-      })
-      .catch((reason: unknown) => {
-        setDialog((current) => (current && current.kind === next.kind ? { ...current, error: reason instanceof ApiError ? reason.message : copy.validation } : current))
-      })
-  }
-
   return (
     <section>
       <div className="model-head">
@@ -197,7 +180,7 @@ export function StructureSection({
                 onAdd={() => editName({ kind: 'group', structure: key })}
                 onRename={() => editName({ kind: 'rename-structure', structure: key, value: title })}
                 onRenameKey={() => editName({ kind: 'rename-structure-key', structure: key, value: key })}
-                onDelete={() => openDelete({ kind: 'delete-structure', structure: key, label: title, count: null, moveTo: '', error: '' })}
+                onDelete={() => void run(() => proposeKey('model.delete_structure', { structure: key }))}
               />
             </div>
             {draft?.kind === 'group' && draft.structure === key && !draft.parent ? (
@@ -240,7 +223,7 @@ export function StructureSection({
                 void run(() => api(`/v1/structures/${encodeURIComponent(key)}/groups/${encodeURIComponent(group)}`, { method: 'PATCH', body: JSON.stringify({ label }) }).then(() => undefined))
               }}
               onMove={(group, label, parentKey) => setDialog({ kind: 'move', structure: key, group, label, parent: parentKey ?? '', error: '' })}
-              onDelete={(group, label) => openDelete({ kind: 'delete-group', structure: key, group, label, count: null, moveTo: '', error: '' })}
+              onDelete={(group) => void run(() => proposeKey('model.delete_group', { structure: key, group }))}
             />
           </div>
         )
@@ -443,7 +426,7 @@ function NodeMenu({
         <DropdownMenuItem onSelect={onRename} onClick={onRename}>{copy.rename}</DropdownMenuItem>
         {onRenameKey ? <DropdownMenuItem onSelect={onRenameKey} onClick={onRenameKey}>{copy.renameKey}</DropdownMenuItem> : null}
         {onMove ? <DropdownMenuItem onSelect={onMove} onClick={onMove}>{copy.move}</DropdownMenuItem> : null}
-        <DropdownMenuItem onSelect={onDelete} onClick={onDelete}>{copy.delete}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onDelete} onClick={onDelete}>{copy.deleteMenu}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

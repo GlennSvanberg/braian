@@ -1,12 +1,12 @@
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use braian_model::{
     Attribute, AttributeId, DefinitionSet, ObjectType, Structure, StructureId, TypeId, UnitFamily,
-    UnitFamilyId, Uuid, delete_attribute, delete_type, delete_unit_family, set_languages,
-    upsert_attribute, upsert_structure, upsert_type, upsert_unit_family,
+    UnitFamilyId, Uuid, set_languages, upsert_attribute, upsert_structure, upsert_type,
+    upsert_unit_family,
 };
 use braian_rules::CompiledModel;
 use braian_store::{Actor, Error, WriteReceipt};
@@ -246,9 +246,14 @@ pub async fn put_attribute(
     delete,
     path = "/v1/attributes/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Attribute key or id")),
+    params(
+        ("id" = String, Path, description = "Attribute key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     responses(
-        (status = 200, description = "Deleted", body = DefinitionWrite),
+        (status = 204, description = "Deleted"),
+        (status = 200, description = "Consequence analysis", body = crate::deletes::ConsequenceReport),
+        (status = 403, description = "An agent or MCP token cannot delete", body = crate::problem::Problem),
         (status = 404, description = "Unknown attribute", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
@@ -257,25 +262,15 @@ pub async fn delete_attribute_route(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
-) -> Result<Json<DefinitionWrite>, Problem> {
-    let defs = state.store.definition_set().await.map_err(store_status)?;
-    let attribute_id = defs
-        .attributes
-        .iter()
-        .find(|item| same_ref(&item.id.as_uuid().to_string(), &item.key, &id))
-        .map(|item| item.id)
-        .ok_or_else(|| missing("attribute", &id))?;
-    let (defs, receipt) = commit(&state, &identity.actor, |defs| {
-        if !delete_attribute(defs, attribute_id) {
-            return Err(missing("attribute", &id));
-        }
-        Ok(())
-    })
-    .await?;
-    Ok(Json(DefinitionWrite {
-        model_revision: defs.model_revision,
-        seq: receipt.last_seq,
-    }))
+    Query(query): Query<crate::deletes::DryRun>,
+) -> Result<Response, Problem> {
+    crate::deletes::delete_model(
+        &state,
+        &identity,
+        query.dry_run,
+        braian_model::ModelChange::DeleteAttribute { key: id },
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -361,33 +356,31 @@ pub async fn put_type(
     delete,
     path = "/v1/types/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Type key or id")),
-    responses((status = 200, description = "Deleted", body = DefinitionWrite)),
+    params(
+        ("id" = String, Path, description = "Type key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
+    responses(
+        (status = 204, description = "Deleted. Objects, values, links and selections of this type are removed."),
+        (status = 200, description = "Consequence analysis", body = crate::deletes::ConsequenceReport),
+        (status = 403, description = "An agent or MCP token cannot delete", body = crate::problem::Problem),
+        (status = 404, description = "Unknown type", body = crate::problem::Problem)
+    ),
     security(("bearer" = []))
 )]
 pub async fn delete_type_route(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
-) -> Result<Json<DefinitionWrite>, Problem> {
-    let defs = state.store.definition_set().await.map_err(store_status)?;
-    let type_id = defs
-        .types
-        .iter()
-        .find(|item| same_ref(&item.id.as_uuid().to_string(), &item.key, &id))
-        .map(|item| item.id)
-        .ok_or_else(|| missing("type", &id))?;
-    let (defs, receipt) = commit(&state, &identity.actor, |defs| {
-        if !delete_type(defs, type_id) {
-            return Err(missing("type", &id));
-        }
-        Ok(())
-    })
-    .await?;
-    Ok(Json(DefinitionWrite {
-        model_revision: defs.model_revision,
-        seq: receipt.last_seq,
-    }))
+    Query(query): Query<crate::deletes::DryRun>,
+) -> Result<Response, Problem> {
+    crate::deletes::delete_model(
+        &state,
+        &identity,
+        query.dry_run,
+        braian_model::ModelChange::DeleteType { key: id },
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -482,11 +475,15 @@ pub async fn put_structure(
     delete,
     path = "/v1/structures/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Structure key or id")),
+    params(
+        ("id" = String, Path, description = "Structure key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
     responses(
-        (status = 200, description = "Deleted", body = DefinitionWrite),
-        (status = 404, description = "Unknown structure", body = crate::problem::Problem),
-        (status = 422, description = "structure_occupied lists how many objects are still placed in the structure", body = crate::problem::Problem)
+        (status = 204, description = "Deleted. Objects placed in the structure leave the tree."),
+        (status = 200, description = "Consequence analysis", body = crate::deletes::ConsequenceReport),
+        (status = 403, description = "An agent or MCP token cannot delete", body = crate::problem::Problem),
+        (status = 404, description = "Unknown structure", body = crate::problem::Problem)
     ),
     security(("bearer" = []))
 )]
@@ -494,13 +491,15 @@ pub async fn delete_structure_route(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
-) -> Result<Json<DefinitionWrite>, Problem> {
-    let (model_revision, seq) =
-        crate::structures::delete_structure_guarded(&state, &identity.actor, &id).await?;
-    Ok(Json(DefinitionWrite {
-        model_revision,
-        seq,
-    }))
+    Query(query): Query<crate::deletes::DryRun>,
+) -> Result<Response, Problem> {
+    crate::deletes::delete_model(
+        &state,
+        &identity,
+        query.dry_run,
+        braian_model::ModelChange::DeleteStructure { structure: id },
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -586,33 +585,31 @@ pub async fn put_unit_family(
     delete,
     path = "/v1/unit-families/{id}",
     tag = "definitions",
-    params(("id" = String, Path, description = "Unit family key or id")),
-    responses((status = 200, description = "Deleted", body = DefinitionWrite)),
+    params(
+        ("id" = String, Path, description = "Unit family key or id"),
+        ("dry_run" = Option<bool>, Query, description = "Return the consequence analysis and change nothing")
+    ),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 200, description = "Consequence analysis", body = crate::deletes::ConsequenceReport),
+        (status = 403, description = "An agent or MCP token cannot delete", body = crate::problem::Problem),
+        (status = 404, description = "Unknown unit family", body = crate::problem::Problem)
+    ),
     security(("bearer" = []))
 )]
 pub async fn delete_unit_family_route(
     State(state): State<AppState>,
     Auth(identity): Auth,
     Path(id): Path<String>,
-) -> Result<Json<DefinitionWrite>, Problem> {
-    let defs = state.store.definition_set().await.map_err(store_status)?;
-    let family_id = defs
-        .unit_families
-        .iter()
-        .find(|item| same_ref(&item.id.as_uuid().to_string(), &item.key, &id))
-        .map(|item| item.id)
-        .ok_or_else(|| missing("unit family", &id))?;
-    let (defs, receipt) = commit(&state, &identity.actor, |defs| {
-        if !delete_unit_family(defs, family_id) {
-            return Err(missing("unit family", &id));
-        }
-        Ok(())
-    })
-    .await?;
-    Ok(Json(DefinitionWrite {
-        model_revision: defs.model_revision,
-        seq: receipt.last_seq,
-    }))
+    Query(query): Query<crate::deletes::DryRun>,
+) -> Result<Response, Problem> {
+    crate::deletes::delete_model(
+        &state,
+        &identity,
+        query.dry_run,
+        braian_model::ModelChange::DeleteUnitFamily { key: id },
+    )
+    .await
 }
 
 #[utoipa::path(

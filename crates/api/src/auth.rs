@@ -79,6 +79,14 @@ pub fn suggestion_source(kind: PrincipalKind) -> &'static str {
     }
 }
 
+pub fn delete_forbidden() -> Problem {
+    Problem::new(
+        axum::http::StatusCode::FORBIDDEN,
+        "agent_cannot_delete",
+        "An agent or MCP token cannot delete.",
+    )
+}
+
 pub fn commit_forbidden() -> Problem {
     Problem::new(
         axum::http::StatusCode::FORBIDDEN,

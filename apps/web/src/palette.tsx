@@ -146,8 +146,17 @@ export function CommandPalette({
         keywords: ['assortment', 'selection'],
       },
       ...columnEntries(tableColumns),
+      ...(session.group
+        ? [{
+            id: 'model:delete-group',
+            group: 'object' as const,
+            title: copy.deleteMenu,
+            subtitle: 'Delete the selected group',
+            keywords: ['delete', 'remove'],
+          }]
+        : []),
     ],
-    [workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns],
+    [workspaces, views, session.objectId, session.group, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns],
   )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
@@ -199,6 +208,22 @@ export function CommandPalette({
     if (id.startsWith('column:hide:') || id.startsWith('column:show:')) {
       const column = id.slice('column:hide:'.length)
       dispatchUi(id.startsWith('column:hide:') ? 'ui.hide_column' : 'ui.show_column', { column })
+      onClose()
+      return
+    }
+    if (id === 'model:delete-group' && session.group) {
+      const [structure, group] = session.group.split(':')
+      if (structure && group) {
+        void api<Json>('/v1/operations/model.delete_group', {
+          method: 'POST',
+          body: JSON.stringify({ structure, group }),
+        }).then((result) => {
+          const proposal = String(result.proposal_id ?? result.id ?? '')
+          if (proposal) {
+            void import('./proposal-bus').then(({ publishProposal }) => publishProposal(proposal))
+          }
+        }).catch(() => undefined)
+      }
       onClose()
       return
     }

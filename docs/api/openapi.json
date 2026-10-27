@@ -225,15 +225,37 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Deleted",
+            "description": "Consequence analysis",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DefinitionWrite"
+                  "$ref": "#/components/schemas/ConsequenceReport"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -1441,21 +1463,33 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Deleted",
+            "description": "Consequence analysis",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DefinitionWrite"
+                  "$ref": "#/components/schemas/ConsequenceReport"
                 }
               }
             }
           },
-          "404": {
-            "description": "Unknown structure",
+          "204": {
+            "description": "Deleted. Objects placed in the structure leave the tree."
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete",
             "content": {
               "application/json": {
                 "schema": {
@@ -1464,8 +1498,8 @@
               }
             }
           },
-          "422": {
-            "description": "structure_occupied lists how many objects are still placed in the structure",
+          "404": {
+            "description": "Unknown structure",
             "content": {
               "application/json": {
                 "schema": {
@@ -1648,15 +1682,37 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "path",
+            "description": "When true, count what the delete would remove and change nothing.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Group, descendants, and their classes removed",
+            "description": "Consequence analysis",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DefinitionWrite"
+                  "$ref": "#/components/schemas/ConsequenceReport"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Group and descendants removed. Objects leave the tree unless move_to names another group."
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -1672,7 +1728,7 @@
             }
           },
           "422": {
-            "description": "group_occupied lists count unless move_to is set. target_in_subtree when move_to is inside the deleted subtree.",
+            "description": "target_in_subtree when move_to is inside the deleted subtree",
             "content": {
               "application/json": {
                 "schema": {
@@ -2121,15 +2177,47 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Deleted",
+            "description": "Consequence analysis",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DefinitionWrite"
+                  "$ref": "#/components/schemas/ConsequenceReport"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted. Objects, values, links and selections of this type are removed."
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -2271,15 +2359,47 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Deleted",
+            "description": "Consequence analysis",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DefinitionWrite"
+                  "$ref": "#/components/schemas/ConsequenceReport"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown unit family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -2849,6 +2969,52 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ConsequenceReport": {
+        "type": "object",
+        "required": [
+          "objects",
+          "links",
+          "values",
+          "selections",
+          "destructive",
+          "confirm_name",
+          "sentence",
+          "detail"
+        ],
+        "properties": {
+          "confirm_name": {
+            "type": "string"
+          },
+          "destructive": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "selections": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "values": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

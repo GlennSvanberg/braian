@@ -410,7 +410,7 @@ pub async fn delete_object(
     headers: HeaderMap,
 ) -> Result<Json<DeletedResponse>, Problem> {
     if !identity.may_commit() {
-        return Err(crate::auth::commit_forbidden());
+        return Err(crate::auth::delete_forbidden());
     }
     let id = ObjectId::from_uuid(id);
     let base = if_match(&headers)?;
