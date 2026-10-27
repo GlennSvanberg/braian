@@ -801,6 +801,249 @@ async fn relations_and_object_refs_become_links() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn a_taken_relation_key_becomes_a_link_that_can_be_removed() {
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    let source = branch_migrations();
+    let dir = std::env::temp_dir().join(format!("braian-v22-key-{}", Uuid::now_v7()));
+    fs::create_dir_all(&dir).unwrap();
+    for entry in fs::read_dir(&source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        let Some(version) = migration_version(&name) else {
+            continue;
+        };
+        if version <= 22 {
+            fs::copy(entry.path(), dir.join(name)).unwrap();
+        }
+    }
+    migrate(&mut conn.client, &dir).await;
+
+    let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap();
+    let related_entity = Uuid::parse_str("018f0000-0000-7000-8000-0000000002c0").unwrap();
+    let number = "018f0000-0000-7000-8000-000000000100";
+    let principal = Uuid::now_v7();
+    let batch = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+            &[&principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO batches (id, actor, kind, source) VALUES ($1, $2, 'interactive', 'test')",
+            &[&batch, &principal],
+        )
+        .await
+        .unwrap();
+    let definitions = serde_json::json!({
+        "model_revision": 1,
+        "languages": ["en"],
+        "unit_families": [],
+        "attributes": [{
+            "id": number,
+            "key": "number",
+            "labels": {"en": "Number"},
+            "language_dependent": false,
+            "multiple": false,
+            "kind": {"type": "text", "max_length": 64},
+            "index": {"searchable": true, "filterable": true, "sortable": true}
+        }],
+        "types": [
+            {
+                "id": article,
+                "key": "article",
+                "labels": {"en": "Article"},
+                "key_attribute": number,
+                "attributes": [number],
+                "structures": []
+            },
+            {
+                "id": related_entity,
+                "key": "related",
+                "labels": {"en": "Related item"},
+                "key_attribute": number,
+                "attributes": [number],
+                "structures": []
+            }
+        ],
+        "structures": []
+    });
+    conn.client
+        .execute(
+            "INSERT INTO definition_revisions (model_revision, definitions, batch_id) VALUES (1, $1, $2)",
+            &[&definitions, &batch],
+        )
+        .await
+        .unwrap();
+    let left = Uuid::now_v7();
+    let right = Uuid::now_v7();
+    for (id, key) in [(left, "A1"), (right, "A2")] {
+        conn.client
+            .execute(
+                "INSERT INTO objects (id, type_id, key, version, model_revision) VALUES ($1, $2, $3, 1, 1)",
+                &[&id, &article, &key],
+            )
+            .await
+            .unwrap();
+    }
+    conn.client
+        .execute(
+            "INSERT INTO relations (from_id, to_id, kind) VALUES ($1, $2, 'related'), ($1, $2, 'article_of')",
+            &[&left, &right],
+        )
+        .await
+        .unwrap();
+
+    migrate(&mut conn.client, &source).await;
+
+    let related_link_type = Uuid::parse_str("018f0000-0000-7000-8000-0000000002b3").unwrap();
+    let article_of_type = Uuid::parse_str("018f0000-0000-7000-8000-0000000002b1").unwrap();
+    let document: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let types = document["types"].as_array().unwrap();
+    let entity = types
+        .iter()
+        .find(|item| item["key"] == "related")
+        .expect("the ordinary type keeps its key");
+    assert_ne!(entity["kind"], "link");
+    assert_eq!(entity["id"], related_entity.to_string());
+    let link_type = types
+        .iter()
+        .find(|item| item["key"] == "related_link")
+        .expect("the relation becomes related_link");
+    assert_eq!(link_type["kind"], "link");
+    assert_eq!(link_type["id"], related_link_type.to_string());
+
+    let related_link: Uuid = conn
+        .client
+        .query_one(
+            "SELECT object_id FROM links WHERE link_type_id = $1",
+            &[&related_link_type],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let article_of: Uuid = conn
+        .client
+        .query_one(
+            "SELECT object_id FROM links WHERE link_type_id = $1",
+            &[&article_of_type],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_ne!(related_link, related_entity);
+    let created: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT diff FROM changes WHERE object_id = $1 AND op = 'create'",
+            &[&related_link],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(created["$created"]["version"], 1, "{created}");
+    let value_rows: i64 = conn
+        .client
+        .query_one(
+            "SELECT count(*) FROM object_values WHERE object_id = $1",
+            &[&related_link],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(value_rows, 0, "an empty link stores no value version");
+
+    drop(conn);
+    let store =
+        braian_store::Store::connect_config(db.config(), braian_store::StorageForm::Document)
+            .await
+            .unwrap();
+    let link_id = braian_model::ObjectId::from_uuid(related_link);
+    let opened = store.get_object(link_id).await.unwrap().expect("detail");
+    assert_eq!(opened.version, 1);
+    assert!(opened.object.values.is_empty());
+    let history = store.stored_changes(link_id).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].op, braian_store::ChangeOp::Create);
+    let actor = braian_store::Actor {
+        actor: braian_store::PrincipalId::from_uuid(principal),
+        on_behalf_of: None,
+        kind: braian_store::BatchKind::Interactive,
+        source: "test".into(),
+    };
+    store
+        .write_batch(
+            &actor,
+            vec![braian_store::ObjectOp::Delete {
+                id: link_id,
+                base_version: Some(1),
+            }],
+        )
+        .await
+        .unwrap();
+    let after = store.stored_changes(link_id).await.unwrap();
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[1].op, braian_store::ChangeOp::Delete);
+    assert!(
+        store
+            .links_for(braian_model::ObjectId::from_uuid(left))
+            .await
+            .unwrap()
+            .iter()
+            .all(|link| link.id != link_id)
+    );
+
+    store
+        .write_batch(
+            &actor,
+            vec![braian_store::ObjectOp::Delete {
+                id: braian_model::ObjectId::from_uuid(left),
+                base_version: Some(1),
+            }],
+        )
+        .await
+        .unwrap();
+    let cascaded = store
+        .get_object(braian_model::ObjectId::from_uuid(article_of))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(cascaded.deleted_at.is_some());
+    let remaining: i64 = {
+        let conn = db.connect().await;
+        let count: i64 = conn
+            .client
+            .query_one("SELECT count(*) FROM links", &[])
+            .await
+            .unwrap()
+            .get(0);
+        count
+    };
+    assert_eq!(remaining, 0);
+    let cascade_history = store
+        .stored_changes(braian_model::ObjectId::from_uuid(article_of))
+        .await
+        .unwrap();
+    assert_eq!(cascade_history[0].op, braian_store::ChangeOp::Create);
+    assert_eq!(
+        cascade_history.last().unwrap().op,
+        braian_store::ChangeOp::Delete
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 async fn insert_object(client: &tokio_postgres::Client, type_id: Uuid, key: &str, organic: bool) {
     let id = Uuid::now_v7();
     client

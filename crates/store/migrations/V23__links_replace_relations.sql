@@ -53,6 +53,8 @@ DECLARE
     type_row jsonb;
     added boolean := false;
     link_count bigint;
+    type_ids jsonb := '{}'::jsonb;
+    suffix integer;
 BEGIN
     SELECT count(*) INTO link_count FROM relations WHERE from_id <> to_id;
     IF link_count = 0 THEN
@@ -96,15 +98,34 @@ BEGIN
             CONTINUE;
         END IF;
 
+        type_id := NULL;
         SELECT element->>'id'
         INTO type_id
         FROM jsonb_array_elements(COALESCE(defs->'types', '[]'::jsonb)) element
         WHERE lower(element->>'key') = rel_kind
+          AND element->>'kind' = 'link'
         LIMIT 1;
 
         IF type_id IS NULL THEN
             type_id := braian_relation_type_id(rel_kind);
             type_key := rel_kind;
+            -- An ordinary type may already use article_of, variant_of or related.
+            IF EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(COALESCE(defs->'types', '[]'::jsonb)) element
+                WHERE lower(element->>'key') = type_key
+            ) THEN
+                type_key := rel_kind || '_link';
+                suffix := 2;
+                WHILE EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements(COALESCE(defs->'types', '[]'::jsonb)) element
+                    WHERE lower(element->>'key') = type_key
+                ) LOOP
+                    type_key := rel_kind || '_link_' || suffix::text;
+                    suffix := suffix + 1;
+                END LOOP;
+            END IF;
 
             SELECT COALESCE(jsonb_agg(DISTINCT source.type_id::text), '[]'::jsonb)
             INTO from_types
@@ -197,14 +218,15 @@ BEGIN
             );
             added := true;
         END IF;
+        type_ids := type_ids || jsonb_build_object(rel_kind, type_id);
     END LOOP;
 
     next_revision := COALESCE(revision, 0) + 1;
+    batch := braian_md5_uuid('batch:relations-to-links');
+    INSERT INTO batches (id, actor, kind, source)
+    VALUES (batch, actor, 'bulk', 'relations-to-links');
     IF added THEN
         defs := jsonb_set(defs, '{model_revision}', to_jsonb(next_revision));
-        batch := braian_md5_uuid('batch:relations-to-links');
-        INSERT INTO batches (id, actor, kind, source)
-        VALUES (batch, actor, 'bulk', 'relations-to-links');
         INSERT INTO definition_revisions (model_revision, definitions, batch_id)
         VALUES (next_revision, defs, batch);
     ELSE
@@ -213,15 +235,7 @@ BEGIN
 
     INSERT INTO objects (id, type_id, key, version, model_revision, updated_by)
     SELECT braian_md5_uuid('relation:' || relations.kind || ':' || relations.from_id::text || ':' || relations.to_id::text),
-           COALESCE(
-               (
-                   SELECT element->>'id'
-                   FROM jsonb_array_elements(COALESCE(defs->'types', '[]'::jsonb)) element
-                   WHERE lower(element->>'key') = relations.kind
-                   LIMIT 1
-               )::uuid,
-               braian_relation_type_id(relations.kind)
-           ),
+           (type_ids->>relations.kind)::uuid,
            NULL,
            1,
            next_revision,
@@ -246,6 +260,23 @@ BEGIN
                WHERE element->>'id' = object.type_id::text
                LIMIT 1
            ), false)
+    FROM relations
+    JOIN objects object ON object.id = braian_md5_uuid(
+        'relation:' || relations.kind || ':' || relations.from_id::text || ':' || relations.to_id::text
+    )
+    WHERE relations.from_id <> relations.to_id;
+
+    -- The same create row the API writes, so history can open the link.
+    -- Attribute values stay empty, which is also what an API link with no
+    -- values stores: the create diff is a marker, not a copy of the values.
+    INSERT INTO changes (batch_id, object_id, version, op, actor, diff, kind)
+    SELECT batch,
+           object.id,
+           1,
+           'create',
+           actor,
+           '{"$created":{"version":1}}'::jsonb,
+           'bulk'
     FROM relations
     JOIN objects object ON object.id = braian_md5_uuid(
         'relation:' || relations.kind || ':' || relations.from_id::text || ':' || relations.to_id::text
