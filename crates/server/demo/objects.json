@@ -4,7 +4,7 @@
     "type": "supplier",
     "values": {
       "number": "SUP-NORTH",
-      "company_name": "Northmill Foods",
+      "name": { "en": "Northmill Foods" },
       "org_number": "556100-0101",
       "gln": "7300000000018",
       "country": "se",
@@ -21,7 +21,7 @@
     "type": "supplier",
     "values": {
       "number": "SUP-COAST",
-      "company_name": "Coast & Meadow",
+      "name": { "en": "Coast & Meadow" },
       "org_number": "556200-0202",
       "gln": "7300000000025",
       "country": "dk",

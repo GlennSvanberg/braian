@@ -160,6 +160,7 @@ export function StructureSection({
                 <NameField
                   label={copy.renameKey}
                   initial={draft.value}
+                  warning={copy.keyRenameWarning}
                   inputRef={nameRef}
                   onCommit={(name) => {
                     const next = name.trim()
@@ -316,6 +317,7 @@ function GroupList({
                 <NameField
                   label={copy.renameKey}
                   initial={keyDraft.value}
+                  warning={copy.keyRenameWarning}
                   inputRef={nameRef}
                   onCommit={(name) => {
                     const next = name.trim()
@@ -435,12 +437,14 @@ function NodeMenu({
 function NameField({
   label,
   initial = '',
+  warning,
   onCommit,
   onCancel,
   inputRef,
 }: {
   label: string
   initial?: string
+  warning?: string
   onCommit: (name: string) => void
   onCancel: () => void
   inputRef?: RefObject<HTMLInputElement | null>
@@ -464,6 +468,7 @@ function NameField({
     return () => window.clearTimeout(timer)
   }, [])
   return (
+    <>
     <input
       ref={setField}
       className="model-rename"
@@ -484,6 +489,10 @@ function NameField({
         }
       }}
     />
+    {warning && value.trim() && value.trim() !== initial ? (
+      <p className="warn" data-testid="key-rename-warning">{warning.replace('{key}', initial)}</p>
+    ) : null}
+    </>
   )
 }
 

@@ -512,7 +512,7 @@ async fn save_views(store: &Store, defs: &DefinitionSet) -> anyhow::Result<()> {
             "Suppliers",
             "center",
             0,
-            json!({"columns": ["number", "company_name", "country", "city", "status"], "sort": "number", "object_type": "018f0000-0000-7000-8000-000000000202", "type_key": "supplier"}),
+            json!({"columns": ["018f0000-0000-7000-8000-000000000100", "018f0000-0000-7000-8000-000000000101", "018f0000-0000-7000-8000-00000000012b", "018f0000-0000-7000-8000-00000000012c", "018f0000-0000-7000-8000-000000000103"], "sort": "number", "object_type": "018f0000-0000-7000-8000-000000000202", "type_key": "supplier"}),
         ),
         (
             "018f2000-0000-7000-8000-000000000309",
@@ -907,8 +907,8 @@ fn fill_values(model: &CompiledModel, slot: &Slot) -> anyhow::Result<BTreeMap<At
             put_attr(
                 model,
                 &mut values,
-                "company_name",
-                json!(format!("{} Foods {}", brand_for(index), index + 1)),
+                "name",
+                json!({"en": format!("{} Foods {}", brand_for(index), index + 1)}),
             )?;
             put_attr(
                 model,

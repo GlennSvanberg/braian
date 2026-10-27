@@ -152,7 +152,9 @@ async fn serve(state: AppState, addr: SocketAddr) -> anyhow::Result<()> {
 async fn connect() -> anyhow::Result<Store> {
     let database_url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is not set"))?;
-    Ok(Store::connect(&database_url).await?)
+    let store = Store::connect(&database_url).await?;
+    store.upgrade_standard_attributes().await?;
+    Ok(store)
 }
 
 fn typesense() -> Option<Typesense> {

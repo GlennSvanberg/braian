@@ -52,6 +52,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
 
   const created = `ART-E2E-${Date.now().toString().slice(-6)}`
   await page.getByTestId('new-number').fill(created)
+  await page.getByTestId('new-name').fill(created)
   await page.getByTestId('create-object').click()
   await expect(page.getByTestId('validation-error')).toHaveCount(0)
   await expect(page.getByTestId('activity-log')).toContainText(created)

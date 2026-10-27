@@ -40,6 +40,17 @@ pub struct StoredObject {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+/// Column stamps that are not part of the object document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectAudit {
+    pub id: ObjectId,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub updated_by: Option<PrincipalId>,
+    pub updated_by_name: Option<String>,
+    pub updated_by_kind: Option<crate::ids::PrincipalKind>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectOp {
     Create(Object),

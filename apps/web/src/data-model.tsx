@@ -142,7 +142,6 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
   useEffect(() => {
     setMessage('')
   }, [selectionKey])
-  const keyAttribute = keyAttributeOf(defs, selection)
   const run = (name: string, args: Json) => {
     setMessage('')
     void propose(name, args).catch((reason: unknown) => setMessage(reason instanceof ApiError ? reason.message : copy.validation))
@@ -165,11 +164,14 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
           <TableMenu filter={filter} sort={sort} onFilter={setFilter} onSort={setSort} />
         </div>
         {selection.kind === 'type' ? (
-          <TypeNameFields
-            defs={defs}
-            typeKey={selection.typeKey}
-            onSave={(patch) => run('model.update_type', { key: selection.typeKey, language: uiLanguage, ...patch })}
-          />
+          <>
+            <TypeNameFields
+              defs={defs}
+              typeKey={selection.typeKey}
+              onSave={(patch) => run('model.update_type', { key: selection.typeKey, language: uiLanguage, ...patch })}
+            />
+            <AllowedTrees defs={defs} typeKey={selection.typeKey} />
+          </>
         ) : null}
         <div className="attr-head">
           <span>{copy.attributeName}</span>
@@ -181,13 +183,16 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
           <span>{copy.searchable}</span>
           <span />
         </div>
-        {visibleRows(rows, filter, sort).map((row) => (
+        {selection.kind === 'type' && visibleRows(rows, filter, sort).some((row) => standardAttribute(row.id)) ? (
+          <p className="attr-section">{copy.standardAttributes}</p>
+        ) : null}
+        {visibleRows(rows, filter, sort).filter((row) => selection.kind !== 'type' || standardAttribute(row.id)).map((row) => (
           <AttributeLine
             key={row.id}
             row={row}
             families={families}
             defs={defs}
-            locked={row.id === keyAttribute}
+            locked={standardAttribute(row.id)}
             onUpdate={(patch) => run('model.update_attribute', { key: row.key, ...patch })}
             onRenameKey={(newKey) => run('model.rename_attribute_key', { key: row.key, new_key: newKey })}
             onRemove={() =>
@@ -201,6 +206,23 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
             onDelete={row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
           />
         ))}
+        {selection.kind === 'type' ? visibleRows(rows, filter, sort).filter((row) => !standardAttribute(row.id)).map((row) => (
+          <AttributeLine
+            key={row.id}
+            row={row}
+            families={families}
+            defs={defs}
+            locked={false}
+            onUpdate={(patch) => run('model.update_attribute', { key: row.key, ...patch })}
+            onRenameKey={(newKey) => run('model.rename_attribute_key', { key: row.key, new_key: newKey })}
+            onRemove={() =>
+              run('model.detach_attribute', {
+                attribute: row.key,
+                type: selection.typeKey,
+              })
+            }
+          />
+        )) : null}
         <AddRow
           key={selectionKey}
           families={families}
@@ -262,11 +284,13 @@ function AttributeLine({
           if (next && next !== row.label) onUpdate({ label: next })
         }}
       />
+      <div>
       <input
         aria-label={copy.key}
         data-testid={`attr-key-${row.key}`}
         defaultValue={row.key}
         key={row.key}
+        disabled={locked}
         onBlur={(event) => {
           const next = event.target.value.trim()
           if (next && next !== row.key) onRenameKey(next)
@@ -279,7 +303,16 @@ function AttributeLine({
           event.currentTarget.focus()
           event.currentTarget.select()
         }}
+        onChange={(event) => {
+          const next = event.target.value.trim()
+          const note = event.currentTarget.parentElement?.querySelector('[data-key-warning]')
+          if (note instanceof HTMLElement) note.hidden = !next || next === row.key
+        }}
       />
+      <p className="warn" data-key-warning hidden>
+        {copy.keyRenameWarning.replace('{key}', row.key)}
+      </p>
+      </div>
       <Select value={row.kind} onValueChange={(kind) => onUpdate(kind === 'number' || kind === 'range' ? { kind } : { kind, clear_unit: true })}>
         <SelectTrigger aria-label={copy.attributeType}><SelectValue /></SelectTrigger>
         <SelectContent>
@@ -522,6 +555,62 @@ function ModelPreview({ defs }: { defs: Json | undefined }) {
   )
 }
 
+const STANDARD_ATTRIBUTE_IDS = new Set([
+  '018f0000-0000-7000-8000-000000000100',
+  '018f0000-0000-7000-8000-000000000101',
+  '018f0000-0000-7000-8000-00000000a003',
+  '018f0000-0000-7000-8000-00000000a004',
+  '018f0000-0000-7000-8000-00000000a005',
+])
+
+function standardAttribute(id: string) {
+  return STANDARD_ATTRIBUTE_IDS.has(id)
+}
+
+function AllowedTrees({ defs, typeKey }: { defs: Json | undefined; typeKey: string }) {
+  const raw = ((defs?.types as Json[]) ?? []).find((item) => String(item.key) === typeKey)
+  const selected = new Set(Array.isArray(raw?.structures) ? raw.structures.map((id) => String(id)) : [])
+  const structures = ((defs?.structures as Json[]) ?? [])
+  const [focus, setFocus] = useState(false)
+  useEffect(() => {
+    const open = () => setFocus(true)
+    window.addEventListener('braian-allowed-trees', open)
+    return () => window.removeEventListener('braian-allowed-trees', open)
+  }, [])
+  const save = (next: string[]) => {
+    const id = String(raw?.id ?? typeKey)
+    void api<Json>(`/v1/types/${id}/structures`, {
+      method: 'PUT',
+      body: JSON.stringify({ structures: next }),
+    }).catch(() => undefined)
+  }
+  return (
+    <fieldset className="type-names" data-testid="allowed-trees">
+      <legend>{copy.allowedTrees}</legend>
+      {structures.map((structure, index) => {
+        const id = String(structure.id ?? structure.key)
+        const checked = selected.has(id) || selected.has(String(structure.key))
+        return (
+          <label key={id}>
+            <input
+              type="checkbox"
+              autoFocus={focus && index === 0}
+              checked={checked}
+              onChange={(event) => {
+                const next = new Set(selected)
+                if (event.target.checked) next.add(id)
+                else next.delete(id)
+                save([...next])
+              }}
+            />
+            {String(structure.key)}
+          </label>
+        )
+      })}
+    </fieldset>
+  )
+}
+
 function indefiniteHere(name: string) {
   const lower = name.toLowerCase()
   const article = /^[aeiou]/i.test(lower) ? 'An' : 'A'
@@ -597,12 +686,6 @@ function typeName(defs: Json | undefined, key: string) {
 
 function kindLabel(kind: string) {
   return KINDS.find(([value]) => value === kind)?.[1] ?? kind
-}
-
-function keyAttributeOf(defs: Json | undefined, selection: ModelSelection | null) {
-  if (!defs || selection?.kind !== 'type') return ''
-  const objectType = ((defs.types as Json[]) ?? []).find((item) => String(item.key) === selection.typeKey)
-  return String(objectType?.key_attribute ?? '')
 }
 
 function ImpactNote() {

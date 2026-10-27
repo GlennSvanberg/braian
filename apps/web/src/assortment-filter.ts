@@ -33,6 +33,7 @@ export function groupKeyOf(token: string, defs?: Json) {
     return token
   }
   const [structureToken, groupToken] = token.split(':')
+  if (groupToken === 'unplaced') return token
   const structure = structures.find((item) => String(item.id ?? '') === structureToken || String(item.key ?? '') === structureToken)
   const group = ((structure?.groups as Json[]) ?? []).find((item) => String(item.id ?? '') === groupToken || String(item.key ?? '') === groupToken)
   if (structure && group) return `${String(structure.key)}:${String(group.key)}`

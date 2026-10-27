@@ -286,6 +286,16 @@ export function CommandPalette({
       setActive(0)
       return
     }
+    if (id === 'object:move-group') {
+      window.dispatchEvent(new Event('braian-move-group'))
+      onClose()
+      return
+    }
+    if (id === 'model:allowed-trees') {
+      window.dispatchEvent(new Event('braian-allowed-trees'))
+      onClose()
+      return
+    }
     if (id === 'model:command') {
       void api<Json>('/v1/operations/model.command', {
         method: 'POST',
@@ -748,6 +758,8 @@ function buildCatalog(
     })),
     { id: 'import:file', group: 'views', title: copy.importFile, subtitle: 'Drop an Excel or CSV file' },
     { id: 'model:rename-key', group: 'views', title: copy.renameKey, subtitle: 'Change a key. External integrations that use the old key will stop working', keywords: ['rename', 'key', 'attribute'] },
+    { id: 'object:move-group', group: 'views', title: copy.moveToGroup, subtitle: 'Place the open object in a group', keywords: ['move', 'group', 'place'] },
+    { id: 'model:allowed-trees', group: 'views', title: copy.allowedTrees, subtitle: 'Choose the trees a type may use', keywords: ['tree', 'structure', 'type'] },
     { id: 'theme:light', group: 'views', title: 'Light', subtitle: 'Switch theme', shortcut: undefined },
     { id: 'theme:dark', group: 'views', title: 'Dark', subtitle: 'Switch theme' },
     { id: 'layout:move_view_left', group: 'views', title: 'Move view left', subtitle: 'Move the focused view left', kbd: 'Ctrl+Alt+←', shortcut: 'Ctrl+Alt+Left' },

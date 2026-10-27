@@ -12,13 +12,14 @@ const defs: Json = {
     { id: 'length', key: 'length', labels: { en: 'Length' }, kind: { type: 'number' } },
   ],
   types: [
-    { id: '200', key: 'product', singular: { en: 'Product' }, plural: { en: 'Products' }, attributes: ['name'] },
-    { id: '201', key: 'article', singular: { en: 'Article' }, plural: { en: 'Articles' }, attributes: ['name', 'weight'] },
-    { id: '202', key: 'supplier', singular: { en: 'Supplier' }, plural: { en: 'Suppliers' }, attributes: ['name'] },
+    { id: '200', key: 'product', singular: { en: 'Product' }, plural: { en: 'Products' }, attributes: ['name'], structures: ['food'] },
+    { id: '201', key: 'article', singular: { en: 'Article' }, plural: { en: 'Articles' }, attributes: ['name', 'weight'], structures: ['food'] },
+    { id: '202', key: 'supplier', singular: { en: 'Supplier' }, plural: { en: 'Suppliers' }, attributes: ['name'], structures: [] },
   ],
   structures: [
     {
       key: 'food',
+      labels: { en: 'Food' },
       groups: [
         { id: 'dairy', key: 'dairy', labels: { en: 'Dairy & eggs' }, attributes: ['weight'] },
         { id: 'cheese', key: 'cheese', parent: 'dairy', labels: { en: 'Cheese' }, attributes: ['length'] },
@@ -51,8 +52,9 @@ describe('type workspaces', () => {
       'Review',
     ])
     expect(typeShareToken('product')).toBe('braian-type-product')
-    expect(typeUsesTree('article')).toBe(true)
-    expect(typeUsesTree('supplier')).toBe(false)
+    expect(typeUsesTree({ structures: ['food'] })).toBe(true)
+    expect(typeUsesTree({})).toBe(true)
+    expect(typeUsesTree({ structures: [] })).toBe(false)
     expect(missingTypeWorkspaces(ordered, types).map((type) => type.key)).toEqual([])
     expect(missingTypeWorkspaces([{ share_token: 'braian-model' }], types).map((type) => type.key)).toEqual([
       'product',
@@ -76,7 +78,8 @@ describe('type workspaces', () => {
       'class_attributes',
     ])
     expect(articles?.views[2]?.state).toMatchObject({ type_key: 'article', object_type: '201' })
-    expect(articles?.views[0]?.state).toMatchObject({ expanded: ['dairy', 'beverages'] })
+    expect(articles?.views[0]?.title).toBe('Food')
+    expect(articles?.views[0]?.state).toEqual({})
     const suppliers = templates[2]
     expect(suppliers?.views.map((view) => view.type)).toEqual([
       'assortment_list',

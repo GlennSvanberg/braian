@@ -90,6 +90,42 @@ impl CompiledModel {
             ));
         }
 
+        let (allowed, has_name) = {
+            let info = self
+                .type_info(object.type_id)
+                .expect("type was found above");
+            let name = braian_model::name_id();
+            (info.structures.clone(), info.attributes.contains(&name))
+        };
+        if let Some(allowed) = &allowed {
+            for structure_id in object.groups.keys() {
+                if !allowed.contains(structure_id) {
+                    errors.push(failure(
+                        None,
+                        None,
+                        None,
+                        ErrorCode::DisallowedStructure,
+                        format!("type is not allowed in structure {structure_id}"),
+                    ));
+                }
+            }
+        }
+        let name = braian_model::name_id();
+        if has_name
+            && self
+                .attribute(name)
+                .is_some_and(|attribute| attribute.required)
+            && !name_present(object.values.get(&name))
+        {
+            errors.push(failure(
+                Some(name),
+                None,
+                None,
+                ErrorCode::MissingRequired,
+                "missing required attribute name".into(),
+            ));
+        }
+
         for (attribute_id, value) in &object.values {
             let Some(attribute) = self.attribute(*attribute_id) else {
                 errors.push(failure(
@@ -651,10 +687,19 @@ pub struct PatchReport {
     pub warnings: Vec<ValidationError>,
 }
 
+fn name_present(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Object(map)) => map.values().any(|item| name_present(Some(item))),
+        Some(_) => true,
+    }
+}
+
 fn blocks_patch(patch: &ObjectPatch, error: &ValidationError) -> bool {
     if matches!(
         error.code,
-        ErrorCode::UnknownStructure | ErrorCode::UnknownGroup
+        ErrorCode::UnknownStructure | ErrorCode::UnknownGroup | ErrorCode::DisallowedStructure
     ) {
         return !patch.groups.is_empty();
     }

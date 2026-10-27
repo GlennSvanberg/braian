@@ -14,6 +14,7 @@ mod model_change;
 mod object;
 mod patch;
 pub mod refs;
+pub mod standard;
 pub mod structure;
 
 pub use consequence::{
@@ -43,6 +44,11 @@ pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, app
 pub use refs::{
     RefKind, ResolvedRef, attribute_index_field, key_rename_warning, resolve,
     translate_assortment_query, translate_import_mapping, translate_view_state,
+};
+pub use standard::{
+    StandardIds, apply_defaults, detach_name_aliases, install_standard_attributes,
+    is_standard_attribute, move_values, name_id, number_id, placement_allowed, standard_ids,
+    structures_from_usage,
 };
 pub use structure::{GroupRemoval, StructureError, StructureErrorCode};
 pub use uuid::Uuid;
