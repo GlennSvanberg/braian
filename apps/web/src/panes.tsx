@@ -31,6 +31,7 @@ import {
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
+import { RecordSection } from './record-section'
 import { labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
 import { objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
@@ -1263,6 +1264,14 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       }}
     >
       <div className="detail-scroll">
+        <RecordSection
+          defs={defs.data}
+          typeKey={String(object.data.type ?? '')}
+          values={(object.data.values as Json) ?? {}}
+          createdAt={typeof object.data.created_at === 'string' ? object.data.created_at : ''}
+          updatedAt={typeof object.data.updated_at === 'string' ? object.data.updated_at : ''}
+          updatedBy={object.data.updated_by}
+        />
         <header className="detail-head">
           <p className="detail-kicker">{singularOf(defs.data, String(object.data.type), uiLanguage)}</p>
           <div className="detail-title">

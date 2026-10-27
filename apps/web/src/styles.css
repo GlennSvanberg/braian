@@ -709,6 +709,9 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   gap: 6px;
 }
 .field-card h3 { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
+.record-field { display: grid; grid-template-columns: 120px minmax(0, 1fr); column-gap: 10px; align-items: center; }
+.record-field > label { color: var(--muted); font-size: 12px; }
+.record-field input { width: 100%; cursor: text; color: var(--text); }
 .save-bar {
   flex: none;
   display: flex;
