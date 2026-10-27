@@ -596,6 +596,9 @@ pub fn apply_destructive(defs: &mut DefinitionSet, change: &ModelChange) -> Resu
             let id = find_attribute(defs, key)
                 .map(|item| item.id)
                 .ok_or_else(|| format!("unknown attribute {key}"))?;
+            if crate::standard::is_locked_standard(defs, id) {
+                return Err(format!("attribute {key} is a standard attribute"));
+            }
             if defs.types.iter().any(|item| item.key_attribute == id) {
                 return Err(format!(
                     "attribute {key} is a type key and cannot be deleted"
@@ -805,6 +808,8 @@ mod tests {
                         AttributeId::from_uuid(weight),
                         AttributeId::from_uuid(color),
                     ],
+                    structures: None,
+                    defaults: BTreeMap::new(),
                 },
                 ObjectType {
                     id: TypeId::from_uuid(article),
@@ -814,6 +819,8 @@ mod tests {
                     plural: label("Articles"),
                     key_attribute: AttributeId::from_uuid(name),
                     attributes: vec![AttributeId::from_uuid(name)],
+                    structures: None,
+                    defaults: BTreeMap::new(),
                 },
             ],
             structures: vec![Structure {

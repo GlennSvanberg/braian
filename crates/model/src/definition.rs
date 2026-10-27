@@ -219,9 +219,10 @@ pub struct NumberValue {
 
 /// An object type. There are no built-in types such as article or product.
 ///
-/// `key_attribute` is the human key, unique within the type. The database
-/// enforces that uniqueness; phase 1 only checks that the attribute is
-/// single-valued, language-independent text and that a value is present.
+/// `key_attribute` is the value copied into `objects.key`. On a type that has
+/// been given standard attributes it is the `number` attribute. Older sets
+/// still name their own key attribute. `structures` lists the trees the type
+/// may use. `None` means the set was stored before that limit existed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
@@ -240,6 +241,17 @@ pub struct ObjectType {
     pub plural: BTreeMap<LanguageTag, String>,
     pub key_attribute: AttributeId,
     pub attributes: Vec<AttributeId>,
+    /// Trees this type may be placed in.
+    ///
+    /// Missing means any tree is still allowed. An empty list means the type
+    /// has no tree: new objects stay unplaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structures: Option<Vec<StructureId>>,
+    /// Values applied when an object is created without that attribute.
+    ///
+    /// Keys are attribute keys, for example `status` = `draft`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub defaults: BTreeMap<String, String>,
 }
 
 impl ObjectType {
@@ -401,6 +413,8 @@ pub struct Class {
 
 #[cfg(test)]
 mod label_tests {
+    use std::collections::BTreeMap;
+
     use super::{ObjectType, default_plural, operation_title};
     use crate::id::{AttributeId, TypeId};
     use crate::language::LanguageTag;
@@ -420,6 +434,8 @@ mod label_tests {
             plural: plural_map,
             key_attribute: AttributeId::from_uuid(uuid::Uuid::from_u128(2)),
             attributes: vec![],
+            structures: None,
+            defaults: BTreeMap::new(),
         }
     }
 

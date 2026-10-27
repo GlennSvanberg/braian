@@ -232,6 +232,12 @@ pub enum ModelChange {
         family: String,
         unit: String,
     },
+    /// Replaces the trees a type may use. An empty list means the type has no tree.
+    SetStructures {
+        #[serde(alias = "id")]
+        type_key: String,
+        structures: Vec<String>,
+    },
 }
 
 /// A definition edit that did not apply.
@@ -312,6 +318,7 @@ pub fn change_needs_reindex(change: &ModelChange) -> bool {
         ModelChange::RenameTypeKey { .. }
             | ModelChange::RenameStructureKey { .. }
             | ModelChange::RenameGroupKey { .. }
+            | ModelChange::SetStructures { .. }
     )
 }
 
@@ -619,6 +626,30 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     object_type.plural_label("en")
                 ));
             }
+            if previous.structures != object_type.structures {
+                let listed = object_type.structures.as_ref().map(|ids| {
+                    ids.iter()
+                        .map(|id| {
+                            after
+                                .structures
+                                .iter()
+                                .find(|item| item.id == *id)
+                                .map(|item| item.key.as_str())
+                                .unwrap_or("unknown")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                });
+                match listed {
+                    None => {}
+                    Some(text) if text.is_empty() => {
+                        lines.push(format!("Type {} uses no tree", object_type.key));
+                    }
+                    Some(text) => {
+                        lines.push(format!("Type {} may use {text}", object_type.key));
+                    }
+                }
+            }
         }
     }
     ChangeImpact {
@@ -902,6 +933,10 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
         | ModelChange::DeleteValueOption { .. }
         | ModelChange::DeleteUnitFamily { .. }
         | ModelChange::DeleteUnit { .. } => Ok(()),
+        ModelChange::SetStructures {
+            type_key,
+            structures,
+        } => set_structures(defs, type_key, structures).map_err(ApplyError::from),
         ModelChange::UpdateAttribute {
             key,
             label,
@@ -959,13 +994,13 @@ fn add_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelCh
         let structure = "unplaced".to_owned();
         steps.push(ModelChange::CreateStructure {
             key: structure.clone(),
-            label: String::new(),
+            label: "Unplaced".into(),
         });
         steps.push(ModelChange::CreateGroup {
             structure: structure.clone(),
             group: "groups".into(),
             parent: None,
-            label: String::new(),
+            label: "Groups".into(),
         });
         steps.push(ModelChange::CreateClass {
             structure: structure.clone(),
@@ -1132,6 +1167,9 @@ fn rename_entity(
     match kind {
         crate::refs::RefKind::Attribute => {
             let id = crate::refs::attribute_id(defs, token)?;
+            if crate::standard::is_locked_standard(defs, id) {
+                return Err(format!("attribute {token} is a standard attribute").into());
+            }
             let attribute = defs
                 .attributes
                 .iter_mut()
@@ -1454,6 +1492,9 @@ fn link_attribute(
     if type_key.is_none() && (structure_key.is_none() || group_key.is_none()) {
         return Err("name a type, or a structure and a group".into());
     }
+    if !attach && crate::standard::is_locked_standard(defs, attribute_id) && type_key.is_some() {
+        return Err(format!("attribute {attribute} is a standard attribute"));
+    }
     if let Some(type_key) = type_key {
         let object_type = type_mut(defs, type_key)?;
         if !attach && object_type.key_attribute == attribute_id {
@@ -1570,6 +1611,22 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
         .find(|tag| tag.as_str() == "en")
         .cloned()
         .or_else(|| defs.languages.first().cloned());
+    let locked = defs
+        .attributes
+        .iter()
+        .find(|item| eq_key(&item.key, key))
+        .map(|item| crate::standard::is_locked_standard(defs, item.id))
+        .unwrap_or(false);
+    if locked
+        && (next_kind.is_some()
+            || languages.is_some()
+            || required.is_some()
+            || searchable.is_some()
+            || filterable.is_some()
+            || sortable.is_some())
+    {
+        return Err(format!("attribute {key} is a standard attribute"));
+    }
     let attribute = defs
         .attributes
         .iter_mut()
@@ -1622,6 +1679,24 @@ fn attribute_kind(kind: &str, unit_family: Option<UnitFamilyId>) -> Result<Attri
         "object" | "object_ref" => Ok(AttributeKind::ObjectRef { type_key: None }),
         other => Err(format!("unknown attribute type {other}")),
     }
+}
+
+fn set_structures(
+    defs: &mut DefinitionSet,
+    type_key: &str,
+    structures: &[String],
+) -> Result<(), String> {
+    let mut ids = Vec::with_capacity(structures.len());
+    for token in structures {
+        let id = crate::refs::structure_id(defs, token)
+            .map_err(|_| format!("unknown structure {token}"))?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let object_type = type_mut(defs, type_key)?;
+    object_type.structures = Some(ids);
+    Ok(())
 }
 
 fn label_map(defs: &DefinitionSet, label: &str) -> BTreeMap<LanguageTag, String> {
@@ -1798,6 +1873,8 @@ mod tests {
                 plural: Default::default(),
                 key_attribute: weight,
                 attributes: vec![weight],
+                structures: None,
+                defaults: BTreeMap::new(),
             }],
             structures: vec![Structure {
                 id: structure,

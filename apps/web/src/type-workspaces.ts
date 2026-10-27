@@ -34,9 +34,9 @@ export function missingTypeWorkspaces(rows: Array<{ share_token?: string | null 
   return types.filter((type) => type.id && type.key && !tokens.has(typeShareToken(type.key)))
 }
 
-/** Supplier sits beside the Food tree and is linked with object references. */
-export function typeUsesTree(key: string) {
-  return key !== 'supplier'
+/** A type with no `structures` field still uses a tree. An empty list does not. */
+export function typeUsesTree(type: { structures?: string[] | null }) {
+  return type.structures == null || type.structures.length > 0
 }
 
 function workspaceRank(shareToken: string | null | undefined, types: TypeName[]) {

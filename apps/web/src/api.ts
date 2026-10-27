@@ -38,19 +38,17 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export type Json = Record<string, unknown>
 
-/** Indexed display name. English `name`, then another stored language, then company name. */
+/** Indexed display name from the standard name attribute. */
 export function catalogName(doc: Json | undefined, defs?: Json): string {
   if (!doc) return ''
   const fields: string[] = []
-  for (const key of ['name', 'company_name']) {
-    const attribute = ((defs?.attributes as Json[] | undefined) ?? []).find((item) => String(item.key ?? '') === key)
-    const id = String(attribute?.id ?? '')
-    if (id) {
-      const base = `a_${id.replaceAll('-', '_')}`
-      fields.push(`${base}__en`, `${base}__sv`, `${base}__en_GB`, base)
-    }
+  const attribute = ((defs?.attributes as Json[] | undefined) ?? []).find((item) => String(item.key ?? '') === 'name')
+  const id = String(attribute?.id ?? '')
+  if (id) {
+    const base = `a_${id.replaceAll('-', '_')}`
+    fields.push(`${base}__en`, `${base}__sv`, `${base}__en_GB`, base)
   }
-  fields.push('a_name__en', 'a_name__sv', 'a_name', 'a_company_name')
+  fields.push('a_name__en', 'a_name__sv', 'a_name')
   for (const key of fields) {
     const text = textValue(doc[key])
     if (text) return text
@@ -60,7 +58,7 @@ export function catalogName(doc: Json | undefined, defs?: Json): string {
 
 export function recordTitle(values: Json | undefined, language = 'en'): string {
   if (!values) return ''
-  return textValue(values.name, language) || textValue(values.company_name, language)
+  return textValue(values.name, language)
 }
 
 export function recordNumber(values: Json | undefined): string {

@@ -28,6 +28,8 @@ use utoipa::OpenApi;
         crate::definitions::get_type,
         crate::definitions::put_type,
         crate::definitions::delete_type_route,
+        crate::definitions::put_type_structures,
+        crate::definitions::unplaced_count,
         crate::definitions::post_structure,
         crate::structures::create_structure_route,
         crate::definitions::get_structure,

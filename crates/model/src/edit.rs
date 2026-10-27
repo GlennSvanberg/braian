@@ -170,6 +170,8 @@ mod tests {
                 plural: Default::default(),
                 key_attribute: attribute.id,
                 attributes: vec![attribute.id],
+                structures: None,
+                defaults: BTreeMap::new(),
             },
         );
         upsert_type(
@@ -182,6 +184,8 @@ mod tests {
                 plural: Default::default(),
                 key_attribute: attribute.id,
                 attributes: vec![attribute.id],
+                structures: None,
+                defaults: BTreeMap::new(),
             },
         );
         assert_eq!(defs.types.len(), 1);

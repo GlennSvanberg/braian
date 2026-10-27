@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MoreHorizontal, Search } from 'lucide-react'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
+import { newObjectBody } from './new-object'
 import { indexSort, readIndexed } from './index-fields'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
@@ -121,6 +122,7 @@ export function ObjectTable({
   // The active cell's column, by key. Left and Right move it; the keyboard menu acts on it.
   const [activeColumn, setActiveColumn] = useState('')
   const [menu, setMenu] = useState<{ x: number; y: number; id: string; column: string } | null>(null)
+  const [moving, setMoving] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuOpen = useRef(false)
   const [flashId, setFlashId] = useState('')
@@ -202,6 +204,13 @@ export function ObjectTable({
   useEffect(() => {
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
+  useEffect(() => {
+    const open = () => {
+      if (session.objectId) setMoving(session.objectId)
+    }
+    window.addEventListener('braian-move-group', open)
+    return () => window.removeEventListener('braian-move-group', open)
+  }, [session.objectId])
   useEffect(() => {
     publishSelectionLabels(labelCodes(labelFilter.split(' && ').map((part) => part.replace(/^a_[A-Za-z0-9_]+:=/, ''))))
   }, [labelFilter])
@@ -782,6 +791,7 @@ export function ObjectTable({
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
+          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setMoving(menu.id); setMenu(null) }}>{copy.moveToGroup}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
           {menu.column ? (
             <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.hide_column', { column: menu.column }); setMenu(null) }}>{copy.hideColumn}</button>
@@ -794,7 +804,84 @@ export function ObjectTable({
           <button type="button" role="menuitem" tabIndex={-1} onClick={closeMenu}>{copy.close} <Kbd>Esc</Kbd></button>
         </div>
       ) : null}
+      {moving ? (
+        <MoveToGroup
+          id={moving}
+          defs={defs.data}
+          onClose={() => setMoving(null)}
+          onMoved={() => {
+            setMoving(null)
+            session.push(copy.saved)
+            void queryClient.invalidateQueries({ queryKey: ['objects'] })
+          }}
+        />
+      ) : null}
     </div>
+  )
+}
+
+function MoveToGroup({
+  id,
+  defs,
+  onClose,
+  onMoved,
+}: {
+  id: string
+  defs?: Json
+  onClose: () => void
+  onMoved: () => void
+}) {
+  const structures = (defs?.structures as Json[] | undefined) ?? []
+  const choices = structures.flatMap((structure) =>
+    ((structure.groups as Json[]) ?? []).map((group) => ({
+      structure: String(structure.key),
+      group: String(group.key),
+      label: `${String(structure.key)} / ${String(group.key)}`,
+    })),
+  )
+  const [choice, setChoice] = useState(choices[0] ? `${choices[0].structure}:${choices[0].group}` : '')
+  return (
+    <form
+      className="menu"
+      role="dialog"
+      aria-label={copy.moveToGroup}
+      data-testid="move-to-group"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const [structure, group] = choice.split(':')
+        if (!structure) return
+        void api<Json>(`/v1/objects/${id}`)
+          .then((object) =>
+            api<Json>('/v1/operations/move_to_group', {
+              method: 'POST',
+              body: JSON.stringify({
+                id,
+                structure,
+                group: group || null,
+                base_version: object.version,
+              }),
+            }),
+          )
+          .then(() => onMoved())
+          .catch(() => onClose())
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onClose()
+        }
+      }}
+    >
+      <label>
+        {copy.moveToGroup}
+        <select autoFocus value={choice} onChange={(event) => setChoice(event.target.value)}>
+          {choices.map((item) => (
+            <option key={`${item.structure}:${item.group}`} value={`${item.structure}:${item.group}`}>{item.label}</option>
+          ))}
+        </select>
+      </label>
+      <button type="submit">{copy.save}</button>
+    </form>
   )
 }
 
@@ -958,33 +1045,33 @@ function TableFilters({
   )
 }
 
-function createGroups(typeKey: string, group: string | null) {
-  if (typeKey === 'supplier' || !group) {
-    return typeKey === 'supplier' ? {} : { food: 'bread' }
-  }
-  const splitAt = group.indexOf(':')
-  if (splitAt > 0) return { [group.slice(0, splitAt)]: group.slice(splitAt + 1) }
-  return { food: group }
-}
-
 function NewObject({ session, typeKey, singular }: { session: PanesSession; typeKey?: string; singular?: string }) {
   const [open, setOpen] = useState(false)
   const [number, setNumber] = useState('')
+  const [name, setName] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const named = typeNames(defs.data, uiLanguage).find((item) => item.key === (typeKey || 'product'))
   if (!open) return <button onClick={() => setOpen(true)}>{newObjectLabel(singular)}</button>
   return (
     <form
       className="create-row"
       onSubmit={(event) => {
         event.preventDefault()
+        if (!number.trim() || !name.trim()) {
+          setError(copy.validation)
+          return
+        }
         void api<Json>('/v1/objects', {
           method: 'POST',
-          body: JSON.stringify({
-            type: typeKey || 'product',
-            groups: createGroups(typeKey || 'product', session.group),
-            values: { number, name: { en: number }, status: 'draft' },
-          }),
+          body: JSON.stringify(newObjectBody({
+            typeKey: typeKey || 'product',
+            number,
+            name,
+            group: session.group,
+            structures: named?.structures,
+          })),
         })
           .then((created) => {
             setError('')
@@ -997,6 +1084,7 @@ function NewObject({ session, typeKey, singular }: { session: PanesSession; type
       }}
     >
       <input data-testid="new-number" value={number} onChange={(event) => setNumber(event.target.value)} placeholder={copy.numberPlaceholder} />
+      <input data-testid="new-name" value={name} onChange={(event) => setName(event.target.value)} placeholder={copy.namePlaceholder} aria-label={copy.namePlaceholder} />
       <button className="primary" type="submit" data-testid="create-object">{copy.save}</button>
       {error ? <span className="error" data-testid="validation-error">{error}</span> : null}
     </form>
@@ -1185,6 +1273,9 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
             <MetaChip>{typeLabel(defs.data, String(object.data.type), uiLanguage)}</MetaChip>
             {status ? <MetaChip tone={statusTone(status)}>{optionLabel(defs.data, 'status', status, uiLanguage)}</MetaChip> : null}
             <MetaChip>{String(object.data.version ?? '')}</MetaChip>
+            {object.data.updated_by ? (
+              <MetaChip>{copy.updatedBy} {String((object.data.updated_by as Json).name ?? '')}</MetaChip>
+            ) : null}
             {suggestionCount > 0 ? <span className="suggestion-count" data-testid="suggestion-count">{suggestionCount} {copy.suggested}</span> : null}
           </div>
         </header>

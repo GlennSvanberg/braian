@@ -85,6 +85,19 @@ pub struct ObjectResponse {
     pub seq: i64,
     pub model_revision: u64,
     pub warnings: Vec<ValidationError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<UpdatedBy>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UpdatedBy {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -148,12 +161,14 @@ pub async fn create_object(
         let structure = resolve_structure(&cached.model, &cached.defs, structure)?;
         groups.insert(structure, resolve_group(&cached.defs, structure, group)?);
     }
+    let mut values = create_values(&cached.model, &body.values)?;
+    braian_model::apply_defaults(&cached.defs, type_id, &mut values);
     let object = Object {
         id: object_id(body.id)?,
         type_id,
         model_revision: cached.revision,
         groups,
-        values: create_values(&cached.model, &body.values)?,
+        values,
     };
     let errors = cached.model.validate(&object);
     if !errors.is_empty() {
@@ -193,13 +208,7 @@ pub async fn create_object(
         receipt.last_seq,
         &body.object_type,
     );
-    Ok(object_response(
-        &cached,
-        &stored,
-        receipt.last_seq,
-        false,
-        true,
-    ))
+    Ok(object_response(&state, &cached, &stored, receipt.last_seq, false, true).await)
 }
 
 #[utoipa::path(
@@ -228,12 +237,14 @@ pub async fn get_object(
     let stored = load(&state, id).await?;
     let seq = state.store.latest_seq(id).await.map_err(store_status)?;
     Ok(object_response(
+        &state,
         &cached,
         &stored,
         seq,
         includes_inapplicable(&query),
         true,
-    ))
+    )
+    .await)
 }
 
 #[utoipa::path(
@@ -270,6 +281,12 @@ pub async fn batch_get(
         .await
         .map_err(store_status)?;
     let seqs = state.store.latest_seqs(&ids).await.map_err(store_status)?;
+    let audits = state
+        .store
+        .object_audits(&ids)
+        .await
+        .map_err(store_status)?;
+    let audits: HashMap<_, _> = audits.into_iter().map(|audit| (audit.id, audit)).collect();
     let include = includes_inapplicable_text(body.include.as_deref());
     let mut objects = Vec::with_capacity(loaded.len());
     for stored in loaded {
@@ -277,7 +294,14 @@ pub async fn batch_get(
             continue;
         }
         let seq = seqs.get(&stored.object.id).copied().unwrap_or(0);
-        objects.push(object_body(&cached, &stored, seq, include, full_values));
+        objects.push(object_body(
+            &cached,
+            &stored,
+            seq,
+            include,
+            full_values,
+            audits.get(&stored.object.id),
+        ));
     }
     Ok(Json(BatchGetResponse { objects }))
 }
@@ -363,12 +387,14 @@ pub async fn patch_object(
                     &type_key(&cached.defs, stored.object.type_id),
                 );
                 return Ok(object_response(
+                    &state,
                     &cached,
                     &stored,
                     receipt.last_seq,
                     false,
                     true,
-                ));
+                )
+                .await);
             }
             Err(Error::StaleRead { .. }) => continue,
             Err(Error::Conflict {
@@ -617,14 +643,28 @@ pub async fn object_changes(
     Ok(Json(changes))
 }
 
-fn object_response(
+async fn object_response(
+    state: &AppState,
     cached: &CachedModel,
     stored: &StoredObject,
     seq: i64,
     include_inapplicable: bool,
     validate: bool,
 ) -> Response {
-    let body = object_body(cached, stored, seq, include_inapplicable, validate);
+    let audit = state
+        .store
+        .object_audits(&[stored.object.id])
+        .await
+        .ok()
+        .and_then(|rows| rows.into_iter().next());
+    let body = object_body(
+        cached,
+        stored,
+        seq,
+        include_inapplicable,
+        validate,
+        audit.as_ref(),
+    );
     (
         StatusCode::OK,
         [(header::ETAG, etag(stored.version))],
@@ -647,6 +687,7 @@ fn object_body(
     seq: i64,
     include_inapplicable: bool,
     validate: bool,
+    audit: Option<&braian_store::ObjectAudit>,
 ) -> ObjectResponse {
     let applicable = cached
         .model
@@ -673,6 +714,15 @@ fn object_body(
         seq,
         model_revision: stored.object.model_revision,
         warnings,
+        created_at: audit.map(|audit| audit.created_at.to_rfc3339()),
+        updated_at: audit.map(|audit| audit.updated_at.to_rfc3339()),
+        updated_by: audit.and_then(|audit| {
+            Some(UpdatedBy {
+                id: audit.updated_by?.as_uuid(),
+                name: audit.updated_by_name.clone()?,
+                kind: audit.updated_by_kind?.as_str().to_owned(),
+            })
+        }),
     }
 }
 

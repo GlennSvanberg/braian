@@ -756,7 +756,7 @@ pub fn document(
     doc.insert("seq".into(), json!(seq));
     doc.insert("version".into(), json!(version));
     doc.insert("deleted".into(), Value::Bool(deleted));
-    let groups: Vec<Value> = object
+    let mut groups: Vec<Value> = object
         .groups
         .iter()
         .filter_map(|(structure, group)| {
@@ -765,6 +765,20 @@ pub fn document(
             Some(Value::String(format!("{}:{}", structure.key, group.key)))
         })
         .collect();
+    if let Some(object_type) = defs.types.iter().find(|item| item.id == object.type_id)
+        && let Some(allowed) = &object_type.structures
+    {
+        for structure_id in allowed {
+            if object.groups.contains_key(structure_id) {
+                continue;
+            }
+            let Some(structure) = defs.structures.iter().find(|item| item.id == *structure_id)
+            else {
+                continue;
+            };
+            groups.push(Value::String(format!("{}:unplaced", structure.key)));
+        }
+    }
     doc.insert("groups".into(), Value::Array(groups));
 
     let mut blobs: BTreeMap<String, String> = BTreeMap::new();

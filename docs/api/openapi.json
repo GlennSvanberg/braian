@@ -2230,6 +2230,105 @@
         ]
       }
     },
+    "/v1/types/{id}/structures": {
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_type_structures",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Type id or key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StructuresBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Allowed trees replaced, or a dry run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructuresResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Filed as a model proposal",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/types/{id}/unplaced": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "unplaced_count",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Type id or key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "structure",
+            "in": "query",
+            "description": "Structure id or key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects of this type with no group in the tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnplacedCount"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/unit-families": {
       "post": {
         "tags": [
@@ -3148,6 +3247,7 @@
           "unknown_type",
           "unknown_structure",
           "unknown_group",
+          "disallowed_structure",
           "attribute_not_applicable",
           "wrong_type",
           "expected_list",
@@ -3165,7 +3265,8 @@
           "invalid_object_ref",
           "not_integer",
           "range_inverted",
-          "missing_key_attribute"
+          "missing_key_attribute",
+          "missing_required"
         ]
       },
       "Group": {
@@ -3407,6 +3508,12 @@
           "warnings"
         ],
         "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "groups": {
             "type": "object",
             "additionalProperties": {
@@ -3432,6 +3539,22 @@
           "type": {
             "type": "string"
           },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdatedBy"
+              }
+            ]
+          },
           "values": {
             "type": "object"
           },
@@ -3450,7 +3573,7 @@
       },
       "ObjectType": {
         "type": "object",
-        "description": "An object type. There are no built-in types such as article or product.\n\n`key_attribute` is the human key, unique within the type. The database\nenforces that uniqueness; phase 1 only checks that the attribute is\nsingle-valued, language-independent text and that a value is present.",
+        "description": "An object type. There are no built-in types such as article or product.\n\n`key_attribute` is the value copied into `objects.key`. On a type that has\nbeen given standard attributes it is the `number` attribute. Older sets\nstill name their own key attribute. `structures` lists the trees the type\nmay use. `None` means the set was stored before that limit existed.",
         "required": [
           "id",
           "key",
@@ -3463,6 +3586,16 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AttributeId"
+            }
+          },
+          "defaults": {
+            "type": "object",
+            "description": "Values applied when an object is created without that attribute.\n\nKeys are attribute keys, for example `status` = `draft`.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
             }
           },
           "id": {
@@ -3502,6 +3635,16 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "structures": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/StructureId"
+            },
+            "description": "Trees this type may be placed in.\n\nMissing means any tree is still allowed. An empty list means the type\nhas no tree: new objects stay unplaced."
           }
         },
         "additionalProperties": false
@@ -3786,6 +3929,51 @@
           }
         }
       },
+      "StructuresBody": {
+        "type": "object",
+        "required": [
+          "structures"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "StructuresResponse": {
+        "type": "object",
+        "required": [
+          "structures",
+          "applied",
+          "warnings"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "Suggestion": {
         "type": "object",
         "description": "A write that was filed for a person to accept. Nothing was saved.",
@@ -3876,6 +4064,42 @@
         "type": "string",
         "format": "uuid",
         "description": "Id of a family of units that share a base unit."
+      },
+      "UnplacedCount": {
+        "type": "object",
+        "required": [
+          "structure",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "structure": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdatedBy": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "ValidationError": {
         "type": "object",

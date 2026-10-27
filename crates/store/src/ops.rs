@@ -14,8 +14,8 @@ use crate::ids::{Actor, BatchId, ChangeOp, PrincipalId, PrincipalKind};
 use crate::session::{DbLane, Store};
 use crate::split::{self, diff_from_patch};
 use crate::types::{
-    BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectOp, PrincipalRecord, StoredObject,
-    WriteReceipt,
+    BulkReport, BulkRowError, CachedDefs, ChangeRow, ObjectAudit, ObjectOp, PrincipalRecord,
+    StoredObject, WriteReceipt,
 };
 
 /// What an accepted proposal row writes, in the same transaction as its status change.
@@ -162,6 +162,143 @@ impl Store {
     ) -> Result<braian_model::ConsequenceCounts, Error> {
         let client = self.pool().get().await?;
         crate::purge::measure(&client, purge).await
+    }
+
+    /// Gives every type its standard attributes and the trees its objects already use.
+    ///
+    /// Runs once, when a stored type has no `structures` field. Value moves and the
+    /// new definition revision share one transaction. Search is asked to rebuild.
+    pub async fn upgrade_standard_attributes(&self) -> Result<bool, Error> {
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT model_revision, definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1 FOR UPDATE",
+                &[],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Ok(false);
+        };
+        let revision: i64 = row.get(0);
+        let document: Value = row.get(1);
+        let pending = document
+            .get("types")
+            .and_then(Value::as_array)
+            .is_some_and(|types| types.iter().any(|item| item.get("structures").is_none()));
+        if !pending {
+            return Ok(false);
+        }
+        let mut defs: DefinitionSet = serde_json::from_value(document.clone())
+            .map_err(|error| Error::Definitions(error.to_string()))?;
+        let usage_rows = tx
+            .query(
+                "SELECT DISTINCT object.type_id, placement.structure_id
+                 FROM objects object
+                 JOIN object_structures placement ON placement.object_id = object.id
+                 WHERE object.deleted_at IS NULL",
+                &[],
+            )
+            .await?;
+        let mut usage: std::collections::BTreeMap<TypeId, std::collections::BTreeSet<StructureId>> =
+            std::collections::BTreeMap::new();
+        for row in &usage_rows {
+            usage
+                .entry(TypeId::from_uuid(row.get(0)))
+                .or_default()
+                .insert(StructureId::from_uuid(row.get(1)));
+        }
+        braian_model::install_standard_attributes(&mut defs);
+        braian_model::structures_from_usage(&mut defs, &usage);
+        let existing = load_groups(&tx).await?;
+        let assigned = split::SplitContext::assign_groups(&defs, &existing);
+        let context = split::SplitContext::with_groups(&defs, &assigned);
+        rewrite_standard_values(&tx, self.form(), &context, &defs).await?;
+        braian_model::detach_name_aliases(&mut defs);
+        defs.model_revision = u64::try_from(revision)
+            .map_err(|_| Error::Data("definition revision does not fit".into()))?
+            + 1;
+        let actor_id: Uuid = tx
+            .query_one(
+                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'human', 'System', 'system')
+                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name
+                 RETURNING id",
+                &[&Uuid::now_v7()],
+            )
+            .await?
+            .get(0);
+        let actor = Actor {
+            actor: PrincipalId::from_uuid(actor_id),
+            on_behalf_of: None,
+            kind: crate::ids::BatchKind::Bulk,
+            source: "standard-attributes".into(),
+        };
+        let (_receipt, groups) = self.write_definitions_in(&tx, &actor, &defs).await?;
+        tx.execute(
+            "UPDATE indexer_progress SET reindex_requested = true, updated_at = now() WHERE id = 1",
+            &[],
+        )
+        .await?;
+        tx.commit().await?;
+        self.remember(Arc::new(CachedDefs::from_groups(defs, groups)))
+            .await;
+        Ok(true)
+    }
+
+    /// Objects of this type with no group in the structure.
+    pub async fn unplaced_count(
+        &self,
+        type_id: TypeId,
+        structure_id: StructureId,
+    ) -> Result<i64, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "SELECT count(*)
+                 FROM objects object
+                 WHERE object.type_id = $1
+                   AND object.deleted_at IS NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM object_structures placement
+                       WHERE placement.object_id = object.id
+                         AND placement.structure_id = $2
+                   )",
+                &[&type_id.as_uuid(), &structure_id.as_uuid()],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    /// Created, updated, and who last wrote each object.
+    pub async fn object_audits(&self, ids: &[ObjectId]) -> Result<Vec<ObjectAudit>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT object.id, object.created_at, object.updated_at, object.updated_by,
+                        principal.name, principal.kind
+                 FROM objects object
+                 LEFT JOIN principals principal ON principal.id = object.updated_by
+                 WHERE object.id = ANY($1)",
+                &[&keys],
+            )
+            .await?;
+        rows.iter()
+            .map(|row| {
+                let kind: Option<String> = row.get(5);
+                Ok(ObjectAudit {
+                    id: ObjectId::from_uuid(row.get(0)),
+                    created_at: row.get(1),
+                    updated_at: row.get(2),
+                    updated_by: row.get::<_, Option<Uuid>>(3).map(PrincipalId::from_uuid),
+                    updated_by_name: row.get(4),
+                    updated_by_kind: kind.as_deref().map(PrincipalKind::parse).transpose()?,
+                })
+            })
+            .collect()
     }
 
     /// Locks the proposal until [`ProposalLock::release`]. Row writes use their own transactions.
@@ -799,8 +936,8 @@ impl Store {
             .await?;
             let version_row = tx
                 .query_one(
-                    "UPDATE objects SET version = version + 1, updated_at = now() WHERE id = $1 RETURNING version",
-                    &[&object_id],
+                    "UPDATE objects SET version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1 RETURNING version",
+                    &[&object_id, &actor.actor.as_uuid()],
                 )
                 .await?;
             let version: i64 = version_row.get(0);
@@ -1247,12 +1384,13 @@ async fn insert_object(
     let key = defs.key_of(object)?;
     let revision = as_i64(object.model_revision)?;
     tx.execute(
-        "INSERT INTO objects (id, type_id, key, version, model_revision) VALUES ($1, $2, $3, 1, $4)",
+        "INSERT INTO objects (id, type_id, key, version, model_revision, updated_by) VALUES ($1, $2, $3, 1, $4, $5)",
         &[
             &object.id.as_uuid(),
             &object.type_id.as_uuid(),
             &key,
             &revision,
+            &actor.actor.as_uuid(),
         ],
     )
     .await
@@ -1357,15 +1495,15 @@ async fn update_object(
     {
         let key = new_key(id, patch, key_attribute.expect("checked above"))?;
         tx.query_one(
-            "UPDATE objects SET version = version + 1, updated_at = now(), model_revision = $2, key = $3 WHERE id = $1 RETURNING version",
-            &[&id.as_uuid(), &revision, &key],
+            "UPDATE objects SET version = version + 1, updated_at = now(), model_revision = $2, key = $3, updated_by = $4 WHERE id = $1 RETURNING version",
+            &[&id.as_uuid(), &revision, &key, &actor.actor.as_uuid()],
         )
         .await
         .map_err(|error| map_unique(error, type_id, &key))?
     } else {
         tx.query_one(
-            "UPDATE objects SET version = version + 1, updated_at = now(), model_revision = $2 WHERE id = $1 RETURNING version",
-            &[&id.as_uuid(), &revision],
+            "UPDATE objects SET version = version + 1, updated_at = now(), model_revision = $2, updated_by = $3 WHERE id = $1 RETURNING version",
+            &[&id.as_uuid(), &revision, &actor.actor.as_uuid()],
         )
         .await?
     };
@@ -1424,8 +1562,8 @@ async fn delete_object(
     }
     let version_row = tx
         .query_one(
-            "UPDATE objects SET version = version + 1, updated_at = now(), deleted_at = now() WHERE id = $1 RETURNING version",
-            &[&id.as_uuid()],
+            "UPDATE objects SET version = version + 1, updated_at = now(), deleted_at = now(), updated_by = $2 WHERE id = $1 RETURNING version",
+            &[&id.as_uuid(), &actor.actor.as_uuid()],
         )
         .await?;
     let version = u64_from_i64(version_row.get(0))?;
@@ -1855,6 +1993,89 @@ async fn load_parts_for_update(
     };
     split::documents_from_rows(rows.iter().map(|row| (row.get("part"), row.get("values"))))
         .map_err(|message| Error::Corrupt(id, message))
+}
+
+async fn rewrite_standard_values(
+    tx: &Transaction<'_>,
+    form: crate::split::StorageForm,
+    context: &split::SplitContext,
+    defs: &DefinitionSet,
+) -> Result<(), Error> {
+    let rows = tx
+        .query(
+            "SELECT object.id, object.key, value.part, value.\"values\"
+             FROM objects object
+             JOIN object_values value ON value.object_id = object.id AND value.is_latest
+             WHERE object.deleted_at IS NULL
+             ORDER BY object.id",
+            &[],
+        )
+        .await?;
+    struct Bucket {
+        key: String,
+        parts: BTreeMap<String, Value>,
+    }
+    let mut objects: BTreeMap<Uuid, Bucket> = BTreeMap::new();
+    for row in &rows {
+        let id: Uuid = row.get(0);
+        let entry = objects.entry(id).or_insert_with(|| Bucket {
+            key: row.get(1),
+            parts: BTreeMap::new(),
+        });
+        entry.parts.insert(row.get(2), row.get(3));
+    }
+    for (id, bucket) in objects {
+        let mut values = split::join_parts(form, &bucket.parts)
+            .map_err(|message| Error::Corrupt(ObjectId::from_uuid(id), message))?;
+        let before = values.clone();
+        braian_model::move_values(defs, &bucket.key, &mut values);
+        if values == before {
+            continue;
+        }
+        let next = context.split(form, &values);
+        for (part, document) in &next {
+            let value = Value::Object(document.clone());
+            let updated = tx
+                .execute(
+                    "UPDATE object_values SET \"values\" = $3
+                     WHERE object_id = $1 AND part = $2 AND is_latest",
+                    &[&id, part, &value],
+                )
+                .await?;
+            if updated == 0 {
+                tx.execute(
+                    "INSERT INTO object_values (object_id, part, version, \"values\", is_latest)
+                     VALUES ($1, $2, 1, $3, true)",
+                    &[&id, part, &value],
+                )
+                .await?;
+            }
+        }
+        for part in bucket.parts.keys() {
+            if next.contains_key(part) {
+                continue;
+            }
+            let empty = Value::Object(Map::new());
+            tx.execute(
+                "UPDATE object_values SET \"values\" = $3
+                 WHERE object_id = $1 AND part = $2 AND is_latest",
+                &[&id, part, &empty],
+            )
+            .await?;
+        }
+        if let Some(number) = values
+            .get(&braian_model::number_id())
+            .and_then(Value::as_str)
+            && number != bucket.key
+        {
+            tx.execute(
+                "UPDATE objects SET key = $2 WHERE id = $1 AND deleted_at IS NULL",
+                &[&id, &number],
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn load_groups(

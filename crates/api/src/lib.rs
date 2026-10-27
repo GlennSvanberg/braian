@@ -72,6 +72,11 @@ pub fn into_router(state: AppState) -> axum::Router {
                 .put(definitions::put_type)
                 .delete(definitions::delete_type_route),
         )
+        .route(
+            "/v1/types/{id}/structures",
+            put(definitions::put_type_structures),
+        )
+        .route("/v1/types/{id}/unplaced", get(definitions::unplaced_count))
         .route("/v1/structures", post(definitions::post_structure))
         .route(
             "/v1/structures:create",

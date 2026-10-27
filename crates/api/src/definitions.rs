@@ -10,12 +10,14 @@ use braian_model::{
 };
 use braian_rules::CompiledModel;
 use braian_store::{Actor, Error, WriteReceipt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::auth::Auth;
+use crate::auth::{Auth, Role};
 use crate::headers::{etag, if_match};
+use crate::keys::DryQuery;
+use crate::platform::require;
 use crate::problem::{Problem, store_status};
 use crate::state::AppState;
 
@@ -778,4 +780,156 @@ fn find_family(defs: DefinitionSet, id: UnitFamilyId) -> Result<UnitFamily, Prob
                 "unit family missing",
             )
         })
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StructuresBody {
+    pub structures: Vec<String>,
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct StructuresResponse {
+    pub structures: Vec<String>,
+    pub applied: bool,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UnplacedQuery {
+    pub structure: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UnplacedCount {
+    pub structure: String,
+    pub count: i64,
+}
+
+#[utoipa::path(
+    put,
+    path = "/v1/types/{id}/structures",
+    tag = "definitions",
+    params(("id" = String, Path, description = "Type id or key")),
+    request_body = StructuresBody,
+    responses(
+        (status = 200, description = "Allowed trees replaced, or a dry run", body = StructuresResponse),
+        (status = 202, description = "Filed as a model proposal", body = Value)
+    ),
+    security(("bearer" = []))
+)]
+pub async fn put_type_structures(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<String>,
+    Query(query): Query<DryQuery>,
+    Json(body): Json<StructuresBody>,
+) -> Result<Response, Problem> {
+    let dry_run = body.dry_run.unwrap_or(false) || query.dry_run.unwrap_or(false);
+    if dry_run {
+        require(&identity, Role::Viewer)?;
+    } else {
+        require(&identity, Role::Editor)?;
+    }
+    let change = braian_model::ModelChange::SetStructures {
+        type_key: id.clone(),
+        structures: body.structures.clone(),
+    };
+    let cached = state.models.get(&state.store).await?;
+    let (after, impact) = braian_model::preview(&cached.defs, std::slice::from_ref(&change))
+        .map_err(|error| Problem::new(StatusCode::BAD_REQUEST, "model", error.to_string()))?;
+    let object_type = after
+        .types
+        .iter()
+        .find(|item| item.key == id || item.id.as_uuid().to_string() == id)
+        .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "unknown_type", id.clone()))?;
+    let listed = object_type
+        .structures
+        .clone()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|structure| {
+            after
+                .structures
+                .iter()
+                .find(|item| item.id == *structure)
+                .map(|item| item.key.clone())
+        })
+        .collect::<Vec<_>>();
+    if dry_run {
+        return Ok(Json(StructuresResponse {
+            structures: listed,
+            applied: false,
+            warnings: impact.lines,
+        })
+        .into_response());
+    }
+    if !identity.may_commit() {
+        let response = crate::model_proposal::propose(
+            &state,
+            &identity,
+            "model.set_structures",
+            &serde_json::json!({ "type": id, "structures": body.structures }),
+        )
+        .await?;
+        return Ok((StatusCode::ACCEPTED, Json(response)).into_response());
+    }
+    let (_defs, _receipt) = commit(&state, &identity.actor, |defs| {
+        braian_model::apply_all(defs, std::slice::from_ref(&change))
+            .map_err(|error| Problem::new(StatusCode::BAD_REQUEST, "model", error.to_string()))
+    })
+    .await?;
+    if impact
+        .lines
+        .iter()
+        .any(|line| line.contains("may use") || line.contains("no tree"))
+    {
+        let _ = state.store.request_reindex().await;
+    }
+    Ok(Json(StructuresResponse {
+        structures: listed,
+        applied: true,
+        warnings: impact.lines,
+    })
+    .into_response())
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/types/{id}/unplaced",
+    tag = "definitions",
+    params(
+        ("id" = String, Path, description = "Type id or key"),
+        ("structure" = String, Query, description = "Structure id or key")
+    ),
+    responses((status = 200, description = "Objects of this type with no group in the tree", body = UnplacedCount)),
+    security(("bearer" = []))
+)]
+pub async fn unplaced_count(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<String>,
+    Query(query): Query<UnplacedQuery>,
+) -> Result<Json<UnplacedCount>, Problem> {
+    require(&identity, Role::Viewer)?;
+    let cached = state.models.get(&state.store).await?;
+    let type_id = crate::wire::resolve_type(&cached.model, &id)?;
+    let structure = crate::wire::resolve_structure(&cached.model, &cached.defs, &query.structure)?;
+    let count = state
+        .store
+        .unplaced_count(type_id, structure)
+        .await
+        .map_err(store_status)?;
+    let key = cached
+        .defs
+        .structures
+        .iter()
+        .find(|item| item.id == structure)
+        .map(|item| item.key.clone())
+        .unwrap_or(query.structure);
+    Ok(Json(UnplacedCount {
+        structure: key,
+        count,
+    }))
 }

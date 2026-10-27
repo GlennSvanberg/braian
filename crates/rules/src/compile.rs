@@ -35,6 +35,8 @@ pub enum AttributeSource {
 pub(crate) struct TypeInfo {
     pub(crate) key_attribute: AttributeId,
     pub(crate) attributes: HashSet<AttributeId>,
+    /// `None` allows every tree. `Some` is the allowed list, empty for none.
+    pub(crate) structures: Option<Vec<StructureId>>,
 }
 
 #[derive(Debug, Clone)]
@@ -341,6 +343,7 @@ fn index(defs: &DefinitionSet) -> CompiledModel {
                 TypeInfo {
                     key_attribute: object_type.key_attribute,
                     attributes: object_type.attributes.iter().copied().collect(),
+                    structures: object_type.structures.clone(),
                 },
             )
         })
@@ -822,6 +825,8 @@ mod tests {
                 plural: Default::default(),
                 key_attribute: sku.id,
                 attributes: vec![sku.id],
+                structures: None,
+                defaults: BTreeMap::new(),
             }],
             structures: vec![],
         }
@@ -1366,6 +1371,8 @@ mod tests {
                 plural: Default::default(),
                 key_attribute: name.id,
                 attributes: vec![name.id, weight.id],
+                structures: None,
+                defaults: BTreeMap::new(),
             }],
             structures: vec![
                 Structure {
@@ -1478,6 +1485,8 @@ mod tests {
                 plural: Default::default(),
                 key_attribute: name.id,
                 attributes: vec![name.id],
+                structures: None,
+                defaults: BTreeMap::new(),
             }],
             structures: vec![Structure {
                 id: assortment,

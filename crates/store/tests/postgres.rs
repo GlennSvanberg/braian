@@ -125,6 +125,8 @@ async fn key_is_unique_per_type_and_reusable_after_delete() {
         plural: BTreeMap::new(),
         key_attribute,
         attributes: vec![key_attribute],
+        structures: None,
+        defaults: BTreeMap::new(),
     });
     defs.model_revision = 2;
     db.store().put_definitions(&who, &defs).await.unwrap();
@@ -304,6 +306,17 @@ async fn an_agent_needs_on_behalf_of() {
         )
         .await
         .unwrap();
+    let audit = db
+        .store()
+        .object_audits(&[object.id])
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(
+        audit.updated_by.map(|id| id.as_uuid()),
+        Some(agent.as_uuid())
+    );
     let changes = db.store().changes_for(object.id).await.unwrap();
     assert_eq!(changes[0].actor, agent);
     assert_eq!(changes[0].on_behalf_of, Some(human));

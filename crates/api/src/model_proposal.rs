@@ -526,6 +526,27 @@ fn changes_from(
             group: required_str(args, "group")?,
             name: required_str(args, "name")?,
         }]),
+        "model.set_structures" => {
+            let structures = args
+                .get("structures")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(vec![ModelChange::SetStructures {
+                type_key: args
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or(required_str(args, "type_key")?),
+                structures,
+            }])
+        }
         other => Err(bad(format!("unknown model operation {other}"))),
     }
 }

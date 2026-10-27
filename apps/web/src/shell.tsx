@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
 import { api, recordTitle, textValue, type Json } from './api'
 import { AssortmentList, NewSelectionDialog } from './assortments'
@@ -875,9 +875,25 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   })
   const [openKeys, setOpenKeys] = useState<string[]>(() => (view.state.expanded as string[] | undefined) ?? [])
   const [menu, setMenu] = useState<{ x: number; y: number; row: TreeEntry } | null>(null)
-  const [editing, setEditing] = useState<{ row: TreeEntry; mode: 'rename' | 'child' | 'sibling'; value: string } | null>(null)
+  const [editing, setEditing] = useState<{ row: TreeEntry; mode: 'rename' | 'child' | 'sibling' | 'key'; value: string } | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
   const structures = (defs.data?.structures as Json[] | undefined) ?? []
+  const typeKey = session.workspaceType || session.listType || ''
+  const typeRow = ((defs.data?.types as Json[]) ?? []).find((item) => String(item.key) === typeKey)
+  const allowedTrees = Array.isArray(typeRow?.structures) ? (typeRow.structures as unknown[]).map(String) : null
+  const unplacedCounts = useQueries({
+    queries: structures.map((structure) => {
+      const token = String(structure.id ?? structure.key)
+      const shown = allowedTrees == null
+        ? true
+        : allowedTrees.length > 0 && (allowedTrees.includes(token) || allowedTrees.includes(String(structure.key)))
+      return {
+        queryKey: ['unplaced', String(typeRow?.id ?? ''), token],
+        enabled: Boolean(typeRow?.id) && shown,
+        queryFn: () => api<Json>(`/v1/types/${typeRow?.id}/unplaced?structure=${encodeURIComponent(token)}`),
+      }
+    }),
+  })
   const countOf = (structure: string, key: string) => {
     const groups = (counts.data?.groups as Json[] | undefined) ?? []
     const hit = groups.find((group) => String(group.key) === `${structure}:${key}`)
@@ -903,6 +919,23 @@ export function StructureTree({ session, view }: { session: Session; view: View 
       }
     }
     walk(undefined, null, 0)
+    const token = String(structure.id ?? structure.key)
+    const shown = allowedTrees == null
+      ? Boolean(typeRow)
+      : allowedTrees.includes(token) || allowedTrees.includes(structureKey)
+    if (shown) {
+      const found = Number(unplacedCounts[structures.indexOf(structure)]?.data?.count ?? 0)
+      entries.push({
+        structureKey,
+        key: 'unplaced',
+        id: `${token}:unplaced`,
+        parentKey: null,
+        depth: 0,
+        kids: false,
+        open: false,
+        count: found,
+      })
+    }
   }
   const activeIndex = entries.findIndex((row) => session.group === `${row.structureKey}:${row.key}`)
   const activeRow = activeIndex >= 0 ? entries[activeIndex] : undefined
@@ -950,10 +983,16 @@ export function StructureTree({ session, view }: { session: Session; view: View 
       session.push(reason instanceof Error ? reason.message : copy.validation)
     }
   }
-  const startEdit = (row: TreeEntry, mode: 'rename' | 'child' | 'sibling') => {
+  const startEdit = (row: TreeEntry, mode: 'rename' | 'child' | 'sibling' | 'key') => {
+    if (row.key === 'unplaced') return
     setMenu(null)
     if (mode === 'child' && !openKeys.includes(row.key)) setOpenKeys((current) => [...current, row.key])
-    setEditing({ row, mode, value: mode === 'rename' ? structureCaption(row.key, defs.data, row.structureKey) : '' })
+    const value = mode === 'rename'
+      ? structureCaption(row.key, defs.data, row.structureKey)
+      : mode === 'key'
+        ? row.key
+        : ''
+    setEditing({ row, mode, value })
   }
   const commitEdit = (typedRaw?: string) => {
     if (!editing) return
@@ -964,6 +1003,11 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     if (mode === 'rename') {
       if (typed === structureCaption(row.key, defs.data, row.structureKey) || typed === row.key) return
       void propose('model.rename_group', { structure: row.structureKey, group: row.key, label: typed })
+      return
+    }
+    if (mode === 'key') {
+      if (typed === row.key) return
+      void propose('model.rename_group_key', { structure: row.structureKey, group: row.key, new_key: typed })
       return
     }
     const name = groupKeyFromLabel(typed)
@@ -978,6 +1022,10 @@ export function StructureTree({ session, view }: { session: Session; view: View 
   }
   const openMenu = (row: TreeEntry, x: number, y: number) => {
     session.setGroup(`${row.structureKey}:${row.key}`)
+    if (row.key === 'unplaced') {
+      setMenu(null)
+      return
+    }
     setMenu({
       row,
       x: Math.max(8, Math.min(x, window.innerWidth - 220)),
@@ -1015,7 +1063,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
           startEdit(activeRow, 'child')
           return
         }
-        if ((event.key === 'Delete' || event.key === 'Backspace') && activeRow) {
+        if ((event.key === 'Delete' || event.key === 'Backspace') && activeRow && activeRow.key !== 'unplaced') {
           event.preventDefault()
           setMenu(null)
           void propose('model.delete_group', { structure: activeRow.structureKey, group: activeRow.key })
@@ -1107,7 +1155,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                       <span className="tree-chevron" aria-hidden="true" />
                     )}
                     <Icon size={14} className="tree-icon" aria-hidden="true" />
-                    <span className="tree-label">{structureCaption(row.key, defs.data, structureKey)}</span>
+                    <span className="tree-label">{row.key === 'unplaced' ? copy.unplaced : structureCaption(row.key, defs.data, structureKey)}</span>
                     {row.count > 0 ? <span className="tree-count">{row.count}</span> : null}
                   </button>
                   {editing?.row.id === row.id ? (
@@ -1115,7 +1163,8 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                       className="tree-edit"
                       data-testid="tree-edit"
                       autoFocus
-                      placeholder={editing.mode === 'rename' ? '' : copy.newGroup}
+                      placeholder={editing.mode === 'key' ? copy.key : editing.mode === 'rename' ? '' : copy.newGroup}
+                      aria-label={editing.mode === 'key' ? copy.renameKey : copy.rename}
                       value={editing.value}
                       style={{ marginLeft: 28 + row.depth * 16 }}
                       onChange={(event) => setEditing({ ...editing, value: event.target.value })}
@@ -1131,6 +1180,9 @@ export function StructureTree({ session, view }: { session: Session; view: View 
                         }
                       }}
                     />
+                  ) : null}
+                  {editing?.row.id === row.id && editing.mode === 'key' && editing.value.trim() && editing.value.trim() !== row.key ? (
+                    <p className="warn" data-testid="key-rename-warning">{copy.keyRenameWarning.replace('{key}', row.key)}</p>
                   ) : null}
                 </div>
               )
@@ -1148,14 +1200,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
         >
           <button type="button" onClick={() => { session.setGroup(`${menu.row.structureKey}:${menu.row.key}`); setMenu(null) }}>{copy.open}</button>
           <button type="button" onClick={() => startEdit(menu.row, 'rename')}>{copy.rename}<kbd>F2</kbd></button>
-          <button type="button" onClick={() => {
-            const next = window.prompt(copy.renameKey, menu.row.key)
-            if (!next || next.trim() === menu.row.key) {
-              setMenu(null)
-              return
-            }
-            void propose('model.rename_group_key', { structure: menu.row.structureKey, group: menu.row.key, new_key: next.trim() })
-          }}>{copy.renameKey}</button>
+          <button type="button" onClick={() => startEdit(menu.row, 'key')}>{copy.renameKey}</button>
           <button type="button" onClick={() => startEdit(menu.row, 'child')}>{copy.addChild}<kbd>Ins</kbd></button>
           <button type="button" onClick={() => startEdit(menu.row, 'sibling')}>{copy.addSibling}</button>
           <button

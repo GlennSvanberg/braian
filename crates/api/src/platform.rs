@@ -451,6 +451,18 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.set_structures",
+            title: "Allowed trees…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "move_to_group",
+            title: "Move to group…",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
             name: "model.rename_type_key",
             title: "Rename key…",
             permission: Role::Editor,
@@ -797,7 +809,11 @@ pub(crate) fn require(identity: &Identity, role: Role) -> Result<(), Problem> {
 }
 
 fn agent_must_propose(identity: &Identity, op: &Operation) -> bool {
-    !identity.may_commit() && matches!(op.name, "create_object" | "patch_object" | "set_relation")
+    !identity.may_commit()
+        && matches!(
+            op.name,
+            "create_object" | "patch_object" | "set_relation" | "move_to_group"
+        )
 }
 
 async fn login(
@@ -2710,12 +2726,14 @@ fn create_op(cached: &crate::state::CachedModel, body: &CreateObject) -> Result<
             wire::resolve_group(&cached.defs, structure, group)?,
         );
     }
+    let mut values = create_values(&cached.model, &body.values)?;
+    braian_model::apply_defaults(&cached.defs, type_id, &mut values);
     let object = Object {
         id: wire::object_id(body.id)?,
         type_id,
         model_revision: cached.revision,
         groups,
-        values: create_values(&cached.model, &body.values)?,
+        values,
     };
     let errors = cached.model.validate(&object);
     if !errors.is_empty() {
@@ -3886,14 +3904,15 @@ async fn object_names(
         }
     }
     let cached = state.models.get(&state.store).await?;
-    let name_ids: Vec<_> = ["name", "company_name"]
+    let name_ids: Vec<_> = [braian_model::name_id()]
         .into_iter()
-        .filter_map(|key| {
+        .filter(|id| cached.model.attribute(*id).is_some())
+        .chain(
             cached
                 .model
-                .attribute_by_key(key)
-                .map(|attribute| attribute.id)
-        })
+                .attribute_by_key("name")
+                .map(|attribute| attribute.id),
+        )
         .collect();
     // The graph asks for names in batches. Load the display-name parts; the
     // object key and type come from the object row.
@@ -4489,8 +4508,11 @@ async fn run_operation(
     if operation_deletes(op.name) && (from_agent || !identity.may_commit()) {
         return Err(crate::auth::delete_forbidden());
     }
-    let agent_write =
-        from_agent && matches!(op.name, "create_object" | "patch_object" | "set_relation");
+    let agent_write = from_agent
+        && matches!(
+            op.name,
+            "create_object" | "patch_object" | "set_relation" | "move_to_group"
+        );
     if op.needs_approval || agent_must_propose(identity, op) || agent_write {
         return propose_operation(state, identity, name, args).await;
     }
@@ -4582,6 +4604,13 @@ async fn run_operation(
                 .map_err(store_status)?
                 .ok_or_else(|| store_status(braian_store::Error::NotFound(id)))?;
             let applicable = applicable(&cached, &stored.object);
+            let audit = state
+                .store
+                .object_audits(&[id])
+                .await
+                .map_err(store_status)?
+                .into_iter()
+                .next();
             Ok(json!({
                 "id": stored.object.id.as_uuid(),
                 "type": wire::type_key(&cached.defs, stored.object.type_id),
@@ -4589,6 +4618,15 @@ async fn run_operation(
                 "version": stored.version,
                 "groups": groups_to_wire(&cached.defs, &stored.object.groups),
                 "values": values_to_wire(&cached.model, &applicable, &stored.object.values, false),
+                "created_at": audit.as_ref().map(|audit| audit.created_at.to_rfc3339()),
+                "updated_at": audit.as_ref().map(|audit| audit.updated_at.to_rfc3339()),
+                "updated_by": audit.as_ref().and_then(|audit| {
+                    Some(json!({
+                        "id": audit.updated_by?.as_uuid(),
+                        "name": audit.updated_by_name.clone()?,
+                        "kind": audit.updated_by_kind?.as_str(),
+                    }))
+                }),
             }))
         }
         "create_object" => {
@@ -4647,6 +4685,23 @@ async fn run_operation(
             );
             state.index_after_commit(id.as_uuid(), receipt.last_seq);
             Ok(json!({ "seq": receipt.last_seq }))
+        }
+        "move_to_group" => {
+            let structure = args.get("structure").and_then(Value::as_str).unwrap_or("");
+            let group = args.get("group").cloned().unwrap_or(Value::Null);
+            let mut groups = serde_json::Map::new();
+            groups.insert(structure.to_owned(), group);
+            let mut patched = args.clone();
+            patched["groups"] = Value::Object(groups);
+            // Same write as an object patch, including the proposal an agent files.
+            Box::pin(run_operation(
+                state,
+                identity,
+                "patch_object",
+                &patched,
+                from_agent,
+            ))
+            .await
         }
         "history" => Ok(history(
             State(state.clone()),
@@ -4877,6 +4932,15 @@ async fn propose_operation(
             crate::model_proposal::propose(state, identity, name, args).await
         }
         "assortment.save" => propose_assortment(state, identity, args).await,
+        "move_to_group" => {
+            let structure = args.get("structure").and_then(Value::as_str).unwrap_or("");
+            let group = args.get("group").cloned().unwrap_or(Value::Null);
+            let mut groups = serde_json::Map::new();
+            groups.insert(structure.to_owned(), group);
+            let mut patched = args.clone();
+            patched["groups"] = Value::Object(groups);
+            Box::pin(propose_operation(state, identity, "patch_object", &patched)).await
+        }
         "create_object" | "patch_object" | "set_relation" => {
             if name == "patch_object" && args.get("base_version").and_then(Value::as_i64).is_none()
             {

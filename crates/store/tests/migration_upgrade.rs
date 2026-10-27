@@ -109,6 +109,12 @@ fn v3_checksum(migrations: &[Migration]) -> u64 {
         .checksum()
 }
 
+fn migration_version(file: &str) -> Option<u32> {
+    let rest = file.strip_prefix('V')?;
+    let (number, _) = rest.split_once('_')?;
+    number.parse().ok()
+}
+
 fn max_migration_version(migrations: &[Migration]) -> i32 {
     migrations
         .iter()
@@ -261,8 +267,9 @@ async fn selection_type_comes_from_the_query_or_the_most_hits() {
         let entry = entry.unwrap();
         let name = entry.file_name();
         let file = name.to_string_lossy();
-        // V18 rewrites query ids and must run after V17 has filled type_id.
-        if file.starts_with("V17") || file.starts_with("V18") {
+        // V17 fills type_id. Later files (V18 rewrites query ids, V19 adds
+        // updated_by) must not run until that column exists.
+        if migration_version(&file).is_some_and(|version| version >= 17) {
             continue;
         }
         fs::copy(entry.path(), dir.join(&name)).unwrap();

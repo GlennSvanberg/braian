@@ -17,9 +17,10 @@ const TABLE_STATE = {
 }
 
 export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
-  const tree = typeUsesTree(type.key)
+  const tree = typeUsesTree(type)
+  const treeTitle = type.structureLabel || 'Structure'
   const views: WorkspaceTemplate['views'] = [
-    ...(tree ? [{ type: 'structure_tree', title: 'Food', state: { expanded: ['dairy', 'beverages'] } }] : []),
+    ...(tree ? [{ type: 'structure_tree', title: treeTitle, state: {} }] : []),
     { type: 'assortment_list', title: 'Selections', state: {} },
     {
       type: 'object_table',

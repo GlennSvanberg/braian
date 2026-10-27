@@ -14,6 +14,11 @@ pub enum ErrorCode {
     UnknownType,
     UnknownStructure,
     UnknownGroup,
+    /// The object's type is not allowed in this tree.
+    ///
+    /// Kept out of [`ErrorCode::ALL`]. That list is the set the synthetic
+    /// catalog's mutations produce.
+    DisallowedStructure,
     AttributeNotApplicable,
     WrongType,
     ExpectedList,
@@ -32,6 +37,11 @@ pub enum ErrorCode {
     NotInteger,
     RangeInverted,
     MissingKeyAttribute,
+    /// A required standard attribute, such as name, has no value.
+    ///
+    /// Kept out of [`ErrorCode::ALL`]. That list is the set the synthetic
+    /// catalog's mutations produce.
+    MissingRequired,
 }
 
 impl ErrorCode {

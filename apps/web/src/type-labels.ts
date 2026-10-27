@@ -8,6 +8,10 @@ export type TypeName = {
   key: string
   singular: string
   plural: string
+  /** Missing means any tree. An empty list means the type has no tree. */
+  structures?: string[]
+  /** Label of the only allowed tree, when there is exactly one. */
+  structureLabel?: string
 }
 
 export type SavedView = {
@@ -73,7 +77,18 @@ export function typeNames(defs: Json | undefined, language = 'en'): TypeName[] {
     const key = String(item.key ?? '')
     const singular = stored(item.singular, language) || stored(item.labels, language) || key
     const plural = pluralStored(item.plural, language) || defaultPlural(singular)
-    return { id: String(item.id ?? ''), key, singular, plural }
+    const structures = Array.isArray(item.structures)
+      ? item.structures.map((id) => String(id))
+      : undefined
+    let structureLabel: string | undefined
+    if (structures?.length === 1) {
+      const token = structures[0]
+      const structure = ((defs?.structures as Json[]) ?? []).find(
+        (row) => String(row.id ?? '') === token || String(row.key ?? '') === token,
+      )
+      structureLabel = stored(structure?.labels, language) || String(structure?.key ?? '') || undefined
+    }
+    return { id: String(item.id ?? ''), key, singular, plural, structures, structureLabel }
   })
 }
 
