@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
 import { ApiError, api, type Json } from './api'
+import { formatCount } from './format'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
 import { copy } from './i18n'
@@ -62,15 +63,8 @@ export function StructureSection({
   }
 
   const proposeKey = async (name: string, args: Json) => {
-    const result = await api<Json>(`/v1/operations/${name}`, {
-      method: 'POST',
-      body: JSON.stringify(args),
-    })
-    const id = String(result.proposal_id ?? result.id ?? '')
-    if (id) {
-      const { publishProposal } = await import('./proposal-bus')
-      publishProposal(id)
-    }
+    const { stageModel } = await import('./model-stage')
+    await stageModel(name, args)
   }
   const run = async (work: () => Promise<void>) => {
     if (busyRef.current) return
@@ -526,7 +520,7 @@ function StructureDialog({
         </DialogTitle>
         <DialogDescription>{dialog?.label ?? ''}</DialogDescription>
         {dialog && dialog.kind !== 'move' ? (
-          <p>{count === null ? copy.loadingModel : `${count} ${dialog.kind === 'delete-structure' ? copy.objectsInStructure : copy.objectsInGroup}`}</p>
+          <p>{count === null ? copy.loadingModel : `${formatCount(count)} ${dialog.kind === 'delete-structure' ? copy.objectsInStructure : copy.objectsInGroup}`}</p>
         ) : null}
         {removed.length > 1 ? <p>{copy.groupsRemovedToo}</p> : null}
         {blocked ? <p>{copy.structureOccupiedHint}</p> : null}

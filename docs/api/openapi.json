@@ -326,6 +326,17 @@
           "definitions"
         ],
         "operationId": "put_definitions",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "description": "JSON or YAML definition set",
           "content": {
@@ -339,7 +350,7 @@
         },
         "responses": {
           "200": {
-            "description": "Imported",
+            "description": "Imported, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
@@ -2511,6 +2522,195 @@
         ]
       }
     },
+    "/v1/value-lists": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "list_value_lists",
+        "responses": {
+          "200": {
+            "description": "Shared value lists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SharedValueList"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_value_list",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValueListBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, or a dry run"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/value-lists/{id}": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "get_value_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Value list key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Value list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedValueList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "put_value_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Value list key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValueListBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, or a dry run"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_value_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Value list key or id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consequence analysis"
+          },
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view-types": {
       "get": {
         "tags": [
@@ -4141,6 +4341,32 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ValueListBody": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            }
           }
         }
       },

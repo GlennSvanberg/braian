@@ -965,6 +965,44 @@ impl Store {
         Ok(moved)
     }
 
+    /// The newest definition revisions, latest first. Used to undo a model save.
+    pub async fn recent_definitions(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<braian_model::DefinitionSet>, Error> {
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT $1",
+                &[&limit],
+            )
+            .await?;
+        let mut sets = Vec::with_capacity(rows.len());
+        for row in rows {
+            let document: serde_json::Value = row.get(0);
+            sets.push(
+                serde_json::from_value(document)
+                    .map_err(|error| Error::Definitions(error.to_string()))?,
+            );
+        }
+        Ok(sets)
+    }
+
+    /// Source recorded on the batch that wrote a definition revision.
+    pub async fn definition_batch_source(&self, revision: u64) -> Result<Option<String>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT batches.source
+                 FROM definition_revisions
+                 JOIN batches ON batches.id = definition_revisions.batch_id
+                 WHERE definition_revisions.model_revision = $1",
+                &[&as_i64(revision)?],
+            )
+            .await?;
+        Ok(row.map(|row| row.get(0)))
+    }
+
     /// Latest stored model revision. `None` when no definitions have been stored.
     pub async fn model_revision(&self) -> Result<Option<u64>, Error> {
         match self.defs().await {

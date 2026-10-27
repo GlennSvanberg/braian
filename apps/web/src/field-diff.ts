@@ -1,5 +1,6 @@
 import { textValue, type Json } from './api'
 import { optionLabel } from './chips'
+import { formatTimestamp } from './format'
 import { structureCaption } from './graph-scene'
 import { copy, uiLanguage } from './i18n'
 
@@ -41,25 +42,9 @@ export function isCreate(row: Json): boolean {
   return Boolean(diff && typeof diff === 'object' && '$created' in (diff as Json))
 }
 
-export function relativeTime(value: unknown, now = Date.now()): string {
-  if (typeof value !== 'string' || !value) return ''
-  const then = new Date(value).getTime()
-  if (Number.isNaN(then)) return value
-  const delta = then - now
-  const abs = Math.abs(delta)
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 365 * 24 * 60 * 60 * 1000],
-    ['month', 30 * 24 * 60 * 60 * 1000],
-    ['day', 24 * 60 * 60 * 1000],
-    ['hour', 60 * 60 * 1000],
-    ['minute', 60 * 1000],
-    ['second', 1000],
-  ]
-  const format = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
-  for (const [unit, size] of units) {
-    if (abs >= size || unit === 'second') return format.format(Math.round(delta / size), unit)
-  }
-  return format.format(0, 'second')
+/** Absolute local time. History and drafts use this instead of a relative phrase. */
+export function relativeTime(value: unknown, _now = Date.now()): string {
+  return formatTimestamp(value)
 }
 
 export function diffLines(diff: unknown, defs: Json | undefined): DiffLine[] {

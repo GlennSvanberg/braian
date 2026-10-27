@@ -1,4 +1,5 @@
 import { recordNumber, recordTitle, textValue, type Json } from './api'
+import { formatTimestamp } from './format'
 import { optionLabel, typeLabel } from './chips'
 import { copy, uiLanguage } from './i18n'
 
@@ -219,10 +220,7 @@ function shorten(text: string, max = 42) {
 }
 
 function formatWhen(value: unknown) {
-  if (typeof value !== 'string' || !value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+  return formatTimestamp(value)
 }
 
 function formatValue(defs: Json | undefined, attribute: Json, raw: unknown) {

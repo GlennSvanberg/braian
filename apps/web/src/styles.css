@@ -444,6 +444,16 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   box-shadow: var(--inset);
 }
 .status .grow { flex: 1; }
+.draft-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 0 6px 6px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-radius: var(--r-lg);
+  box-shadow: var(--inset);
+}
 [data-testid='live-flag'] { color: var(--text-2); }
 [data-testid='live-flag']::before {
   content: "";

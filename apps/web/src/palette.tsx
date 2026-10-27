@@ -16,6 +16,7 @@ import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
 import { publishProposal } from './proposal-bus'
+import { modelFocus, openModelDialog, requestDiscardDraft, requestReview, stageModel } from './model-stage'
 import { stepText } from './steps'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
 import {
@@ -155,6 +156,20 @@ export function CommandPalette({
             keywords: ['delete', 'remove'],
           }]
         : []),
+      { id: 'model:new-type', group: 'object' as const, title: copy.newType, subtitle: copy.dataModel, keywords: ['create', 'type'] },
+      { id: 'model:new-list', group: 'object' as const, title: copy.newValueList, subtitle: copy.dataModel, keywords: ['create', 'list', 'option'] },
+      { id: 'model:new-family', group: 'object' as const, title: copy.newUnitFamily, subtitle: copy.dataModel, keywords: ['create', 'unit'] },
+      { id: 'model:new-tree', group: 'object' as const, title: copy.newTree, subtitle: copy.dataModel, keywords: ['create', 'structure', 'tree'] },
+      { id: 'model:review', group: 'object' as const, title: copy.reviewAndSave, subtitle: copy.dataModel, keywords: ['draft', 'save'], kbd: 'Ctrl+S' },
+      { id: 'model:discard', group: 'object' as const, title: copy.discardDraft, subtitle: copy.dataModel, keywords: ['draft'] },
+      { id: 'model:undo', group: 'object' as const, title: copy.undoModel, subtitle: copy.dataModel, keywords: ['undo'] },
+      { id: 'model:delete-type', group: 'object' as const, title: copy.deleteType, subtitle: copy.dataModel, keywords: ['delete', 'type'] },
+      { id: 'model:delete-attribute', group: 'object' as const, title: copy.deleteAttribute, subtitle: copy.dataModel, keywords: ['delete', 'attribute'] },
+      { id: 'model:delete-structure', group: 'object' as const, title: copy.deleteStructure, subtitle: copy.dataModel, keywords: ['delete', 'structure', 'tree'] },
+      { id: 'model:delete-list', group: 'object' as const, title: copy.deleteValueList, subtitle: copy.dataModel, keywords: ['delete', 'list'] },
+      { id: 'model:delete-option', group: 'object' as const, title: copy.deleteOption, subtitle: copy.dataModel, keywords: ['delete', 'option'] },
+      { id: 'model:delete-family', group: 'object' as const, title: copy.deleteUnitFamily, subtitle: copy.dataModel, keywords: ['delete', 'unit'] },
+      { id: 'model:delete-unit', group: 'object' as const, title: copy.deleteUnit, subtitle: copy.dataModel, keywords: ['delete', 'unit'] },
     ],
     [workspaces, views, session.objectId, session.group, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns],
   )
@@ -208,6 +223,44 @@ export function CommandPalette({
     if (id.startsWith('column:hide:') || id.startsWith('column:show:')) {
       const column = id.slice('column:hide:'.length)
       dispatchUi(id.startsWith('column:hide:') ? 'ui.hide_column' : 'ui.show_column', { column })
+      onClose()
+      return
+    }
+    if (id === 'model:new-type' || id === 'model:new-list' || id === 'model:new-family' || id === 'model:new-tree') {
+      const kind = id === 'model:new-type' ? 'type' : id === 'model:new-list' ? 'list' : id === 'model:new-family' ? 'family' : 'tree'
+      openModelDialog(kind)
+      onClose()
+      return
+    }
+    if (id === 'model:review') {
+      requestReview()
+      onClose()
+      return
+    }
+    if (id === 'model:discard') {
+      requestDiscardDraft()
+      onClose()
+      return
+    }
+    if (id === 'model:undo') {
+      void api('/v1/operations/model.undo', { method: 'POST', body: '{}' }).catch((reason: unknown) => {
+        session.push(reason instanceof Error ? reason.message : copy.validation)
+      })
+      onClose()
+      return
+    }
+    if (id.startsWith('model:delete-') && id !== 'model:delete-group') {
+      const target = modelFocus()
+      const runDelete = (name: string, args: Json) => {
+        void stageModel(name, args).catch((reason: unknown) => session.push(reason instanceof Error ? reason.message : copy.validation))
+      }
+      if (id === 'model:delete-type' && target?.kind === 'type') runDelete('model.delete_type', { type: target.key })
+      if (id === 'model:delete-attribute' && target?.kind === 'attribute') runDelete('model.delete_attribute', { attribute: target.key })
+      if (id === 'model:delete-structure' && target?.kind === 'structure') runDelete('model.delete_structure', { structure: target.key })
+      if (id === 'model:delete-list' && target?.kind === 'value_list') runDelete('model.delete_value_list', { value_list: target.key })
+      if (id === 'model:delete-option' && target?.kind === 'option') runDelete('model.delete_value_option', { value_list: target.list, option: target.code })
+      if (id === 'model:delete-family' && target?.kind === 'unit_family') runDelete('model.delete_unit_family', { unit_family: target.key })
+      if (id === 'model:delete-unit' && target?.kind === 'unit') runDelete('model.delete_unit', { unit_family: target.family, unit: target.code })
       onClose()
       return
     }
@@ -297,15 +350,17 @@ export function CommandPalette({
       return
     }
     if (id === 'model:command') {
-      void api<Json>('/v1/operations/model.command', {
-        method: 'POST',
-        body: JSON.stringify({ text: query }),
-      })
+      const deleting = /^delete\b/i.test(query.trim())
+      const call = deleting
+        ? api<Json>('/v1/operations/model.command', { method: 'POST', body: JSON.stringify({ text: query }) })
+        : stageModel('model.command', { text: query })
+      void call
         .then((result) => {
           const proposalId = String(result.proposal_id ?? result.id ?? '')
-          if (!proposalId) return
-          publishProposal(proposalId)
-          session.setProposalId(proposalId)
+          if (proposalId) {
+            publishProposal(proposalId)
+            session.setProposalId(proposalId)
+          }
           onClose()
         })
         .catch((reason: unknown) => {

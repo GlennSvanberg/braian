@@ -205,7 +205,7 @@ pub fn is_model_row(row: &Value) -> bool {
     row.get("type_key").and_then(Value::as_str) == Some("model")
 }
 
-async fn consequence(
+pub(crate) async fn consequence(
     state: &AppState,
     defs: &braian_model::DefinitionSet,
     changes: &[ModelChange],
@@ -298,7 +298,7 @@ fn parse_groups(groups: &[String]) -> Vec<Uuid> {
         .collect()
 }
 
-fn changes_from(
+pub(crate) fn changes_from(
     name: &str,
     args: &Value,
     defs: &braian_model::DefinitionSet,
@@ -333,17 +333,17 @@ fn changes_from(
             attribute: required_str(args, "attribute")?,
         }]),
         "model.reorder_attributes" => {
-            let attributes = args
-                .get("attributes")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default();
+            let attributes = string_list(args, "attributes").unwrap_or_default();
+            if let Some(type_key) =
+                optional_str(args, "type").or_else(|| optional_str(args, "type_key"))
+            {
+                if args.get("structure").is_none() {
+                    return Ok(vec![ModelChange::ReorderTypeAttributes {
+                        type_key,
+                        attributes,
+                    }]);
+                }
+            }
             Ok(vec![ModelChange::ReorderAttributes {
                 structure: required_str(args, "structure")?,
                 class_key: class_ref(args)?,
@@ -387,6 +387,7 @@ fn changes_from(
                 .get("sortable")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            bounds: bounds_from(args),
         }]),
         "model.attach_attribute" => Ok(vec![ModelChange::AttachAttribute {
             attribute: required_str(args, "attribute")?,
@@ -405,6 +406,8 @@ fn changes_from(
             language: optional_str(args, "language"),
             singular: optional_str(args, "singular"),
             plural: optional_str(args, "plural"),
+            structures: string_list(args, "structures"),
+            defaults: string_map(args, "defaults"),
         }]),
         "model.update_attribute" => Ok(vec![ModelChange::UpdateAttribute {
             key: required_str(args, "key")?,
@@ -420,6 +423,8 @@ fn changes_from(
             searchable: args.get("searchable").and_then(Value::as_bool),
             filterable: args.get("filterable").and_then(Value::as_bool),
             sortable: args.get("sortable").and_then(Value::as_bool),
+            multiple: args.get("multiple").and_then(Value::as_bool),
+            bounds: bounds_from(args),
         }]),
         "model.create_class" => Ok(vec![ModelChange::CreateClass {
             structure: required_str(args, "structure")?,
@@ -526,6 +531,59 @@ fn changes_from(
             group: required_str(args, "group")?,
             name: required_str(args, "name")?,
         }]),
+        "model.create_type" => Ok(vec![ModelChange::CreateType {
+            key: required_str(args, "key")?,
+            label: optional_str(args, "label").unwrap_or_default(),
+            plural: optional_str(args, "plural"),
+            structures: string_list(args, "structures"),
+            defaults: string_map(args, "defaults"),
+        }]),
+        "model.create_value_list" => Ok(vec![ModelChange::CreateValueList {
+            key: required_str(args, "key")?,
+            label: optional_str(args, "label").unwrap_or_default(),
+            options: named_options(args, "options"),
+        }]),
+        "model.update_value_list" => Ok(vec![ModelChange::UpdateValueList {
+            key: required_str(args, "key")?,
+            label: optional_str(args, "label"),
+            options: if args.get("options").is_some() {
+                Some(named_options(args, "options"))
+            } else {
+                None
+            },
+        }]),
+        "model.create_unit_family" => Ok(vec![ModelChange::CreateUnitFamily {
+            key: required_str(args, "key")?,
+            dimension: optional_str(args, "dimension"),
+            base_unit: required_str(args, "base_unit")?,
+            units: unit_specs(args),
+        }]),
+        "model.update_unit_family" => Ok(vec![ModelChange::UpdateUnitFamily {
+            key: required_str(args, "key")?,
+            dimension: optional_str(args, "dimension"),
+            clear_dimension: args
+                .get("clear_dimension")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            base_unit: optional_str(args, "base_unit"),
+            units: if args.get("units").is_some() {
+                Some(unit_specs(args))
+            } else {
+                None
+            },
+        }]),
+        "model.update_structure" => Ok(vec![ModelChange::RenameStructure {
+            structure: required_str(args, "structure")?,
+            label: required_str(args, "label")?,
+        }]),
+        "model.reorder_type_attributes" => Ok(vec![ModelChange::ReorderTypeAttributes {
+            type_key: args
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or(required_str(args, "type_key")?),
+            attributes: string_list(args, "attributes").unwrap_or_default(),
+        }]),
         "model.set_structures" => {
             let structures = args
                 .get("structures")
@@ -571,6 +629,102 @@ pub(crate) fn model_status(error: ApplyError) -> Problem {
             Problem::new(status, "model", message)
         }
     }
+}
+
+fn bounds_from(args: &Value) -> braian_model::AttributeBounds {
+    braian_model::AttributeBounds {
+        min: optional_str(args, "min"),
+        max: optional_str(args, "max"),
+        clear_min: args
+            .get("clear_min")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        clear_max: args
+            .get("clear_max")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        integer: args.get("integer").and_then(Value::as_bool),
+        max_length: args
+            .get("max_length")
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        clear_max_length: args
+            .get("clear_max_length")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        text_form: optional_str(args, "text_form"),
+        value_list: optional_str(args, "value_list"),
+        clear_value_list: args
+            .get("clear_value_list")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        unit_family: optional_str(args, "unit_family"),
+    }
+}
+
+fn string_list(args: &Value, key: &str) -> Option<Vec<String>> {
+    args.get(key).and_then(Value::as_array).map(|items| {
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+fn string_map(args: &Value, key: &str) -> Option<std::collections::BTreeMap<String, String>> {
+    args.get(key).and_then(Value::as_object).map(|map| {
+        map.iter()
+            .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.to_owned())))
+            .collect()
+    })
+}
+
+fn named_options(args: &Value, key: &str) -> Vec<braian_model::NamedOption> {
+    args.get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let code = item
+                        .get("code")
+                        .or_else(|| item.get("key"))
+                        .and_then(Value::as_str)?;
+                    Some(braian_model::NamedOption {
+                        code: code.to_owned(),
+                        label: item
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn unit_specs(args: &Value) -> Vec<braian_model::UnitSpec> {
+    args.get("units")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let code = item.get("code").and_then(Value::as_str)?;
+                    Some(braian_model::UnitSpec {
+                        code: code.to_owned(),
+                        factor: item
+                            .get("factor")
+                            .and_then(Value::as_str)
+                            .unwrap_or("1")
+                            .to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn text_arg(args: &Value) -> &str {

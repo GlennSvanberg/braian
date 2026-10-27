@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Json } from './api'
 import { copy } from './i18n'
+import { formatCount } from './format'
 import { affectedLabel, typeNames } from './type-labels'
 import { onProposal } from './proposal-bus'
 import { StateNote } from './states'
@@ -129,7 +130,7 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
         ) : null}
         <div data-testid="impact-result">
           <p>
-            {affectedLabel(((body?.rows as Json[] | undefined) ?? []).map((row) => String(row.type_key ?? '')), typeNames(defs.data))}: {String(consequence.affected_objects ?? 0)}
+            {affectedLabel(((body?.rows as Json[] | undefined) ?? []).map((row) => String(row.type_key ?? '')), typeNames(defs.data))}: {formatCount(consequence.affected_objects ?? 0)}
           </p>
           <p>
             {copy.samples}: {samples.map((item) => String(item.key ?? item.id ?? '')).filter(Boolean).join(', ') || '—'}

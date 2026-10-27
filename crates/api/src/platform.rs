@@ -421,6 +421,54 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.create_type",
+            title: "New type",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.create_value_list",
+            title: "New value list",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.update_value_list",
+            title: "Update value list",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.create_unit_family",
+            title: "New unit family",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.update_unit_family",
+            title: "Update unit family",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.update_structure",
+            title: "Rename structure",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.reorder_type_attributes",
+            title: "Reorder attributes",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.undo",
+            title: "Undo model change",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
             name: "model.create_group",
             title: "Add group",
             permission: Role::Editor,
@@ -746,6 +794,7 @@ const AGENT_COMMIT_EXCLUDED: &[&str] = &[
     "model.delete_value_option",
     "model.detach_attribute",
     "model.remove_attribute",
+    "model.undo",
 ];
 
 fn exposed_to_agent(op: &Operation) -> bool {
@@ -4505,6 +4554,9 @@ async fn run_operation(
     if op.name == "discard_proposal" && (from_agent || !identity.may_commit()) {
         return Err(agent_cannot_discard());
     }
+    if op.name == "model.undo" && (from_agent || !identity.may_commit()) {
+        return Err(crate::auth::delete_forbidden());
+    }
     if operation_deletes(op.name) && (from_agent || !identity.may_commit()) {
         return Err(crate::auth::delete_forbidden());
     }
@@ -4517,6 +4569,7 @@ async fn run_operation(
         return propose_operation(state, identity, name, args).await;
     }
     match name {
+        "model.undo" => crate::model_draft::undo_model(state, identity).await,
         "search" => {
             let params = SearchParams {
                 q: args.get("q").and_then(Value::as_str).map(str::to_owned),

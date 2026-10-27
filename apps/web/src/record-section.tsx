@@ -39,7 +39,7 @@ export function formatRecordTime(iso: string, timeZone?: string): { text: string
   if (!iso) return { text: '', title: '' }
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return { text: iso, title: iso }
-  const parts = new Intl.DateTimeFormat(undefined, timeZone ? { ...timeOptions, timeZone } : timeOptions).formatToParts(date)
+  const parts = new Intl.DateTimeFormat('en', timeZone ? { ...timeOptions, timeZone } : timeOptions).formatToParts(date)
   const year = recordPart(parts, 'year', 4)
   const month = recordPart(parts, 'month', 2)
   const day = recordPart(parts, 'day', 2)

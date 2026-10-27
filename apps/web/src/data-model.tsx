@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal } from 'lucide-react'
 import { ApiError, api, textValue, type Json } from './api'
+import { formatCount } from './format'
 import { Checkbox } from './components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
@@ -17,8 +18,8 @@ import {
 } from './model-view'
 import { structureCaption } from './graph-scene'
 import { StructureSection } from './structure-tree'
-import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
+import { onDraftChange, openModelDialog, setModelFocus, stageModel } from './model-stage'
 
 type View = { state: Json }
 
@@ -43,7 +44,12 @@ function notify() {
 
 function choose(next: ModelSelection) {
   selection = next
-  if (next.kind === 'type') previewType = next.typeKey
+  if (next.kind === 'type') {
+    previewType = next.typeKey
+    setModelFocus({ kind: 'type', key: next.typeKey })
+  } else {
+    setModelFocus({ kind: 'structure', key: next.structure })
+  }
   notify()
 }
 
@@ -65,30 +71,40 @@ function useModelSelection() {
 }
 
 async function propose(name: string, args: Json) {
-  const result = await api<Json>(`/v1/operations/${name}`, {
-    method: 'POST',
-    body: JSON.stringify(args),
-  })
-  const id = String(result.proposal_id ?? result.id ?? '')
-  if (id) publishProposal(id)
-  return result
+  return stageModel(name, args)
 }
 
 export function DataModel({ view }: { view: View }) {
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const queryClient = useQueryClient()
+  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api<Json>('/v1/model/draft') })
+  useEffect(() => onDraftChange(() => {
+    void queryClient.invalidateQueries({ queryKey: ['model-draft'] })
+  }), [queryClient])
   const mode = String(view.state.mode ?? '')
-  if (defs.isPending) return <div data-testid="data-model"><StateNote tone="loading" title={copy.loadingModel} /></div>
-  if (defs.isError) return <div data-testid="data-model"><StateNote tone="error" title={copy.errorModel} detail={copy.validation} /></div>
-  if (mode === 'classes') return <AttributeTable defs={defs.data} />
-  if (mode === 'card' || mode === 'editor') return <ModelPreview defs={defs.data} />
+  if (stored.isPending) return <div data-testid="data-model"><StateNote tone="loading" title={copy.loadingModel} /></div>
+  if (stored.isError) return <div data-testid="data-model"><StateNote tone="error" title={copy.errorModel} detail={copy.validation} /></div>
+  const preview = draft.data?.conflict === true ? undefined : (draft.data?.definitions as Json | undefined)
+  const defs = preview ?? stored.data
+  if (mode === 'classes') return <AttributeTable defs={defs} />
+  if (mode === 'card' || mode === 'editor') return <ModelPreview defs={defs} />
   if (mode === 'impact') return <ImpactNote />
-  return <ModelNav defs={defs.data} />
+  return <ModelNav defs={defs} />
 }
+
+type NavMenu =
+  | { x: number; y: number; kind: 'type'; key: string }
+  | { x: number; y: number; kind: 'list'; key: string }
+  | { x: number; y: number; kind: 'option'; list: string; code: string }
+  | { x: number; y: number; kind: 'family'; key: string }
+  | { x: number; y: number; kind: 'unit'; family: string; code: string }
 
 function ModelNav({ defs }: { defs: Json | undefined }) {
   const { selection, choose: pick } = useModelSelection()
-  const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null)
+  const [menu, setMenu] = useState<NavMenu | null>(null)
   const types = objectTypes(defs, uiLanguage)
+  const lists = ((defs?.value_lists as Json[]) ?? [])
+  const families = ((defs?.unit_families as Json[]) ?? [])
   useEffect(() => {
     if (selection || types.length === 0) return
     const first = types[0]
@@ -103,7 +119,14 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
   return (
     <div data-testid="data-model" className="model-nav">
       <section>
-        <h2>{copy.objectTypes}</h2>
+        <h2
+          onContextMenu={(event) => {
+            event.preventDefault()
+            setMenu({ x: event.clientX, y: event.clientY, kind: 'type', key: '' })
+          }}
+        >
+          {copy.objectTypes}
+        </h2>
         {types.map((item) => (
           <button
             key={item.key}
@@ -114,17 +137,127 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
             onContextMenu={(event) => {
               event.preventDefault()
               pick({ kind: 'type', typeKey: item.key })
-              setMenu({ x: event.clientX, y: event.clientY, key: item.key })
+              setMenu({ x: event.clientX, y: event.clientY, kind: 'type', key: item.key })
             }}
           >
             {item.label}
           </button>
         ))}
       </section>
+      <section>
+        <h2>{copy.valueLists}</h2>
+        {lists.map((list) => {
+          const key = String(list.key ?? '')
+          const label = textValue(list.labels as Json, uiLanguage) || key
+          const options = ((list.options as Json[]) ?? [])
+          return (
+            <div key={key}>
+              <button
+                type="button"
+                className="model-node"
+                data-testid={`list-${key}`}
+                onClick={() => setModelFocus({ kind: 'value_list', key })}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setModelFocus({ kind: 'value_list', key })
+                  setMenu({ x: event.clientX, y: event.clientY, kind: 'list', key })
+                }}
+              >
+                {label}
+              </button>
+              {options.map((option) => {
+                const code = String(option.code ?? option.key ?? '')
+                return (
+                  <button
+                    key={code}
+                    type="button"
+                    className="model-node"
+                    data-testid={`option-${key}-${code}`}
+                    onClick={() => setModelFocus({ kind: 'option', list: key, code })}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      setModelFocus({ kind: 'option', list: key, code })
+                      setMenu({ x: event.clientX, y: event.clientY, kind: 'option', list: key, code })
+                    }}
+                  >
+                    {textValue(option.labels as Json, uiLanguage) || code}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
+      </section>
+      <section>
+        <h2>{copy.unitFamilies}</h2>
+        {families.map((family) => {
+          const key = String(family.key ?? '')
+          const units = ((family.units as Json[]) ?? [])
+          return (
+            <div key={key}>
+              <button
+                type="button"
+                className="model-node"
+                data-testid={`family-${key}`}
+                onClick={() => setModelFocus({ kind: 'unit_family', key })}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setModelFocus({ kind: 'unit_family', key })
+                  setMenu({ x: event.clientX, y: event.clientY, kind: 'family', key })
+                }}
+              >
+                {key}
+              </button>
+              {units.map((unit) => {
+                const code = String(unit.code ?? '')
+                return (
+                  <button
+                    key={code}
+                    type="button"
+                    className="model-node"
+                    data-testid={`unit-${key}-${code}`}
+                    onClick={() => setModelFocus({ kind: 'unit', family: key, code })}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      setModelFocus({ kind: 'unit', family: key, code })
+                      setMenu({ x: event.clientX, y: event.clientY, kind: 'unit', family: key, code })
+                    }}
+                  >
+                    {code}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
+      </section>
       <StructureSection defs={defs} selection={selection} onPick={pick} />
       {menu ? (
         <div className="menu" role="menu" data-testid="type-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => { setMenu(null); void propose('model.delete_type', { type: menu.key }) }}>{copy.deleteMenu}</button>
+          {menu.kind === 'type' ? (
+            <>
+              <button type="button" onClick={() => { setMenu(null); openModelDialog('type') }}>{copy.newType}</button>
+              {menu.key ? <button type="button" onClick={() => { setMenu(null); void propose('model.delete_type', { type: menu.key }) }}>{copy.deleteMenu}</button> : null}
+            </>
+          ) : null}
+          {menu.kind === 'list' ? (
+            <>
+              <button type="button" onClick={() => { setMenu(null); openModelDialog('list') }}>{copy.newValueList}</button>
+              <button type="button" onClick={() => { setMenu(null); void propose('model.delete_value_list', { value_list: menu.key }) }}>{copy.deleteValueList}</button>
+            </>
+          ) : null}
+          {menu.kind === 'option' ? (
+            <button type="button" onClick={() => { setMenu(null); void propose('model.delete_value_option', { value_list: menu.list, option: menu.code }) }}>{copy.deleteOption}</button>
+          ) : null}
+          {menu.kind === 'family' ? (
+            <>
+              <button type="button" onClick={() => { setMenu(null); openModelDialog('family') }}>{copy.newUnitFamily}</button>
+              <button type="button" onClick={() => { setMenu(null); void propose('model.delete_unit_family', { unit_family: menu.key }) }}>{copy.deleteUnitFamily}</button>
+            </>
+          ) : null}
+          {menu.kind === 'unit' ? (
+            <button type="button" onClick={() => { setMenu(null); void propose('model.delete_unit', { unit_family: menu.family, unit: menu.code }) }}>{copy.deleteUnit}</button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -136,6 +269,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
   const rows = attributeRows(defs, selection, uiLanguage)
   const families = ((defs?.unit_families as Json[]) ?? []).map((item) => String(item.key ?? '')).filter(Boolean)
   const [message, setMessage] = useState('')
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; key: string } | null>(null)
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<'listed' | 'name' | 'kind'>('listed')
   const selectionKey = selection ? (selection.kind === 'type' ? selection.typeKey : `${selection.structure}/${selection.group}`) : ''
@@ -158,7 +292,39 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
     ? objectTypes(defs, uiLanguage).find((item) => item.key === selection.typeKey)?.label ?? selection.typeKey
     : structureCaption(selection.group, defs, selection.kind === 'group' ? selection.structure : undefined)
   return (
-    <div data-testid="data-model" className="model-attributes">
+    <div
+      data-testid="data-model"
+      className="model-attributes"
+      onKeyDown={(event) => {
+        if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+        const key = event.target instanceof HTMLElement ? event.target.closest('[data-attr]')?.getAttribute('data-attr') : ''
+        if (!key || selection.kind !== 'type') return
+        event.preventDefault()
+        const order = rows.map((item) => item.key)
+        const index = order.indexOf(key)
+        const next = event.key === 'ArrowUp' ? index - 1 : index + 1
+        if (index < 0 || next < 0 || next >= order.length) return
+        const swapped = [...order]
+        const moved = swapped[index]
+        swapped[index] = swapped[next] ?? moved
+        swapped[next] = moved
+        run('model.reorder_type_attributes', { type: selection.typeKey, attributes: swapped })
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        if (selection.kind !== 'type') return
+        const key = event.dataTransfer.getData('text/plain')
+        const target = event.target instanceof HTMLElement ? event.target.closest('[data-attr]')?.getAttribute('data-attr') : ''
+        if (!key || !target || key === target) return
+        const order = rows.map((item) => item.key)
+        const from = order.indexOf(key)
+        const to = order.indexOf(target)
+        if (from < 0 || to < 0) return
+        order.splice(from, 1)
+        order.splice(to, 0, key)
+        run('model.reorder_type_attributes', { type: selection.typeKey, attributes: order })
+      }}
+    >
       <div data-testid="attribute-table" className="attr-table">
         <div className="attr-title">
           <span>{title}</span>
@@ -223,8 +389,14 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
               })
             }
             onDelete={row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
+            onMenu={(event) => setRowMenu({ x: event.clientX, y: event.clientY, key: row.key })}
           />
         )) : null}
+        {rowMenu ? (
+          <div className="menu" role="menu" data-testid="attribute-menu" style={{ left: rowMenu.x, top: rowMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+            <button type="button" onClick={() => { setRowMenu(null); void propose('model.delete_attribute', { attribute: rowMenu.key }) }}>{copy.deleteMenu}</button>
+          </div>
+        ) : null}
         <AddRow
           key={selectionKey}
           families={families}
@@ -248,6 +420,7 @@ function AttributeLine({
   onRenameKey,
   onRemove,
   onDelete,
+  onMenu,
 }: {
   row: AttributeRow
   families: string[]
@@ -257,6 +430,7 @@ function AttributeLine({
   onRenameKey: (key: string) => void
   onRemove: () => void
   onDelete?: () => void
+  onMenu?: (event: { preventDefault: () => void; clientX: number; clientY: number }) => void
 }) {
   if (row.inherited) {
     return (
@@ -276,7 +450,21 @@ function AttributeLine({
     )
   }
   return (
-    <div className="attr-row" data-inherited="false">
+    <div
+      className="attr-row"
+      data-inherited="false"
+      data-attr={row.key}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.setData('text/plain', row.key)
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        setModelFocus({ kind: 'attribute', key: row.key })
+        onMenu?.(event)
+      }}
+      onFocus={() => setModelFocus({ kind: 'attribute', key: row.key })}
+    >
       <input
         aria-label={copy.attributeName}
         defaultValue={row.label}
@@ -368,6 +556,13 @@ function AddRow({
   const [searchable, setSearchable] = useState(false)
   const [filterable, setFilterable] = useState(false)
   const [sortable, setSortable] = useState(false)
+  const [multiple, setMultiple] = useState(false)
+  const [min, setMin] = useState('')
+  const [max, setMax] = useState('')
+  const [maxLength, setMaxLength] = useState('')
+  const [textForm, setTextForm] = useState('')
+  const [listKey, setListKey] = useState('')
+  const lists = ((defs?.value_lists as Json[]) ?? []).map((item) => String(item.key ?? '')).filter(Boolean)
   const submit = () => {
     const label = name.trim()
     const key = attributeKey(label)
@@ -387,12 +582,17 @@ function AddRow({
         label,
         kind,
         unit: unitKey || null,
-        multiple: false,
+        multiple,
         languages: kind === 'text' ? languages : false,
         required,
         searchable,
         filterable,
         sortable,
+        ...(min.trim() ? { min: min.trim() } : {}),
+        ...(max.trim() ? { max: max.trim() } : {}),
+        ...(maxLength.trim() ? { max_length: Number(maxLength.trim()) } : {}),
+        ...(textForm ? { text_form: textForm } : {}),
+        ...(kind === 'value_list' && listKey ? { value_list: listKey } : {}),
       })
     }
     steps.push({
@@ -432,6 +632,34 @@ function AddRow({
       <span className="attr-check"><Checkbox checked={languages} aria-label={copy.languages} onCheckedChange={(value) => setLanguages(value === true)} /></span>
       <span className="attr-check"><Checkbox checked={searchable} aria-label={copy.searchable} onCheckedChange={(value) => setSearchable(value === true)} /></span>
       <MoreMenu filterable={filterable} sortable={sortable} onFilterable={setFilterable} onSortable={setSortable} />
+      {kind === 'number' || kind === 'range' ? (
+        <>
+          <input aria-label={copy.min} data-testid="attr-min" placeholder={copy.min} value={min} onChange={(event) => setMin(event.target.value)} />
+          <input aria-label={copy.max} data-testid="attr-max" placeholder={copy.max} value={max} onChange={(event) => setMax(event.target.value)} />
+        </>
+      ) : null}
+      {kind === 'text' ? (
+        <>
+          <input aria-label={copy.maxLength} placeholder={copy.maxLength} value={maxLength} onChange={(event) => setMaxLength(event.target.value)} />
+          <Select value={textForm || 'short'} onValueChange={setTextForm}>
+            <SelectTrigger aria-label={copy.textForm}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="short">short</SelectItem>
+              <SelectItem value="long">long</SelectItem>
+            </SelectContent>
+          </Select>
+        </>
+      ) : null}
+      {kind === 'value_list' ? (
+        <Select value={listKey || 'none'} onValueChange={(value) => setListKey(value === 'none' ? '' : value)}>
+          <SelectTrigger aria-label={copy.kindValueList}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">{copy.kindValueList}</SelectItem>
+            {lists.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <span className="attr-check"><Checkbox checked={multiple} aria-label={copy.multiple} onCheckedChange={(value) => setMultiple(value === true)} /></span>
     </form>
   )
 }
@@ -719,7 +947,7 @@ function ImpactNote() {
       </form>
       {result ? (
         <div data-testid="impact-result">
-          <p>{copy.affected}: {String(result.affected_objects)}</p>
+          <p>{copy.affected}: {formatCount(result.affected_objects)}</p>
           <p>{copy.samples}: {((result.samples as Json[]) ?? []).map((item) => String(item.key)).join(', ')}</p>
           {((result.jobs as Json[]) ?? []).map((job) => (
             <p key={String(job.key)}>{String(job.title)}</p>

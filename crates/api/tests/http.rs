@@ -2979,3 +2979,205 @@ async fn deleting_a_type_counts_then_removes_objects_links_and_selections() {
     let left = db.store().list_assortments(None).await.unwrap();
     assert!(left.is_empty(), "{left:?}");
 }
+
+#[tokio::test]
+async fn a_person_saves_a_model_draft_and_an_agent_gets_a_proposal() {
+    let (db, app) = app().await;
+    let principal = db
+        .store()
+        .principal_by_handle("ada")
+        .await
+        .unwrap()
+        .expect("ada");
+    db.store()
+        .attach_user(principal, "ada@example.com", "x", "admin", "Ada")
+        .await
+        .unwrap();
+
+    let (status, _, empty) = call(&app, "GET", "/v1/model/draft", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["count"], 0);
+
+    let (status, _, draft) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"steps":[
+                {"op":"create_value_list","key":"difficulty","label":"Difficulty","options":[{"code":"easy","label":"Easy"}]},
+                {"op":"create_type","key":"recipe","label":"Recipe","plural":"Recipes"},
+                {"op":"create_attribute","key":"servings","label":"Servings","kind":"number","unit":"kg","min":"1","max":"12"},
+                {"op":"attach_attribute","attribute":"servings","type_key":"recipe"}
+            ]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    assert_eq!(draft["count"], 4, "{draft}");
+    assert_eq!(draft["conflict"], false);
+
+    let (status, _, removed) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"remove":0}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{removed}");
+    assert_eq!(removed["count"], 3);
+
+    let (status, _, added) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"steps":[{"op":"create_value_list","key":"difficulty","label":"Difficulty","options":[{"code":"easy","label":"Easy"}]}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    assert_eq!(added["count"], 4);
+
+    let (status, _, spice) = call(
+        &app,
+        "POST",
+        "/v1/value-lists",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"spice","label":"Spice","options":[{"code":"salt","label":"Salt"}]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{spice}");
+    let (status, _, conflicted) =
+        call(&app, "GET", "/v1/model/draft", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{conflicted}");
+    assert_eq!(conflicted["conflict"], true, "{conflicted}");
+    let (status, _, blocked) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/save",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{blocked}");
+    let (status, _, rebased) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/rebase",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rebased}");
+    assert_eq!(rebased["conflict"], false, "{rebased}");
+
+    let (status, _, dry) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/save?dry_run=true",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert_eq!(dry["applied"], false);
+
+    let (status, _, saved) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/save",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["applied"], true);
+    assert_eq!(saved["source"], "user", "{saved}");
+    assert_eq!(saved["proposal"], false);
+    let revision = saved["model_revision"].as_u64().unwrap();
+    let source = db
+        .store()
+        .definition_batch_source(revision)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(source, "user");
+
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    let types = defs["types"].as_array().unwrap();
+    assert!(types.iter().any(|item| item["key"] == "recipe"), "{defs}");
+    let attributes = defs["attributes"].as_array().unwrap();
+    let servings = attributes
+        .iter()
+        .find(|item| item["key"] == "servings")
+        .expect("servings");
+    assert_eq!(servings["kind"]["min"], "1");
+    assert_eq!(servings["kind"]["max"], "12");
+
+    let (status, _, proposals) = call(&app, "GET", "/v1/proposals", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{proposals}");
+    let before = proposals["proposals"]
+        .as_array()
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+
+    let (status, _, proposed) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.create_attribute",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"note","label":"Note","kind":"text"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{proposed}");
+    assert_eq!(proposed["source"], "agent", "{proposed}");
+    assert_eq!(proposed["needs_approval"], true);
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    assert!(
+        defs["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "note"),
+        "{defs}"
+    );
+    let (status, _, proposals) = call(&app, "GET", "/v1/proposals", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{proposals}");
+    let after = proposals["proposals"]
+        .as_array()
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    assert!(after > before, "{proposals}");
+
+    let (status, _, denied) =
+        call(&app, "DELETE", "/v1/types/recipe", Some(AGENT), &[], None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.delete_type",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"recipe"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let (status, _, cleared) =
+        call(&app, "DELETE", "/v1/model/draft", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{cleared}");
+}
