@@ -328,10 +328,9 @@ pub fn translate_assortment_query(query: &mut Value, defs: &DefinitionSet) {
     let Some(object) = query.as_object_mut() else {
         return;
     };
-    if let Some(text) = object.get("type").and_then(Value::as_str) {
-        let next = id_of(defs, RefKind::Type, text).unwrap_or_else(|| text.to_owned());
-        object.insert("type".into(), Value::String(next));
-    }
+    // The selection type lives in assortments.type_id. A leftover query.type
+    // must not be written back.
+    object.remove("type");
     if let Some(text) = object.get("group").and_then(Value::as_str) {
         let next = translate_group_token(text, defs);
         object.insert("group".into(), Value::String(next));
@@ -765,6 +764,19 @@ mod tests {
                 .ends_with("@en-GB")
         );
         assert_eq!(mapping["columns"][2]["target"], "action");
+
+        let mut query = serde_json::json!({
+            "type": "item",
+            "group": "catalog:child",
+            "filter": "type_key:=item"
+        });
+        translate_assortment_query(&mut query, &defs);
+        translate_assortment_query(&mut query, &defs);
+        assert!(query.get("type").is_none());
+        let catalog = resolve(&defs, RefKind::Structure, "catalog", None).unwrap();
+        let child = resolve(&defs, RefKind::Group, "child", Some("catalog")).unwrap();
+        assert_eq!(query["group"], format!("{}:{}", catalog.id, child.id));
+        assert_eq!(query["filter"], format!("type_key:={}", item.id));
     }
 
     #[test]

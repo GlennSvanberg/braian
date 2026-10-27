@@ -203,7 +203,7 @@ export function ObjectTable({
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
   useEffect(() => {
-    publishSelectionLabels(labelCodes(labelFilter.split(' && ').map((part) => part.replace(/^a_labels:=/, ''))))
+    publishSelectionLabels(labelCodes(labelFilter.split(' && ').map((part) => part.replace(/^a_[A-Za-z0-9_]+:=/, ''))))
   }, [labelFilter])
   useEffect(() => {
     const onApply = (event: Event) => {
@@ -212,11 +212,11 @@ export function ObjectTable({
       const query = (item.query as Json) ?? {}
       setFilter('')
       session.setGroup(query.group ? String(query.group) : null)
-      setLabelFilter(labelSearchFilter(query))
+      setLabelFilter(labelSearchFilter(query, defs.data))
     }
     window.addEventListener(SELECTION_APPLIED_EVENT, onApply)
     return () => window.removeEventListener(SELECTION_APPLIED_EVENT, onApply)
-  }, [session, typeKey, bound?.id])
+  }, [session, typeKey, bound?.id, defs.data])
   const filterBy = [objectTableFilter(typeKey, session.group, defs.data), labelFilter]
     .filter(Boolean)
     .join(' && ')
@@ -585,6 +585,7 @@ export function ObjectTable({
             setGroup={session.setGroup}
             setLabelFilter={setLabelFilter}
             assortments={selectionRows}
+            defs={defs.data}
             massDisabled={selected.length === 0}
             onMass={() => mass.mutate()}
             onExport={exportVisible}
@@ -605,6 +606,7 @@ export function ObjectTable({
                 setGroup={session.setGroup}
                 setLabelFilter={setLabelFilter}
                 assortments={selectionRows}
+                defs={defs.data}
                 massDisabled={selected.length === 0}
                 onMass={() => mass.mutate()}
                 onExport={exportVisible}
@@ -621,6 +623,7 @@ export function ObjectTable({
               setGroup={session.setGroup}
               setLabelFilter={setLabelFilter}
               assortments={selectionRows}
+              defs={defs.data}
               massDisabled={selected.length === 0}
               onMass={() => mass.mutate()}
               onExport={exportVisible}
@@ -893,6 +896,7 @@ function TableFilters({
   setGroup,
   setLabelFilter,
   assortments,
+  defs,
   massDisabled,
   onMass,
   onExport,
@@ -904,6 +908,7 @@ function TableFilters({
   setGroup: (value: string | null) => void
   setLabelFilter: (value: string) => void
   assortments: Json[]
+  defs?: Json
   massDisabled: boolean
   onMass: () => void
   onExport: () => void
@@ -919,7 +924,7 @@ function TableFilters({
     const query = (item.query as Json) ?? {}
     setFilter('')
     setGroup(query.group ? String(query.group) : null)
-    setLabelFilter(labelSearchFilter(query))
+    setLabelFilter(labelSearchFilter(query, defs))
   }
   if (menu) {
     return (

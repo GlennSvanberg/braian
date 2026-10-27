@@ -1,4 +1,5 @@
--- Stored view state, assortment queries and import mappings keep ids.
+-- Stored view state, selection queries and import mappings keep ids.
+-- A selection type lives in assortments.type_id; this rewrite does not put type back into query.
 -- A key that is still stored is rewritten from the latest definition revision.
 -- Attribute index fields change from a_<key> to a_<id>, so the indexer rebuilds.
 
@@ -301,9 +302,8 @@ BEGIN
     IF source IS NULL OR jsonb_typeof(source) <> 'object' THEN
         RETURN source;
     END IF;
-    IF jsonb_typeof(source->'type') = 'string' THEN
-        result := jsonb_set(result, '{type}', to_jsonb(braian_ref_id(defs, 'type', source->>'type')));
-    END IF;
+    -- V17 stores the type in assortments.type_id and strips query.type.
+    result := result - 'type';
     IF jsonb_typeof(source->'group') = 'string' THEN
         result := jsonb_set(result, '{group}', to_jsonb(braian_group_token(defs, source->>'group')));
     END IF;

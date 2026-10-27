@@ -40,10 +40,10 @@ export function groupKeyOf(token: string, defs?: Json) {
 }
 
 /** Label clause only. The object table already applies type and group. */
-export function labelSearchFilter(query: unknown): string {
+export function labelSearchFilter(query: unknown, defs?: Json): string {
   if (!query || typeof query !== 'object') return ''
   const item = query as { labels?: unknown }
-  return labelSearchParts(item.labels).join(' && ')
+  return labelSearchParts(item.labels, defs).join(' && ')
 }
 
 export function labelCodes(value: unknown): string[] {
