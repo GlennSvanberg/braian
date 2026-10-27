@@ -108,15 +108,16 @@ export function structureCaption(key: string, defs?: Json, structureKey?: string
 
 function captionFromDefs(defs: Json | undefined, key: string, structureKey?: string) {
   const structures = (defs?.structures as Json[]) ?? []
-  const preferred = structureKey ? structures.filter((item) => String(item.key) === structureKey) : []
-  const rest = structureKey ? structures.filter((item) => String(item.key) !== structureKey) : structures
+  const same = (item: Json, token: string) => String(item.key ?? '') === token || String(item.id ?? '') === token
+  const preferred = structureKey ? structures.filter((item) => same(item, structureKey)) : []
+  const rest = structureKey ? structures.filter((item) => !same(item, structureKey)) : structures
   for (const structure of [...preferred, ...rest]) {
-    if (String(structure.key) === key) {
+    if (same(structure, key)) {
       const label = labelText(structure.labels)
       if (label) return label
     }
     for (const group of (structure.groups as Json[]) ?? []) {
-      if (String(group.key) !== key) continue
+      if (!same(group, key)) continue
       const label = labelText(group.labels)
       if (label) return label
     }

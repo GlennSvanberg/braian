@@ -78,7 +78,7 @@ export function typeNames(defs: Json | undefined, language = 'en'): TypeName[] {
 }
 
 export function singularOf(defs: Json | undefined, key: string, language = 'en') {
-  return typeNames(defs, language).find((item) => item.key === key)?.singular ?? ''
+  return typeNames(defs, language).find((item) => item.key === key || item.id === key)?.singular ?? ''
 }
 
 export function pluralOf(defs: Json | undefined, key: string, language = 'en') {

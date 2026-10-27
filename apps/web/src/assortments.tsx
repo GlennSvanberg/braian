@@ -202,7 +202,7 @@ export function AssortmentList({ session }: { session: SelectionSession }) {
             {hits.map((hit) => {
               const id = String(hit.id ?? '')
               const key = String(hit.key ?? id)
-              const label = catalogName(hit) || key
+              const label = catalogName(hit, defs.data) || key
               return (
                 <button key={id || key} type="button" className="row" onClick={() => session.setObjectId(id)}>
                   <span>{key}</span>

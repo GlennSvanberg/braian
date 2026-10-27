@@ -2721,11 +2721,23 @@ async fn id_and_key_resolve_to_the_same_attribute_and_a_rename_applies() {
     .await;
     assert_eq!(status, StatusCode::OK, "{dry}");
     assert_eq!(dry["applied"], false, "{dry}");
-    assert_eq!(dry["key"], "sku", "{dry}");
+    assert_eq!(dry["id"], id);
+    assert_eq!(dry["key"], "article_number", "{dry}");
     assert_eq!(
         dry["warnings"][0],
         "External integrations that use the old key « sku » will stop working"
     );
+    let (status, _, unchanged) = call(
+        &app,
+        "GET",
+        "/v1/resolve/attribute/sku",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
+    assert_eq!(unchanged["key"], "sku", "{unchanged}");
 
     let (status, _, renamed) = call(
         &app,

@@ -379,15 +379,22 @@ fn translate_table(table: &mut Map<String, Value>, defs: &DefinitionSet) {
     if let Some(order) = table.get_mut("order").and_then(Value::as_array_mut) {
         for item in order {
             if let Some(text) = item.as_str() {
-                *item = Value::String(translate_column(text, defs));
+                *item = Value::String(translate_table_column(text, defs));
             }
         }
     }
 }
 
+/// Object-table column ids. `name` and `status` are also attribute keys, and
+/// the table addresses columns by these ids, not by the attribute.
+fn translate_table_column(token: &str, defs: &DefinitionSet) -> String {
+    if matches!(token, "key" | "name" | "type" | "status" | "version") {
+        return token.to_owned();
+    }
+    translate_column(token, defs)
+}
+
 fn translate_column(token: &str, defs: &DefinitionSet) -> String {
-    // Built-in table columns stay as they are. `name` and `status` are
-    // translated when they are attributes.
     if matches!(token, "key" | "type" | "version") {
         return token.to_owned();
     }
@@ -729,6 +736,15 @@ mod tests {
         );
         assert_eq!(state["table"]["sort"], format!("{field}:asc"));
         assert_eq!(state["table"]["filter"], format!("{field}:=SKU-1"));
+
+        let mut table = serde_json::json!({
+            "table": { "order": ["key", "name", "type", "status", "version"] }
+        });
+        translate_view_state(&mut table, &defs);
+        assert_eq!(
+            table["table"]["order"],
+            serde_json::json!(["key", "name", "type", "status", "version"])
+        );
 
         let mut mapping = serde_json::json!({
             "type": "item",

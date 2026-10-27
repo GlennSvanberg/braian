@@ -269,11 +269,17 @@ BEGIN
         IF jsonb_typeof(table_state->'order') = 'array' THEN
             FOR item IN SELECT value FROM jsonb_array_elements(table_state->'order')
             LOOP
-                IF jsonb_typeof(item) = 'string' THEN
-                    order_columns := order_columns || to_jsonb(braian_translate_column(defs, item #>> '{}'));
-                ELSE
+            IF jsonb_typeof(item) = 'string' THEN
+                text_value := item #>> '{}';
+                -- Object-table column ids. name and status are also attribute keys.
+                IF text_value IN ('key', 'name', 'type', 'status', 'version') THEN
                     order_columns := order_columns || item;
+                ELSE
+                    order_columns := order_columns || to_jsonb(braian_translate_column(defs, text_value));
                 END IF;
+            ELSE
+                order_columns := order_columns || item;
+            END IF;
             END LOOP;
             table_state := jsonb_set(table_state, '{order}', order_columns);
         END IF;
