@@ -67,9 +67,16 @@ pub struct ExportObject {
     pub key: String,
     pub type_id: Uuid,
     pub version: i64,
+    /// UTC `YYYY-MM-DD HH:MM`. The browser formats the same instant in local time.
+    pub created_at: String,
+    pub updated_at: String,
+    pub updated_by: String,
     pub values: BTreeMap<AttributeId, Value>,
     /// Peer numbers keyed by `{link_type_id}:out` or `{link_type_id}:in`.
     pub links: BTreeMap<String, Vec<String>>,
+    /// Attribute values one link away.
+    /// Key is `{link_type_id}:{out|in|link}:{attribute_id}`.
+    pub hops: BTreeMap<String, Vec<Value>>,
 }
 
 const WHERE: &str = r#"
@@ -135,8 +142,13 @@ impl Store {
         let tx = client.build_transaction().read_only(true).start().await?;
         let declare = format!(
             "DECLARE export_cur NO SCROLL CURSOR FOR \
-             SELECT o.id, o.key, o.type_id, o.version \
-             FROM objects o WHERE {WHERE} ORDER BY {order}",
+             SELECT o.id, COALESCE(o.key, ''), o.type_id, o.version, \
+                    to_char(o.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), \
+                    to_char(o.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), \
+                    COALESCE(principal.name, '') \
+             FROM objects o \
+             LEFT JOIN principals principal ON principal.id = o.updated_by \
+             WHERE {WHERE} ORDER BY {order}",
             order = order_sql(scan.order),
         );
         let pattern = key_param(scan);
@@ -152,10 +164,14 @@ impl Store {
             let ids: Vec<Uuid> = heads.iter().map(|row| row.get(0)).collect();
             let parts = tx.query(PARTS, &[&ids]).await?;
             let peers = link_peer_keys(&tx, &ids).await?;
+            let hops = link_hop_values(&tx, self.form(), &ids).await?;
             let mut chunk = assemble(self.form(), heads, parts)?;
             for object in &mut chunk {
                 if let Some(links) = peers.get(&object.id) {
                     object.links.clone_from(links);
+                }
+                if let Some(values) = hops.get(&object.id) {
+                    object.hops.clone_from(values);
                 }
             }
             total += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
@@ -232,6 +248,93 @@ async fn link_peer_keys(
     Ok(peers)
 }
 
+async fn link_hop_values(
+    tx: &tokio_postgres::Transaction<'_>,
+    form: StorageForm,
+    ids: &[Uuid],
+) -> Result<BTreeMap<Uuid, BTreeMap<String, Vec<Value>>>, Error> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let edges = tx
+        .query(
+            "SELECT l.from_id AS endpoint, l.link_type_id, 'out' AS side,
+                    peer.id AS peer_id, COALESCE(peer.key, '') AS peer_key, link_obj.id AS link_id
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             JOIN objects peer ON peer.id = l.to_id AND peer.deleted_at IS NULL
+             WHERE l.from_id = ANY($1)
+             UNION ALL
+             SELECT l.to_id, l.link_type_id, 'in',
+                    peer.id, COALESCE(peer.key, ''), link_obj.id
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             JOIN objects peer ON peer.id = l.from_id AND peer.deleted_at IS NULL
+             WHERE l.to_id = ANY($1)
+             ORDER BY endpoint, link_type_id, side, peer_key",
+            &[&ids],
+        )
+        .await?;
+    if edges.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut related = Vec::new();
+    for row in &edges {
+        let peer: Uuid = row.get(3);
+        let link_id: Uuid = row.get(5);
+        related.push(peer);
+        related.push(link_id);
+    }
+    related.sort();
+    related.dedup();
+    let parts = tx.query(PARTS, &[&related]).await?;
+    let mut encoded: BTreeMap<Uuid, BTreeMap<String, Value>> = BTreeMap::new();
+    for row in &parts {
+        let id: Uuid = row.get(0);
+        let part: String = row.get(1);
+        let values: Value = row.get(2);
+        encoded.entry(id).or_default().insert(part, values);
+    }
+    let mut joined = BTreeMap::new();
+    for (id, parts) in &encoded {
+        let values = split::join_parts(form, parts)
+            .map_err(|message| Error::Corrupt(ObjectId::from_uuid(*id), message))?;
+        joined.insert(*id, values);
+    }
+    let number = braian_model::number_id();
+    let mut hops: BTreeMap<Uuid, BTreeMap<String, Vec<Value>>> = BTreeMap::new();
+    for row in edges {
+        let endpoint: Uuid = row.get(0);
+        let link_type: Uuid = row.get(1);
+        let side: String = row.get(2);
+        let peer: Uuid = row.get(3);
+        let peer_key: String = row.get(4);
+        let link_id: Uuid = row.get(5);
+        let bucket = hops.entry(endpoint).or_default();
+        let number_slot = format!("{link_type}:{side}:{}", number.as_uuid());
+        bucket
+            .entry(number_slot)
+            .or_default()
+            .push(Value::String(peer_key));
+        if let Some(values) = joined.get(&peer) {
+            for (attribute, value) in values {
+                if *attribute == number {
+                    continue;
+                }
+                let slot = format!("{link_type}:{side}:{}", attribute.as_uuid());
+                bucket.entry(slot).or_default().push(value.clone());
+            }
+        }
+        if let Some(values) = joined.get(&link_id) {
+            for (attribute, value) in values {
+                let slot = format!("{link_type}:link:{}", attribute.as_uuid());
+                bucket.entry(slot).or_default().push(value.clone());
+            }
+        }
+    }
+    Ok(hops)
+}
+
 fn assemble(
     form: StorageForm,
     heads: Vec<tokio_postgres::Row>,
@@ -255,8 +358,12 @@ fn assemble(
             key: row.get(1),
             type_id: row.get(2),
             version: row.get(3),
+            created_at: row.get(4),
+            updated_at: row.get(5),
+            updated_by: row.get(6),
             values,
             links: BTreeMap::new(),
+            hops: BTreeMap::new(),
         });
     }
     Ok(objects)

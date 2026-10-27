@@ -18,7 +18,9 @@ use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use braian_model::{Attribute, AttributeId, AttributeKind, DefinitionSet, LanguageTag};
+use braian_model::{
+    Attribute, AttributeId, AttributeKind, DefinitionSet, LanguageTag, PathPart, PathSide,
+};
 use braian_rules::CompiledModel;
 use braian_store::{Error, ExportObject, ExportOrder, ExportScan, Store};
 use futures::stream;
@@ -111,6 +113,7 @@ enum ValueShape {
 struct AttrColumn {
     id: AttributeId,
     shape: ValueShape,
+    part: PathPart,
     multiple: bool,
     language_dependent: bool,
     labels: BTreeMap<String, String>,
@@ -128,6 +131,15 @@ enum ColumnKind {
         link_type: Uuid,
         outgoing: bool,
     },
+    /// One attribute, one link step away. `slot` is `{link}:{out|in|link}:{attribute}`.
+    Hop {
+        slot: String,
+        part: PathPart,
+        labels: BTreeMap<String, String>,
+    },
+    CreatedAt,
+    UpdatedAt,
+    UpdatedBy,
 }
 
 #[derive(Clone)]
@@ -615,10 +627,10 @@ fn resolve_columns(
             "too many columns",
         ));
     }
-    Ok(requested
+    requested
         .iter()
         .map(|column| resolve_column(model, defs, column, lang, type_key))
-        .collect())
+        .collect()
 }
 
 fn resolve_column(
@@ -627,7 +639,7 @@ fn resolve_column(
     column: &ColumnIn,
     lang: &str,
     type_key: Option<&str>,
-) -> ResolvedColumn {
+) -> Result<ResolvedColumn, Problem> {
     let (id, header, attribute) = column.parts();
     let header_of = |fallback: &str| {
         header
@@ -636,49 +648,196 @@ fn resolve_column(
             .to_owned()
     };
     match id {
-        "key" => ResolvedColumn {
+        "key" => Ok(ResolvedColumn {
             header: header_of("Key"),
             kind: ColumnKind::Key,
-        },
-        "type" | "type_key" => ResolvedColumn {
+        }),
+        "type" | "type_key" => Ok(ResolvedColumn {
             header: header_of("Type"),
             kind: ColumnKind::Type,
-        },
-        "version" => ResolvedColumn {
+        }),
+        "version" => Ok(ResolvedColumn {
             header: header_of("Version"),
             kind: ColumnKind::Version,
-        },
+        }),
         _ => {
             let key = attribute_name(id, attribute);
+            if key == "number"
+                && model
+                    .attribute_by_key("number")
+                    .is_some_and(|attribute| attribute.id == braian_model::standard_ids().number)
+            {
+                return Ok(ResolvedColumn {
+                    header: header_of("Number"),
+                    kind: ColumnKind::Key,
+                });
+            }
+            if key == "created_at" || key == "updated_at" || key == "updated_by" {
+                let kind = match key.as_str() {
+                    "created_at" => ColumnKind::CreatedAt,
+                    "updated_at" => ColumnKind::UpdatedAt,
+                    _ => ColumnKind::UpdatedBy,
+                };
+                let fallback = match key.as_str() {
+                    "created_at" => "Created",
+                    "updated_at" => "Updated",
+                    _ => "Updated by",
+                };
+                return Ok(ResolvedColumn {
+                    header: header_of(fallback),
+                    kind,
+                });
+            }
+            if let Some(resolved) = path_column(model, defs, &key, header, lang, type_key)? {
+                return Ok(resolved);
+            }
             let Some(attribute) = attribute_for_column(model, &key) else {
                 if let Some((link_type, outgoing, label)) = link_column(defs, type_key, &key, lang)
                 {
-                    return ResolvedColumn {
+                    return Ok(ResolvedColumn {
                         header: header_of(&label),
                         kind: ColumnKind::Link {
                             link_type,
                             outgoing,
                         },
-                    };
+                    });
                 }
-                return ResolvedColumn {
+                return Ok(ResolvedColumn {
                     header: header_of(&key),
                     kind: ColumnKind::Blank,
-                };
+                });
             };
             let fallback =
                 label_in(&attribute.labels, lang).unwrap_or_else(|| attribute.key.clone());
-            ResolvedColumn {
+            Ok(ResolvedColumn {
                 header: header_of(&fallback),
                 kind: ColumnKind::Attribute(AttrColumn {
                     id: attribute.id,
                     shape: shape_of(&attribute.kind),
+                    part: PathPart::Whole,
                     multiple: attribute.multiple,
                     language_dependent: attribute.language_dependent,
                     labels: option_labels(defs, attribute, lang),
                 }),
-            }
+            })
         }
+    }
+}
+
+fn path_column(
+    model: &CompiledModel,
+    defs: &DefinitionSet,
+    key: &str,
+    header: Option<&str>,
+    lang: &str,
+    type_key: Option<&str>,
+) -> Result<Option<ResolvedColumn>, Problem> {
+    if !key.contains('>') && !key.contains('.') && !key.contains('@') {
+        return Ok(None);
+    }
+    let from = type_key.and_then(|token| {
+        defs.types.iter().find(|item| {
+            item.key.eq_ignore_ascii_case(token) || item.id.as_uuid().to_string() == token
+        })
+    });
+    let path =
+        braian_model::parse_path_text(key, defs, from.map(|item| item.id)).map_err(|message| {
+            Problem::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_path", message)
+        })?;
+    if let Some(object_type) = from {
+        braian_model::validate_path(&path, defs, object_type.id).map_err(|message| {
+            Problem::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_path", message)
+        })?;
+    }
+    let header_of = |fallback: &str| {
+        header
+            .filter(|text| !text.is_empty())
+            .unwrap_or(fallback)
+            .to_owned()
+    };
+    let label = braian_model::path_label(&path, defs, lang);
+    let ids = braian_model::standard_ids();
+    if path.via.is_none() && path.attribute == ids.number {
+        let named_number = model
+            .attribute(ids.number)
+            .is_some_and(|attribute| attribute.key == "number");
+        if named_number {
+            return Ok(Some(ResolvedColumn {
+                header: header_of(&label),
+                kind: ColumnKind::Key,
+            }));
+        }
+    }
+    if path.via.is_none() && path.attribute == ids.created_at {
+        return Ok(Some(ResolvedColumn {
+            header: header_of(&label),
+            kind: ColumnKind::CreatedAt,
+        }));
+    }
+    if path.via.is_none() && path.attribute == ids.updated_at {
+        return Ok(Some(ResolvedColumn {
+            header: header_of(&label),
+            kind: ColumnKind::UpdatedAt,
+        }));
+    }
+    if path.via.is_none() && path.attribute == ids.updated_by {
+        return Ok(Some(ResolvedColumn {
+            header: header_of(&label),
+            kind: ColumnKind::UpdatedBy,
+        }));
+    }
+    if let Some(via) = &path.via {
+        let side = match via.side {
+            PathSide::To => "out",
+            PathSide::From => "in",
+            PathSide::Link => "link",
+        };
+        let attribute = model.attribute(path.attribute);
+        return Ok(Some(ResolvedColumn {
+            header: header_of(&label),
+            kind: ColumnKind::Hop {
+                slot: format!(
+                    "{}:{side}:{}",
+                    via.link_type.as_uuid(),
+                    path.attribute.as_uuid()
+                ),
+                part: path.part,
+                labels: attribute
+                    .map(|attribute| option_labels(defs, attribute, lang))
+                    .unwrap_or_default(),
+            },
+        }));
+    }
+    let Some(attribute) = model.attribute(path.attribute) else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedColumn {
+        header: header_of(&label),
+        kind: ColumnKind::Attribute(AttrColumn {
+            id: attribute.id,
+            shape: shape_for_part(&attribute.kind, path.part),
+            part: path.part,
+            multiple: attribute.multiple,
+            language_dependent: attribute.language_dependent
+                && path.language.is_none()
+                && path.part == PathPart::Whole,
+            labels: option_labels(defs, attribute, lang),
+        }),
+    }))
+}
+
+fn shape_for_part(kind: &AttributeKind, part: PathPart) -> ValueShape {
+    match part {
+        PathPart::Unit | PathPart::Label => ValueShape::Text,
+        PathPart::Value | PathPart::Min | PathPart::Max
+            if matches!(
+                kind,
+                AttributeKind::Number { .. } | AttributeKind::Range { .. }
+            ) =>
+        {
+            ValueShape::Number
+        }
+        _ => shape_of(kind),
     }
 }
 
@@ -813,6 +972,28 @@ fn cells_for(
             ColumnKind::Version => Cell::Number(object.version as f64),
             ColumnKind::Blank => Cell::Blank,
             ColumnKind::Attribute(attr) => map_attribute(object.values.get(&attr.id), attr, lang),
+            ColumnKind::CreatedAt => text_cell(&object.created_at),
+            ColumnKind::UpdatedAt => text_cell(&object.updated_at),
+            ColumnKind::UpdatedBy => text_cell(&object.updated_by),
+            ColumnKind::Hop { slot, part, labels } => {
+                let joined = object
+                    .hops
+                    .get(slot)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .map(|value| hop_text(value, *part, labels))
+                            .filter(|text| !text.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                if joined.is_empty() {
+                    Cell::Blank
+                } else {
+                    text_cell(&joined)
+                }
+            }
             ColumnKind::Link {
                 link_type,
                 outgoing,
@@ -840,9 +1021,13 @@ fn map_attribute(value: Option<&Value>, attr: &AttrColumn, lang: &str) -> Cell {
     let Some(value) = language_value(value, attr.language_dependent, lang) else {
         return Cell::Blank;
     };
+    let value = project_part(value, attr.part, &attr.labels);
+    if value.is_null() {
+        return Cell::Blank;
+    }
     if attr.multiple {
         let Some(items) = value.as_array() else {
-            return scalar_one(value, attr);
+            return scalar_one(&value, attr);
         };
         let joined = items
             .iter()
@@ -852,7 +1037,34 @@ fn map_attribute(value: Option<&Value>, attr: &AttrColumn, lang: &str) -> Cell {
             .join(", ");
         return text_cell(joined);
     }
-    scalar_one(value, attr)
+    scalar_one(&value, attr)
+}
+
+fn project_part(value: &Value, part: PathPart, labels: &BTreeMap<String, String>) -> Value {
+    match part {
+        PathPart::Whole | PathPart::Code => value.clone(),
+        PathPart::Value => value.get("value").cloned().unwrap_or_else(|| value.clone()),
+        PathPart::Unit => value.get("unit").cloned().unwrap_or(Value::Null),
+        PathPart::Min => value.get("min").cloned().unwrap_or(Value::Null),
+        PathPart::Max => value.get("max").cloned().unwrap_or(Value::Null),
+        PathPart::Label => {
+            let code = value.as_str().unwrap_or("");
+            Value::String(labels.get(code).cloned().unwrap_or_else(|| code.to_owned()))
+        }
+    }
+}
+
+fn hop_text(value: &Value, part: PathPart, labels: &BTreeMap<String, String>) -> String {
+    let projected = project_part(value, part, labels);
+    match projected {
+        Value::String(text) => text,
+        Value::Null => String::new(),
+        other => other
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+    }
 }
 
 fn language_value<'a>(value: &'a Value, dependent: bool, lang: &str) -> Option<&'a Value> {
@@ -1447,6 +1659,7 @@ mod tests {
         AttrColumn {
             id: AttributeId::from_uuid(uuid::Uuid::nil()),
             shape,
+            part: braian_model::PathPart::Whole,
             multiple,
             language_dependent: localized,
             labels: [("ok".into(), "Klar".into())].into(),
@@ -1486,13 +1699,71 @@ mod tests {
             key: "A-1".into(),
             type_id: Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap(),
             version: 1,
+            created_at: String::new(),
+            updated_at: String::new(),
+            updated_by: String::new(),
             values: BTreeMap::new(),
             links,
+            hops: BTreeMap::new(),
         };
         let cells = cells_for(&object, &columns, &HashMap::new(), "en");
         assert!(matches!(&cells[0], Cell::Text(text) if text == "A-1"));
         assert!(matches!(&cells[1], Cell::Text(text) if text == "P-1"));
         assert!(matches!(&cells[2], Cell::Text(text) if text == "S-2, S-9"));
+    }
+
+    #[test]
+    fn product_brand_and_weight_parts_are_columns() {
+        let defs: DefinitionSet =
+            serde_json::from_str(include_str!("../../../crates/model/src/path_catalog.json"))
+                .unwrap();
+        let model = CompiledModel::compile(&defs).unwrap();
+        let columns = resolve_columns(
+            &model,
+            &defs,
+            &[
+                ColumnIn::Name("number".into()),
+                ColumnIn::Name("net_weight.value".into()),
+                ColumnIn::Name("net_weight.unit".into()),
+                ColumnIn::Name("product>brand".into()),
+                ColumnIn::Name("created_at".into()),
+            ],
+            "en",
+            Some("article"),
+        )
+        .unwrap();
+        assert_eq!(columns[0].header, "Number");
+        assert_eq!(columns[1].header, "Net weight (value)");
+        assert_eq!(columns[2].header, "Net weight (unit)");
+        assert_eq!(columns[3].header, "Product › Brand");
+        assert_eq!(columns[4].header, "Created");
+        let weight = AttributeId::from_uuid(
+            Uuid::parse_str("018f0000-0000-7000-8000-00000000011c").unwrap(),
+        );
+        let brand = "018f0000-0000-7000-8000-000000000142";
+        let link = "018f0000-0000-7000-8000-000000000210";
+        let mut values = BTreeMap::new();
+        values.insert(weight, json!({"value": "500", "unit": "g"}));
+        let mut hops = BTreeMap::new();
+        hops.insert(format!("{link}:in:{brand}"), vec![json!("Meadow")]);
+        let object = ExportObject {
+            id: Uuid::nil(),
+            key: "A-1".into(),
+            type_id: Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap(),
+            version: 3,
+            created_at: "2026-10-27 15:04".into(),
+            updated_at: "2026-10-27 15:05".into(),
+            updated_by: "Ada".into(),
+            values,
+            links: BTreeMap::new(),
+            hops,
+        };
+        let cells = cells_for(&object, &columns, &HashMap::new(), "en");
+        assert!(matches!(&cells[0], Cell::Text(text) if text == "A-1"));
+        assert!(matches!(&cells[1], Cell::Number(number) if (*number - 500.0).abs() < 1e-9));
+        assert!(matches!(&cells[2], Cell::Text(text) if text == "g"));
+        assert!(matches!(&cells[3], Cell::Text(text) if text == "Meadow"));
+        assert!(matches!(&cells[4], Cell::Text(text) if text == "2026-10-27 15:04"));
     }
 
     #[test]

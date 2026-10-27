@@ -4342,3 +4342,119 @@ async fn a_type_from_rest_gets_the_same_standard_attributes_as_the_draft() {
         .expect("dish");
     assert_eq!(type_attribute_ids(dish), standard);
 }
+
+#[tokio::test]
+async fn attribute_paths_filter_and_an_agent_patch_use_the_same_path() {
+    let (_db, app) = app().await;
+    let (status, _, listed) = call(
+        &app,
+        "GET",
+        "/v1/types/item/attribute-paths",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let texts: Vec<_> = listed["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["text"].as_str())
+        .collect();
+    assert!(texts.contains(&"weight.unit"), "{texts:?}");
+    assert!(texts.contains(&"weight.value"), "{texts:?}");
+
+    let (status, _, paths) = call(
+        &app,
+        "POST",
+        "/v1/operations/list_attribute_paths",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{paths}");
+    assert!(
+        paths["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["text"] == "weight.unit"),
+        "{paths}"
+    );
+
+    let (status, _, denied) = call(
+        &app,
+        "GET",
+        "/v1/search?filter=missing%3Ebrand:=x",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{denied}");
+    assert_eq!(denied["code"], "invalid_path");
+
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"SKU-PATH","weight":{"value":"1","unit":"kg"}}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = created["id"].as_str().unwrap();
+    let (status, _, proposed) = call(
+        &app,
+        "POST",
+        "/v1/operations/patch_object",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"id":"{id}","base_version":1,"values":{{"weight.value":"500","weight.unit":"g"}}}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{proposed}");
+    assert_eq!(proposed["needs_approval"], true, "{proposed}");
+    let (status, _, after) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["values"]["weight"]["value"], "1", "{after}");
+    assert_eq!(after["values"]["weight"]["unit"], "kg", "{after}");
+
+    let (status, _, patched) = call(
+        &app,
+        "PATCH",
+        &format!("/v1/objects/{id}"),
+        Some(HUMAN),
+        &[("content-type", "application/json"), ("if-match", "\"1\"")],
+        Some(r#"{"values":{"weight.value":"500","weight.unit":"g"}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{patched}");
+    let (status, _, after) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(
+        after["values"]["weight"],
+        json!({"value": "500", "unit": "g"})
+    );
+}

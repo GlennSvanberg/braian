@@ -300,12 +300,12 @@ fn attribute_targets(
         ),
     };
     if !attribute.language_dependent || defs.languages.is_empty() {
-        return vec![Target {
-            id: id_prefix,
+        let mut targets = vec![Target {
+            id: id_prefix.clone(),
             label: label_of(&attribute.labels, &attribute.key),
             kind: kind.into(),
             key_attribute,
-            source: source_label,
+            source: source_label.clone(),
             attribute_key: Some(attribute.key.clone()),
             language: None,
             structure_key: structure_key(source),
@@ -315,6 +315,15 @@ fn attribute_targets(
             structure_id: structure_id_of(defs, source),
             group_id: group_id_of(defs, source),
         }];
+        targets.extend(part_targets(
+            attribute,
+            &id_prefix,
+            &source_label,
+            source,
+            defs,
+            kind,
+        ));
+        return targets;
     }
     let mut targets = Vec::new();
     let default_lang = defs.languages[0].as_str().to_owned();
@@ -363,7 +372,64 @@ fn attribute_targets(
             group_id: group_id_of(defs, source),
         });
     }
+    targets.extend(part_targets(
+        attribute,
+        &id_prefix,
+        &source_label,
+        source,
+        defs,
+        kind,
+    ));
     targets
+}
+
+fn part_targets(
+    attribute: &Attribute,
+    id_prefix: &str,
+    source_label: &str,
+    source: &Provenance,
+    defs: &DefinitionSet,
+    kind: &str,
+) -> Vec<Target> {
+    braian_model::extra_parts(&attribute.kind)
+        .into_iter()
+        .map(|part| {
+            let word = part.word();
+            let part_kind = if matches!(
+                part,
+                braian_model::PathPart::Unit | braian_model::PathPart::Label
+            ) {
+                "text"
+            } else {
+                kind
+            };
+            Target {
+                id: format!("{id_prefix}.{word}"),
+                label: format!("{} ({word})", label_of(&attribute.labels, &attribute.key)),
+                kind: part_kind.to_owned(),
+                key_attribute: false,
+                source: source_label.to_owned(),
+                attribute_key: Some(attribute.key.clone()),
+                language: None,
+                structure_key: structure_key(source),
+                group_key: group_key(source),
+                unit: unit_of(defs, attribute),
+                attribute_id: Some(attribute.id.as_uuid().to_string()),
+                structure_id: structure_id_of(defs, source),
+                group_id: group_id_of(defs, source),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn path_part(id: &str) -> Option<&str> {
+    let body = id
+        .rsplit_once('@')
+        .filter(|(_, language)| !language.is_empty() && !language.contains(':'))
+        .map(|(body, _)| body)
+        .unwrap_or(id);
+    let part = body.rsplit_once('.')?.1;
+    matches!(part, "value" | "unit" | "min" | "max" | "code" | "label").then_some(part)
 }
 
 fn structure_key(source: &Provenance) -> Option<String> {
@@ -480,6 +546,19 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
     };
     let key_norm = normalize_header(key);
     let label_norm = normalize_header(&target.label);
+    if let Some(part) = path_part(&target.id) {
+        let part_norm = normalize_header(part);
+        if name == label_norm
+            || name == format!("{key_norm}_{part_norm}")
+            || name == format!("{key_norm}{part_norm}")
+        {
+            return 1.0;
+        }
+        // "net_weight" is the whole attribute, not every part of it.
+        if name == key_norm || name == normalize_header(label_without_language(&target.label)) {
+            return 0.0;
+        }
+    }
     // "Name (en)" is the same field as a header "Name".
     let bare_norm = normalize_header(label_without_language(&target.label));
     let exact_labels = match &target.language {
@@ -1682,29 +1761,63 @@ pub fn target_wire(targets: &[Target]) -> Value {
 }
 
 pub fn find_target<'a>(targets: &'a [Target], id: &str) -> Option<&'a Target> {
-    targets
-        .iter()
-        .find(|target| target.id == id || stored_target_id(target).as_deref() == Some(id))
+    targets.iter().find(|target| target_matches(target, id))
+}
+
+fn target_matches(target: &Target, id: &str) -> bool {
+    if target.id == id {
+        return true;
+    }
+    let stored = stored_target_id(target);
+    if stored.as_deref() == Some(id) {
+        return true;
+    }
+    // A mapping saved before paths used `type:<attribute id>`.
+    let Some(rest) = id.strip_prefix("type:") else {
+        return false;
+    };
+    if stored.as_deref() == Some(rest) {
+        return true;
+    }
+    path_part(id).is_none()
+        && path_part(&target.id).is_none()
+        && target.id.starts_with("type:")
+        && target.attribute_id.as_deref() == Some(rest)
 }
 
 /// Id form of a target. Decisions and the picker keep the key form in `id`.
+/// A type-level attribute is stored as an attribute path (`<id>` or `<id>.unit`).
 fn stored_target_id(target: &Target) -> Option<String> {
     let (body, language) = target
         .id
         .rsplit_once('@')
         .filter(|(_, language)| !language.is_empty() && !language.contains(':'))
         .unwrap_or((target.id.as_str(), ""));
+    let part = path_part(body).unwrap_or("");
     let next = if body.starts_with("membership:") {
         format!("membership:{}", target.structure_id.as_deref()?)
-    } else if body.starts_with("type:") {
-        format!("type:{}", target.attribute_id.as_deref()?)
+    } else if body.starts_with("link:") {
+        let side = body.rsplit_once(':')?.1;
+        format!("link:{}:{side}", target.attribute_id.as_deref()?)
     } else if body.starts_with("group:") {
-        format!(
+        let base = format!(
             "group:{}/{}:{}",
             target.structure_id.as_deref()?,
             target.group_id.as_deref()?,
             target.attribute_id.as_deref()?
-        )
+        );
+        if part.is_empty() {
+            base
+        } else {
+            format!("{base}.{part}")
+        }
+    } else if body.starts_with("type:") || path_part(body).is_some() {
+        let id = target.attribute_id.as_deref()?;
+        if part.is_empty() {
+            id.to_owned()
+        } else {
+            format!("{id}.{part}")
+        }
     } else {
         return None;
     };

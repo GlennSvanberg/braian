@@ -2658,6 +2658,268 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// V23-shaped filters and import targets are rewritten on startup, then a
+    /// second seed does not duplicate the rows.
+    #[tokio::test]
+    async fn old_shape_data_survives_startup_and_a_second_seed() {
+        load_test_database_url();
+        let _restore = SeedEnv::set(&[
+            ("BRAIAN_DEMO_EMAIL", "path-upgrade@example.com"),
+            ("BRAIAN_DEMO_PASSWORD", "seed-test-password"),
+            ("BRAIAN_SEED_COUNT", "0"),
+        ]);
+        let admin_url = std::env::var("BRAIAN_TEST_DATABASE_URL").expect("database url");
+        let name = format!("p{:032x}", Uuid::now_v7().as_u128());
+        let _cleanup = DbGuard {
+            admin_url: admin_url.clone(),
+            name: name.clone(),
+        };
+        let mut admin_config = braian_store::admin::parse_config(&admin_url).unwrap();
+        admin_config.dbname("postgres");
+        let admin = braian_store::admin::PgConn::connect(admin_config)
+            .await
+            .unwrap();
+        braian_store::admin::create_database(&admin.client, &name)
+            .await
+            .unwrap();
+        drop(admin);
+
+        let mut config = braian_store::admin::parse_config(&admin_url).unwrap();
+        config.dbname(&name);
+        let mut conn = braian_store::admin::PgConn::connect(config).await.unwrap();
+        let source =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../store/migrations");
+        let dir = std::env::temp_dir().join(format!("braian-v23-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for entry in std::fs::read_dir(&source).unwrap() {
+            let entry = entry.unwrap();
+            let file = entry.file_name().into_string().unwrap();
+            if file.starts_with("V24") || !file.ends_with(".sql") {
+                continue;
+            }
+            std::fs::copy(entry.path(), dir.join(file)).unwrap();
+        }
+        let migrations = refinery::load_sql_migrations(&dir).unwrap();
+        refinery::Runner::new(&migrations)
+            .run_async(&mut conn.client)
+            .await
+            .unwrap();
+
+        let principal = Uuid::now_v7();
+        let user = Uuid::now_v7();
+        let batch = Uuid::now_v7();
+        let workspace = Uuid::now_v7();
+        let view = Uuid::parse_str("018f2000-0000-7000-8000-00000000f010").unwrap();
+        let import_id = Uuid::parse_str("018f2000-0000-7000-8000-00000000f011").unwrap();
+        let assortment = Uuid::parse_str("018f2000-0000-7000-8000-00000000f012").unwrap();
+        let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap();
+        let weight = "018f0000-0000-7000-8000-00000000011c";
+        let defs: Value = serde_json::from_str(include_str!("../demo/definitions.json")).unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+                &[&principal],
+            )
+            .await
+            .unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO users (id, principal_id, email, password_hash, role, display_name)
+                 VALUES ($1, $2, 'legacy-path@example.com', 'x', 'admin', 'Ada')",
+                &[&user, &principal],
+            )
+            .await
+            .unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO batches (id, actor, kind, source) VALUES ($1, $2, 'interactive', 'test')",
+                &[&batch, &principal],
+            )
+            .await
+            .unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO definition_revisions (model_revision, definitions, batch_id)
+                 VALUES (1, $1::jsonb, $2)",
+                &[&defs, &batch],
+            )
+            .await
+            .unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO workspaces (id, owner_id, name, share_token) VALUES ($1, $2, 'Legacy', $3)",
+                &[&workspace, &user, &format!("legacy-{name}")],
+            )
+            .await
+            .unwrap();
+        let state: Value = serde_json::from_str(&format!(
+            r#"{{"table":{{"filter":"a_{underscored}:=500","sort":"a_{underscored}:asc"}}}}"#,
+            underscored = weight.replace('-', "_")
+        ))
+        .unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO views (id, workspace_id, type_key, title, state)
+                 VALUES ($1, $2, 'object_table', 'Legacy filter', $3::jsonb)",
+                &[&view, &workspace, &state],
+            )
+            .await
+            .unwrap();
+        let mapping: Value = serde_json::json!({
+            "type": "article",
+            "columns": [
+                { "col": 0, "target": "type:net_weight" },
+                { "col": 1, "target": "type:net_weight.unit" }
+            ]
+        });
+        conn.client
+            .execute(
+                "INSERT INTO import_sessions (id, owner, file_name, file_kind, status, model_revision, mapping)
+                 VALUES ($1, $2, 'old.csv', 'csv', 'ready', 1, $3::jsonb)",
+                &[&import_id, &principal, &mapping],
+            )
+            .await
+            .unwrap();
+        let query: Value = serde_json::from_str(&format!(
+            r#"{{"filter":"a_{underscored}__unit:=g"}}"#,
+            underscored = weight.replace('-', "_")
+        ))
+        .unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO assortments (id, owner_id, name, query, type_id)
+                 VALUES ($1, $2, 'Legacy selection', $3::jsonb, $4)",
+                &[&assortment, &user, &query, &article],
+            )
+            .await
+            .unwrap();
+        drop(conn);
+
+        let url = {
+            let base = admin_url.trim_end_matches('/');
+            match base.rsplit_once('/') {
+                Some((prefix, _)) => format!("{prefix}/{name}"),
+                None => format!("{base}/{name}"),
+            }
+        };
+        let store = braian_store::Store::connect(&url).await.expect("startup");
+        let mut read_config = braian_store::admin::parse_config(&url).unwrap();
+        read_config.dbname(&name);
+        let read = braian_store::admin::PgConn::connect(read_config)
+            .await
+            .unwrap();
+        let view_state = read
+            .client
+            .query_one("SELECT state FROM views WHERE id = $1", &[&view])
+            .await
+            .unwrap()
+            .get::<_, Value>("state");
+        assert_eq!(view_state["table"]["filter"], format!("{weight}:=500"));
+        assert_eq!(view_state["table"]["sort"], format!("{weight}:asc"));
+        let stored_mapping = read
+            .client
+            .query_one(
+                "SELECT mapping FROM import_sessions WHERE id = $1",
+                &[&import_id],
+            )
+            .await
+            .unwrap()
+            .get::<_, Value>("mapping");
+        assert_eq!(stored_mapping["columns"][0]["target"], weight);
+        assert_eq!(
+            stored_mapping["columns"][1]["target"],
+            format!("{weight}.unit")
+        );
+        let stored_query = read
+            .client
+            .query_one(
+                "SELECT query FROM assortments WHERE id = $1",
+                &[&assortment],
+            )
+            .await
+            .unwrap()
+            .get::<_, Value>("query");
+        assert_eq!(stored_query["filter"], format!("{weight}.unit:=g"));
+        let requested: bool = read
+            .client
+            .query_one(
+                "SELECT reindex_requested FROM indexer_progress WHERE id = 1",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert!(requested);
+
+        run(&store, None).await.expect("first seed");
+        let objects_after_first: i64 = read
+            .client
+            .query_one("SELECT count(*) FROM objects", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let views_after_first: i64 = read
+            .client
+            .query_one("SELECT count(*) FROM views WHERE id = $1", &[&view])
+            .await
+            .unwrap()
+            .get(0);
+        run(&store, None).await.expect("second seed");
+        let objects_after_second: i64 = read
+            .client
+            .query_one("SELECT count(*) FROM objects", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let views_after_second: i64 = read
+            .client
+            .query_one("SELECT count(*) FROM views WHERE id = $1", &[&view])
+            .await
+            .unwrap()
+            .get(0);
+        let imports: i64 = read
+            .client
+            .query_one(
+                "SELECT count(*) FROM import_sessions WHERE id = $1",
+                &[&import_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(views_after_first, 1);
+        assert_eq!(views_after_second, 1);
+        assert_eq!(imports, 1);
+        assert_eq!(objects_after_first, objects_after_second);
+        assert!(objects_after_second > 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct DbGuard {
+        admin_url: String,
+        name: String,
+    }
+
+    impl Drop for DbGuard {
+        fn drop(&mut self) {
+            let url = self.admin_url.clone();
+            let name = self.name.clone();
+            let _ = std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("cleanup");
+                runtime.block_on(async {
+                    let mut config = braian_store::admin::parse_config(&url).unwrap();
+                    config.dbname("postgres");
+                    if let Ok(admin) = braian_store::admin::PgConn::connect(config).await {
+                        let _ = braian_store::admin::drop_database(&admin.client, &name).await;
+                    }
+                });
+            })
+            .join();
+        }
+    }
+
     fn english_name(model: &CompiledModel, object: &Object) -> String {
         let Some(attribute) = model.attribute_by_key("name") else {
             return String::new();

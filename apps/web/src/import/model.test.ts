@@ -145,7 +145,8 @@ describe('import mapping helpers', () => {
       label: 'Article number',
       attribute_id: '018f0000-0000-7000-8000-000000000100',
     }]
-    expect(storedTargetId(targets[0])).toBe('type:018f0000-0000-7000-8000-000000000100')
+    expect(storedTargetId(targets[0])).toBe('018f0000-0000-7000-8000-000000000100')
+    expect(targetForStored(targets, '018f0000-0000-7000-8000-000000000100')?.label).toBe('Article number')
     expect(targetForStored(targets, 'type:018f0000-0000-7000-8000-000000000100')?.label).toBe('Article number')
     expect(targetForStored(targets, 'type:sku')?.id).toBe('type:sku')
   })

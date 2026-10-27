@@ -1039,6 +1039,52 @@ pub async fn put_type_structures(
     .into_response())
 }
 
+pub fn attribute_path_list(defs: &DefinitionSet, type_id: TypeId) -> Value {
+    let paths = braian_model::list_attribute_paths(defs, type_id)
+        .into_iter()
+        .map(|item| {
+            serde_json::json!({
+                "text": item.text,
+                "label": item.label,
+                "id": item.id,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "paths": paths })
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AttributePathRow {
+    pub text: String,
+    pub label: String,
+    #[schema(value_type = Object)]
+    pub id: Value,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AttributePathList {
+    pub paths: Vec<AttributePathRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/types/{id}/attribute-paths",
+    tag = "definitions",
+    params(("id" = String, Path, description = "Type id or key")),
+    responses((status = 200, description = "Attribute paths this type can read", body = AttributePathList)),
+    security(("bearer" = []))
+)]
+pub async fn attribute_paths(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    let cached = state.models.get(&state.store).await?;
+    let type_id = crate::wire::resolve_type(&cached.model, &id)?;
+    Ok(Json(attribute_path_list(&cached.defs, type_id)))
+}
+
 #[utoipa::path(
     get,
     path = "/v1/types/{id}/unplaced",

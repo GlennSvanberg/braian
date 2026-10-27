@@ -50,9 +50,9 @@ fn medium_search_document_keeps_filter_fields_and_drops_searchable_only_copies()
     assert!(doc.get("search_sv").is_some(), "missing search blob");
     assert_eq!(omitted_fields, 50);
     assert_eq!(own_fields, 518);
-    assert_eq!(keys, 312);
-    // `a_<attribute id>` is longer than `a_<key>`. The field count stays the same.
-    assert_eq!(bytes, 18_898);
+    // Unit and range ends add 60 fields (312 → 372) and 3_335 bytes (18_898 → 22_233).
+    assert_eq!(keys, 372);
+    assert_eq!(bytes, 22_233);
     assert_eq!(
         defs.attributes
             .iter()

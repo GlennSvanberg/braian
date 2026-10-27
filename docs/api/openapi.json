@@ -2706,6 +2706,42 @@
         ]
       }
     },
+    "/v1/types/{id}/attribute-paths": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "attribute_paths",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Type id or key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attribute paths this type can read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttributePathList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/types/{id}/structures": {
       "put": {
         "tags": [
@@ -3539,6 +3575,39 @@
             }
           }
         ]
+      },
+      "AttributePathList": {
+        "type": "object",
+        "required": [
+          "paths"
+        ],
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttributePathRow"
+            }
+          }
+        }
+      },
+      "AttributePathRow": {
+        "type": "object",
+        "required": [
+          "text",
+          "label",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "object"
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
       },
       "BatchGetRequest": {
         "type": "object",
