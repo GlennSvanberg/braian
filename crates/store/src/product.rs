@@ -428,6 +428,24 @@ impl Store {
         Ok(())
     }
 
+    /// Stored view document, without the seed template.
+    pub async fn view_state(&self, id: Uuid) -> Result<Option<Value>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt("SELECT state FROM views WHERE id = $1", &[&id])
+            .await?;
+        Ok(row.map(|row| row.get(0)))
+    }
+
+    /// Rewrites `views.state` and leaves title, pane and position alone.
+    pub async fn update_view_state(&self, id: Uuid, state: &Value) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("UPDATE views SET state = $2 WHERE id = $1", &[&id, state])
+            .await?;
+        Ok(())
+    }
+
     pub async fn list_view_types(&self) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client
@@ -501,6 +519,18 @@ impl Store {
                 "INSERT INTO assortments (id, owner_id, type_id, name, query) VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, query = EXCLUDED.query, type_id = EXCLUDED.type_id",
                 &[&id, &owner_id, &type_id, &name, query],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Rewrites `assortments.query` and leaves the name and type alone.
+    pub async fn update_assortment_query(&self, id: Uuid, query: &Value) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "UPDATE assortments SET query = $2 WHERE id = $1",
+                &[&id, query],
             )
             .await?;
         Ok(())
