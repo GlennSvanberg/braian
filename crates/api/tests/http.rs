@@ -2683,3 +2683,125 @@ async fn a_selection_cannot_be_used_with_another_type() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{unknown}");
     assert_eq!(unknown["code"], "unknown_reference", "{unknown}");
 }
+
+#[tokio::test]
+async fn id_and_key_resolve_to_the_same_attribute_and_a_rename_applies() {
+    let (_db, app) = app().await;
+    let (status, _, by_key) = call(
+        &app,
+        "GET",
+        "/v1/resolve/attribute/sku",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_key}");
+    let id = by_key["id"].as_str().unwrap();
+    let (status, _, by_id) = call(
+        &app,
+        "GET",
+        &format!("/v1/resolve/attribute/{id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_key, by_id);
+
+    let (status, _, dry) = call(
+        &app,
+        "POST",
+        "/v1/model/keys?dry_run=true",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"kind":"attribute","ref":"sku","key":"article_number"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert_eq!(dry["applied"], false, "{dry}");
+    assert_eq!(dry["id"], id);
+    assert_eq!(dry["key"], "article_number", "{dry}");
+    assert_eq!(
+        dry["warnings"][0],
+        "External integrations that use the old key « sku » will stop working"
+    );
+    let (status, _, unchanged) = call(
+        &app,
+        "GET",
+        "/v1/resolve/attribute/sku",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
+    assert_eq!(unchanged["key"], "sku", "{unchanged}");
+
+    let (status, _, renamed) = call(
+        &app,
+        "POST",
+        "/v1/model/keys",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"kind":"attribute","ref":"sku","key":"article_number"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["applied"], true, "{renamed}");
+    assert_eq!(renamed["id"], id);
+    assert_eq!(renamed["key"], "article_number");
+    let (status, _, gone) = call(
+        &app,
+        "GET",
+        "/v1/resolve/attribute/sku",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{gone}");
+    let (status, _, found) = call(
+        &app,
+        "GET",
+        "/v1/attributes/article_number",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found["id"], id);
+    assert_eq!(found["key"], "article_number");
+}
+
+#[tokio::test]
+async fn an_agent_rename_is_a_proposal_and_delete_is_refused() {
+    let (_db, app) = app().await;
+    let (status, _, proposed) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.rename_attribute_key",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"sku","new_key":"article_number"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{proposed}");
+    assert_eq!(proposed["needs_approval"], true, "{proposed}");
+    assert_eq!(
+        proposed["consequence"]["warnings"][0],
+        "External integrations that use the old key « sku » will stop working"
+    );
+    let (status, _, deleted) = call(
+        &app,
+        "POST",
+        "/v1/operations/model.command",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"text":"delete group flat"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{deleted}");
+}

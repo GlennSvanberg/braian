@@ -33,6 +33,7 @@ import {
   confidenceLabel,
   confidenceTone,
   dedupedTargets,
+  targetForStored,
   mappedLines,
   mappingRank,
   matchSummary,
@@ -192,7 +193,7 @@ function Mapping() {
   const session = snap.session!
   const targets = session.targets ?? []
   const choices = dedupedTargets(targets.filter((target) => target.id !== 'action'))
-  const labelOf = (id: string) => targets.find((target) => target.id === id)?.label ?? id
+  const labelOf = (id: string) => targetForStored(targets, id)?.label ?? id
   const headers = [...(session.headers ?? [])].sort((left, right) => {
     const leftColumn = snap.columns.find((item) => item.col === left.index)
     const rightColumn = snap.columns.find((item) => item.col === right.index)
@@ -212,7 +213,7 @@ function Mapping() {
       <div className="import-map-bar">
         <label>
           {copy.type}
-          <select value={snap.typeKey} onChange={(event) => setImportType(event.target.value)} data-testid="import-type">
+          <select value={(session.types ?? []).find((item) => item.key === snap.typeKey || item.id === snap.typeKey)?.key ?? snap.typeKey} onChange={(event) => setImportType(event.target.value)} data-testid="import-type">
             <option value="">{copy.type}</option>
             {(session.types ?? []).map((item) => (
               <option key={item.key} value={item.key}>{item.label}</option>

@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MoreHorizontal, Search } from 'lucide-react'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
+import { indexSort, readIndexed } from './index-fields'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
@@ -85,14 +86,14 @@ function objectRowId(id: string) {
   return `object-row-${id}`
 }
 
-function toRow(doc: Json): ObjRow {
+function toRow(doc: Json, defs?: Json): ObjRow {
   return {
     id: String(doc.id ?? ''),
     key: String(doc.key ?? ''),
     type: String(doc.type_key ?? ''),
     version: String(doc.version ?? ''),
-    name: catalogName(doc),
-    status: textValue(doc.a_status),
+    name: catalogName(doc, defs),
+    status: readIndexed(doc, defs, 'status'),
   }
 }
 
@@ -202,7 +203,7 @@ export function ObjectTable({
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
   useEffect(() => {
-    publishSelectionLabels(labelCodes(labelFilter.split(' && ').map((part) => part.replace(/^a_labels:=/, ''))))
+    publishSelectionLabels(labelCodes(labelFilter.split(' && ').map((part) => part.replace(/^a_[A-Za-z0-9_]+:=/, ''))))
   }, [labelFilter])
   useEffect(() => {
     const onApply = (event: Event) => {
@@ -211,17 +212,19 @@ export function ObjectTable({
       const query = (item.query as Json) ?? {}
       setFilter('')
       session.setGroup(query.group ? String(query.group) : null)
-      setLabelFilter(labelSearchFilter(query))
+      setLabelFilter(labelSearchFilter(query, defs.data))
     }
     window.addEventListener(SELECTION_APPLIED_EVENT, onApply)
     return () => window.removeEventListener(SELECTION_APPLIED_EVENT, onApply)
-  }, [session, typeKey, bound?.id])
-  const filterBy = [objectTableFilter(typeKey, session.group), labelFilter]
+  }, [session, typeKey, bound?.id, defs.data])
+  const filterBy = [objectTableFilter(typeKey, session.group, defs.data), labelFilter]
     .filter(Boolean)
     .join(' && ')
+  const sortBy = indexSort(sort, defs.data)
+  const groupField = groupBy ? indexSort(groupBy, defs.data) : groupBy
   const probe = useQuery({
-    queryKey: ['objects', queryText, filterBy, sort, groupBy, 1],
-    queryFn: () => loadPage(queryText, filterBy, sort, groupBy, 1),
+    queryKey: ['objects', queryText, filterBy, sortBy, groupField, 1],
+    queryFn: () => loadPage(queryText, filterBy, sortBy, groupField, 1),
   })
   const found = Number(probe.data?.found ?? 0)
   const virtualizer = useVirtualizer({
@@ -236,8 +239,8 @@ export function ObjectTable({
   const pages = groupBy ? [] : [...new Set([Math.floor(start / pageSize) + 1, Math.floor(end / pageSize) + 1])]
   const windows = useQueries({
     queries: pages.map((page) => ({
-      queryKey: ['objects', queryText, filterBy, sort, groupBy, page],
-      queryFn: () => loadPage(queryText, filterBy, sort, groupBy, page),
+      queryKey: ['objects', queryText, filterBy, sortBy, groupField, page],
+      queryFn: () => loadPage(queryText, filterBy, sortBy, groupField, page),
     })),
   })
   const byIndex = new Map<number, ObjRow>()
@@ -247,13 +250,13 @@ export function ObjectTable({
     const hits = (result.data?.hits as Json[] | undefined) ?? []
     hits.forEach((hit, offset) => {
       const doc = (hit.document as Json) ?? hit
-      byIndex.set((page - 1) * pageSize + offset, toRow(doc))
+      byIndex.set((page - 1) * pageSize + offset, toRow(doc, defs.data))
     })
   }
   const groups = ((probe.data?.groups as Json[] | undefined) ?? []).map((group) => ({
     key: String(group.key ?? ''),
     found: Number(group.found ?? 0),
-    hits: ((group.hits as Json[]) ?? []).map((hit) => toRow((hit.document as Json) ?? hit)),
+    hits: ((group.hits as Json[]) ?? []).map((hit) => toRow((hit.document as Json) ?? hit, defs.data)),
   }))
   const groupedRows = groups.flatMap((group) => group.hits)
   const listCount = groupBy ? groupedRows.length : found
@@ -582,6 +585,7 @@ export function ObjectTable({
             setGroup={session.setGroup}
             setLabelFilter={setLabelFilter}
             assortments={selectionRows}
+            defs={defs.data}
             massDisabled={selected.length === 0}
             onMass={() => mass.mutate()}
             onExport={exportVisible}
@@ -602,6 +606,7 @@ export function ObjectTable({
                 setGroup={session.setGroup}
                 setLabelFilter={setLabelFilter}
                 assortments={selectionRows}
+                defs={defs.data}
                 massDisabled={selected.length === 0}
                 onMass={() => mass.mutate()}
                 onExport={exportVisible}
@@ -618,6 +623,7 @@ export function ObjectTable({
               setGroup={session.setGroup}
               setLabelFilter={setLabelFilter}
               assortments={selectionRows}
+              defs={defs.data}
               massDisabled={selected.length === 0}
               onMass={() => mass.mutate()}
               onExport={exportVisible}
@@ -890,6 +896,7 @@ function TableFilters({
   setGroup,
   setLabelFilter,
   assortments,
+  defs,
   massDisabled,
   onMass,
   onExport,
@@ -901,6 +908,7 @@ function TableFilters({
   setGroup: (value: string | null) => void
   setLabelFilter: (value: string) => void
   assortments: Json[]
+  defs?: Json
   massDisabled: boolean
   onMass: () => void
   onExport: () => void
@@ -916,7 +924,7 @@ function TableFilters({
     const query = (item.query as Json) ?? {}
     setFilter('')
     setGroup(query.group ? String(query.group) : null)
-    setLabelFilter(labelSearchFilter(query))
+    setLabelFilter(labelSearchFilter(query, defs))
   }
   if (menu) {
     return (
@@ -1006,7 +1014,7 @@ export function ClassAttributes({ session }: { session: PanesSession }) {
   const listed = session.listType ? types.find((item) => item.key === session.listType) : undefined
   if (!session.objectId || !object.data) {
     const empty = listed
-      ? `Select a ${listed.singular.toLowerCase()} to see the attributes on its classes.`
+      ? `Select a ${listed.singular.toLowerCase()} to see the attributes on its groups.`
       : copy.classAttributesEmpty
     return (
       <div className="detail-empty" data-testid="class-empty">

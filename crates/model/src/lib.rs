@@ -12,6 +12,7 @@ mod language;
 mod model_change;
 mod object;
 mod patch;
+pub mod refs;
 pub mod structure;
 
 pub use definition::{
@@ -29,9 +30,14 @@ pub use id::{
 };
 pub use language::{LanguageTag, LanguageTagError};
 pub use model_change::{
-    ApplyError, ChangeImpact, ModelChange, apply_all, diff as model_diff, interpret, preview,
+    ApplyError, ChangeImpact, ModelChange, apply_all, change_needs_reindex, deletes_data,
+    diff as model_diff, interpret, preview,
 };
 pub use object::Object;
 pub use patch::{AttributePatch, ObjectPatch, ValuePatch, apply_object_patch, apply_value_patch};
+pub use refs::{
+    RefKind, ResolvedRef, attribute_index_field, key_rename_warning, resolve,
+    translate_assortment_query, translate_import_mapping, translate_view_state,
+};
 pub use structure::{GroupRemoval, StructureError, StructureErrorCode};
 pub use uuid::Uuid;

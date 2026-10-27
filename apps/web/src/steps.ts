@@ -86,6 +86,12 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
     case 'model.update_attribute':
     case 'model.create_class':
     case 'model.create_group':
+    case 'model.rename_type_key':
+    case 'model.rename_attribute_key':
+    case 'model.rename_structure_key':
+    case 'model.rename_group_key':
+    case 'model.rename_value_list_key':
+    case 'model.rename_unit_family_key':
     case 'model.rename_group':
     case 'model.move_group':
     case 'model.duplicate_group':

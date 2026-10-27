@@ -304,7 +304,7 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
         .mapping
         .clone()
         .ok_or_else(|| "Choose a mapping first.".to_owned())?;
-    let type_key = mapping
+    let type_token = mapping
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(|| "Choose an object type.".to_owned())?
@@ -327,11 +327,23 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
         .get(&state.store)
         .await
         .map_err(|problem| problem.detail)?;
-    let targets = mapping::targets_for(&cached.defs, &type_key);
-    let type_id = cached
-        .model
-        .type_id(&type_key)
+    let targets = mapping::targets_for(&cached.defs, &type_token);
+    let object_type = cached
+        .defs
+        .types
+        .iter()
+        .find(|item| {
+            item.key == type_token
+                || item
+                    .id
+                    .as_uuid()
+                    .to_string()
+                    .eq_ignore_ascii_case(&type_token)
+        })
         .ok_or_else(|| "That object type does not exist.".to_owned())?;
+    // The saved mapping stores the type id. Classification looks the type up by key.
+    let type_id = object_type.id;
+    let type_key = object_type.key.clone();
     let mut cursor = RowCursor::open(&session_dir(id)).map_err(|error| error.message)?;
     let mut seen = std::collections::HashMap::new();
     let mut counters = Counter::default();

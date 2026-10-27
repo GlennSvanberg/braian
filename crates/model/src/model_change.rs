@@ -26,25 +26,25 @@ pub enum ModelChange {
     },
     SetParent {
         structure: String,
-        #[serde(alias = "class")]
+        #[serde(rename = "group", alias = "class", alias = "class_key")]
         class_key: String,
         parent: Option<String>,
     },
     AddAttribute {
         structure: String,
-        #[serde(alias = "class")]
+        #[serde(rename = "group", alias = "class", alias = "class_key")]
         class_key: String,
         attribute: String,
     },
     RemoveAttribute {
         structure: String,
-        #[serde(alias = "class")]
+        #[serde(rename = "group", alias = "class", alias = "class_key")]
         class_key: String,
         attribute: String,
     },
     ReorderAttributes {
         structure: String,
-        #[serde(alias = "class")]
+        #[serde(rename = "group", alias = "class", alias = "class_key")]
         class_key: String,
         attributes: Vec<String>,
     },
@@ -174,6 +174,38 @@ pub enum ModelChange {
         group: String,
         name: String,
     },
+    /// `key` is the current id or key. The id does not change.
+    RenameTypeKey {
+        #[serde(alias = "id")]
+        key: String,
+        new_key: String,
+    },
+    RenameAttributeKey {
+        #[serde(alias = "id")]
+        key: String,
+        new_key: String,
+    },
+    RenameStructureKey {
+        #[serde(alias = "key", alias = "id")]
+        structure: String,
+        new_key: String,
+    },
+    RenameGroupKey {
+        #[serde(alias = "id")]
+        structure: String,
+        group: String,
+        new_key: String,
+    },
+    RenameValueListKey {
+        #[serde(alias = "id")]
+        key: String,
+        new_key: String,
+    },
+    RenameUnitFamilyKey {
+        #[serde(alias = "id")]
+        key: String,
+        new_key: String,
+    },
 }
 
 /// A definition edit that did not apply.
@@ -218,12 +250,32 @@ pub struct ChangeImpact {
     pub fields: Vec<String>,
     /// Attribute keys whose stored values may become invalid.
     pub usage_fields: Vec<String>,
-    /// Group ids whose objects change class applicability.
+    /// Group ids whose objects change group applicability.
     pub groups: Vec<String>,
+    /// Key changes. External integrations that still send the old key stop matching.
+    pub warnings: Vec<String>,
 }
 
 fn default_filterable() -> bool {
     true
+}
+
+/// A step that removes a structure or a group. The agent is not offered these.
+pub fn deletes_data(change: &ModelChange) -> bool {
+    matches!(
+        change,
+        ModelChange::DeleteStructure { .. } | ModelChange::DeleteGroup { .. }
+    )
+}
+
+/// Type, structure and group keys are copied into the search document.
+pub fn change_needs_reindex(change: &ModelChange) -> bool {
+    matches!(
+        change,
+        ModelChange::RenameTypeKey { .. }
+            | ModelChange::RenameStructureKey { .. }
+            | ModelChange::RenameGroupKey { .. }
+    )
 }
 
 /// Applies every step. Later steps see earlier ones. Idempotent creates stay put.
@@ -250,6 +302,27 @@ pub fn interpret(text: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename attribute key ") {
+        return rename_key_sentence(defs, crate::refs::RefKind::Attribute, rest, None);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename type key ") {
+        return rename_key_sentence(defs, crate::refs::RefKind::Type, rest, None);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename structure key ") {
+        return rename_key_sentence(defs, crate::refs::RefKind::Structure, rest, None);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename group key ") {
+        return rename_group_key_sentence(defs, rest);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename value list key ") {
+        return rename_key_sentence(defs, crate::refs::RefKind::ValueList, rest, None);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename unit family key ") {
+        return rename_key_sentence(defs, crate::refs::RefKind::UnitFamily, rest, None);
+    }
+    if let Some(rest) = strip_prefix_ci(trimmed, "rename key ") {
+        return rename_key_sentence(defs, crate::refs::RefKind::Attribute, rest, None);
     }
     if let Some(rest) = strip_prefix_ci(trimmed, "add attribute ") {
         return add_attribute_command(rest, defs);
@@ -286,18 +359,29 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
     let mut fields = BTreeSet::new();
     let mut usage_fields = BTreeSet::new();
     let mut groups = BTreeSet::new();
+    let mut warnings = Vec::new();
+    for rename in crate::refs::key_renames(before, after) {
+        lines.push(format!(
+            "Rename {} key {} to {}",
+            rename.kind, rename.old_key, rename.new_key
+        ));
+        warnings.push(crate::refs::key_rename_warning(&rename.old_key));
+        if rename.kind == "attribute" {
+            fields.insert(rename.new_key.clone());
+        }
+    }
     let languages: &[LanguageTag] = if after.languages.is_empty() {
         &before.languages
     } else {
         &after.languages
     };
-    let before_attrs: BTreeMap<&str, &Attribute> = before
+    let before_attrs: BTreeMap<AttributeId, &Attribute> = before
         .attributes
         .iter()
-        .map(|attribute| (attribute.key.as_str(), attribute))
+        .map(|attribute| (attribute.id, attribute))
         .collect();
     for attribute in &after.attributes {
-        match before_attrs.get(attribute.key.as_str()) {
+        match before_attrs.get(&attribute.id) {
             None => {
                 lines.push(format!(
                     "Create attribute {} ({})",
@@ -323,14 +407,14 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
         let previous = before
             .structures
             .iter()
-            .find(|item| item.key == structure.key);
+            .find(|item| item.id == structure.id);
         if previous.is_none() {
             lines.push(format!("Add structure {}", structure.key));
         }
         let old_groups = previous.map(|item| &item.groups);
         for group in &structure.groups {
             let existed =
-                old_groups.is_some_and(|groups| groups.iter().any(|item| item.key == group.key));
+                old_groups.is_some_and(|groups| groups.iter().any(|item| item.id == group.id));
             if !existed {
                 let name = caption_of(languages, &group.labels, &group.key);
                 let parent = group_caption(languages, structure, group.parent);
@@ -340,7 +424,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                 }
             }
             let old_ids = old_groups
-                .and_then(|groups| groups.iter().find(|item| item.key == group.key))
+                .and_then(|groups| groups.iter().find(|item| item.id == group.id))
                 .map(|item| item.attributes.as_slice())
                 .unwrap_or(&[]);
             let old_keys = attribute_keys(before, old_ids);
@@ -365,7 +449,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                 ));
             }
             for old in &previous.groups {
-                let Some(group) = structure.groups.iter().find(|item| item.key == old.key) else {
+                let Some(group) = structure.groups.iter().find(|item| item.id == old.id) else {
                     let name = caption_of(languages, &old.labels, &old.key);
                     lines.push(format!("Delete group {name}"));
                     groups.insert(old.id.as_uuid().to_string());
@@ -401,10 +485,10 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     let parent = class_key(structure, class.parent);
                     match parent {
                         Some(parent) => lines.push(format!(
-                            "Add class {} on {group_name}, parent {parent}",
+                            "Add group {} on {group_name}, parent {parent}",
                             class.key
                         )),
-                        None => lines.push(format!("Add class {} on {group_name}", class.key)),
+                        None => lines.push(format!("Add group {} on {group_name}", class.key)),
                     }
                     for key in attribute_keys(after, &class.attributes) {
                         lines.push(format!("Add attribute {key} to {}", class.key));
@@ -417,7 +501,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                         .unwrap_or_else(|| "?".into());
                     if old.group != class.group {
                         lines.push(format!(
-                            "Move class {} from {old_group} to {group_name}",
+                            "Move group {} from {old_group} to {group_name}",
                             class.key
                         ));
                         groups.insert(old.group.as_uuid().to_string());
@@ -431,7 +515,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
                     let new_parent = class_key(structure, class.parent);
                     if old_parent != new_parent {
                         lines.push(format!(
-                            "Class {} parent is {}",
+                            "Group {} parent is {}",
                             class.key,
                             new_parent.unwrap_or_else(|| "none".into())
                         ));
@@ -456,7 +540,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
         }
     }
     for old in &before.structures {
-        if after.structures.iter().any(|item| item.key == old.key) {
+        if after.structures.iter().any(|item| item.id == old.id) {
             continue;
         }
         lines.push(format!("Delete structure {}", old.key));
@@ -465,7 +549,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
         }
     }
     for object_type in &after.types {
-        let old = before.types.iter().find(|item| item.key == object_type.key);
+        let old = before.types.iter().find(|item| item.id == object_type.id);
         let old_keys = attribute_keys(
             before,
             old.map(|item| item.attributes.as_slice()).unwrap_or(&[]),
@@ -505,6 +589,7 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
         fields: fields.into_iter().collect(),
         usage_fields: usage_fields.into_iter().collect(),
         groups: groups.into_iter().collect(),
+        warnings,
     }
 }
 
@@ -562,6 +647,36 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             group,
             name,
         } => duplicate_group(defs, structure, group, name),
+        ModelChange::RenameTypeKey { key, new_key } => {
+            rename_entity(defs, crate::refs::RefKind::Type, key, new_key, None)
+        }
+        ModelChange::RenameAttributeKey { key, new_key } => {
+            rename_entity(defs, crate::refs::RefKind::Attribute, key, new_key, None)
+        }
+        ModelChange::RenameStructureKey { structure, new_key } => rename_entity(
+            defs,
+            crate::refs::RefKind::Structure,
+            structure,
+            new_key,
+            None,
+        ),
+        ModelChange::RenameGroupKey {
+            structure,
+            group,
+            new_key,
+        } => rename_entity(
+            defs,
+            crate::refs::RefKind::Group,
+            group,
+            new_key,
+            Some(structure),
+        ),
+        ModelChange::RenameValueListKey { key, new_key } => {
+            rename_entity(defs, crate::refs::RefKind::ValueList, key, new_key, None)
+        }
+        ModelChange::RenameUnitFamilyKey { key, new_key } => {
+            rename_entity(defs, crate::refs::RefKind::UnitFamily, key, new_key, None)
+        }
         ModelChange::CreateClass {
             structure,
             class_key,
@@ -949,6 +1064,177 @@ fn duplicate_group(
         attributes: source.attributes,
     });
     Ok(())
+}
+
+fn rename_entity(
+    defs: &mut DefinitionSet,
+    kind: crate::refs::RefKind,
+    token: &str,
+    new_key: &str,
+    structure: Option<&str>,
+) -> Result<(), ApplyError> {
+    let new_key = new_key.trim();
+    crate::refs::check_new_key(new_key)?;
+    let current = crate::refs::resolve(defs, kind, token, structure)?;
+    if current.key.eq_ignore_ascii_case(new_key) {
+        return Ok(());
+    }
+    if crate::refs::duplicate_key(defs, kind, new_key, structure) {
+        return Err(format!("{} key {new_key} already exists", kind_word(kind)).into());
+    }
+    let old_key = current.key.clone();
+    match kind {
+        crate::refs::RefKind::Attribute => {
+            let id = crate::refs::attribute_id(defs, token)?;
+            let attribute = defs
+                .attributes
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| format!("unknown attribute {token}"))?;
+            attribute.key = new_key.to_owned();
+        }
+        crate::refs::RefKind::Type => {
+            let id = crate::refs::type_id(defs, token)?;
+            {
+                let object_type = defs
+                    .types
+                    .iter_mut()
+                    .find(|item| item.id == id)
+                    .ok_or_else(|| format!("unknown type {token}"))?;
+                object_type.key = new_key.to_owned();
+            }
+            crate::refs::retarget_key_strings(defs, kind, &old_key, new_key);
+        }
+        crate::refs::RefKind::Structure => {
+            let id = crate::refs::structure_id(defs, token)?;
+            let structure = defs
+                .structures
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| format!("unknown structure {token}"))?;
+            structure.key = new_key.to_owned();
+        }
+        crate::refs::RefKind::Group => {
+            let structure_token = structure.ok_or("missing structure")?;
+            let resolved = crate::refs::resolve(defs, kind, token, Some(structure_token))?;
+            let group_id = GroupId::from_uuid(
+                uuid::Uuid::parse_str(&resolved.id)
+                    .map_err(|_| format!("unknown group {token}"))?,
+            );
+            let structure = structure_mut(defs, structure_token)?;
+            let group = structure
+                .groups
+                .iter_mut()
+                .find(|group| group.id == group_id)
+                .ok_or_else(|| format!("unknown group {token}"))?;
+            group.key = new_key.to_owned();
+        }
+        crate::refs::RefKind::ValueList => {
+            let id = crate::refs::value_list_id(defs, token)?;
+            {
+                let list = defs
+                    .value_lists
+                    .iter_mut()
+                    .find(|item| item.id == id)
+                    .ok_or_else(|| format!("unknown value list {token}"))?;
+                list.key = new_key.to_owned();
+            }
+            crate::refs::retarget_key_strings(defs, kind, &old_key, new_key);
+        }
+        crate::refs::RefKind::UnitFamily => {
+            let id = crate::refs::unit_family_id(defs, token)?;
+            let family = defs
+                .unit_families
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| format!("unknown unit family {token}"))?;
+            family.key = new_key.to_owned();
+        }
+    }
+    Ok(())
+}
+
+fn kind_word(kind: crate::refs::RefKind) -> &'static str {
+    match kind {
+        crate::refs::RefKind::Type => "type",
+        crate::refs::RefKind::Attribute => "attribute",
+        crate::refs::RefKind::Structure => "structure",
+        crate::refs::RefKind::Group => "group",
+        crate::refs::RefKind::ValueList => "value list",
+        crate::refs::RefKind::UnitFamily => "unit family",
+    }
+}
+
+fn rename_key_sentence(
+    defs: &DefinitionSet,
+    kind: crate::refs::RefKind,
+    rest: &str,
+    structure: Option<&str>,
+) -> Option<Vec<ModelChange>> {
+    let (token, new_key) = split_ci(rest, " to ")?;
+    if token.is_empty() || new_key.is_empty() {
+        return None;
+    }
+    if crate::refs::resolve(defs, kind, token, structure).is_err() {
+        return None;
+    }
+    let step = match kind {
+        crate::refs::RefKind::Attribute => ModelChange::RenameAttributeKey {
+            key: token.to_owned(),
+            new_key: new_key.to_owned(),
+        },
+        crate::refs::RefKind::Type => ModelChange::RenameTypeKey {
+            key: token.to_owned(),
+            new_key: new_key.to_owned(),
+        },
+        crate::refs::RefKind::Structure => ModelChange::RenameStructureKey {
+            structure: token.to_owned(),
+            new_key: new_key.to_owned(),
+        },
+        crate::refs::RefKind::ValueList => ModelChange::RenameValueListKey {
+            key: token.to_owned(),
+            new_key: new_key.to_owned(),
+        },
+        crate::refs::RefKind::UnitFamily => ModelChange::RenameUnitFamilyKey {
+            key: token.to_owned(),
+            new_key: new_key.to_owned(),
+        },
+        crate::refs::RefKind::Group => return None,
+    };
+    Some(vec![step])
+}
+
+fn rename_group_key_sentence(defs: &DefinitionSet, rest: &str) -> Option<Vec<ModelChange>> {
+    let (left, new_key) = split_ci(rest, " to ")?;
+    if new_key.is_empty() {
+        return None;
+    }
+    let (structure, group) = if let Some((structure, group)) = split_ci(left, " ") {
+        if crate::refs::resolve(defs, crate::refs::RefKind::Group, group, Some(structure)).is_ok() {
+            (structure.to_owned(), group.to_owned())
+        } else {
+            (String::new(), left.to_owned())
+        }
+    } else {
+        (String::new(), left.to_owned())
+    };
+    let (structure, group) = if structure.is_empty() {
+        let resolved =
+            crate::refs::resolve(defs, crate::refs::RefKind::Group, group.as_str(), None).ok()?;
+        let structure = defs.structures.iter().find(|item| {
+            item.groups
+                .iter()
+                .any(|candidate| candidate.id.as_uuid().to_string() == resolved.id)
+        })?;
+        (structure.key.clone(), resolved.key)
+    } else {
+        (structure, group)
+    };
+    Some(vec![ModelChange::RenameGroupKey {
+        structure,
+        group,
+        new_key: new_key.to_owned(),
+    }])
 }
 
 fn remove_attribute_command(rest: &str, defs: &DefinitionSet) -> Option<Vec<ModelChange>> {
@@ -1571,7 +1857,7 @@ mod tests {
         let (_after, impact) = preview(&defs, &steps).expect("preview");
         assert_eq!(
             impact.lines,
-            vec!["Move class bag from camp to timber".to_owned()]
+            vec!["Move group bag from camp to timber".to_owned()]
         );
         assert!(impact.usage_fields.iter().any(|field| field == "weight"));
         assert_eq!(impact.groups.len(), 2);
@@ -1687,5 +1973,29 @@ mod tests {
         );
         assert_eq!(defs.types[0].attributes.len(), 2);
         assert_eq!(defs.structures[0].groups[0].attributes.len(), 1);
+    }
+
+    #[test]
+    fn renaming_an_attribute_key_keeps_the_id_and_warns() {
+        let defs = base();
+        let weight = defs.attributes[0].id;
+        let steps = interpret("rename attribute key weight to mass_kg", &defs).expect("rename");
+        let (after, impact) = preview(&defs, &steps).expect("preview");
+        assert_eq!(after.attributes[0].id, weight);
+        assert_eq!(after.attributes[0].key, "mass_kg");
+        assert_eq!(
+            impact.warnings,
+            vec![
+                "External integrations that use the old key « weight » will stop working"
+                    .to_owned()
+            ]
+        );
+        assert!(impact.lines.iter().any(|line| line.contains("mass_kg")));
+        let mut state = serde_json::json!({ "columns": ["weight"], "sort": "weight" });
+        crate::refs::translate_view_state(&mut state, &defs);
+        assert_eq!(state["columns"][0], weight.as_uuid().to_string());
+        assert_eq!(state["sort"], weight.as_uuid().to_string());
+        crate::refs::translate_view_state(&mut state, &after);
+        assert_eq!(state["columns"][0], weight.as_uuid().to_string());
     }
 }

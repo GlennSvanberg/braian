@@ -41,6 +41,7 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   const body = proposal.data
   const consequence = (body?.consequence as Json | undefined) ?? {}
   const lines = (consequence.lines as string[] | undefined) ?? []
+  const warnings = (consequence.warnings as string[] | undefined) ?? []
   const samples = (consequence.samples as Json[] | undefined) ?? []
   const jobs = (consequence.jobs as Json[] | undefined) ?? []
   const errors = (consequence.definition_errors as string[] | undefined) ?? []
@@ -95,6 +96,9 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
             </ul>
           </>
         ) : null}
+        {warnings.map((warning) => (
+          <p key={warning} className="error" role="status" data-testid="key-warning">{warning}</p>
+        ))}
         <div data-testid="impact-result">
           <p>
             {affectedLabel(((body?.rows as Json[] | undefined) ?? []).map((row) => String(row.type_key ?? '')), typeNames(defs.data))}: {String(consequence.affected_objects ?? 0)}

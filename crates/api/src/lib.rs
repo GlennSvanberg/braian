@@ -13,6 +13,7 @@ mod export;
 mod feedback;
 mod headers;
 pub mod import;
+mod keys;
 mod model_proposal;
 mod objects;
 mod platform;
@@ -107,6 +108,8 @@ pub fn into_router(state: AppState) -> axum::Router {
                 .delete(definitions::delete_unit_family_route),
         )
         .route("/v1/languages", put(definitions::put_languages))
+        .route("/v1/resolve/{kind}/{id_or_key}", get(keys::resolve_ref))
+        .route("/v1/model/keys", post(keys::rename_key))
         .route("/v1/objects", post(objects::create_object))
         .route("/v1/objects:batchGet", post(objects::batch_get))
         .route(

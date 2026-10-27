@@ -1579,13 +1579,13 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 .attr-table { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-x: auto; }
 .attr-head, .attr-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.4fr) minmax(100px, 1fr) minmax(72px, 0.8fr) 56px 64px 76px 28px;
+  grid-template-columns: minmax(120px, 1.4fr) minmax(88px, 0.8fr) minmax(100px, 1fr) minmax(72px, 0.8fr) 56px 64px 76px 28px;
   gap: 4px;
   align-items: center;
   min-width: 0;
 }
 .attr-head { color: var(--muted); font-size: 11px; line-height: 1.15; padding: 0 6px; }
-.attr-head span:nth-child(n+4):nth-child(-n+6) { text-align: center; }
+.attr-head span:nth-child(n+5):nth-child(-n+7) { text-align: center; }
 .attr-row {
   background: var(--raised);
   border-radius: var(--r-lg);
@@ -1594,7 +1594,7 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 }
 .attr-row.inherited { background: transparent; box-shadow: none; color: var(--muted); }
 .attr-row.inherited small { display: block; font-size: 11px; color: var(--muted); }
-.attr-row.inherited span:nth-child(n+4):nth-child(-n+6) { text-align: center; }
+.attr-row.inherited span:nth-child(n+5):nth-child(-n+7) { text-align: center; }
 .attr-row.add { background: var(--surface); }
 .attr-row input, .attr-row .select-trigger { width: 100%; min-width: 0; height: 28px; font-size: 12px; }
 .attr-row .select-trigger { padding: 0 4px; gap: 2px; }

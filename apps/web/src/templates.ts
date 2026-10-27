@@ -29,13 +29,13 @@ export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
     { type: 'object_detail', title: 'Detail', state: { language: 'en' } },
     { type: 'graph', title: 'Graph', state: {} },
     { type: 'history', title: 'History', state: {} },
-    ...(tree ? [{ type: 'class_attributes', title: 'Classes', state: {} }] : []),
+    ...(tree ? [{ type: 'class_attributes', title: 'Group attributes', state: {} }] : []),
   ]
   return {
     id: `type:${type.key}`,
     name: type.plural,
     summary: tree
-      ? 'Selections, structure, list, detail, graph, history and classes'
+      ? 'Selections, structure, list, detail, graph, history and group attributes'
       : 'Selections, list, detail, graph and history',
     views,
     layout: (ids) =>
@@ -59,7 +59,7 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
   {
     id: 'model',
     name: 'Data model',
-    summary: 'Structure, classes and the class card',
+    summary: 'Structure, groups and the group card',
     views: [
       { type: 'data_model', title: 'Model', state: { mode: 'tree' } },
       { type: 'data_model', title: 'Attributes', state: { mode: 'classes' } },

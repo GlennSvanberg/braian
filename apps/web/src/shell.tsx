@@ -898,7 +898,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
         const key = String(group.key)
         const id = String(group.id)
         const kids = groups.some((item) => String(item.parent ?? '') === id)
-        const open = openKeys.includes(key)
+        const open = openKeys.includes(key) || openKeys.includes(id) || openKeys.includes(`${structureKey}:${key}`) || openKeys.includes(`${String(structure.id ?? '')}:${id}`)
         entries.push({ structureKey, key, id, parentKey, depth, kids, open, count: countOf(structureKey, key) })
         if (kids && open) walk(id, key, depth + 1)
       }
@@ -1153,6 +1153,14 @@ export function StructureTree({ session, view }: { session: Session; view: View 
         >
           <button type="button" onClick={() => { session.setGroup(`${menu.row.structureKey}:${menu.row.key}`); setMenu(null) }}>{copy.open}</button>
           <button type="button" onClick={() => startEdit(menu.row, 'rename')}>{copy.rename}<kbd>F2</kbd></button>
+          <button type="button" onClick={() => {
+            const next = window.prompt(copy.renameKey, menu.row.key)
+            if (!next || next.trim() === menu.row.key) {
+              setMenu(null)
+              return
+            }
+            void propose('model.rename_group_key', { structure: menu.row.structureKey, group: menu.row.key, new_key: next.trim() })
+          }}>{copy.renameKey}</button>
           <button type="button" onClick={() => startEdit(menu.row, 'child')}>{copy.addChild}<kbd>Ins</kbd></button>
           <button type="button" onClick={() => startEdit(menu.row, 'sibling')}>{copy.addSibling}</button>
           <button

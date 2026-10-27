@@ -33,6 +33,9 @@ pub struct Target {
     pub structure_key: Option<String>,
     pub group_key: Option<String>,
     pub unit: Option<String>,
+    pub attribute_id: Option<String>,
+    pub structure_id: Option<String>,
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +120,9 @@ struct Scored {
 }
 
 pub fn targets_for(defs: &DefinitionSet, type_key: &str) -> Vec<Target> {
-    let Some(object_type) = defs.types.iter().find(|item| item.key == type_key) else {
+    let Some(object_type) = defs.types.iter().find(|item| {
+        item.key == type_key || item.id.as_uuid().to_string().eq_ignore_ascii_case(type_key)
+    }) else {
         return vec![action_target()];
     };
     let key_attribute = defs
@@ -185,6 +190,9 @@ pub fn targets_for(defs: &DefinitionSet, type_key: &str) -> Vec<Target> {
             structure_key: Some(structure.key.clone()),
             group_key: None,
             unit: None,
+            attribute_id: None,
+            structure_id: Some(structure.id.as_uuid().to_string()),
+            group_id: None,
         });
     }
     targets.sort_by(|left, right| left.id.cmp(&right.id));
@@ -216,6 +224,9 @@ fn action_target() -> Target {
         structure_key: None,
         group_key: None,
         unit: None,
+        attribute_id: None,
+        structure_id: None,
+        group_id: None,
     }
 }
 
@@ -248,6 +259,9 @@ fn attribute_targets(
             structure_key: structure_key(source),
             group_key: group_key(source),
             unit,
+            attribute_id: Some(attribute.id.as_uuid().to_string()),
+            structure_id: structure_id_of(defs, source),
+            group_id: group_id_of(defs, source),
         }];
     }
     let mut targets = Vec::new();
@@ -266,6 +280,9 @@ fn attribute_targets(
         structure_key: structure_key(source),
         group_key: group_key(source),
         unit: unit.clone(),
+        attribute_id: Some(attribute.id.as_uuid().to_string()),
+        structure_id: structure_id_of(defs, source),
+        group_id: group_id_of(defs, source),
     });
     for language in &defs.languages {
         // The unsuffixed target already writes the default language, and it
@@ -289,6 +306,9 @@ fn attribute_targets(
             structure_key: structure_key(source),
             group_key: group_key(source),
             unit: unit.clone(),
+            attribute_id: Some(attribute.id.as_uuid().to_string()),
+            structure_id: structure_id_of(defs, source),
+            group_id: group_id_of(defs, source),
         });
     }
     targets
@@ -1594,6 +1614,9 @@ pub fn target_wire(targets: &[Target]) -> Value {
                     "source": target.source,
                     "language": target.language,
                     "unit": target.unit,
+                    "attribute_id": target.attribute_id,
+                    "structure_id": target.structure_id,
+                    "group_id": target.group_id,
                 })
             })
             .collect(),
@@ -1601,7 +1624,59 @@ pub fn target_wire(targets: &[Target]) -> Value {
 }
 
 pub fn find_target<'a>(targets: &'a [Target], id: &str) -> Option<&'a Target> {
-    targets.iter().find(|target| target.id == id)
+    targets
+        .iter()
+        .find(|target| target.id == id || stored_target_id(target).as_deref() == Some(id))
+}
+
+/// Id form of a target. Decisions and the picker keep the key form in `id`.
+fn stored_target_id(target: &Target) -> Option<String> {
+    let (body, language) = target
+        .id
+        .rsplit_once('@')
+        .filter(|(_, language)| !language.is_empty() && !language.contains(':'))
+        .unwrap_or((target.id.as_str(), ""));
+    let next = if body.starts_with("membership:") {
+        format!("membership:{}", target.structure_id.as_deref()?)
+    } else if body.starts_with("type:") {
+        format!("type:{}", target.attribute_id.as_deref()?)
+    } else if body.starts_with("group:") {
+        format!(
+            "group:{}/{}:{}",
+            target.structure_id.as_deref()?,
+            target.group_id.as_deref()?,
+            target.attribute_id.as_deref()?
+        )
+    } else {
+        return None;
+    };
+    if language.is_empty() {
+        Some(next)
+    } else {
+        Some(format!("{next}@{language}"))
+    }
+}
+
+fn structure_id_of(defs: &DefinitionSet, source: &Provenance) -> Option<String> {
+    let Provenance::Group { structure, .. } = source else {
+        return None;
+    };
+    defs.structures
+        .iter()
+        .find(|item| &item.key == structure)
+        .map(|item| item.id.as_uuid().to_string())
+}
+
+fn group_id_of(defs: &DefinitionSet, source: &Provenance) -> Option<String> {
+    let Provenance::Group { structure, group } = source else {
+        return None;
+    };
+    let structure = defs.structures.iter().find(|item| &item.key == structure)?;
+    structure
+        .groups
+        .iter()
+        .find(|item| &item.key == group)
+        .map(|item| item.id.as_uuid().to_string())
 }
 
 #[cfg(test)]
@@ -1769,6 +1844,9 @@ mod tests {
             structure_key: None,
             group_key: None,
             unit: None,
+            attribute_id: None,
+            structure_id: None,
+            group_id: None,
         }
     }
 

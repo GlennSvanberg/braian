@@ -141,7 +141,7 @@ export function AssortmentList({ session }: { session: SelectionSession }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const open = items.find((item) => String(item.id) === openId)
   const query = (open?.query as Json) ?? {}
-  const filter = open ? assortmentSearchFilter(query, String(open.type ?? typeKey)) : ''
+  const filter = open ? assortmentSearchFilter(query, String(open.type ?? typeKey), defs.data) : ''
   const matches = useQuery({
     queryKey: ['assortment-matches', openId, filter],
     queryFn: () => api<Json>(`/v1/search?${new URLSearchParams({ filter, per_page: '20' })}`),
@@ -202,7 +202,7 @@ export function AssortmentList({ session }: { session: SelectionSession }) {
             {hits.map((hit) => {
               const id = String(hit.id ?? '')
               const key = String(hit.key ?? id)
-              const label = catalogName(hit) || key
+              const label = catalogName(hit, defs.data) || key
               return (
                 <button key={id || key} type="button" className="row" onClick={() => session.setObjectId(id)}>
                   <span>{key}</span>

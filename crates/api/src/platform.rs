@@ -368,7 +368,7 @@ fn registry() -> &'static [Operation] {
         },
         Operation {
             name: "model.move_class",
-            title: "Move class",
+            title: "Move group",
             permission: Role::Editor,
             needs_approval: true,
         },
@@ -451,8 +451,44 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.rename_type_key",
+            title: "Rename key…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_attribute_key",
+            title: "Rename key…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_structure_key",
+            title: "Rename key…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_group_key",
+            title: "Rename key…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_value_list_key",
+            title: "Rename key…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.rename_unit_family_key",
+            title: "Rename key…",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
             name: "model.create_class",
-            title: "Create class",
+            title: "Create group",
             permission: Role::Editor,
             needs_approval: true,
         },
@@ -470,7 +506,7 @@ fn registry() -> &'static [Operation] {
         },
         Operation {
             name: "model.set_parent",
-            title: "Set class parent",
+            title: "Set group parent",
             permission: Role::Editor,
             needs_approval: true,
         },
@@ -595,6 +631,20 @@ fn collect_layout_views(value: &Value, out: &mut Vec<String>) {
     }
 }
 
+async fn translate_workspace_views(state: &AppState, workspace: &mut Value) {
+    let Ok(cached) = state.models.get(&state.store).await else {
+        return;
+    };
+    let Some(views) = workspace.get_mut("views").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for view in views {
+        if let Some(view_state) = view.get_mut("state") {
+            braian_model::translate_view_state(view_state, &cached.defs);
+        }
+    }
+}
+
 fn layout_snapshot(workspace: Uuid, document: &Value) -> Value {
     let layout = document
         .get("layout")
@@ -621,8 +671,14 @@ const AGENT_UI_EXCLUDED: &[&str] = &[];
 /// The name stays out of the agent tool list and out of MCP.
 const AGENT_COMMIT_EXCLUDED: &[&str] = &["accept_proposal", "discard_proposal"];
 
+/// Deletes stay available to a person. The agent is not offered them, and
+/// `propose` rejects the same steps if they arrive through `model.command`.
+const AGENT_DELETE_EXCLUDED: &[&str] = &["model.delete_group", "model.delete_structure"];
+
 fn exposed_to_agent(op: &Operation) -> bool {
-    !AGENT_UI_EXCLUDED.contains(&op.name) && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
+    !AGENT_UI_EXCLUDED.contains(&op.name)
+        && !AGENT_COMMIT_EXCLUDED.contains(&op.name)
+        && !AGENT_DELETE_EXCLUDED.contains(&op.name)
 }
 
 #[cfg(test)]
@@ -1758,13 +1814,14 @@ async fn get_workspace(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
-    state
+    let mut workspace = state
         .store
         .workspace(id)
         .await
         .map_err(store_status)?
-        .map(Json)
-        .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "workspace"))
+        .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "workspace"))?;
+    translate_workspace_views(&state, &mut workspace).await;
+    Ok(Json(workspace))
 }
 
 async fn save_workspace(
@@ -1929,7 +1986,7 @@ async fn open_share(
     Path(token): Path<String>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
-    let workspace = state
+    let mut workspace = state
         .store
         .workspace_by_share(&token)
         .await
@@ -1947,6 +2004,7 @@ async fn open_share(
             .await
             .map_err(store_status)?;
     }
+    translate_workspace_views(&state, &mut workspace).await;
     Ok(Json(workspace))
 }
 
@@ -1970,6 +2028,10 @@ async fn save_view(
         ));
     }
     let id = body.id.unwrap_or_else(Uuid::now_v7);
+    let mut view_state = body.state.unwrap_or(json!({}));
+    if let Ok(cached) = state.models.get(&state.store).await {
+        braian_model::translate_view_state(&mut view_state, &cached.defs);
+    }
     state
         .store
         .save_view(
@@ -1979,7 +2041,7 @@ async fn save_view(
             &body.title,
             &body.pane.unwrap_or_else(|| "main".into()),
             body.position.unwrap_or(0),
-            &body.state.unwrap_or(json!({})),
+            &view_state,
         )
         .await
         .map_err(store_status)?;
@@ -2105,9 +2167,17 @@ async fn list_assortments(
         .list_assortments(type_id)
         .await
         .map_err(store_status)?;
+    let cached = state.models.get(&state.store).await.ok();
     let mut assortments = Vec::with_capacity(rows.len());
     for row in rows {
-        assortments.push(with_type_key(&state, row).await);
+        let mut row = with_type_key(&state, row).await;
+        if let Some(cached) = &cached
+            && let Some(query) = row.get_mut("query")
+        {
+            braian_model::translate_assortment_query(query, &cached.defs);
+            strip_query_type(query);
+        }
+        assortments.push(row);
     }
     Ok(Json(json!({ "assortments": assortments })))
 }
@@ -2141,7 +2211,14 @@ async fn get_assortment(
             return Err(wrong_type());
         }
     }
-    Ok(Json(with_type_key(&state, row).await))
+    let mut row = with_type_key(&state, row).await;
+    if let Ok(cached) = state.models.get(&state.store).await
+        && let Some(query) = row.get_mut("query")
+    {
+        braian_model::translate_assortment_query(query, &cached.defs);
+        strip_query_type(query);
+    }
+    Ok(Json(row))
 }
 
 async fn prepared_selection(
@@ -2161,6 +2238,8 @@ async fn prepared_selection(
             return Err(wrong_type());
         }
     }
+    strip_query_type(&mut query);
+    braian_model::translate_assortment_query(&mut query, &cached.defs);
     strip_query_type(&mut query);
     if let Some(id) = id
         && let Some(existing) = state.store.assortment(id).await.map_err(store_status)?
@@ -5000,6 +5079,7 @@ struct RelationBody {
 #[derive(Deserialize)]
 struct ImpactBody {
     remove_attribute: Option<String>,
+    #[serde(alias = "remove_group")]
     remove_class: Option<String>,
     attribute: Option<String>,
     kind: Option<AttributeKind>,
@@ -5495,6 +5575,12 @@ mod tests {
             !tools.contains("discard_proposal"),
             "an agent must not be offered discard"
         );
+        assert!(
+            !tools.contains("model_delete_group"),
+            "an agent must not be offered delete"
+        );
+        assert!(!tools.contains("model_delete_structure"));
+        assert!(tools.contains("model_rename_attribute_key"));
         assert!(
             tools.contains("mass_edit"),
             "mass edit stays a proposal the person approves"

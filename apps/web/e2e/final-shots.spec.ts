@@ -75,7 +75,7 @@ test('agent tree shot', async ({ page }) => {
   expect(drafted.ok()).toBeTruthy()
   await page.getByRole('button', { name: 'Review' }).click()
   await page.getByRole('button', { name: 'add attribute voltage to Drill', exact: true }).first().click()
-  await expect(page.getByTestId('proposal-tree')).toContainText('Add class Drill')
+  await expect(page.getByTestId('proposal-tree')).toContainText('Add group Drill')
   await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
   await page.getByRole('button', { name: 'Review the change before it is saved.' }).click()
   await expect(page.getByTestId('model-diff')).toContainText('Drill')

@@ -90,6 +90,32 @@ export function showTypeConfidence(
   return confidence
 }
 
+type StoredTarget = {
+  id: string
+  label?: string
+  attribute_id?: string | null
+  structure_id?: string | null
+  group_id?: string | null
+}
+
+/** Decisions keep `type:sku`. A saved mapping stores `type:<attribute id>`. */
+export function storedTargetId(target: StoredTarget): string | null {
+  const [body, language = ''] = target.id.split('@')
+  const suffix = language && !language.includes(':') ? `@${language}` : ''
+  const bare = suffix ? body : target.id
+  if (!bare) return null
+  if (bare.startsWith('membership:') && target.structure_id) return `membership:${target.structure_id}`
+  if (bare.startsWith('type:') && target.attribute_id) return `type:${target.attribute_id}${suffix}`
+  if (bare.startsWith('group:') && target.structure_id && target.group_id && target.attribute_id) {
+    return `group:${target.structure_id}/${target.group_id}:${target.attribute_id}${suffix}`
+  }
+  return null
+}
+
+export function targetForStored<T extends StoredTarget>(targets: T[], stored: string): T | undefined {
+  return targets.find((target) => target.id === stored || storedTargetId(target) === stored)
+}
+
 export function dedupedTargets<T extends { id: string; label: string }>(targets: T[]): T[] {
   const seen = new Set<string>()
   const out: T[] = []

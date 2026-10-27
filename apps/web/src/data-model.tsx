@@ -156,6 +156,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
         ) : null}
         <div className="attr-head">
           <span>{copy.attributeName}</span>
+          <span>{copy.key}</span>
           <span>{copy.attributeType}</span>
           <span>{copy.unit}</span>
           <span>{copy.required}</span>
@@ -171,6 +172,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
             defs={defs}
             locked={row.id === keyAttribute}
             onUpdate={(patch) => run('model.update_attribute', { key: row.key, ...patch })}
+            onRenameKey={(newKey) => run('model.rename_attribute_key', { key: row.key, new_key: newKey })}
             onRemove={() =>
               run('model.detach_attribute', {
                 attribute: row.key,
@@ -201,6 +203,7 @@ function AttributeLine({
   defs,
   locked,
   onUpdate,
+  onRenameKey,
   onRemove,
 }: {
   row: AttributeRow
@@ -208,6 +211,7 @@ function AttributeLine({
   defs?: Json
   locked: boolean
   onUpdate: (patch: Json) => void
+  onRenameKey: (key: string) => void
   onRemove: () => void
 }) {
   if (row.inherited) {
@@ -217,6 +221,7 @@ function AttributeLine({
           {row.label}
           <small>{copy.fromSource} {structureCaption(row.fromKey ?? '', defs)}</small>
         </span>
+        <span>{row.key}</span>
         <span>{kindLabel(row.kind)}</span>
         <span>{row.unit || '—'}</span>
         <span>{row.required ? copy.yes : '—'}</span>
@@ -235,6 +240,24 @@ function AttributeLine({
         onBlur={(event) => {
           const next = event.target.value.trim()
           if (next && next !== row.label) onUpdate({ label: next })
+        }}
+      />
+      <input
+        aria-label={copy.key}
+        data-testid={`attr-key-${row.key}`}
+        defaultValue={row.key}
+        key={row.key}
+        onBlur={(event) => {
+          const next = event.target.value.trim()
+          if (next && next !== row.key) onRenameKey(next)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          event.currentTarget.focus()
+          event.currentTarget.select()
         }}
       />
       <Select value={row.kind} onValueChange={(kind) => onUpdate(kind === 'number' || kind === 'range' ? { kind } : { kind, clear_unit: true })}>
@@ -335,6 +358,7 @@ function AddRow({
       }}
     >
       <input aria-label={copy.attributeName} data-testid="attr-add" placeholder={copy.attributeName} value={name} onChange={(event) => setName(event.target.value)} />
+      <span />
       <Select value={kind} onValueChange={(value) => { setKind(value); setLanguages(value === 'text') }}>
         <SelectTrigger aria-label={copy.attributeType}><SelectValue /></SelectTrigger>
         <SelectContent>
@@ -516,6 +540,26 @@ function TypeNameFields({
           onBlur={(event) => {
             const next = event.target.value.trim()
             if (next !== pluralValue) onSave({ plural: next })
+          }}
+        />
+      </label>
+      <label>
+        {copy.key}
+        <input
+          aria-label={copy.key}
+          data-testid={`type-key-${typeKey}`}
+          defaultValue={typeKey}
+          key={`${typeKey}:key`}
+          onBlur={(event) => {
+            const next = event.target.value.trim()
+            if (next && next !== typeKey) {
+              void propose('model.rename_type_key', { key: typeKey, new_key: next }).catch(() => undefined)
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            event.currentTarget.focus()
+            event.currentTarget.select()
           }}
         />
       </label>

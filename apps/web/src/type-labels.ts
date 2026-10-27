@@ -78,7 +78,7 @@ export function typeNames(defs: Json | undefined, language = 'en'): TypeName[] {
 }
 
 export function singularOf(defs: Json | undefined, key: string, language = 'en') {
-  return typeNames(defs, language).find((item) => item.key === key)?.singular ?? ''
+  return typeNames(defs, language).find((item) => item.key === key || item.id === key)?.singular ?? ''
 }
 
 export function pluralOf(defs: Json | undefined, key: string, language = 'en') {
@@ -89,7 +89,7 @@ export function typeOfView(view: { state?: Json }, types: TypeName[]) {
   const id = String(view.state?.object_type ?? '')
   const key = String(view.state?.type_key ?? '')
   if (!id && !key) return undefined
-  return types.find((item) => (id && item.id === id) || (key && item.key === key))
+  return types.find((item) => (id && item.id === id) || (key && (item.key === key || item.id === key)))
 }
 
 export function isGenericObjectTitle(title: string) {

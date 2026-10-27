@@ -2,7 +2,8 @@
 
 use axum::http::StatusCode;
 use braian_model::{
-    ApplyError, ChangeImpact, ModelChange, StructureErrorCode, apply_all, interpret, preview,
+    ApplyError, ChangeImpact, ModelChange, StructureErrorCode, apply_all, change_needs_reindex,
+    deletes_data, interpret, preview,
 };
 use braian_rules::CompiledModel;
 use braian_store::{Error, ProposalRow, ProposalWrite};
@@ -29,6 +30,13 @@ pub async fn propose(
             StatusCode::BAD_REQUEST,
             "empty_model",
             "the draft has no steps",
+        ));
+    }
+    if identity.kind == braian_store::PrincipalKind::Agent && changes.iter().any(deletes_data) {
+        return Err(Problem::new(
+            StatusCode::FORBIDDEN,
+            "agent",
+            "the agent cannot delete",
         ));
     }
     let (after, impact) = preview(&cached.defs, &changes).map_err(model_status)?;
@@ -172,6 +180,9 @@ pub async fn apply_row(
         {
             Ok(Some(receipt)) => {
                 state.models.invalidate().await;
+                if change_needs_reindex(&change) {
+                    state.store.request_reindex().await.map_err(store_status)?;
+                }
                 state.emit(json!({
                     "seq": receipt.last_seq,
                     "op": "model",
@@ -256,6 +267,7 @@ async fn consequence(
     };
     Ok(json!({
         "lines": impact.lines,
+        "warnings": impact.warnings,
         "fields": impact.fields,
         "affected_objects": affected,
         "samples": samples,
@@ -296,12 +308,12 @@ fn changes_from(
         }]),
         "model.add_attribute" => Ok(vec![ModelChange::AddAttribute {
             structure: required_str(args, "structure")?,
-            class_key: required_str(args, "class")?,
+            class_key: class_ref(args)?,
             attribute: required_str(args, "attribute")?,
         }]),
         "model.remove_attribute" => Ok(vec![ModelChange::RemoveAttribute {
             structure: required_str(args, "structure")?,
-            class_key: required_str(args, "class")?,
+            class_key: class_ref(args)?,
             attribute: required_str(args, "attribute")?,
         }]),
         "model.reorder_attributes" => {
@@ -318,7 +330,7 @@ fn changes_from(
                 .unwrap_or_default();
             Ok(vec![ModelChange::ReorderAttributes {
                 structure: required_str(args, "structure")?,
-                class_key: required_str(args, "class")?,
+                class_key: class_ref(args)?,
                 attributes,
             }])
         }
@@ -405,11 +417,41 @@ fn changes_from(
         }]),
         "model.set_parent" => Ok(vec![ModelChange::SetParent {
             structure: required_str(args, "structure")?,
-            class_key: required_str(args, "class")?,
+            class_key: class_ref(args)?,
             parent: args
                 .get("parent")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+        }]),
+        "model.rename_type_key" => Ok(vec![ModelChange::RenameTypeKey {
+            key: current_ref(args)?,
+            new_key: required_str(args, "new_key")?,
+        }]),
+        "model.rename_attribute_key" => Ok(vec![ModelChange::RenameAttributeKey {
+            key: current_ref(args)?,
+            new_key: required_str(args, "new_key")?,
+        }]),
+        "model.rename_structure_key" => Ok(vec![ModelChange::RenameStructureKey {
+            structure: current_ref(args)?,
+            new_key: required_str(args, "new_key")?,
+        }]),
+        "model.rename_group_key" => Ok(vec![ModelChange::RenameGroupKey {
+            structure: required_str(args, "structure")?,
+            group: args
+                .get("group")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or(current_ref(args)?),
+            new_key: required_str(args, "new_key")?,
+        }]),
+        "model.rename_value_list_key" => Ok(vec![ModelChange::RenameValueListKey {
+            key: current_ref(args)?,
+            new_key: required_str(args, "new_key")?,
+        }]),
+        "model.rename_unit_family_key" => Ok(vec![ModelChange::RenameUnitFamilyKey {
+            key: current_ref(args)?,
+            new_key: required_str(args, "new_key")?,
         }]),
         "model.create_structure" => Ok(vec![ModelChange::CreateStructure {
             key: required_str(args, "key")?,
@@ -483,6 +525,42 @@ fn required_str(args: &Value, key: &str) -> Result<String, Problem> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "model", format!("missing {key}")))
+}
+
+/// Class identifier on steps that do not already have a destination group.
+/// `group` is the name for one release; `class` and `class_key` still work.
+fn class_ref(args: &Value) -> Result<String, Problem> {
+    for key in ["group", "class", "class_key"] {
+        if let Some(value) = args
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(value.to_owned());
+        }
+    }
+    Err(Problem::new(
+        StatusCode::BAD_REQUEST,
+        "model",
+        "missing group",
+    ))
+}
+
+fn current_ref(args: &Value) -> Result<String, Problem> {
+    for key in ["ref", "key", "id", "structure"] {
+        if let Some(value) = args
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(value.to_owned());
+        }
+    }
+    Err(Problem::new(
+        StatusCode::BAD_REQUEST,
+        "model",
+        "missing key",
+    ))
 }
 
 fn title_for(args: &Value, lines: &[String]) -> String {
