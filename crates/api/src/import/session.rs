@@ -329,8 +329,18 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
         .map_err(|problem| problem.detail)?;
     let targets = mapping::targets_for(&cached.defs, &type_key);
     let type_id = cached
-        .model
-        .type_id(&type_key)
+        .defs
+        .types
+        .iter()
+        .find(|item| {
+            item.key == type_key
+                || item
+                    .id
+                    .as_uuid()
+                    .to_string()
+                    .eq_ignore_ascii_case(&type_key)
+        })
+        .map(|item| item.id)
         .ok_or_else(|| "That object type does not exist.".to_owned())?;
     let mut cursor = RowCursor::open(&session_dir(id)).map_err(|error| error.message)?;
     let mut seen = std::collections::HashMap::new();

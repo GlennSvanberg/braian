@@ -1,16 +1,42 @@
+import type { Json } from './api'
+
 /** Typesense filter for a saved selection.
  *
  * `type` on the query is ignored. The selection's type is passed in, so a
- * stored query cannot point the search at another type. `text` is not a filter.
+ * stored query cannot point the search at another type. Group and label
+ * fields may be ids; the index still stores the current keys.
+ * `text` is not a filter.
  */
-export function assortmentSearchFilter(query: unknown, typeKey = ''): string {
-  if (!query || typeof query !== 'object') return typeKey ? `type_key:=${typeKey}` : ''
+export function assortmentSearchFilter(query: unknown, typeKey = '', defs?: Json): string {
+  if (!query || typeof query !== 'object') return typeKey ? `type_key:=${typeKeyOf(typeKey, defs)}` : ''
   const item = query as { group?: unknown; labels?: unknown }
   const parts: string[] = []
-  if (typeKey) parts.push(`type_key:=${typeKey}`)
-  if (typeof item.group === 'string' && item.group) parts.push(`groups:=${item.group}`)
-  parts.push(...labelSearchParts(item.labels))
+  if (typeKey) parts.push(`type_key:=${typeKeyOf(typeKey, defs)}`)
+  if (typeof item.group === 'string' && item.group) parts.push(`groups:=${groupKeyOf(item.group, defs)}`)
+  parts.push(...labelSearchParts(item.labels, defs))
   return parts.join(' && ')
+}
+
+export function typeKeyOf(token: string, defs?: Json) {
+  const types = (defs?.types as Json[] | undefined) ?? []
+  const match = types.find((item) => String(item.id ?? '') === token || String(item.key ?? '') === token)
+  return match ? String(match.key ?? token) : token
+}
+
+export function groupKeyOf(token: string, defs?: Json) {
+  const structures = (defs?.structures as Json[] | undefined) ?? []
+  if (!token.includes(':')) {
+    for (const structure of structures) {
+      const group = ((structure.groups as Json[]) ?? []).find((item) => String(item.id ?? '') === token || String(item.key ?? '') === token)
+      if (group) return `${String(structure.key)}:${String(group.key)}`
+    }
+    return token
+  }
+  const [structureToken, groupToken] = token.split(':')
+  const structure = structures.find((item) => String(item.id ?? '') === structureToken || String(item.key ?? '') === structureToken)
+  const group = ((structure?.groups as Json[]) ?? []).find((item) => String(item.id ?? '') === groupToken || String(item.key ?? '') === groupToken)
+  if (structure && group) return `${String(structure.key)}:${String(group.key)}`
+  return token
 }
 
 /** Label clause only. The object table already applies type and group. */
@@ -63,6 +89,9 @@ export function currentSelectionLabels() {
   return selectionLabels
 }
 
-function labelSearchParts(value: unknown): string[] {
-  return labelCodes(value).map((code) => `a_labels:=${code}`)
+function labelSearchParts(value: unknown, defs?: Json): string[] {
+  const attribute = ((defs?.attributes as Json[] | undefined) ?? []).find((item) => String(item.key ?? '') === 'labels')
+  const id = String(attribute?.id ?? '')
+  const field = id ? `a_${id.replaceAll('-', '_')}` : 'a_labels'
+  return labelCodes(value).map((code) => `${field}:=${code}`)
 }

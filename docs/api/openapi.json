@@ -629,6 +629,62 @@
         ]
       }
     },
+    "/v1/model/keys": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "rename_key",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the warning without writing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyRenameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Key renamed, or the consequences of a dry run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyRenameResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The key was rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/objects": {
       "get": {
         "tags": [
@@ -1154,6 +1210,70 @@
         ],
         "summary": "Discard a proposal",
         "responses": {}
+      }
+    },
+    "/v1/resolve/{kind}/{id_or_key}": {
+      "get": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "resolve_ref",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "type, attribute, structure, group, value_list or unit_family",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id_or_key",
+            "in": "path",
+            "description": "Entity id or key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "structure",
+            "in": "query",
+            "description": "Structure id or key, for a group",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The same entity for an id or a key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolvedBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/search": {
@@ -3004,6 +3124,70 @@
         },
         "additionalProperties": false
       },
+      "KeyRenameBody": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref",
+          "key"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "The key to store. The id does not change."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`type`, `attribute`, `structure`, `group`, `value_list` or `unit_family`."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Current id or key."
+          },
+          "structure": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "KeyRenameResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "label",
+          "applied",
+          "warnings"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "LanguageTag": {
         "type": "string",
         "description": "BCP 47 language tag with an optional region, for example sv or en-GB"
@@ -3258,6 +3442,25 @@
             "items": {
               "$ref": "#/components/schemas/ValidationError"
             }
+          }
+        }
+      },
+      "ResolvedBody": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
           }
         }
       },

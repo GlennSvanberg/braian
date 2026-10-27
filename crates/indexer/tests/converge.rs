@@ -116,7 +116,8 @@ async fn stale_events_and_reindex_converge_on_postgres() {
         .await
         .unwrap();
     assert_eq!(doc["key"], "SKU-1");
-    assert_eq!(doc["a_active"], "false");
+    let active_field = braian_model::attribute_index_field(active, None);
+    assert_eq!(doc[&active_field], "false");
 
     let page = search
         .search(&SearchQuery {
@@ -146,7 +147,7 @@ async fn stale_events_and_reindex_converge_on_postgres() {
         .await
         .unwrap();
     assert_eq!(page.found, 1);
-    assert_eq!(page.hits[0].document["a_active"], "false");
+    assert_eq!(page.hits[0].document[&active_field], "false");
     if let Some(name) = after {
         let _ = search.drop_collection(&name).await;
     }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   acceptsFile,
+  storedTargetId,
+  targetForStored,
   ariaMap,
   cellClass,
   confidenceLabel,
@@ -135,5 +137,16 @@ describe('import mapping helpers', () => {
     expect(stepIndex('mapping')).toBe(1)
     expect(stepIndex('preview')).toBe(2)
     expect(stepIndex('saving')).toBe(3)
+  })
+
+  it('matches a saved attribute id to the key-form target', () => {
+    const targets = [{
+      id: 'type:sku',
+      label: 'Article number',
+      attribute_id: '018f0000-0000-7000-8000-000000000100',
+    }]
+    expect(storedTargetId(targets[0])).toBe('type:018f0000-0000-7000-8000-000000000100')
+    expect(targetForStored(targets, 'type:018f0000-0000-7000-8000-000000000100')?.label).toBe('Article number')
+    expect(targetForStored(targets, 'type:sku')?.id).toBe('type:sku')
   })
 })

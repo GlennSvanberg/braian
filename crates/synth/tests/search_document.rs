@@ -51,7 +51,8 @@ fn medium_search_document_keeps_filter_fields_and_drops_searchable_only_copies()
     assert_eq!(omitted_fields, 50);
     assert_eq!(own_fields, 518);
     assert_eq!(keys, 312);
-    assert_eq!(bytes, 9_751);
+    // `a_<attribute id>` is longer than `a_<key>`. The field count stays the same.
+    assert_eq!(bytes, 18_898);
     assert_eq!(
         defs.attributes
             .iter()

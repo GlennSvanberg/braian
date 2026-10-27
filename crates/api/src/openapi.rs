@@ -45,6 +45,8 @@ use utoipa::OpenApi;
         crate::definitions::put_unit_family,
         crate::definitions::delete_unit_family_route,
         crate::definitions::put_languages,
+        crate::keys::resolve_ref,
+        crate::keys::rename_key,
         crate::objects::create_object,
         crate::objects::batch_get,
         crate::objects::get_object,

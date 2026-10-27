@@ -4,6 +4,7 @@ import { Check } from 'lucide-react'
 import { MetaChip, optionLabel, statusTone, typeLabel, type ChipTone } from './chips'
 import { toast } from 'sonner'
 import { ApiError, api, catalogName, textValue, type Json } from './api'
+import { readIndexed } from './index-fields'
 import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
@@ -151,9 +152,9 @@ export function CommandPalette({
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
     const type = String(row.type_key ?? row.type ?? '')
-    const status = textValue(row.a_status)
+    const status = readIndexed(row, defs.data, 'status') || textValue(row.a_status)
     const version = String(row.version ?? '')
-    const name = catalogName(row)
+    const name = catalogName(row, defs.data)
     return {
       id: `hit:${String(row.id)}`,
       sourceId: String(row.id),
@@ -253,6 +254,11 @@ export function CommandPalette({
         .catch((reason: unknown) => {
           session.push(reason instanceof Error ? reason.message : copy.validation)
         })
+      return
+    }
+    if (id === 'model:rename-key') {
+      setQuery('rename attribute key ')
+      setActive(0)
       return
     }
     if (id === 'model:command') {
@@ -716,6 +722,7 @@ function buildCatalog(
       subtitle: `Template · ${template.summary}`,
     })),
     { id: 'import:file', group: 'views', title: copy.importFile, subtitle: 'Drop an Excel or CSV file' },
+    { id: 'model:rename-key', group: 'views', title: copy.renameKey, subtitle: 'Change a key. External integrations that use the old key will stop working', keywords: ['rename', 'key', 'attribute'] },
     { id: 'theme:light', group: 'views', title: 'Light', subtitle: 'Switch theme', shortcut: undefined },
     { id: 'theme:dark', group: 'views', title: 'Dark', subtitle: 'Switch theme' },
     { id: 'layout:move_view_left', group: 'views', title: 'Move view left', subtitle: 'Move the focused view left', kbd: 'Ctrl+Alt+←', shortcut: 'Ctrl+Alt+Left' },

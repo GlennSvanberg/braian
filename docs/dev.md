@@ -65,6 +65,10 @@ Integrationstesterna i `crates/store` kräver `BRAIAN_TEST_DATABASE_URL`. Den sk
 `just demo-1` behöver `wasm-bindgen` 0.2.129 på `PATH` (`cargo install wasm-bindgen-cli --version 0.2.129`).
 Devcontainern installerar samma version. wasm-bindgen's Node-mål är CommonJS, så `packages/rules-wasm` har ingen `"type": "module"`; skripten är `.mjs`.
 
+## Ids, keys and groups
+
+Definitions are addressed by id or key. `GET /v1/resolve/{kind}/{id_or_key}` returns `{id, key, label}`. `POST /v1/model/keys` renames a key immediately; `dry_run=true` returns the warning without writing. The warning is `External integrations that use the old key « x » will stop working`. View state, assortment queries and import mappings store ids. Search fields are `a_<attribute id>` with hyphens replaced by underscores, so an attribute key rename does not rebuild the index. A type, structure or group key rename does, because those keys are still copied into the document. Migration V18 rewrites stored key refs to ids and sets `reindex_requested`. It does not reset demo data. The API field for a legacy class identifier is `group`, and `class` remains an alias for one release. The Classes view is titled Group attributes.
+
 ## Ändringslogg
 
 Indexern och SSE läser `changes` direkt. Design, garantier och avvägningar står i

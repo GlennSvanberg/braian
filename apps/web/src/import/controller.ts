@@ -17,6 +17,9 @@ export type ImportTarget = {
   key?: boolean
   source?: string
   language?: string | null
+  attribute_id?: string | null
+  structure_id?: string | null
+  group_id?: string | null
 }
 
 export type ImportHeader = {
@@ -30,7 +33,7 @@ export type ImportHeader = {
 export type ImportSession = {
   id: string
   status: string
-  types?: Array<{ key: string; label: string }>
+  types?: Array<{ key: string; label: string; id?: string }>
   file_name: string
   file_kind: string
   sheets: Array<{ index: number; name: string; empty?: boolean; rows_estimate?: number }>

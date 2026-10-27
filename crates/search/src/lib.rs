@@ -720,14 +720,15 @@ fn field_type(attribute: &braian_model::Attribute) -> &'static str {
 }
 
 fn field_names(attribute: &braian_model::Attribute, defs: &DefinitionSet) -> Vec<String> {
-    let base = format!("a_{}", attribute.key);
     if attribute.language_dependent {
         defs.languages
             .iter()
-            .map(|language| format!("{base}__{}", field_language(language.as_str())))
+            .map(|language| {
+                braian_model::attribute_index_field(attribute.id, Some(language.as_str()))
+            })
             .collect()
     } else {
-        vec![base]
+        vec![braian_model::attribute_index_field(attribute.id, None)]
     }
 }
 
@@ -782,7 +783,8 @@ pub fn document(
                 let Some(inner) = map.get(language.as_str()) else {
                     continue;
                 };
-                let field = format!("a_{}__{}", attribute.key, field_language(language.as_str()));
+                let field =
+                    braian_model::attribute_index_field(attribute.id, Some(language.as_str()));
                 if let Some(indexed) = index_value(model, attribute, inner) {
                     if attribute.index.searchable {
                         push_blob(&mut blobs, field_language(language.as_str()), &indexed);
@@ -802,7 +804,10 @@ pub fn document(
                 }
             }
             if stores_own_field(attribute) {
-                doc.insert(format!("a_{}", attribute.key), indexed_to_json(indexed));
+                doc.insert(
+                    braian_model::attribute_index_field(attribute.id, None),
+                    indexed_to_json(indexed),
+                );
             }
         }
     }
@@ -977,9 +982,11 @@ mod tests {
             .filter_map(|field| field.get("name").and_then(Value::as_str))
             .map(str::to_owned)
             .collect();
+        let sku_field = braian_model::attribute_index_field(sku.id, None);
+        let active_field = braian_model::attribute_index_field(active.id, None);
         assert!(names.iter().any(|name| name == "search_sv"));
-        assert!(names.iter().any(|name| name == "a_sku"));
-        assert!(names.iter().any(|name| name == "a_active"));
+        assert!(names.iter().any(|name| name == &sku_field));
+        assert!(names.iter().any(|name| name == &active_field));
         assert!(names.iter().all(|name| !name.starts_with("a_name")));
 
         let mut values = BTreeMap::new();
@@ -996,8 +1003,8 @@ mod tests {
         let doc = document(&model, &defs, &object, "SKU-1", "item", 1, 4, false);
         assert!(doc.get("a_name__sv").is_none());
         assert!(doc.get("a_name__en_GB").is_none());
-        assert_eq!(doc["a_sku"], "SKU-1");
-        assert_eq!(doc["a_active"], "false");
+        assert_eq!(doc[&sku_field], "SKU-1");
+        assert_eq!(doc[&active_field], "false");
         let blob = doc["search_sv"].as_str().expect("blob");
         assert!(blob.contains("Canvas"), "{blob}");
         assert!(blob.contains("SKU-1"), "{blob}");

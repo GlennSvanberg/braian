@@ -12,6 +12,9 @@ export function modelCommandTitle(query: string): ModelHint | null {
   if (add) return { title: `Add attribute ${add[1]} to ${add[2]}`, subtitle: review }
   const remove = text.match(/^remove attribute\s+(.+?)\s+from\s+(.+)$/i)
   if (remove) return { title: `Remove attribute ${remove[1]} from ${remove[2]}`, subtitle: review }
+  if (/^rename (?:attribute |type |structure |group |value list |unit family )?key\b/i.test(text)) {
+    return { title: `Rename key ${text.replace(/^rename\s+/i, '')}`, subtitle: review }
+  }
   const group = text.match(/^(add|rename|move|duplicate|delete) group\s+(.+)$/i)
   if (group) {
     const verb = group[1].toLowerCase()

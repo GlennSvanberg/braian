@@ -89,7 +89,7 @@ export function typeOfView(view: { state?: Json }, types: TypeName[]) {
   const id = String(view.state?.object_type ?? '')
   const key = String(view.state?.type_key ?? '')
   if (!id && !key) return undefined
-  return types.find((item) => (id && item.id === id) || (key && item.key === key))
+  return types.find((item) => (id && item.id === id) || (key && (item.key === key || item.id === key)))
 }
 
 export function isGenericObjectTitle(title: string) {

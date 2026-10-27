@@ -316,9 +316,11 @@ async fn put_mapping(
     })?;
     let targets = targets_for(&cached.defs, type_key);
     validate_mapping(&body, &targets, &cached)?;
+    let mut stored = body.clone();
+    braian_model::translate_import_mapping(&mut stored, &cached.defs);
     state
         .store
-        .update_import_mapping(id, &body)
+        .update_import_mapping(id, &stored)
         .await
         .map_err(store_status)?;
     Ok(StatusCode::NO_CONTENT)
@@ -581,11 +583,16 @@ fn session_body(
         .iter()
         .map(|object_type| {
             json!({
+                "id": object_type.id.as_uuid(),
                 "key": object_type.key,
                 "label": object_type.singular_label("en"),
             })
         })
         .collect::<Vec<_>>();
+    let mut mapping = session.mapping.clone();
+    if let Some(mapping) = mapping.as_mut() {
+        braian_model::translate_import_mapping(mapping, defs);
+    }
     json!({
         "types": types,
         "id": session.id,
@@ -601,7 +608,7 @@ fn session_body(
         "model_revision": session.model_revision,
         "targets": mapping::target_wire(targets),
         "proposal": session.proposal,
-        "mapping": session.mapping,
+        "mapping": mapping,
         "counters": session.counters,
         "job_id": session.job_id,
         "error": session.error,
@@ -611,9 +618,8 @@ fn session_body(
 fn validate_mapping(
     body: &Value,
     targets: &[Target],
-    cached: &crate::state::CachedModel,
+    _cached: &crate::state::CachedModel,
 ) -> Result<(), Problem> {
-    let type_key = body.get("type").and_then(Value::as_str).unwrap_or("");
     let mut used = std::collections::BTreeSet::new();
     let columns = body
         .get("columns")
@@ -630,7 +636,7 @@ fn validate_mapping(
             action += 1;
             continue;
         }
-        if !targets.iter().any(|item| item.id == target) {
+        if mapping::find_target(targets, target).is_none() {
             return Err(Problem::new(
                 StatusCode::BAD_REQUEST,
                 "invalid_mapping",
@@ -653,13 +659,6 @@ fn validate_mapping(
         ));
     }
     if let Some(index) = body.get("id_column").and_then(Value::as_u64) {
-        let key = cached
-            .model
-            .type_id(type_key)
-            .and_then(|type_id| cached.model.key_attribute(type_id));
-        let key_name = key
-            .and_then(|id| cached.model.attribute(id))
-            .map(|attribute| attribute.key.as_str());
         let mapped = columns
             .iter()
             .find(|column| column.get("col").and_then(Value::as_u64) == Some(index));
@@ -667,10 +666,7 @@ fn validate_mapping(
             .and_then(|column| column.get("target"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        let expected = key_name
-            .map(|name| format!("type:{name}"))
-            .unwrap_or_default();
-        if target != expected {
+        if !mapping::find_target(targets, target).is_some_and(|item| item.key_attribute) {
             return Err(Problem::new(
                 StatusCode::BAD_REQUEST,
                 "invalid_mapping",

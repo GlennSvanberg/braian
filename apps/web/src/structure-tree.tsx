@@ -20,7 +20,9 @@ type Draft =
   | { kind: 'structure' }
   | { kind: 'group'; structure: string; parent?: string }
   | { kind: 'rename-structure'; structure: string; value: string }
+  | { kind: 'rename-structure-key'; structure: string; value: string }
   | { kind: 'rename-group'; structure: string; group: string; value: string }
+  | { kind: 'rename-group-key'; structure: string; group: string; value: string }
 
 type DialogState =
   | { kind: 'move'; structure: string; group: string; label: string; parent: string; error: string }
@@ -59,6 +61,17 @@ export function StructureSection({
     await client.invalidateQueries({ queryKey: ['definitions'] })
   }
 
+  const proposeKey = async (name: string, args: Json) => {
+    const result = await api<Json>(`/v1/operations/${name}`, {
+      method: 'POST',
+      body: JSON.stringify(args),
+    })
+    const id = String(result.proposal_id ?? result.id ?? '')
+    if (id) {
+      const { publishProposal } = await import('./proposal-bus')
+      publishProposal(id)
+    }
+  }
   const run = async (work: () => Promise<void>) => {
     if (busyRef.current) return
     busyRef.current = true
@@ -160,6 +173,21 @@ export function StructureSection({
                   }}
                   onCancel={() => setDraft(null)}
                 />
+              ) : draft?.kind === 'rename-structure-key' && draft.structure === key ? (
+                <NameField
+                  label={copy.renameKey}
+                  initial={draft.value}
+                  inputRef={nameRef}
+                  onCommit={(name) => {
+                    const next = name.trim()
+                    if (!next || next === key) {
+                      setDraft(null)
+                      return
+                    }
+                    void run(() => proposeKey('model.rename_structure_key', { structure: key, new_key: next }))
+                  }}
+                  onCancel={() => setDraft(null)}
+                />
               ) : (
                 <strong>{title}</strong>
               )}
@@ -168,6 +196,7 @@ export function StructureSection({
                 onCloseAutoFocus={holdNameFocus}
                 onAdd={() => editName({ kind: 'group', structure: key })}
                 onRename={() => editName({ kind: 'rename-structure', structure: key, value: title })}
+                onRenameKey={() => editName({ kind: 'rename-structure-key', structure: key, value: key })}
                 onDelete={() => openDelete({ kind: 'delete-structure', structure: key, label: title, count: null, moveTo: '', error: '' })}
               />
             </div>
@@ -201,6 +230,7 @@ export function StructureSection({
                 body: JSON.stringify({ key: groupKey, label, parent }),
               }).then(() => undefined))}
               onRename={(group, label) => editName({ kind: 'rename-group', structure: key, group, value: label })}
+              onRenameKey={(group) => editName({ kind: 'rename-group-key', structure: key, group, value: group })}
               onRenameCommit={(group, name) => {
                 const label = name.trim()
                 if (!label) {
@@ -259,6 +289,7 @@ function GroupList({
   onAdd,
   onCreate,
   onRename,
+  onRenameKey,
   onRenameCommit,
   onMove,
   onDelete,
@@ -276,6 +307,7 @@ function GroupList({
   onAdd: (parent: string) => void
   onCreate: (parent: string, name: string) => void
   onRename: (group: string, label: string) => void
+  onRenameKey: (group: string) => void
   onRenameCommit: (group: string, name: string) => void
   onMove: (group: string, label: string, parentKey?: string) => void
   onDelete: (group: string, label: string) => void
@@ -290,12 +322,34 @@ function GroupList({
         const hasChildren = rows.some((item) => item.parentKey === node.key)
         const label = structureCaption(node.key, defs, structure)
         const renaming = draft?.kind === 'rename-group' && draft.structure === structure && draft.group === node.key
+        const keyDraft = draft?.kind === 'rename-group-key' && draft.structure === structure && draft.group === node.key ? draft : null
         const adding = draft?.kind === 'group' && draft.structure === structure && draft.parent === node.key
         return (
           <div key={node.id} data-testid={`group-${node.key}`}>
             <div className="model-row" style={{ paddingLeft: node.depth * 14 }}>
               {renaming ? (
                 <NameField label={copy.rename} initial={draft.value} inputRef={nameRef} onCommit={(name) => onRenameCommit(node.key, name)} onCancel={() => setDraft(null)} />
+              ) : keyDraft ? (
+                <NameField
+                  label={copy.renameKey}
+                  initial={keyDraft.value}
+                  inputRef={nameRef}
+                  onCommit={(name) => {
+                    const next = name.trim()
+                    setDraft(null)
+                    if (!next || next === node.key) return
+                    void api<Json>('/v1/operations/model.rename_group_key', {
+                      method: 'POST',
+                      body: JSON.stringify({ structure, group: node.key, new_key: next }),
+                    }).then(async (result) => {
+                      const id = String(result.proposal_id ?? result.id ?? '')
+                      if (!id) return
+                      const { publishProposal } = await import('./proposal-bus')
+                      publishProposal(id)
+                    })
+                  }}
+                  onCancel={() => setDraft(null)}
+                />
               ) : (
                 <button
                   type="button"
@@ -322,6 +376,7 @@ function GroupList({
                 onCloseAutoFocus={onCloseAutoFocus}
                 onAdd={() => onAdd(node.key)}
                 onRename={() => onRename(node.key, label)}
+                onRenameKey={() => onRenameKey(node.key)}
                 onMove={() => onMove(node.key, label, node.parentKey)}
                 onDelete={() => onDelete(node.key, label)}
               />
@@ -365,6 +420,7 @@ function NodeMenu({
   testId,
   onAdd,
   onRename,
+  onRenameKey,
   onMove,
   onDelete,
   onCloseAutoFocus,
@@ -372,6 +428,7 @@ function NodeMenu({
   testId: string
   onAdd: () => void
   onRename: () => void
+  onRenameKey?: () => void
   onMove?: () => void
   onDelete: () => void
   onCloseAutoFocus: (event: Event) => void
@@ -384,6 +441,7 @@ function NodeMenu({
       <DropdownMenuContent onCloseAutoFocus={onCloseAutoFocus}>
         <DropdownMenuItem onSelect={onAdd} onClick={onAdd}>{copy.addChild}</DropdownMenuItem>
         <DropdownMenuItem onSelect={onRename} onClick={onRename}>{copy.rename}</DropdownMenuItem>
+        {onRenameKey ? <DropdownMenuItem onSelect={onRenameKey} onClick={onRenameKey}>{copy.renameKey}</DropdownMenuItem> : null}
         {onMove ? <DropdownMenuItem onSelect={onMove} onClick={onMove}>{copy.move}</DropdownMenuItem> : null}
         <DropdownMenuItem onSelect={onDelete} onClick={onDelete}>{copy.delete}</DropdownMenuItem>
       </DropdownMenuContent>

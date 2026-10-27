@@ -637,7 +637,7 @@ fn resolve_column(
         },
         _ => {
             let key = attribute_name(id, attribute);
-            let Some(attribute) = model.attribute_by_key(&key) else {
+            let Some(attribute) = attribute_for_column(model, &key) else {
                 return ResolvedColumn {
                     header: header_of(&key),
                     kind: ColumnKind::Blank,
@@ -657,6 +657,22 @@ fn resolve_column(
             }
         }
     }
+}
+
+fn attribute_for_column<'a>(
+    model: &'a CompiledModel,
+    token: &str,
+) -> Option<&'a braian_model::Attribute> {
+    if let Some(attribute) = model.attribute_by_key(token) {
+        return Some(attribute);
+    }
+    let uuid_text = if token.len() == 36 && token.as_bytes().get(8) == Some(&b'_') {
+        token.replace('_', "-")
+    } else {
+        token.to_owned()
+    };
+    let id = uuid::Uuid::parse_str(&uuid_text).ok()?;
+    model.attribute(braian_model::AttributeId::from_uuid(id))
 }
 
 fn attribute_name(id: &str, attribute: Option<&str>) -> String {
