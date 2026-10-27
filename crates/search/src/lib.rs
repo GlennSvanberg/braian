@@ -670,8 +670,9 @@ fn stores_own_field(attribute: &braian_model::Attribute) -> bool {
 
 fn schema_fields(defs: &DefinitionSet) -> Vec<Value> {
     let mut fields = vec![
-        json!({"name": "key", "type": "string"}),
-        json!({"name": "type_key", "type": "string", "facet": true}),
+        // Typesense 30 does not sort a string unless sort is set. Number paths sort on key.
+        json!({"name": "key", "type": "string", "sort": true}),
+        json!({"name": "type_key", "type": "string", "facet": true, "sort": true}),
         json!({"name": "seq", "type": "int64"}),
         json!({"name": "version", "type": "int64"}),
         json!({"name": "deleted", "type": "bool", "facet": true}),
@@ -1235,13 +1236,18 @@ mod tests {
         let model = CompiledModel::compile(&defs).expect("compile");
         let weight = model.attribute_by_key("net_weight").expect("weight");
         let field = braian_model::attribute_index_field(weight.id, None);
-        let names: Vec<_> = schema_fields(&defs)
+        let schema = schema_fields(&defs);
+        let names: Vec<_> = schema
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .map(str::to_owned)
             .collect();
         assert!(names.iter().any(|name| name == &format!("{field}__unit")));
-        let schema = schema_fields(&defs);
+        let key = schema
+            .iter()
+            .find(|item| item["name"] == "key")
+            .expect("key");
+        assert_eq!(key["sort"], true);
         let unit = schema
             .iter()
             .find(|item| item["name"] == format!("{field}__unit"))
