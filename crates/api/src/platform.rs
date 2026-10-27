@@ -4487,7 +4487,12 @@ async fn propose_operation(
                 .map(str::to_owned),
                 None => args
                     .get("values")
-                    .and_then(|values| values.get("number").or_else(|| values.get("nummer")))
+                    .and_then(|values| {
+                        values
+                            .get("number")
+                            .or_else(|| values.get("nummer"))
+                            .or_else(|| values.get("sku"))
+                    })
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             };
