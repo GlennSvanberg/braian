@@ -1106,14 +1106,71 @@ impl Store {
         Ok(())
     }
 
-    pub async fn set_proposal_status(&self, id: Uuid, status: &str) -> Result<(), Error> {
-        let client = self.pool().get().await?;
-        client
-            .execute(
-                "UPDATE proposals SET status = $2 WHERE id = $1",
-                &[&id, &status],
+    /// Moves an open proposal to `accepted` or `discarded` while `claim` still holds it.
+    ///
+    /// A missing row, a lease that is not `claim`, and any other current status
+    /// are errors. When `reject_pending` is set, rows still `pending` become
+    /// `rejected` in the same transaction, so a failed status write leaves them
+    /// pending. The claim is cleared when the new status commits.
+    pub async fn set_proposal_status(
+        &self,
+        id: Uuid,
+        status: &str,
+        claim: Uuid,
+        reject_pending: bool,
+    ) -> Result<(), Error> {
+        if status != "accepted" && status != "discarded" {
+            return Err(Error::ProposalTransition {
+                id,
+                from: "open".into(),
+                to: status.to_owned(),
+            });
+        }
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT status, claimed_by, (claimed_until > now()) AS live
+                 FROM proposals WHERE id = $1 FOR UPDATE",
+                &[&id],
             )
             .await?;
+        let Some(row) = row else {
+            return Err(Error::ProposalNotFound(id));
+        };
+        let current: String = row.get(0);
+        let holder: Option<Uuid> = row.get(1);
+        let live: Option<bool> = row.get(2);
+        if current != "open" {
+            return Err(Error::ProposalTransition {
+                id,
+                from: current,
+                to: status.to_owned(),
+            });
+        }
+        if holder != Some(claim) || live != Some(true) {
+            return Err(Error::ProposalClaimLost(id));
+        }
+        if reject_pending {
+            tx.execute(
+                "UPDATE proposal_rows SET status = 'rejected'
+                 WHERE proposal_id = $1 AND status = 'pending'",
+                &[&id],
+            )
+            .await?;
+        }
+        let updated = tx
+            .execute(
+                "UPDATE proposals
+                 SET status = $2, claimed_by = NULL, claimed_until = NULL
+                 WHERE id = $1 AND claimed_by = $3",
+                &[&id, &status, &claim],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(Error::ProposalClaimLost(id));
+        }
+        tx.commit().await?;
         Ok(())
     }
 

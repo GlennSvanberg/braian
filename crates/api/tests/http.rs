@@ -2365,6 +2365,131 @@ async fn an_accept_patch_cannot_introduce_a_field_or_value() {
 }
 
 #[tokio::test]
+async fn proposal_status_errors_reach_the_api() {
+    let (db, app) = app().await;
+    let missing = uuid::Uuid::now_v7();
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{missing}/discard"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["code"], "not_found");
+
+    let (status, _, drafted) = call(
+        &app,
+        "POST",
+        "/v1/proposals",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"title":"Close me","source":"agent","rows":[{"type_key":"item","patch":{"values":{"sku":"SKU-STATUS","active":true}}}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{drafted}");
+    assert_eq!(drafted["source"], "user", "{drafted}");
+    let proposal_id = drafted["id"].as_str().unwrap();
+    let (status, _, accepted) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    let (status, _, transition) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/discard"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{transition}");
+    assert_eq!(transition["code"], "invalid_transition", "{transition}");
+    let (status, _, stored) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{proposal_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stored}");
+    assert_eq!(stored["status"], "accepted", "{stored}");
+
+    let (status, _, open) = call(
+        &app,
+        "POST",
+        "/v1/proposals",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"title":"Held","source":"user","rows":[{"type_key":"item","patch":{"values":{"sku":"SKU-HELD","active":true}}}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{open}");
+    assert_eq!(open["source"], "agent", "{open}");
+    let held_id = uuid::Uuid::parse_str(open["id"].as_str().unwrap()).unwrap();
+    let lock = db.store().claim_proposal(held_id).await.unwrap();
+    let (status, _, busy) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{held_id}/discard"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{busy}");
+    assert_eq!(busy["code"], "conflict", "{busy}");
+    let (status, _, during) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{held_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{during}");
+    assert_eq!(during["code"], "conflict", "{during}");
+    let (status, _, unchanged) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{held_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
+    assert_eq!(unchanged["status"], "open", "{unchanged}");
+    assert_eq!(unchanged["rows"][0]["status"], "pending", "{unchanged}");
+    lock.release().await.unwrap();
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{held_id}/discard"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn an_agent_cannot_discard_a_proposal_and_a_person_can() {
     let (_db, app) = app().await;
     let (status, _, created) = call(

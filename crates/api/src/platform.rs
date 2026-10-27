@@ -2573,6 +2573,7 @@ async fn apply_assortment_row(
     proposal_id: Uuid,
     row_id: Uuid,
     row: &Value,
+    claim: Uuid,
 ) -> Result<Option<i64>, Problem> {
     let patch = row.get("patch").cloned().unwrap_or(json!({}));
     let name = patch
@@ -2613,6 +2614,7 @@ async fn apply_assortment_row(
             name: name.to_owned(),
             query,
         },
+        claim,
     )
     .await?;
     Ok(receipt.map(|receipt| receipt.last_seq))
@@ -2940,7 +2942,6 @@ async fn create_proposal(
     require(&identity, Role::Editor)?;
     let id = Uuid::now_v7();
     // The caller does not choose `source`. A spoofed body field is ignored.
-    let _client_source = body.source.as_deref();
     let source = proposal_source(identity.kind);
     let rows = proposal_rows(&body.rows)?;
     state
@@ -3063,6 +3064,9 @@ async fn accept_proposal(
     let selected = selected_rows(&rows, &body.rows);
     validate_accept_patches(&state, &selected, &body.patches).await?;
     if selected.is_empty() {
+        if proposal.get("status").and_then(Value::as_str) == Some("open") {
+            close_open_proposal_without_pending(&state, id).await?;
+        }
         return Err(Problem::new(
             StatusCode::CONFLICT,
             "conflict",
@@ -3070,9 +3074,9 @@ async fn accept_proposal(
         ));
     }
     let patches = body.patches;
-    // Held until this accept finishes, including the background job, so a second
-    // accept waits and then sees the rows are no longer pending.
-    let lock = state.store.lock_proposal(id).await.map_err(store_status)?;
+    // A short lease, not a pooled connection. The background job keeps the
+    // claim and renews it on each row. A second accept loses the claim.
+    let lock = state.store.claim_proposal(id).await.map_err(store_status)?;
     let proposal = match state.store.proposal(id).await {
         Ok(Some(proposal)) => proposal,
         Ok(None) => {
@@ -3091,7 +3095,15 @@ async fn accept_proposal(
         .unwrap_or_default();
     let selected = selected_rows(&rows, &body.rows);
     if selected.is_empty() {
-        lock.release().await.map_err(store_status)?;
+        if proposal.get("status").and_then(Value::as_str) == Some("open") {
+            let claim = lock.token();
+            let closed = close_claimed_proposal(&state, id, &proposal, claim).await;
+            let released = lock.release().await;
+            closed?;
+            released.map_err(store_status)?;
+        } else {
+            lock.release().await.map_err(store_status)?;
+        }
         return Err(Problem::new(
             StatusCode::CONFLICT,
             "conflict",
@@ -3122,6 +3134,66 @@ impl IntoResponse for AcceptReply {
             Self::Job(value) => (StatusCode::ACCEPTED, Json(value)).into_response(),
         }
     }
+}
+
+/// A crash can leave every row finished and the proposal still `open`.
+/// The next accept closes it, then reports that nothing was pending.
+async fn close_open_proposal_without_pending(state: &AppState, id: Uuid) -> Result<(), Problem> {
+    let lock = match state.store.claim_proposal(id).await {
+        Ok(lock) => lock,
+        Err(braian_store::Error::ProposalBusy(_)) => return Ok(()),
+        Err(braian_store::Error::ProposalTransition { .. }) => return Ok(()),
+        Err(error) => return Err(store_status(error)),
+    };
+    let proposal = match state.store.proposal(id).await {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            lock.release().await.map_err(store_status)?;
+            return Err(Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal"));
+        }
+        Err(error) => {
+            lock.release().await.map_err(store_status)?;
+            return Err(store_status(error));
+        }
+    };
+    let claim = lock.token();
+    let closed = close_claimed_proposal(state, id, &proposal, claim).await;
+    let released = lock.release().await;
+    closed?;
+    released.map_err(store_status)?;
+    Ok(())
+}
+
+async fn close_claimed_proposal(
+    state: &AppState,
+    id: Uuid,
+    proposal: &Value,
+    claim: Uuid,
+) -> Result<(), Problem> {
+    if proposal.get("status").and_then(Value::as_str) != Some("open") {
+        return Ok(());
+    }
+    let rows = proposal.get("rows").and_then(Value::as_array);
+    let Some(rows) = rows else {
+        return Ok(());
+    };
+    if rows.is_empty()
+        || rows
+            .iter()
+            .any(|row| row.get("status").and_then(Value::as_str) == Some("pending"))
+    {
+        return Ok(());
+    }
+    let accepted = rows
+        .iter()
+        .any(|row| row.get("status").and_then(Value::as_str) == Some("accepted"));
+    let status = if accepted { "accepted" } else { "discarded" };
+    state
+        .store
+        .set_proposal_status(id, status, claim, false)
+        .await
+        .map_err(store_status)?;
+    Ok(())
 }
 
 fn selected_rows(rows: &[Value], only: &Option<Vec<Uuid>>) -> Vec<Value> {
@@ -3226,8 +3298,26 @@ async fn apply_selected(
     patches: &BTreeMap<Uuid, Value>,
     lock: ProposalLock,
 ) -> Result<Value, Problem> {
-    let outcome = apply_selected_locked(state, identity, proposal_id, rows, job_id, patches).await;
-    lock.release().await.map_err(store_status)?;
+    let claim = lock.token();
+    let outcome =
+        apply_selected_locked(state, identity, proposal_id, rows, job_id, patches, claim).await;
+    let status_result = match outcome.as_ref() {
+        Ok(tally)
+            if tally.failed.is_empty() && !(tally.accepted.is_empty() && tally.rejected == 0) =>
+        {
+            let status = if tally.accepted.is_empty() && tally.rejected > 0 {
+                "discarded"
+            } else {
+                "accepted"
+            };
+            state
+                .store
+                .set_proposal_status(proposal_id, status, claim, false)
+                .await
+        }
+        _ => Ok(()),
+    };
+    let release_result = lock.release().await;
     let tally = outcome?;
     if tally.accepted.is_empty() && tally.failed.is_empty() && tally.rejected == 0 {
         return Err(Problem::new(
@@ -3236,14 +3326,8 @@ async fn apply_selected(
             "this proposal is no longer pending",
         ));
     }
-    if tally.failed.is_empty() {
-        let status = if tally.accepted.is_empty() && tally.rejected > 0 {
-            "discarded"
-        } else {
-            "accepted"
-        };
-        let _ = state.store.set_proposal_status(proposal_id, status).await;
-    }
+    status_result.map_err(store_status)?;
+    release_result.map_err(store_status)?;
     Ok(json!({ "accepted": tally.accepted, "failed": tally.failed }))
 }
 
@@ -3260,6 +3344,7 @@ async fn apply_selected_locked(
     rows: Vec<Value>,
     job_id: Option<Uuid>,
     patches: &BTreeMap<Uuid, Value>,
+    claim: Uuid,
 ) -> Result<AcceptTally, Problem> {
     let total = i32::try_from(rows.len()).unwrap_or(i32::MAX);
     let mut done = 0i32;
@@ -3280,6 +3365,7 @@ async fn apply_selected_locked(
                     row_id,
                     "rejected",
                     ProposalWrite::None,
+                    claim,
                 )
                 .await?
                 .is_some()
@@ -3305,9 +3391,10 @@ async fn apply_selected_locked(
                 object.insert("patch".to_owned(), replacement.clone());
             }
         }
-        match apply_row(state, identity, proposal_id, row_id, &row).await {
+        match apply_row(state, identity, proposal_id, row_id, &row, claim).await {
             Ok(Some(seq)) => accepted.push(json!({ "id": row_id, "seq": seq })),
             Ok(None) => {}
+            Err(problem) if problem.code == "claim_lost" => return Err(problem),
             Err(problem) => {
                 let detail = problem
                     .errors
@@ -3596,22 +3683,25 @@ async fn apply_row(
     proposal_id: Uuid,
     row_id: Uuid,
     row: &Value,
+    claim: Uuid,
 ) -> Result<Option<i64>, Problem> {
     if crate::model_proposal::is_model_row(row) {
-        return crate::model_proposal::apply_row(state, identity, proposal_id, row_id, row).await;
+        return crate::model_proposal::apply_row(state, identity, proposal_id, row_id, row, claim)
+            .await;
     }
     if row
         .get("patch")
         .and_then(|patch| patch.get("link"))
         .is_some()
     {
-        return apply_link_row(state, identity, proposal_id, row_id, row).await;
+        return apply_link_row(state, identity, proposal_id, row_id, row, claim).await;
     }
     if row.get("type_key").and_then(Value::as_str) == Some("assortment") {
-        return apply_assortment_row(state, identity, proposal_id, row_id, row).await;
+        return apply_assortment_row(state, identity, proposal_id, row_id, row, claim).await;
     }
     if let Some((to, kind)) = relation_proposal(row) {
-        return accept_legacy_relation(state, identity, proposal_id, row_id, row, to, &kind).await;
+        return accept_legacy_relation(state, identity, proposal_id, row_id, row, to, &kind, claim)
+            .await;
     }
     let cached = state.models.get(&state.store).await?;
     let patch_body = row.get("patch").cloned().unwrap_or(json!({}));
@@ -3656,6 +3746,7 @@ async fn apply_row(
                 }],
                 expect_version: Some((id, base)),
             },
+            claim,
         )
         .await?
         else {
@@ -3691,6 +3782,7 @@ async fn apply_row(
             ops: vec![op],
             expect_version: None,
         },
+        claim,
     )
     .await?
     else {
@@ -3712,10 +3804,11 @@ async fn finish_row(
     row_id: Uuid,
     status: &str,
     write: ProposalWrite,
+    claim: Uuid,
 ) -> Result<Option<WriteReceipt>, Problem> {
     state
         .store
-        .commit_proposal_row(&identity.actor, proposal_id, row_id, status, write)
+        .commit_proposal_row(&identity.actor, proposal_id, row_id, status, write, claim)
         .await
         .map_err(proposal_write_error)
 }
@@ -3726,6 +3819,7 @@ async fn apply_link_row(
     proposal_id: Uuid,
     row_id: Uuid,
     row: &Value,
+    claim: Uuid,
 ) -> Result<Option<i64>, Problem> {
     let cached = state.models.get(&state.store).await?;
     let link = row
@@ -3762,6 +3856,7 @@ async fn apply_link_row(
                 ops: vec![op],
                 expect_version: Some((id, base as u64)),
             },
+            claim,
         )
         .await?
         else {
@@ -3783,6 +3878,7 @@ async fn apply_link_row(
             ops: vec![op],
             expect_version: None,
         },
+        claim,
     )
     .await?
     else {
@@ -3842,16 +3938,14 @@ async fn discard_proposal(
     if !identity.may_commit() {
         return Err(agent_cannot_discard());
     }
-    state
+    let lock = state.store.claim_proposal(id).await.map_err(store_status)?;
+    let closed = state
         .store
-        .set_proposal_rows(id, &[], "rejected")
-        .await
-        .map_err(store_status)?;
-    state
-        .store
-        .set_proposal_status(id, "discarded")
-        .await
-        .map_err(store_status)?;
+        .set_proposal_status(id, "discarded", lock.token(), true)
+        .await;
+    let released = lock.release().await;
+    closed.map_err(store_status)?;
+    released.map_err(store_status)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -4408,6 +4502,8 @@ fn covers(
     false
 }
 
+// `to` and `kind` are already parsed from the row; the claim still has to be explicit.
+#[expect(clippy::too_many_arguments)]
 async fn accept_legacy_relation(
     state: &AppState,
     identity: &Identity,
@@ -4416,6 +4512,7 @@ async fn accept_legacy_relation(
     row: &Value,
     to: Uuid,
     kind: &str,
+    claim: Uuid,
 ) -> Result<Option<i64>, Problem> {
     let from = row
         .get("object_id")
@@ -4453,6 +4550,7 @@ async fn accept_legacy_relation(
             ops: vec![op],
             expect_version: None,
         },
+        claim,
     )
     .await?;
     Ok(receipt.map(|receipt| receipt.last_seq))
@@ -5548,8 +5646,9 @@ struct BulkBody {
 struct ProposalBody {
     title: String,
     /// Ignored. `source` is taken from the authenticated principal.
-    #[serde(default)]
-    source: Option<String>,
+    /// The field stays so a client can send it and the value is discarded.
+    #[serde(default, rename = "source")]
+    _source: Option<String>,
     #[serde(default)]
     rows: Vec<ProposalRowBody>,
 }
