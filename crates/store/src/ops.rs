@@ -202,6 +202,85 @@ fn unique_violation(error: &tokio_postgres::Error) -> bool {
         .is_some_and(|code| *code == tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
 }
 
+/// Moves rows that still point at an older System principal onto [`crate::SYSTEM_PRINCIPAL`].
+///
+/// Before the stable id existed, some databases created the System integration
+/// with a random id. The stable upsert leaves that row in place, so a database
+/// can hold both. This pass repoints every known foreign key, merges the rows
+/// with a uniqueness rule, and deletes the legacy principal. A second run finds
+/// no legacy rows and does nothing.
+async fn dedupe_legacy_system_principals(tx: &Transaction<'_>) -> Result<(), Error> {
+    let stable = crate::SYSTEM_PRINCIPAL.as_uuid();
+    let legacy_ids = tx
+        .query(
+            "SELECT id FROM principals
+             WHERE id <> $1 AND kind = 'integration' AND name = 'System'",
+            &[&stable],
+        )
+        .await?;
+    for row in &legacy_ids {
+        let legacy: Uuid = row.get(0);
+        for (table, column) in [
+            ("batches", "actor"),
+            ("batches", "on_behalf_of"),
+            ("changes", "actor"),
+            ("changes", "on_behalf_of"),
+            ("objects", "updated_by"),
+            ("api_tokens", "principal_id"),
+            ("job_runs", "actor"),
+            ("job_runs", "on_behalf_of"),
+            ("proposals", "actor"),
+            ("proposals", "on_behalf_of"),
+            ("import_sessions", "owner"),
+            ("import_sessions", "on_behalf_of"),
+        ] {
+            tx.execute(
+                &format!("UPDATE {table} SET {column} = $1 WHERE {column} = $2"),
+                &[&stable, &legacy],
+            )
+            .await?;
+        }
+        tx.execute(
+            "INSERT INTO command_frecency (principal_id, command_id, uses, last_at)
+             SELECT $1, command_id, uses, last_at
+             FROM command_frecency
+             WHERE principal_id = $2
+             ON CONFLICT (principal_id, command_id) DO UPDATE
+             SET uses = command_frecency.uses + EXCLUDED.uses,
+                 last_at = GREATEST(command_frecency.last_at, EXCLUDED.last_at)",
+            &[&stable, &legacy],
+        )
+        .await?;
+        tx.execute(
+            "DELETE FROM command_frecency WHERE principal_id = $1",
+            &[&legacy],
+        )
+        .await?;
+        tx.execute(
+            "UPDATE users SET principal_id = $1
+             WHERE principal_id = $2
+               AND NOT EXISTS (SELECT 1 FROM users WHERE principal_id = $1)",
+            &[&stable, &legacy],
+        )
+        .await?;
+        let still_owned: bool = tx
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM users WHERE principal_id = $1)",
+                &[&legacy],
+            )
+            .await?
+            .get(0);
+        if still_owned {
+            // Both rows already have a user. Keep the legacy row rather than
+            // break a login; the stable row stays on its `system-N` handle.
+            continue;
+        }
+        tx.execute("DELETE FROM principals WHERE id = $1", &[&legacy])
+            .await?;
+    }
+    Ok(())
+}
+
 impl Store {
     /// Inserts a principal with a stable handle, or updates kind and name when the handle exists.
     ///
@@ -234,9 +313,15 @@ impl Store {
     /// has the handle `system` is left untouched. This row then uses the first
     /// free handle in `system`, `system-2`, `system-3`, and so on. A later call
     /// moves it back to `system` when that handle is free again.
+    ///
+    /// A legacy System integration with a random id is merged onto this row in
+    /// the same transaction, so older databases end up with one System row.
     pub async fn ensure_system_principal(&self) -> Result<PrincipalId, Error> {
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
+        upsert_system_principal(&tx).await?;
+        dedupe_legacy_system_principals(&tx).await?;
+        // The legacy row may have held `system`; reclaim that handle now.
         let id = upsert_system_principal(&tx).await?;
         tx.commit().await?;
         Ok(id)
