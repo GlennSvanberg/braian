@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Json } from './api'
 import { copy } from './i18n'
@@ -18,7 +18,15 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [typed, setTyped] = useState('')
+  const opener = useRef<HTMLElement | null>(null)
+  const dismiss = () => {
+    const target = opener.current
+    opener.current = null
+    setId(null)
+    if (target?.isConnected) queueMicrotask(() => target.focus())
+  }
   useEffect(() => onProposal((proposal) => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setError('')
     setTyped('')
     setId(proposal.id)
@@ -32,13 +40,13 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   useEffect(() => {
     if (!id) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setId(null)
-      }
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      dismiss()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [id])
   if (!id) return null
   const body = proposal.data
@@ -53,7 +61,13 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   const detail = (consequence.detail as string[] | undefined) ?? []
   const sentence = String(consequence.sentence ?? '')
   const nameMatches = !destructive || typed === confirmName
-  const close = () => setId(null)
+  const close = dismiss
+  const onDialogKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    event.stopPropagation()
+    dismiss()
+  }
   const discard = () => {
     setBusy(true)
     void api(`/v1/proposals/${id}/discard`, { method: 'POST' })
@@ -86,7 +100,7 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   }
   return (
     <div className="overlay" data-testid="consequence">
-      <div className="dialog consequence" role="dialog" aria-labelledby="consequence-title" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="dialog consequence" role="dialog" aria-labelledby="consequence-title" onMouseDown={(event) => event.stopPropagation()} onKeyDown={onDialogKey}>
         <div className="toolbar">
           <strong id="consequence-title">{String(body?.title ?? copy.dataModel)}</strong>
           {body?.source ? <span className="chip">{String(body.source)}</span> : null}

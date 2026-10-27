@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, type Json } from './api'
 import { formatCount, formatTimestamp } from './format'
@@ -14,13 +14,26 @@ export function ModelDraftHost() {
   const [review, setReview] = useState(false)
   const [dialog, setDialog] = useState<DialogKind | null>(null)
   const [error, setError] = useState('')
+  const opener = useRef<HTMLElement | null>(null)
+  const rememberOpener = () => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  }
+  const closeReview = () => {
+    setReview(false)
+    const target = opener.current
+    opener.current = null
+    if (target?.isConnected) queueMicrotask(() => target.focus())
+  }
   useEffect(() => onDraftChange(() => {
     void queryClient.invalidateQueries({ queryKey: ['model-draft'] })
   }), [queryClient])
   useEffect(() => {
     const open = () => {
       setError('')
-      if (Number(draft.data?.count ?? 0) > 0 && draft.data?.conflict !== true) setReview(true)
+      if (Number(draft.data?.count ?? 0) > 0 && draft.data?.conflict !== true) {
+        rememberOpener()
+        setReview(true)
+      }
     }
     const discard = () => {
       void api('/v1/model/draft', { method: 'DELETE' }).then(() => {
@@ -62,7 +75,7 @@ export function ModelDraftHost() {
               {copy.rebaseDraft}
             </button>
           ) : (
-            <button type="button" data-testid="review-save" onClick={() => setReview(true)}>{copy.reviewAndSave}</button>
+            <button type="button" data-testid="review-save" onClick={() => { rememberOpener(); setReview(true) }}>{copy.reviewAndSave}</button>
           )}
           <button type="button" onClick={() => requestDiscardDraft()}>{copy.discardDraft}</button>
           {error ? <span className="error">{error}</span> : null}
@@ -71,7 +84,7 @@ export function ModelDraftHost() {
       {review && draft.data ? (
         <ReviewDialog
           body={draft.data}
-          onClose={() => setReview(false)}
+          onClose={closeReview}
           onSaved={() => {
             setReview(false)
             refresh()
@@ -95,14 +108,20 @@ function ReviewDialog({ body, onClose, onSaved }: { body: Json; onClose: () => v
   const nameMatches = !destructive || typed === confirmName
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
+  const onDialogKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    event.stopPropagation()
+    onClose()
+  }
   const save = () => {
     setBusy(true)
     void api('/v1/model/draft/save', {
@@ -115,7 +134,7 @@ function ReviewDialog({ body, onClose, onSaved }: { body: Json; onClose: () => v
   }
   return (
     <div className="overlay" data-testid="review-dialog">
-      <div className="dialog consequence" role="dialog" aria-labelledby="review-title" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="dialog consequence" role="dialog" aria-labelledby="review-title" onMouseDown={(event) => event.stopPropagation()} onKeyDown={onDialogKey}>
         <div className="toolbar">
           <strong id="review-title">{copy.reviewAndSave}</strong>
         </div>

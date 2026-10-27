@@ -3181,3 +3181,51 @@ async fn a_person_saves_a_model_draft_and_an_agent_gets_a_proposal() {
         call(&app, "DELETE", "/v1/model/draft", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{cleared}");
 }
+
+#[tokio::test]
+async fn an_agent_dry_run_of_definitions_writes_nothing_and_a_save_is_forbidden() {
+    let (_db, app) = app().await;
+    let (status, _, before) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    let revision = before["model_revision"].clone();
+    let mut posted = before.clone();
+    let label = posted["attributes"][0]["labels"]["sv"]
+        .as_str()
+        .unwrap_or("Artikelnummer");
+    posted["attributes"][0]["labels"]["sv"] = json!(format!("{label} changed"));
+    let payload = posted.to_string();
+
+    let (status, _, dry) = call(
+        &app,
+        "PUT",
+        "/v1/definitions?dry_run=true",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert_eq!(dry["applied"], false, "{dry}");
+
+    let (status, _, after_dry) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after_dry}");
+    assert_eq!(after_dry["model_revision"], revision, "{after_dry}");
+    assert_eq!(after_dry, before, "{after_dry}");
+
+    let (status, _, denied) = call(
+        &app,
+        "PUT",
+        "/v1/definitions",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let (status, _, after_deny) =
+        call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{after_deny}");
+    assert_eq!(after_deny["model_revision"], revision, "{after_deny}");
+    assert_eq!(after_deny, before, "{after_deny}");
+}
