@@ -559,6 +559,18 @@ impl Store {
         Ok(())
     }
 
+    /// Removes a job type and its runs. Used when seed drops a type that is not a real runner.
+    pub async fn delete_job_type(&self, key: &str) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute("DELETE FROM job_runs WHERE type_key = $1", &[&key])
+            .await?;
+        client
+            .execute("DELETE FROM job_types WHERE key = $1", &[&key])
+            .await?;
+        Ok(())
+    }
+
     pub async fn list_job_types(&self) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client

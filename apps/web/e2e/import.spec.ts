@@ -26,7 +26,7 @@ test('mapping lines can change and the preview paints the diff', async ({ page }
   await page.getByRole('button', { name: "Don't import" }).click()
   await expect(page.locator('.import-aria')).not.toContainText('Column Artnr maps to')
   await page.keyboard.press('Control+z')
-  await expect(page.locator('.import-aria')).toContainText('Column Artnr maps to Artikelnummer')
+  await expect(page.locator('.import-aria')).toContainText('Column Artnr maps to Article number')
 
   await openPreview(page, 'diff')
   await expect(page.getByTestId('import-row-new')).toBeVisible()

@@ -166,7 +166,7 @@ pub async fn create_object(
             SuggestionDraft {
                 title: "Create object",
                 object_id: None,
-                object_key: wire_key(&body.values),
+                object_key: wire_key(&cached.model, &body.object_type, &body.values),
                 type_key: Some(body.object_type.clone()),
                 base_version: None,
                 patch: serde_json::json!({ "values": body.values, "groups": body.groups }),
@@ -450,10 +450,52 @@ pub async fn delete_object(
     }))
 }
 
-fn wire_key(values: &BTreeMap<String, Value>) -> Option<String> {
-    ["sku", "nummer"]
-        .into_iter()
-        .find_map(|key| values.get(key).and_then(Value::as_str).map(str::to_owned))
+/// Business key shown on a create suggestion.
+///
+/// The name comes from the type's key attribute. `number`, then the older
+/// `nummer` and `sku` names, are only used when that type is not in the model.
+fn wire_key(
+    model: &braian_rules::CompiledModel,
+    type_key: &str,
+    values: &BTreeMap<String, Value>,
+) -> Option<String> {
+    match model.type_id(type_key) {
+        Some(type_id) => {
+            let attribute_id = model.key_attribute(type_id)?;
+            let name = model.attribute(attribute_id)?.key.as_str();
+            values.get(name).and_then(Value::as_str).map(str::to_owned)
+        }
+        None => ["number", "nummer", "sku"]
+            .into_iter()
+            .find_map(|key| values.get(key).and_then(Value::as_str).map(str::to_owned)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suggestion_key_follows_the_type_key_attribute() {
+        let defs: braian_model::DefinitionSet =
+            serde_json::from_str(include_str!("../../server/demo/definitions.json"))
+                .expect("demo definitions");
+        let model = braian_rules::CompiledModel::compile(&defs).expect("compile");
+        let values = BTreeMap::from([
+            ("number".into(), Value::String("ART-1".into())),
+            ("nummer".into(), Value::String("OLD".into())),
+        ]);
+        assert_eq!(
+            wire_key(&model, "article", &values).as_deref(),
+            Some("ART-1")
+        );
+        let only_old = BTreeMap::from([("nummer".into(), Value::String("OLD".into()))]);
+        assert_eq!(wire_key(&model, "article", &only_old), None);
+        assert_eq!(
+            wire_key(&model, "missing", &only_old).as_deref(),
+            Some("OLD")
+        );
+    }
 }
 
 struct SuggestionDraft {

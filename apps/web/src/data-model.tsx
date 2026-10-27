@@ -77,32 +77,12 @@ async function propose(name: string, args: Json) {
 export function DataModel({ view }: { view: View }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const mode = String(view.state.mode ?? '')
-  if (Array.isArray(view.state.checklist)) return <Checklist defs={defs.data} items={view.state.checklist as string[]} />
   if (defs.isPending) return <div data-testid="data-model"><StateNote tone="loading" title={copy.loadingModel} /></div>
   if (defs.isError) return <div data-testid="data-model"><StateNote tone="error" title={copy.errorModel} detail={copy.validation} /></div>
   if (mode === 'classes') return <AttributeTable defs={defs.data} />
   if (mode === 'card' || mode === 'editor') return <ModelPreview defs={defs.data} />
   if (mode === 'impact') return <ImpactNote />
   return <ModelNav defs={defs.data} />
-}
-
-function Checklist({ defs, items }: { defs: Json | undefined; items: string[] }) {
-  const languages = ((defs?.languages as string[]) ?? []).join(', ')
-  const units = ((defs?.unit_families as Json[]) ?? []).map((item) => String(item.key)).join(', ')
-  const types = ((defs?.types as Json[]) ?? []).map((item) => String(item.key)).join(', ')
-  return (
-    <div data-testid="data-model">
-      <strong>{copy.dataModel}</strong>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-      <p>sv/en/de · {languages}</p>
-      <p>{units}</p>
-      <p>{types}</p>
-    </div>
-  )
 }
 
 function ModelNav({ defs }: { defs: Json | undefined }) {
@@ -159,7 +139,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
   }
   const title = selection.kind === 'type'
     ? objectTypes(defs, uiLanguage).find((item) => item.key === selection.typeKey)?.label ?? selection.typeKey
-    : structureCaption(selection.group)
+    : structureCaption(selection.group, defs, selection.kind === 'group' ? selection.structure : undefined)
   return (
     <div data-testid="data-model" className="model-attributes">
       <div data-testid="attribute-table" className="attr-table">
@@ -188,6 +168,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
             key={row.id}
             row={row}
             families={families}
+            defs={defs}
             locked={row.id === keyAttribute}
             onUpdate={(patch) => run('model.update_attribute', { key: row.key, ...patch })}
             onRemove={() =>
@@ -217,12 +198,14 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
 function AttributeLine({
   row,
   families,
+  defs,
   locked,
   onUpdate,
   onRemove,
 }: {
   row: AttributeRow
   families: string[]
+  defs?: Json
   locked: boolean
   onUpdate: (patch: Json) => void
   onRemove: () => void
@@ -232,7 +215,7 @@ function AttributeLine({
       <div className="attr-row inherited" data-inherited="true">
         <span>
           {row.label}
-          <small>{copy.fromSource} {structureCaption(row.fromKey ?? '')}</small>
+          <small>{copy.fromSource} {structureCaption(row.fromKey ?? '', defs)}</small>
         </span>
         <span>{kindLabel(row.kind)}</span>
         <span>{row.unit || '—'}</span>
@@ -481,7 +464,7 @@ function ModelPreview({ defs }: { defs: Json | undefined }) {
             <small>{kindLabel(field.kind)}</small>
             <small>
               {copy.fromSource}{' '}
-              {field.sources.map((source) => (source.kind === 'type' ? typeName(defs, source.key) : structureCaption(source.group))).join(', ')}
+              {field.sources.map((source) => (source.kind === 'type' ? typeName(defs, source.key) : structureCaption(source.group, defs))).join(', ')}
             </small>
           </article>
         ))}
@@ -541,7 +524,7 @@ function TypeNameFields({
 }
 
 function typeName(defs: Json | undefined, key: string) {
-  return objectTypes(defs, uiLanguage).find((item) => item.key === key)?.label ?? structureCaption(key)
+  return objectTypes(defs, uiLanguage).find((item) => item.key === key)?.label ?? structureCaption(key, defs)
 }
 
 function kindLabel(kind: string) {

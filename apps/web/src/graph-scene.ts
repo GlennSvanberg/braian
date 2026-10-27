@@ -1,4 +1,4 @@
-import { textValue, type Json } from './api'
+import { recordNumber, recordTitle, textValue, type Json } from './api'
 import { optionLabel, typeLabel } from './chips'
 import { copy, uiLanguage } from './i18n'
 
@@ -99,22 +99,11 @@ export type SceneEdge = {
 
 export type Scene = { nodes: SceneNode[]; edges: SceneEdge[] }
 
-export type KnownObject = { name: string; typeKey: string }
+export type KnownObject = { name: string; typeKey: string; key?: string }
 
-const STRUCTURE_NAMES: Record<string, string> = {
-  sortiment: copy.structure,
-  friluft: copy.structureOutdoor,
-  talt: copy.assortmentTents,
-  sovsack: copy.structureSleepingBags,
-  bygg: copy.structureBuilding,
-  virke: copy.assortmentTimber,
-}
-
-/** Display name for a structure or group. Labels on the model win; known demo group keys stay as a fallback. */
+/** Display name for a structure or group. Labels on the model win; otherwise the key. */
 export function structureCaption(key: string, defs?: Json, structureKey?: string) {
-  const fromModel = captionFromDefs(defs, key, structureKey)
-  if (fromModel) return fromModel
-  return STRUCTURE_NAMES[key] ?? key
+  return captionFromDefs(defs, key, structureKey) || key
 }
 
 function captionFromDefs(defs: Json | undefined, key: string, structureKey?: string) {
@@ -334,7 +323,7 @@ function linkSource(
   defs?: Json,
 ) {
   const inherited = Boolean(source.inherited)
-  const structure = String(source.structure ?? 'sortiment')
+  const structure = String(source.structure ?? 'food')
   if (source.class) {
     const classKey = String(source.class)
     const classId = `class:${structure}:${classKey}`
@@ -384,11 +373,11 @@ export function buildScene(input: {
   const objectId = String(input.graph.id ?? '')
   const key = String(input.graph.key ?? '')
   const values = input.values ?? {}
-  const name = textValue(values.namn, uiLanguage)
+  const name = recordTitle(values, uiLanguage)
   const selfId = `object:${objectId}`
   const typeKey = String(input.graph.type ?? '')
   const typeName = (typeKey ? typeLabel(input.defs, typeKey, uiLanguage) || typeKey : '')
-  const number = textValue(values.nummer, uiLanguage) || key
+  const number = recordNumber(values) || key
   const statusCode = textValue(values.status)
   const status = statusCode ? optionLabel(input.defs, 'status', statusCode, uiLanguage) : ''
   putNode(nodes, {
@@ -423,6 +412,13 @@ export function buildScene(input: {
   for (const attribute of attributes) {
     const attrKey = String(attribute.key ?? '')
     if (!attrKey) continue
+    if (attributeKind(input.defs, attrKey) === 'object_ref') {
+      const caption = attributeCaption(input.defs, attribute)
+      for (const otherId of linkedObjectIds(values[attrKey])) {
+        putReferencedObject(nodes, edges, selfId, otherId, caption, input.defs, input.known)
+      }
+      continue
+    }
     const valueId = `value:${objectId}:${attrKey}`
     const caption = attributeCaption(input.defs, attribute)
     const shown = formatValue(input.defs, attribute, values[attrKey])
@@ -582,7 +578,64 @@ export function expandClass(defs: Json | undefined, structure: string, classKey:
 
 export type MemberHit = { id: string; key: string; name: string; type: string; typeKey?: string; rawCaption?: boolean }
 
-export function groupMembers(structure: string, group: string, hits: MemberHit[]): Scene {
+export function objectRefIds(defs: Json | undefined, values: Json | undefined): string[] {
+  if (!values) return []
+  const ids: string[] = []
+  for (const attribute of (defs?.attributes as Json[]) ?? []) {
+    if (attributeKind(defs, String(attribute.key ?? '')) !== 'object_ref') continue
+    ids.push(...linkedObjectIds(values[String(attribute.key ?? '')]))
+  }
+  return ids
+}
+
+function attributeKind(defs: Json | undefined, key: string) {
+  const found = ((defs?.attributes as Json[]) ?? []).find((item) => String(item.key) === key)
+  return String(((found?.kind as Json | undefined)?.type) ?? '')
+}
+
+function linkedObjectIds(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : [value]
+  const ids: string[] = []
+  for (const item of list) {
+    const id = textValue(item)
+    if (/^[0-9a-f-]{36}$/i.test(id)) ids.push(id)
+  }
+  return ids
+}
+
+function putReferencedObject(
+  nodes: Map<string, SceneNode>,
+  edges: Map<string, SceneEdge>,
+  selfId: string,
+  otherId: string,
+  label: string,
+  defs: Json | undefined,
+  known: Record<string, KnownObject> | undefined,
+) {
+  const nodeId = `object:${otherId}`
+  const record = known?.[otherId]
+  const otherKey = record?.typeKey || ''
+  const typeNameForOther = otherKey ? typeLabel(defs, otherKey, uiLanguage) || otherKey : ''
+  const caption = record?.name || typeNameForOther || copy.nodeObject
+  putNode(nodes, {
+    id: nodeId,
+    kind: 'object',
+    caption,
+    subtitle: typeNameForOther || copy.nodeObject,
+    rawCaption: record === undefined,
+    objectId: otherId,
+    typeKey: otherKey || undefined,
+    typeName: typeNameForOther || undefined,
+    properties: [
+      { label: copy.number, value: record?.key || otherId },
+      { label: copy.type, value: typeNameForOther || copy.nodeObject },
+      { label: copy.identity, value: record?.key || otherId },
+    ],
+  })
+  putEdge(edges, link(selfId, label, nodeId))
+}
+
+export function groupMembers(structure: string, group: string, hits: MemberHit[], defs?: Json): Scene {
   const groupId = `group:${structure}:${group}`
   const nodes: SceneNode[] = []
   const edges: SceneEdge[] = []
@@ -602,7 +655,7 @@ export function groupMembers(structure: string, group: string, hits: MemberHit[]
       properties: [
         { label: copy.number, value: hit.key || hit.id },
         { label: copy.type, value: hit.type || copy.nodeObject },
-        { label: copy.nodeGroup, value: structureCaption(group) },
+        { label: copy.nodeGroup, value: structureCaption(group, defs, structure) },
       ],
     })
     edges.push(link(id, copy.placedIn, groupId))

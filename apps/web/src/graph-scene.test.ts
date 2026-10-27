@@ -134,7 +134,8 @@ describe('graph scene', () => {
     expect(resolved?.rawCaption).toBe(false)
     expect(resolved?.properties.some((property) => property.value === 'PROD-TALT')).toBe(true)
     expect(relationLabel('variant_of')).toBe('Variant of')
-    expect(structureCaption('sovsack')).toBe('Sleeping bags')
+    expect(structureCaption('sovsack')).toBe('sovsack')
+    expect(structureCaption('talt', defs)).toBe('Tents')
   })
 
   it('draws an ancestor group attribute as inherited when it has no class', () => {

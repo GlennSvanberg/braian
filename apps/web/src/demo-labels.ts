@@ -15,8 +15,6 @@ const WORKSPACE_BY_SHARE: Record<string, string> = {
 }
 
 const LEGACY_VIEW_TITLES: Record<string, string> = {
-  Översikt: copy.dashboard,
-  'Att göra': copy.toDo,
   Struktur: copy.structure,
   Klass: copy.classTab,
   Konsekvens: copy.impactTab,
@@ -45,11 +43,6 @@ export function viewDisplayTitle(title: string): string {
   return LEGACY_VIEW_TITLES[title] ?? title
 }
 
-const LEGACY_ASSORTMENT_NAMES: Record<string, string> = {
-  Tält: copy.assortmentTents,
-  Virke: copy.assortmentTimber,
-}
-
 const LEGACY_JOB_TYPE_NAMES: Record<string, string> = {
   Statuskontroll: copy.statusCheck,
   Masskrivning: copy.bulkWrite,
@@ -57,7 +50,7 @@ const LEGACY_JOB_TYPE_NAMES: Record<string, string> = {
 }
 
 export function assortmentDisplayName(name: string): string {
-  return LEGACY_ASSORTMENT_NAMES[name] ?? name
+  return name
 }
 
 export function jobTypeDisplayTitle(title: string): string {

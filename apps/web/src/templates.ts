@@ -1,6 +1,7 @@
 import { api, type Json } from './api'
 import { splitPair, tabGroup, type Node } from './layout'
 import type { TypeName } from './type-labels'
+import { typeUsesTree } from './type-workspaces'
 
 export type WorkspaceTemplate = {
   id: string
@@ -11,34 +12,43 @@ export type WorkspaceTemplate = {
 }
 
 const TABLE_STATE = {
-  columns: ['nummer', 'namn', 'type', 'status', 'farg', 'vikt', 'langd'],
-  sort: 'nummer',
+  columns: ['number', 'name', 'type', 'status'],
+  sort: 'number',
 }
 
 export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
+  const tree = typeUsesTree(type.key)
+  const views: WorkspaceTemplate['views'] = [
+    ...(tree ? [{ type: 'structure_tree', title: 'Food', state: { expanded: ['dairy', 'beverages'] } }] : []),
+    { type: 'assortment_list', title: 'Assortments', state: {} },
+    {
+      type: 'object_table',
+      title: type.plural,
+      state: { ...TABLE_STATE, object_type: type.id, type_key: type.key },
+    },
+    { type: 'object_detail', title: 'Detail', state: { language: 'en' } },
+    { type: 'graph', title: 'Graph', state: {} },
+    { type: 'history', title: 'History', state: {} },
+    ...(tree ? [{ type: 'class_attributes', title: 'Classes', state: {} }] : []),
+  ]
   return {
     id: `type:${type.key}`,
     name: type.plural,
-    summary: 'Assortments, structure, list, detail, graph, history and classes',
-    views: [
-      { type: 'structure_tree', title: 'eCom', state: { expanded: ['friluft', 'bygg'] } },
-      { type: 'assortment_list', title: 'Assortments', state: {} },
-      {
-        type: 'object_table',
-        title: type.plural,
-        state: { ...TABLE_STATE, object_type: type.id, type_key: type.key },
-      },
-      { type: 'object_detail', title: 'Detail', state: { language: 'sv' } },
-      { type: 'graph', title: 'Graph', state: {} },
-      { type: 'history', title: 'History', state: {} },
-      { type: 'class_attributes', title: 'Classes', state: {} },
-    ],
+    summary: tree
+      ? 'Assortments, structure, list, detail, graph, history and classes'
+      : 'Assortments, list, detail, graph and history',
+    views,
     layout: (ids) =>
       splitPair(
         'horizontal',
         0.22,
-        tabGroup([ids[0] ?? '', ids[1] ?? ''].filter(Boolean)),
-        splitPair('horizontal', 0.62, tabGroup([ids[2] ?? ''].filter(Boolean)), tabGroup(ids.slice(3))),
+        tabGroup([ids[0] ?? '', ids[1] ?? ''].filter(Boolean).slice(0, tree ? 2 : 1)),
+        splitPair(
+          'horizontal',
+          0.62,
+          tabGroup([ids[tree ? 2 : 1] ?? ''].filter(Boolean)),
+          tabGroup(ids.slice(tree ? 3 : 2)),
+        ),
       ),
   }
 }
@@ -67,16 +77,6 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
       { type: 'job_history', title: 'Jobs', state: {} },
     ],
     layout: (ids) => splitPair('horizontal', 0.62, tabGroup([ids[0]]), tabGroup(ids.slice(1))),
-  },
-  {
-    id: 'overview',
-    name: 'Overview',
-    summary: 'Dashboard and the setup list',
-    views: [
-      { type: 'dashboard', title: 'Overview', state: {} },
-      { type: 'data_model', title: 'To do', state: { checklist: ['languages', 'units', 'types', 'import'] } },
-    ],
-    layout: (ids) => splitPair('horizontal', 0.5, tabGroup([ids[0]]), tabGroup([ids[1]])),
   },
   ]
 }

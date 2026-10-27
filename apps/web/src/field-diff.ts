@@ -275,7 +275,7 @@ function groupLabel(defs: Json | undefined, value: unknown): string {
   if (!id) return ''
   for (const structure of (defs?.structures as Json[] | undefined) ?? []) {
     for (const group of (structure.groups as Json[] | undefined) ?? []) {
-      if (String(group.id) === id) return structureCaption(String(group.key))
+      if (String(group.id) === id) return structureCaption(String(group.key), defs, String(structure.key))
     }
   }
   return id

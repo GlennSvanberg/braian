@@ -1,6 +1,10 @@
 {
   "model_revision": 1,
-  "languages": ["sv", "en", "de"],
+  "languages": [
+    "sv",
+    "en",
+    "de"
+  ],
   "unit_families": [
     {
       "id": "018f0000-0000-7000-8000-000000000010",
@@ -8,9 +12,18 @@
       "dimension": "length",
       "base_unit": "mm",
       "units": [
-        { "code": "mm", "factor": "1" },
-        { "code": "cm", "factor": "10" },
-        { "code": "m", "factor": "1000" }
+        {
+          "code": "mm",
+          "factor": "1"
+        },
+        {
+          "code": "cm",
+          "factor": "10"
+        },
+        {
+          "code": "m",
+          "factor": "1000"
+        }
       ]
     },
     {
@@ -19,8 +32,14 @@
       "dimension": "mass",
       "base_unit": "g",
       "units": [
-        { "code": "g", "factor": "1" },
-        { "code": "kg", "factor": "1000" }
+        {
+          "code": "g",
+          "factor": "1"
+        },
+        {
+          "code": "kg",
+          "factor": "1000"
+        }
       ]
     },
     {
@@ -29,8 +48,50 @@
       "dimension": "co2e",
       "base_unit": "kgCO2e",
       "units": [
-        { "code": "kgCO2e", "factor": "1" },
-        { "code": "gCO2e", "factor": "0.001" }
+        {
+          "code": "kgCO2e",
+          "factor": "1"
+        },
+        {
+          "code": "gCO2e",
+          "factor": "0.001"
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000013",
+      "key": "volume",
+      "dimension": "volume",
+      "base_unit": "ml",
+      "units": [
+        {
+          "code": "ml",
+          "factor": "1"
+        },
+        {
+          "code": "cl",
+          "factor": "10"
+        },
+        {
+          "code": "l",
+          "factor": "1000"
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000014",
+      "key": "energy",
+      "dimension": "energy",
+      "base_unit": "kJ",
+      "units": [
+        {
+          "code": "kJ",
+          "factor": "1"
+        },
+        {
+          "code": "kcal",
+          "factor": "4.184"
+        }
       ]
     }
   ],
@@ -38,309 +99,1908 @@
     {
       "id": "018f0000-0000-7000-8000-000000000020",
       "key": "status",
-      "labels": { "sv": "Status", "en": "Status", "de": "Status" },
+      "labels": {
+        "en": "Status"
+      },
       "options": [
-        { "code": "utkast", "labels": { "sv": "Utkast", "en": "Draft", "de": "Entwurf" } },
-        { "code": "ok", "labels": { "sv": "OK", "en": "OK", "de": "OK" } },
-        { "code": "slut", "labels": { "sv": "Utgången", "en": "Discontinued", "de": "Ausgelaufen" } }
+        {
+          "code": "draft",
+          "labels": {
+            "en": "Draft"
+          }
+        },
+        {
+          "code": "ok",
+          "labels": {
+            "en": "OK"
+          }
+        },
+        {
+          "code": "discontinued",
+          "labels": {
+            "en": "Discontinued"
+          }
+        }
       ]
     },
     {
       "id": "018f0000-0000-7000-8000-000000000021",
-      "key": "farg",
-      "labels": { "sv": "Färg", "en": "Colour", "de": "Farbe" },
+      "key": "allergens",
+      "labels": {
+        "en": "Allergens"
+      },
       "options": [
-        { "code": "svart", "labels": { "sv": "Svart", "en": "Black", "de": "Schwarz" } },
-        { "code": "gra", "labels": { "sv": "Grå", "en": "Grey", "de": "Grau" } },
-        { "code": "gron", "labels": { "sv": "Grön", "en": "Green", "de": "Grün" } },
-        { "code": "bla", "labels": { "sv": "Blå", "en": "Blue", "de": "Blau" } }
+        {
+          "code": "celery",
+          "labels": {
+            "en": "Celery"
+          }
+        },
+        {
+          "code": "gluten",
+          "labels": {
+            "en": "Gluten"
+          }
+        },
+        {
+          "code": "crustaceans",
+          "labels": {
+            "en": "Crustaceans"
+          }
+        },
+        {
+          "code": "eggs",
+          "labels": {
+            "en": "Eggs"
+          }
+        },
+        {
+          "code": "fish",
+          "labels": {
+            "en": "Fish"
+          }
+        },
+        {
+          "code": "lupin",
+          "labels": {
+            "en": "Lupin"
+          }
+        },
+        {
+          "code": "milk",
+          "labels": {
+            "en": "Milk"
+          }
+        },
+        {
+          "code": "molluscs",
+          "labels": {
+            "en": "Molluscs"
+          }
+        },
+        {
+          "code": "mustard",
+          "labels": {
+            "en": "Mustard"
+          }
+        },
+        {
+          "code": "nuts",
+          "labels": {
+            "en": "Nuts"
+          }
+        },
+        {
+          "code": "peanuts",
+          "labels": {
+            "en": "Peanuts"
+          }
+        },
+        {
+          "code": "sesame",
+          "labels": {
+            "en": "Sesame"
+          }
+        },
+        {
+          "code": "soybeans",
+          "labels": {
+            "en": "Soybeans"
+          }
+        },
+        {
+          "code": "sulphites",
+          "labels": {
+            "en": "Sulphur dioxide and sulphites"
+          }
+        }
       ]
     },
     {
       "id": "018f0000-0000-7000-8000-000000000022",
-      "key": "eco_label",
-      "labels": { "sv": "Miljömärkning", "en": "Eco label", "de": "Umweltzeichen" },
+      "key": "traces",
+      "labels": {
+        "en": "Traces"
+      },
       "options": [
-        { "code": "eu_ecolabel", "labels": { "sv": "EU Ecolabel", "en": "EU Ecolabel", "de": "EU Ecolabel" } },
-        { "code": "nordic_swan", "labels": { "sv": "Svanen", "en": "Nordic Swan", "de": "Nordischer Schwan" } },
-        { "code": "fsc", "labels": { "sv": "FSC", "en": "FSC", "de": "FSC" } },
-        { "code": "none", "labels": { "sv": "Ingen", "en": "None", "de": "Keine" } }
+        {
+          "code": "celery",
+          "labels": {
+            "en": "Celery"
+          }
+        },
+        {
+          "code": "gluten",
+          "labels": {
+            "en": "Gluten"
+          }
+        },
+        {
+          "code": "crustaceans",
+          "labels": {
+            "en": "Crustaceans"
+          }
+        },
+        {
+          "code": "eggs",
+          "labels": {
+            "en": "Eggs"
+          }
+        },
+        {
+          "code": "fish",
+          "labels": {
+            "en": "Fish"
+          }
+        },
+        {
+          "code": "lupin",
+          "labels": {
+            "en": "Lupin"
+          }
+        },
+        {
+          "code": "milk",
+          "labels": {
+            "en": "Milk"
+          }
+        },
+        {
+          "code": "molluscs",
+          "labels": {
+            "en": "Molluscs"
+          }
+        },
+        {
+          "code": "mustard",
+          "labels": {
+            "en": "Mustard"
+          }
+        },
+        {
+          "code": "nuts",
+          "labels": {
+            "en": "Nuts"
+          }
+        },
+        {
+          "code": "peanuts",
+          "labels": {
+            "en": "Peanuts"
+          }
+        },
+        {
+          "code": "sesame",
+          "labels": {
+            "en": "Sesame"
+          }
+        },
+        {
+          "code": "soybeans",
+          "labels": {
+            "en": "Soybeans"
+          }
+        },
+        {
+          "code": "sulphites",
+          "labels": {
+            "en": "Sulphur dioxide and sulphites"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000023",
+      "key": "labels",
+      "labels": {
+        "en": "Labels"
+      },
+      "options": [
+        {
+          "code": "organic_eu",
+          "labels": {
+            "en": "Organic (EU)"
+          }
+        },
+        {
+          "code": "krav",
+          "labels": {
+            "en": "KRAV"
+          }
+        },
+        {
+          "code": "fairtrade",
+          "labels": {
+            "en": "Fairtrade"
+          }
+        },
+        {
+          "code": "keyhole",
+          "labels": {
+            "en": "Keyhole"
+          }
+        },
+        {
+          "code": "msc",
+          "labels": {
+            "en": "MSC"
+          }
+        },
+        {
+          "code": "vegan",
+          "labels": {
+            "en": "Vegan"
+          }
+        },
+        {
+          "code": "gluten_free",
+          "labels": {
+            "en": "Gluten free"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000024",
+      "key": "nutriscore",
+      "labels": {
+        "en": "Nutri-Score"
+      },
+      "options": [
+        {
+          "code": "a",
+          "labels": {
+            "en": "A"
+          }
+        },
+        {
+          "code": "b",
+          "labels": {
+            "en": "B"
+          }
+        },
+        {
+          "code": "c",
+          "labels": {
+            "en": "C"
+          }
+        },
+        {
+          "code": "d",
+          "labels": {
+            "en": "D"
+          }
+        },
+        {
+          "code": "e",
+          "labels": {
+            "en": "E"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000025",
+      "key": "nova",
+      "labels": {
+        "en": "NOVA"
+      },
+      "options": [
+        {
+          "code": "1",
+          "labels": {
+            "en": "1"
+          }
+        },
+        {
+          "code": "2",
+          "labels": {
+            "en": "2"
+          }
+        },
+        {
+          "code": "3",
+          "labels": {
+            "en": "3"
+          }
+        },
+        {
+          "code": "4",
+          "labels": {
+            "en": "4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000026",
+      "key": "country",
+      "labels": {
+        "en": "Country"
+      },
+      "options": [
+        {
+          "code": "se",
+          "labels": {
+            "en": "Sweden"
+          }
+        },
+        {
+          "code": "no",
+          "labels": {
+            "en": "Norway"
+          }
+        },
+        {
+          "code": "dk",
+          "labels": {
+            "en": "Denmark"
+          }
+        },
+        {
+          "code": "fi",
+          "labels": {
+            "en": "Finland"
+          }
+        },
+        {
+          "code": "de",
+          "labels": {
+            "en": "Germany"
+          }
+        },
+        {
+          "code": "fr",
+          "labels": {
+            "en": "France"
+          }
+        },
+        {
+          "code": "it",
+          "labels": {
+            "en": "Italy"
+          }
+        },
+        {
+          "code": "es",
+          "labels": {
+            "en": "Spain"
+          }
+        },
+        {
+          "code": "nl",
+          "labels": {
+            "en": "Netherlands"
+          }
+        },
+        {
+          "code": "pl",
+          "labels": {
+            "en": "Poland"
+          }
+        },
+        {
+          "code": "be",
+          "labels": {
+            "en": "Belgium"
+          }
+        },
+        {
+          "code": "at",
+          "labels": {
+            "en": "Austria"
+          }
+        },
+        {
+          "code": "ie",
+          "labels": {
+            "en": "Ireland"
+          }
+        },
+        {
+          "code": "pt",
+          "labels": {
+            "en": "Portugal"
+          }
+        },
+        {
+          "code": "gb",
+          "labels": {
+            "en": "United Kingdom"
+          }
+        },
+        {
+          "code": "ch",
+          "labels": {
+            "en": "Switzerland"
+          }
+        },
+        {
+          "code": "gr",
+          "labels": {
+            "en": "Greece"
+          }
+        },
+        {
+          "code": "us",
+          "labels": {
+            "en": "United States"
+          }
+        },
+        {
+          "code": "br",
+          "labels": {
+            "en": "Brazil"
+          }
+        },
+        {
+          "code": "ke",
+          "labels": {
+            "en": "Kenya"
+          }
+        },
+        {
+          "code": "et",
+          "labels": {
+            "en": "Ethiopia"
+          }
+        },
+        {
+          "code": "co",
+          "labels": {
+            "en": "Colombia"
+          }
+        },
+        {
+          "code": "in",
+          "labels": {
+            "en": "India"
+          }
+        },
+        {
+          "code": "vn",
+          "labels": {
+            "en": "Vietnam"
+          }
+        },
+        {
+          "code": "jp",
+          "labels": {
+            "en": "Japan"
+          }
+        },
+        {
+          "code": "nz",
+          "labels": {
+            "en": "New Zealand"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000027",
+      "key": "packaging",
+      "labels": {
+        "en": "Packaging"
+      },
+      "options": [
+        {
+          "code": "bottle",
+          "labels": {
+            "en": "Bottle"
+          }
+        },
+        {
+          "code": "carton",
+          "labels": {
+            "en": "Carton"
+          }
+        },
+        {
+          "code": "can",
+          "labels": {
+            "en": "Can"
+          }
+        },
+        {
+          "code": "bag",
+          "labels": {
+            "en": "Bag"
+          }
+        },
+        {
+          "code": "jar",
+          "labels": {
+            "en": "Jar"
+          }
+        },
+        {
+          "code": "tray",
+          "labels": {
+            "en": "Tray"
+          }
+        },
+        {
+          "code": "box",
+          "labels": {
+            "en": "Box"
+          }
+        },
+        {
+          "code": "pouch",
+          "labels": {
+            "en": "Pouch"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000028",
+      "key": "packaging_material",
+      "labels": {
+        "en": "Packaging material"
+      },
+      "options": [
+        {
+          "code": "glass",
+          "labels": {
+            "en": "Glass"
+          }
+        },
+        {
+          "code": "pet",
+          "labels": {
+            "en": "PET"
+          }
+        },
+        {
+          "code": "cardboard",
+          "labels": {
+            "en": "Cardboard"
+          }
+        },
+        {
+          "code": "aluminium",
+          "labels": {
+            "en": "Aluminium"
+          }
+        },
+        {
+          "code": "paper",
+          "labels": {
+            "en": "Paper"
+          }
+        },
+        {
+          "code": "plastic",
+          "labels": {
+            "en": "Plastic"
+          }
+        },
+        {
+          "code": "steel",
+          "labels": {
+            "en": "Steel"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000029",
+      "key": "storage",
+      "labels": {
+        "en": "Storage"
+      },
+      "options": [
+        {
+          "code": "ambient",
+          "labels": {
+            "en": "Ambient"
+          }
+        },
+        {
+          "code": "chilled",
+          "labels": {
+            "en": "Chilled"
+          }
+        },
+        {
+          "code": "frozen",
+          "labels": {
+            "en": "Frozen"
+          }
+        }
+      ]
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000002a",
+      "key": "certifications",
+      "labels": {
+        "en": "Certifications"
+      },
+      "options": [
+        {
+          "code": "brc",
+          "labels": {
+            "en": "BRC"
+          }
+        },
+        {
+          "code": "ifs",
+          "labels": {
+            "en": "IFS"
+          }
+        },
+        {
+          "code": "krav",
+          "labels": {
+            "en": "KRAV"
+          }
+        },
+        {
+          "code": "msc",
+          "labels": {
+            "en": "MSC"
+          }
+        },
+        {
+          "code": "fairtrade",
+          "labels": {
+            "en": "Fairtrade"
+          }
+        }
       ]
     }
   ],
   "attributes": [
     {
       "id": "018f0000-0000-7000-8000-000000000100",
-      "key": "nummer",
-      "labels": { "sv": "Nummer", "en": "Number", "de": "Nummer" },
+      "key": "number",
+      "labels": {
+        "en": "Number"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "text", "max_length": 64 },
-      "index": { "searchable": true, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "text",
+        "max_length": 64
+      },
+      "index": {
+        "searchable": true,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000101",
-      "key": "namn",
-      "labels": { "sv": "Namn", "en": "Name", "de": "Name" },
+      "key": "name",
+      "labels": {
+        "en": "Name"
+      },
       "language_dependent": true,
       "multiple": false,
-      "kind": { "type": "text", "max_length": 160 },
-      "index": { "searchable": true, "filterable": false, "sortable": true }
+      "kind": {
+        "type": "text",
+        "max_length": 160
+      },
+      "index": {
+        "searchable": true,
+        "filterable": false,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000102",
-      "key": "beskrivning",
-      "labels": { "sv": "Beskrivning", "en": "Description", "de": "Beschreibung" },
+      "key": "description",
+      "labels": {
+        "en": "Description"
+      },
       "language_dependent": true,
       "multiple": false,
-      "kind": { "type": "text", "form": "long", "max_length": 4000 },
-      "index": { "searchable": true, "filterable": false, "sortable": false }
+      "kind": {
+        "type": "text",
+        "max_length": 4000,
+        "form": "long"
+      },
+      "index": {
+        "searchable": true,
+        "filterable": false,
+        "sortable": false
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000103",
       "key": "status",
-      "labels": { "sv": "Status", "en": "Status", "de": "Status" },
+      "labels": {
+        "en": "Status"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "value_list", "list": "status" },
-      "index": { "searchable": false, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "value_list",
+        "list": "status"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000104",
-      "key": "farg",
-      "labels": { "sv": "Färg", "en": "Colour", "de": "Farbe" },
+      "key": "active",
+      "labels": {
+        "en": "Active"
+      },
       "language_dependent": false,
-      "multiple": true,
-      "kind": { "type": "value_list", "list": "farg" },
-      "index": { "searchable": true, "filterable": true, "sortable": false }
+      "multiple": false,
+      "kind": {
+        "type": "boolean"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000105",
-      "key": "vikt",
-      "labels": { "sv": "Vikt", "en": "Weight", "de": "Gewicht" },
+      "key": "image",
+      "labels": {
+        "en": "Image"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000011", "min": "0", "max": "50000" },
-      "index": { "searchable": false, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "file_ref",
+        "media": true
+      },
+      "index": {
+        "searchable": false,
+        "filterable": false,
+        "sortable": false
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000106",
-      "key": "langd",
-      "labels": { "sv": "Längd", "en": "Length", "de": "Länge" },
+      "key": "launched",
+      "labels": {
+        "en": "Launched"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000010", "min": "0", "max": "20000" },
-      "index": { "searchable": false, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "date"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000107",
-      "key": "spann",
-      "labels": { "sv": "Spännvidd", "en": "Span", "de": "Spannweite" },
+      "key": "replaces",
+      "labels": {
+        "en": "Replaces"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "range", "unit_family": "018f0000-0000-7000-8000-000000000010" },
-      "index": { "searchable": false, "filterable": true, "sortable": false }
+      "kind": {
+        "type": "object_ref",
+        "type_key": "article"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000108",
-      "key": "aktiv",
-      "labels": { "sv": "Aktiv", "en": "Active", "de": "Aktiv" },
+      "key": "co2_footprint",
+      "labels": {
+        "en": "CO2 footprint"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "boolean" },
-      "index": { "searchable": false, "filterable": true, "sortable": false }
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000012",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000109",
-      "key": "lanserad",
-      "labels": { "sv": "Lanserad", "en": "Launched", "de": "Lanciert" },
+      "key": "brand",
+      "labels": {
+        "en": "Brand"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "date" },
-      "index": { "searchable": false, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "text",
+        "max_length": 80
+      },
+      "index": {
+        "searchable": true,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-00000000010a",
-      "key": "bild",
-      "labels": { "sv": "Bild", "en": "Image", "de": "Bild" },
-      "language_dependent": false,
+      "key": "ingredients",
+      "labels": {
+        "en": "Ingredients"
+      },
+      "language_dependent": true,
       "multiple": false,
-      "kind": { "type": "file_ref", "media": true },
-      "index": { "searchable": false, "filterable": false, "sortable": false }
+      "kind": {
+        "type": "text",
+        "max_length": 4000,
+        "form": "long"
+      },
+      "index": {
+        "searchable": true,
+        "filterable": false,
+        "sortable": false
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-00000000010b",
-      "key": "ersatter",
-      "labels": { "sv": "Ersätter", "en": "Replaces", "de": "Ersetzt" },
+      "key": "allergens",
+      "labels": {
+        "en": "Allergens"
+      },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": {
+        "type": "value_list",
+        "list": "allergens"
+      },
+      "index": {
+        "searchable": true,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010c",
+      "key": "traces",
+      "labels": {
+        "en": "Traces"
+      },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": {
+        "type": "value_list",
+        "list": "traces"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010d",
+      "key": "labels",
+      "labels": {
+        "en": "Labels"
+      },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": {
+        "type": "value_list",
+        "list": "labels"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010e",
+      "key": "nutriscore",
+      "labels": {
+        "en": "Nutri-Score"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "object_ref", "type_key": "artikel" },
-      "index": { "searchable": false, "filterable": true, "sortable": false }
+      "kind": {
+        "type": "value_list",
+        "list": "nutriscore"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000010f",
+      "key": "nova",
+      "labels": {
+        "en": "NOVA"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "value_list",
+        "list": "nova"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000110",
-      "key": "co2_footprint",
-      "labels": { "sv": "CO2-avtryck", "en": "CO2 footprint", "de": "CO2-Fußabdruck" },
+      "key": "country_of_origin",
+      "labels": {
+        "en": "Country of origin"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000012", "min": "0" },
-      "index": { "searchable": false, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "value_list",
+        "list": "country"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000111",
-      "key": "recyclable",
-      "labels": { "sv": "Återvinningsbar", "en": "Recyclable", "de": "Recycelbar" },
+      "key": "energy",
+      "labels": {
+        "en": "Energy"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "boolean" },
-      "index": { "searchable": false, "filterable": true, "sortable": false }
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000014",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000112",
-      "key": "material_origin",
-      "labels": { "sv": "Materialursprung", "en": "Material origin", "de": "Materialherkunft" },
+      "key": "fat",
+      "labels": {
+        "en": "Fat"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "text", "max_length": 80 },
-      "index": { "searchable": true, "filterable": false, "sortable": false }
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     },
     {
       "id": "018f0000-0000-7000-8000-000000000113",
-      "key": "eco_label",
-      "labels": { "sv": "Miljömärkning", "en": "Eco label", "de": "Umweltzeichen" },
+      "key": "saturated_fat",
+      "labels": {
+        "en": "Saturated fat"
+      },
       "language_dependent": false,
       "multiple": false,
-      "kind": { "type": "value_list", "list": "eco_label" },
-      "index": { "searchable": false, "filterable": true, "sortable": true }
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000114",
+      "key": "carbohydrates",
+      "labels": {
+        "en": "Carbohydrates"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000115",
+      "key": "sugars",
+      "labels": {
+        "en": "Sugars"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000116",
+      "key": "fiber",
+      "labels": {
+        "en": "Fiber"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000117",
+      "key": "protein",
+      "labels": {
+        "en": "Protein"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000118",
+      "key": "salt",
+      "labels": {
+        "en": "Salt"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000119",
+      "key": "gtin",
+      "labels": {
+        "en": "GTIN"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "text",
+        "max_length": 14
+      },
+      "index": {
+        "searchable": true,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011a",
+      "key": "product",
+      "labels": {
+        "en": "Product"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "object_ref",
+        "type_key": "product"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      },
+      "required": true
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011b",
+      "key": "supplier",
+      "labels": {
+        "en": "Supplier"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "object_ref",
+        "type_key": "supplier"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      },
+      "required": true
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011c",
+      "key": "net_weight",
+      "labels": {
+        "en": "Net weight"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011d",
+      "key": "net_volume",
+      "labels": {
+        "en": "Net volume"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000013",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011e",
+      "key": "units_per_pack",
+      "labels": {
+        "en": "Units per pack"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "min": "1",
+        "integer": true
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011f",
+      "key": "packaging",
+      "labels": {
+        "en": "Packaging"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "value_list",
+        "list": "packaging"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000120",
+      "key": "packaging_material",
+      "labels": {
+        "en": "Packaging material"
+      },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": {
+        "type": "value_list",
+        "list": "packaging_material"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000121",
+      "key": "deposit",
+      "labels": {
+        "en": "Deposit"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "boolean"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000122",
+      "key": "storage",
+      "labels": {
+        "en": "Storage"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "value_list",
+        "list": "storage"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000123",
+      "key": "shelf_life_days",
+      "labels": {
+        "en": "Shelf life (days)"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "min": "0",
+        "integer": true
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000124",
+      "key": "height",
+      "labels": {
+        "en": "Height"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000010",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000125",
+      "key": "width",
+      "labels": {
+        "en": "Width"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000010",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000126",
+      "key": "depth",
+      "labels": {
+        "en": "Depth"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000010",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000127",
+      "key": "gross_weight",
+      "labels": {
+        "en": "Gross weight"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "unit_family": "018f0000-0000-7000-8000-000000000011",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000128",
+      "key": "company_name",
+      "labels": {
+        "en": "Company name"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "text",
+        "max_length": 160
+      },
+      "index": {
+        "searchable": true,
+        "filterable": false,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000129",
+      "key": "org_number",
+      "labels": {
+        "en": "Organisation number"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "text",
+        "max_length": 32
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000012a",
+      "key": "gln",
+      "labels": {
+        "en": "GLN"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "text",
+        "max_length": 13
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000012b",
+      "key": "country",
+      "labels": {
+        "en": "Country"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "value_list",
+        "list": "country"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000012c",
+      "key": "city",
+      "labels": {
+        "en": "City"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "text",
+        "max_length": 80
+      },
+      "index": {
+        "searchable": true,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000012d",
+      "key": "website",
+      "labels": {
+        "en": "Website"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "text",
+        "max_length": 200
+      },
+      "index": {
+        "searchable": false,
+        "filterable": false,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000012e",
+      "key": "certifications",
+      "labels": {
+        "en": "Certifications"
+      },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": {
+        "type": "value_list",
+        "list": "certifications"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": false
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000012f",
+      "key": "lead_time_days",
+      "labels": {
+        "en": "Lead time (days)"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "min": "0",
+        "integer": true
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000130",
+      "key": "fat_content",
+      "labels": {
+        "en": "Fat content"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000131",
+      "key": "cocoa_content",
+      "labels": {
+        "en": "Cocoa content"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "min": "0",
+        "max": "100"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000132",
+      "key": "caffeine",
+      "labels": {
+        "en": "Caffeine"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "min": "0"
+      },
+      "index": {
+        "searchable": false,
+        "filterable": true,
+        "sortable": true
+      }
     }
   ],
   "types": [
     {
       "id": "018f0000-0000-7000-8000-000000000200",
-      "key": "produkt",
-      "labels": { "sv": "Produkt", "en": "Product", "de": "Produkt" },
-      "singular": { "sv": "Produkt", "en": "Product", "de": "Produkt" },
-      "plural": { "sv": "Produkter", "en": "Products", "de": "Produkte" },
+      "key": "product",
+      "labels": {
+        "en": "Product"
+      },
+      "singular": {
+        "en": "Product"
+      },
+      "plural": {
+        "en": "Products"
+      },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
         "018f0000-0000-7000-8000-000000000100",
         "018f0000-0000-7000-8000-000000000101",
         "018f0000-0000-7000-8000-000000000102",
-        "018f0000-0000-7000-8000-000000000103",
-        "018f0000-0000-7000-8000-000000000108"
+        "018f0000-0000-7000-8000-000000000109",
+        "018f0000-0000-7000-8000-00000000010a",
+        "018f0000-0000-7000-8000-00000000010b",
+        "018f0000-0000-7000-8000-00000000010c",
+        "018f0000-0000-7000-8000-00000000010d",
+        "018f0000-0000-7000-8000-00000000010e",
+        "018f0000-0000-7000-8000-00000000010f",
+        "018f0000-0000-7000-8000-000000000110",
+        "018f0000-0000-7000-8000-000000000111",
+        "018f0000-0000-7000-8000-000000000112",
+        "018f0000-0000-7000-8000-000000000113",
+        "018f0000-0000-7000-8000-000000000114",
+        "018f0000-0000-7000-8000-000000000115",
+        "018f0000-0000-7000-8000-000000000116",
+        "018f0000-0000-7000-8000-000000000117",
+        "018f0000-0000-7000-8000-000000000118",
+        "018f0000-0000-7000-8000-000000000103"
       ]
     },
     {
       "id": "018f0000-0000-7000-8000-000000000201",
-      "key": "artikel",
-      "labels": { "sv": "Artikel", "en": "Article", "de": "Artikel" },
-      "singular": { "sv": "Artikel", "en": "Article", "de": "Artikel" },
-      "plural": { "sv": "Artiklar", "en": "Articles", "de": "Artikel" },
+      "key": "article",
+      "labels": {
+        "en": "Article"
+      },
+      "singular": {
+        "en": "Article"
+      },
+      "plural": {
+        "en": "Articles"
+      },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
         "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000119",
         "018f0000-0000-7000-8000-000000000101",
-        "018f0000-0000-7000-8000-000000000102",
-        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-00000000010d",
+        "018f0000-0000-7000-8000-00000000011a",
+        "018f0000-0000-7000-8000-00000000011b",
+        "018f0000-0000-7000-8000-00000000011c",
+        "018f0000-0000-7000-8000-00000000011d",
+        "018f0000-0000-7000-8000-00000000011e",
+        "018f0000-0000-7000-8000-00000000011f",
+        "018f0000-0000-7000-8000-000000000120",
+        "018f0000-0000-7000-8000-000000000121",
+        "018f0000-0000-7000-8000-000000000122",
+        "018f0000-0000-7000-8000-000000000123",
+        "018f0000-0000-7000-8000-000000000124",
+        "018f0000-0000-7000-8000-000000000125",
+        "018f0000-0000-7000-8000-000000000126",
+        "018f0000-0000-7000-8000-000000000127",
+        "018f0000-0000-7000-8000-000000000105",
+        "018f0000-0000-7000-8000-000000000106",
         "018f0000-0000-7000-8000-000000000104",
-        "018f0000-0000-7000-8000-000000000108",
-        "018f0000-0000-7000-8000-000000000109",
-        "018f0000-0000-7000-8000-00000000010a",
-        "018f0000-0000-7000-8000-00000000010b"
+        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-000000000107",
+        "018f0000-0000-7000-8000-000000000108"
       ]
     },
     {
       "id": "018f0000-0000-7000-8000-000000000202",
-      "key": "variant",
-      "labels": { "sv": "Variant", "en": "Variant", "de": "Variante" },
-      "singular": { "sv": "Variant", "en": "Variant", "de": "Variante" },
-      "plural": { "sv": "Varianter", "en": "Variants", "de": "Varianten" },
+      "key": "supplier",
+      "labels": {
+        "en": "Supplier"
+      },
+      "singular": {
+        "en": "Supplier"
+      },
+      "plural": {
+        "en": "Suppliers"
+      },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
         "018f0000-0000-7000-8000-000000000100",
-        "018f0000-0000-7000-8000-000000000101",
-        "018f0000-0000-7000-8000-000000000103",
+        "018f0000-0000-7000-8000-000000000128",
+        "018f0000-0000-7000-8000-000000000129",
+        "018f0000-0000-7000-8000-00000000012a",
+        "018f0000-0000-7000-8000-00000000012b",
+        "018f0000-0000-7000-8000-00000000012c",
+        "018f0000-0000-7000-8000-00000000012d",
+        "018f0000-0000-7000-8000-00000000012e",
+        "018f0000-0000-7000-8000-00000000012f",
         "018f0000-0000-7000-8000-000000000104",
-        "018f0000-0000-7000-8000-000000000108"
+        "018f0000-0000-7000-8000-000000000103"
       ]
     }
   ],
   "structures": [
     {
       "id": "018f0000-0000-7000-8000-000000000300",
-      "key": "sortiment",
-      "labels": { "sv": "eCom", "en": "eCom", "de": "eCom" },
+      "key": "food",
+      "labels": {
+        "en": "Food"
+      },
       "groups": [
-        { "id": "018f0000-0000-7000-8000-000000000310", "key": "friluft", "labels": { "sv": "Friluft", "en": "Outdoor", "de": "Outdoor" } },
-        { "id": "018f0000-0000-7000-8000-000000000311", "key": "talt", "parent": "018f0000-0000-7000-8000-000000000310", "labels": { "sv": "Tält", "en": "Tents", "de": "Zelte" } },
-        { "id": "018f0000-0000-7000-8000-000000000312", "key": "sovsack", "parent": "018f0000-0000-7000-8000-000000000310", "labels": { "sv": "Sovsäck", "en": "Sleeping bags", "de": "Schlafsäcke" } },
-        { "id": "018f0000-0000-7000-8000-000000000313", "key": "bygg", "labels": { "sv": "Bygg", "en": "Building", "de": "Bau" } },
-        { "id": "018f0000-0000-7000-8000-000000000314", "key": "virke", "parent": "018f0000-0000-7000-8000-000000000313", "labels": { "sv": "Virke", "en": "Timber", "de": "Holz" } }
-      ],
-      "classes": [
+        {
+          "id": "018f0000-0000-7000-8000-000000000310",
+          "key": "dairy",
+          "labels": {
+            "en": "Dairy & eggs"
+          },
+          "attributes": [
+            "018f0000-0000-7000-8000-000000000130"
+          ]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000311",
+          "key": "milk",
+          "labels": {
+            "en": "Milk"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000310"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000312",
+          "key": "cheese",
+          "labels": {
+            "en": "Cheese"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000310"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000313",
+          "key": "yoghurt",
+          "labels": {
+            "en": "Yoghurt"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000310"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000314",
+          "key": "beverages",
+          "labels": {
+            "en": "Beverages"
+          }
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000315",
+          "key": "juice",
+          "labels": {
+            "en": "Juice"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000314"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000316",
+          "key": "soft_drinks",
+          "labels": {
+            "en": "Soft drinks"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000314"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000317",
+          "key": "coffee_tea",
+          "labels": {
+            "en": "Coffee & tea"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000314",
+          "attributes": [
+            "018f0000-0000-7000-8000-000000000132"
+          ]
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000318",
+          "key": "plant_drinks",
+          "labels": {
+            "en": "Plant drinks"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000314"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-000000000319",
+          "key": "pantry",
+          "labels": {
+            "en": "Pantry"
+          }
+        },
+        {
+          "id": "018f0000-0000-7000-8000-00000000031a",
+          "key": "pasta_rice",
+          "labels": {
+            "en": "Pasta & rice"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000319"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-00000000031b",
+          "key": "cereals",
+          "labels": {
+            "en": "Cereals"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000319"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-00000000031c",
+          "key": "canned",
+          "labels": {
+            "en": "Canned"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000319"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-00000000031d",
+          "key": "spices",
+          "labels": {
+            "en": "Spices"
+          },
+          "parent": "018f0000-0000-7000-8000-000000000319"
+        },
+        {
+          "id": "018f0000-0000-7000-8000-00000000031e",
+          "key": "bread",
+          "labels": {
+            "en": "Bread"
+          }
+        },
+        {
+          "id": "018f0000-0000-7000-8000-00000000031f",
+          "key": "snacks",
+          "labels": {
+            "en": "Snacks & sweets"
+          }
+        },
         {
           "id": "018f0000-0000-7000-8000-000000000320",
-          "key": "friluft",
-          "group": "018f0000-0000-7000-8000-000000000310",
-          "attributes": ["018f0000-0000-7000-8000-000000000105"]
+          "key": "chips",
+          "labels": {
+            "en": "Chips"
+          },
+          "parent": "018f0000-0000-7000-8000-00000000031f"
         },
         {
           "id": "018f0000-0000-7000-8000-000000000321",
-          "key": "talt",
-          "group": "018f0000-0000-7000-8000-000000000311",
-          "parent": "018f0000-0000-7000-8000-000000000320",
+          "key": "chocolate",
+          "labels": {
+            "en": "Chocolate"
+          },
+          "parent": "018f0000-0000-7000-8000-00000000031f",
           "attributes": [
-            "018f0000-0000-7000-8000-000000000106",
-            "018f0000-0000-7000-8000-000000000107"
+            "018f0000-0000-7000-8000-000000000131"
           ]
         },
         {
           "id": "018f0000-0000-7000-8000-000000000322",
-          "key": "sovsack",
-          "group": "018f0000-0000-7000-8000-000000000312",
-          "parent": "018f0000-0000-7000-8000-000000000320",
-          "attributes": []
-        },
-        {
-          "id": "018f0000-0000-7000-8000-000000000324",
-          "key": "bygg",
-          "group": "018f0000-0000-7000-8000-000000000313",
-          "attributes": ["018f0000-0000-7000-8000-000000000106"]
+          "key": "fruit_vegetables",
+          "labels": {
+            "en": "Fruit & vegetables"
+          }
         },
         {
           "id": "018f0000-0000-7000-8000-000000000323",
-          "key": "virke",
-          "group": "018f0000-0000-7000-8000-000000000314",
-          "parent": "018f0000-0000-7000-8000-000000000324",
-          "attributes": ["018f0000-0000-7000-8000-000000000105"]
-        }
-      ]
-    },
-    {
-      "id": "018f0000-0000-7000-8000-000000000330",
-      "key": "environment",
-      "labels": { "sv": "Miljö", "en": "Environment", "de": "Umwelt" },
-      "groups": [
-        {
-          "id": "018f0000-0000-7000-8000-000000000331",
-          "key": "climate",
-          "labels": { "sv": "Klimat", "en": "Climate", "de": "Klima" },
-          "attributes": ["018f0000-0000-7000-8000-000000000110"]
+          "key": "meat_fish",
+          "labels": {
+            "en": "Meat, fish & vegetarian"
+          }
         },
         {
-          "id": "018f0000-0000-7000-8000-000000000332",
-          "key": "materials",
-          "labels": { "sv": "Material", "en": "Materials", "de": "Materialien" },
-          "attributes": [
-            "018f0000-0000-7000-8000-000000000111",
-            "018f0000-0000-7000-8000-000000000112"
-          ]
-        },
-        {
-          "id": "018f0000-0000-7000-8000-000000000333",
-          "key": "certifications",
-          "labels": { "sv": "Certifieringar", "en": "Certifications", "de": "Zertifizierungen" },
-          "attributes": ["018f0000-0000-7000-8000-000000000113"]
+          "id": "018f0000-0000-7000-8000-000000000324",
+          "key": "frozen",
+          "labels": {
+            "en": "Frozen"
+          }
         }
       ],
       "classes": []

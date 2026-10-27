@@ -38,6 +38,26 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export type Json = Record<string, unknown>
 
+/** Indexed display name. English `name`, then company name, then the older `namn` field. */
+export function catalogName(doc: Json | undefined): string {
+  if (!doc) return ''
+  for (const key of ['a_name__en', 'a_name__sv', 'a_name', 'a_company_name', 'a_namn__en', 'a_namn__sv', 'a_namn']) {
+    const text = textValue(doc[key])
+    if (text) return text
+  }
+  return ''
+}
+
+export function recordTitle(values: Json | undefined, language = 'en'): string {
+  if (!values) return ''
+  return textValue(values.name, language) || textValue(values.company_name, language) || textValue(values.namn, language)
+}
+
+export function recordNumber(values: Json | undefined): string {
+  if (!values) return ''
+  return textValue(values.number) || textValue(values.nummer)
+}
+
 export function textValue(value: unknown, language = 'sv'): string {
   if (value == null) return ''
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {

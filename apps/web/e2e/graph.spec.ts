@@ -30,35 +30,42 @@ function articlesPane(page: Page) {
   return page.locator('section.pane', { has: page.locator('.pane-tab', { hasText: 'Articles' }) })
 }
 
-async function openTent(page: Page) {
+async function openCheddar(page: Page) {
   await openArticles(page)
   const articles = articlesPane(page)
-  await articles.getByTestId('quick-filter').fill('ART-TALT-2')
-  const row = articles.getByTestId('object-row').filter({ hasText: 'ART-TALT-2' }).first()
+  await articles.getByTestId('quick-filter').fill('ART-CHED-200')
+  const row = articles.getByTestId('object-row').filter({ hasText: 'ART-CHED-200' }).first()
   await expect(row).toBeVisible()
+  const objectId = (await row.getAttribute('id'))?.replace(/^object-row-/, '') ?? ''
+  expect(objectId, 'article row id').not.toBe('')
+  const stored = await page.request.get(`/v1/objects/${objectId}`)
+  expect(stored.ok()).toBeTruthy()
+  const body = (await stored.json()) as { values?: { storage?: string; name?: { en?: string } } }
+  expect(body.values?.storage, JSON.stringify(body.values)).toBe('chilled')
+  expect(body.values?.name?.en).toBe('Mature cheddar 200 g')
   await row.click()
   await page.locator('.pane-tab', { hasText: 'Graph' }).first().click()
   await expect(page.locator('canvas[data-testid=graph]')).toBeVisible()
   await expect(page.locator('canvas[data-testid=graph]')).toHaveAttribute('data-settled', 'true')
-  await expect(page.getByTestId('graph-inspector')).toContainText('2-person tent')
+  await expect(page.getByTestId('graph-inspector')).toContainText('Mature cheddar 200 g')
+  return objectId
 }
 
 test('force-directed graph', async ({ page }) => {
   test.setTimeout(120_000)
   await login(page)
-  await openTent(page)
+  const objectId = await openCheddar(page)
 
-  for (const kind of ['type-artikel', 'class', 'group', 'value', 'structure']) {
+  for (const kind of ['type-article', 'group', 'value', 'structure']) {
     await expect(page.getByTestId(`legend-${kind}`)).toBeVisible()
     await expect(page.getByTestId(`legend-${kind}`)).toHaveAttribute('aria-pressed', 'true')
   }
+  await expect(page.getByTestId('legend-class')).toHaveCount(0)
   const provenance = page.getByTestId('attribute-provenance')
   await expect(provenance).toContainText('Number')
-  await expect(provenance).toContainText('Description')
-  await expect(provenance).toContainText('Colour')
+  await expect(provenance).toContainText('Storage')
+  await expect(provenance).not.toContainText('Colour')
   await expect(provenance).not.toContainText('Nummer')
-  await expect(provenance).not.toContainText('Beschreibung')
-  await expect(provenance).not.toContainText('Farbe')
   await expect(provenance).not.toContainText('namn')
   await expect(provenance).not.toContainText('friluft')
 
@@ -72,15 +79,15 @@ test('force-directed graph', async ({ page }) => {
   }
 
   const nodes = page.getByTestId('graph-nodes')
-  const colour = nodes.getByRole('button', { name: 'Colour', exact: true })
-  await expect(colour).toHaveAttribute('data-x', /-?\d+/)
-  await colour.dispatchEvent('click')
-  await expect(page.getByTestId('graph-inspector')).toContainText('Colour')
-  await expect(page.getByTestId('graph-inspector')).toContainText('Green')
+  const storage = nodes.locator(`[data-node-id="value:${objectId}:storage"]`)
+  await expect(storage).toHaveAttribute('data-x', /-?\d+/)
+  await storage.dispatchEvent('click')
+  await expect(page.getByTestId('graph-inspector')).toContainText('Storage')
+  await expect(page.getByTestId('graph-inspector')).toContainText('Chilled')
   if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/selected.png` })
 
-  const x = Number(await colour.getAttribute('data-x'))
-  const y = Number(await colour.getAttribute('data-y'))
+  const x = Number(await storage.getAttribute('data-x'))
+  const y = Number(await storage.getAttribute('data-y'))
   await page.mouse.move(x, y)
   await page.mouse.down()
   await page.mouse.move(x + 70, y + 28, { steps: 10 })
@@ -91,25 +98,24 @@ test('force-directed graph', async ({ page }) => {
 
   await page.getByTestId('legend-value').click()
   await expect(page.getByTestId('legend-value')).toHaveAttribute('aria-pressed', 'false')
-  await expect(nodes.getByRole('button', { name: 'Colour', exact: true })).toHaveCount(0)
+  await expect(nodes.getByRole('button', { name: 'Storage', exact: true })).toHaveCount(0)
   await page.getByTestId('legend-value').click()
-  await expect(page.getByTestId('graph-inspector')).toContainText('Colour')
+  await expect(page.getByTestId('graph-inspector')).toContainText('Storage')
 
   const before = await nodes.locator('button').count()
-  const product = nodes.getByRole('button', { name: 'Fjäll tents' })
+  const product = nodes.getByRole('button', { name: 'Mature cheddar', exact: true })
   await expect(product).toHaveCount(1)
   await product.dispatchEvent('dblclick')
   await expect.poll(async () => nodes.locator('button').count()).toBeGreaterThan(before)
-  await expect(nodes.getByRole('button', { name: 'Tent 2 green' })).toHaveCount(1)
-  await expect(nodes.getByRole('button', { name: 'VAR-TALT-2-GRON' })).toHaveCount(0)
-  await expect(nodes.getByRole('button', { name: 'ART-TALT-3' })).toHaveCount(0)
+  await expect(nodes.getByRole('button', { name: 'Ingredients', exact: true })).toHaveCount(1)
+  await expect(nodes.getByRole('button', { name: 'Nutri-Score', exact: true })).toHaveCount(1)
   await expect(page.locator('canvas[data-testid=graph]')).toHaveAttribute('data-settled', 'true', { timeout: 15_000 })
   if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/expanded.png` })
 
-  const variant = nodes.getByRole('button', { name: 'Tent 2 green' })
-  await variant.dispatchEvent('click')
-  await expect(page.getByTestId('graph-inspector')).toContainText('Tent 2 green')
-  await expect(page.getByTestId('graph-inspector')).toContainText('VAR-TALT-2-GRON')
+  const recipe = nodes.getByRole('button', { name: 'Mature cheddar', exact: true })
+  await recipe.dispatchEvent('click')
+  await expect(page.getByTestId('graph-inspector')).toContainText('Mature cheddar')
+  await expect(page.getByTestId('graph-inspector')).toContainText('PROD-CHEDDAR')
   if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/selected.png` })
 
   await page.getByTestId('graph-fit').click()

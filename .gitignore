@@ -15,6 +15,7 @@ dist/
 Thumbs.db
 
 data/
+backups/
 
 # Playwright
 apps/web/test-results/

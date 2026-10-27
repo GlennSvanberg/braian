@@ -12,7 +12,7 @@ import {
 } from 'd3-force'
 import { ChevronDown, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
-import { api, textValue, type Json } from './api'
+import { api, catalogName, textValue, type Json } from './api'
 import { MetaChip, typeLabel } from './chips'
 import {
   buildScene,
@@ -20,6 +20,7 @@ import {
   expandStructure,
   expandClass,
   groupMembers,
+  objectRefIds,
   isLegendHidden,
   kindLabel,
   labelPriority,
@@ -207,7 +208,8 @@ export function GraphMap({
           api<Json>(`/v1/objects/${node.objectId}`),
         ])
         const relationIds = ((graph.relations as Json[]) ?? []).map((relation) => String(relation.object_id ?? '')).filter(Boolean)
-        const nextKnown = await resolveNames([String(graph.id ?? node.objectId), ...relationIds], knownRef.current)
+        const refIds = objectRefIds(defsRef.current, (object.values as Json) ?? {})
+        const nextKnown = await resolveNames([String(graph.id ?? node.objectId), ...relationIds, ...refIds], knownRef.current)
         knownRef.current = nextKnown
         setKnown(nextKnown)
         extra = buildScene({
@@ -224,18 +226,18 @@ export function GraphMap({
           const params = new URLSearchParams({
             filter: `groups:=${parsed.structure}:${parsed.key}`,
             per_page: '40',
+            lang: uiLanguage,
           })
           const body = await api<Json>(`/v1/search?${params}`)
           const hits = searchDocuments(body).map((doc) => {
-            const english = textValue(doc.a_namn__en, 'en')
-            const fallback = textValue(doc.a_namn__sv, 'sv')
+            const name = catalogName(doc)
             return {
               id: String(doc.id ?? ''),
               key: String(doc.key ?? ''),
-              name: english || fallback,
+              name,
               type: typeLabel(defsRef.current, String(doc.type_key ?? ''), uiLanguage),
               typeKey: String(doc.type_key ?? ''),
-              rawCaption: !(english || fallback),
+              rawCaption: !name,
             }
           })
           const nextKnown = await resolveNames(
@@ -250,7 +252,7 @@ export function GraphMap({
             const type = record?.typeKey ? typeLabel(defsRef.current, record.typeKey, uiLanguage) || hit.type : hit.type
             return { ...hit, name, type, rawCaption: !name }
           })
-          extra = groupMembers(parsed.structure, parsed.key, named)
+          extra = groupMembers(parsed.structure, parsed.key, named, defsRef.current)
         }
       }
       fitAfterRef.current = true
@@ -1333,7 +1335,7 @@ async function lookupNames(ids: string[]): Promise<Record<string, KnownObject>> 
     for (const row of rows) {
       const id = String(row.id ?? '')
       if (!id) continue
-      found[id] = { name: String(row.name ?? '').trim(), typeKey: String(row.type ?? '') }
+      found[id] = { name: String(row.name ?? '').trim(), typeKey: String(row.type ?? ''), key: String(row.key ?? '') }
     }
   }
   return found

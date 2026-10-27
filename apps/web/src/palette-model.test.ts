@@ -17,7 +17,7 @@ describe('palette rows', () => {
   })
 
   it('puts search hits above the ask row with a middle dot', () => {
-    const rows = visibleRows('talt', [], [{ id: '1', group: 'search', title: 'ART-TALT-1 · Kupol', subtitle: 'artikel' }], {})
+    const rows = visibleRows('ched', [], [{ id: '1', group: 'search', title: 'ART-CHED-200 · Mature cheddar', subtitle: 'article' }], {})
     const hit = rows.find((row) => row.group === 'search')
     expect(hit?.title).toContain('·')
     expect(rows.at(-1)?.group).toBe('ask')

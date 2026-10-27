@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MoreHorizontal, Search } from 'lucide-react'
-import { ApiError, api, textValue, type Json } from './api'
+import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
@@ -29,6 +29,7 @@ import {
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
+import { labelSearchFilter } from './assortment-filter'
 import { objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishColumns, publishSelection, publishTable } from './ui-context'
@@ -60,8 +61,8 @@ export type PanesWorkspace = { id: string; locked?: boolean }
 type ObjRow = { id: string; key: string; type: string; version: string; name: string; status: string }
 
 const columns = [
-  { id: 'key', header: 'Number', size: 160, sort: 'a_nummer' },
-  { id: 'name', header: 'Name', size: 280, sort: 'a_namn__sv' },
+  { id: 'key', header: 'Number', size: 160, sort: 'a_number' },
+  { id: 'name', header: 'Name', size: 280, sort: 'a_name__en' },
   { id: 'type', header: 'Type', size: 108, sort: 'type_key' },
   { id: 'status', header: 'Status', size: 128, sort: 'a_status' },
   { id: 'version', header: 'Version', size: 72, sort: 'version' },
@@ -73,7 +74,7 @@ function savedTable(view: PanesView) {
   const table = (view.state.table as Json | undefined) ?? {}
   return {
     filter: String(table.filter ?? ''),
-    sort: String(table.sort ?? 'a_nummer:asc'),
+    sort: String(table.sort ?? 'a_number:asc'),
     groupBy: String(table.groupBy ?? ''),
     order: Array.isArray(table.order) ? table.order.map(String) : columns.map((column) => column.id),
     sizes: (table.sizes as Record<string, number> | undefined) ?? {},
@@ -90,7 +91,7 @@ function toRow(doc: Json): ObjRow {
     key: String(doc.key ?? ''),
     type: String(doc.type_key ?? ''),
     version: String(doc.version ?? ''),
-    name: textValue(doc.a_namn__sv),
+    name: catalogName(doc),
     status: textValue(doc.a_status),
   }
 }
@@ -106,6 +107,7 @@ export function ObjectTable({
 }) {
   const initial = savedTable(view)
   const [filter, setFilter] = useState(initial.filter)
+  const [labelFilter, setLabelFilter] = useState('')
   const [queryText, setQueryText] = useState(initial.filter)
   const [sort, setSort] = useState(initial.sort)
   const [groupBy, setGroupBy] = useState(initial.groupBy)
@@ -195,7 +197,9 @@ export function ObjectTable({
   useEffect(() => {
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
-  const filterBy = objectTableFilter(typeKey, session.group, assortments.data?.assortments ?? [])
+  const filterBy = [objectTableFilter(typeKey, session.group, assortments.data?.assortments ?? []), labelFilter]
+    .filter(Boolean)
+    .join(' && ')
   const probe = useQuery({
     queryKey: ['objects', queryText, filterBy, sort, groupBy, 1],
     queryFn: () => loadPage(queryText, filterBy, sort, groupBy, 1),
@@ -557,6 +561,7 @@ export function ObjectTable({
             setGroupBy={setGroupBy}
             setFilter={setFilter}
             setGroup={session.setGroup}
+            setLabelFilter={setLabelFilter}
             assortments={assortments.data?.assortments ?? []}
             massDisabled={selected.length === 0}
             onMass={() => mass.mutate()}
@@ -576,6 +581,7 @@ export function ObjectTable({
                 setGroupBy={setGroupBy}
                 setFilter={setFilter}
                 setGroup={session.setGroup}
+                setLabelFilter={setLabelFilter}
                 assortments={assortments.data?.assortments ?? []}
                 massDisabled={selected.length === 0}
                 onMass={() => mass.mutate()}
@@ -591,6 +597,7 @@ export function ObjectTable({
               setGroupBy={setGroupBy}
               setFilter={setFilter}
               setGroup={session.setGroup}
+              setLabelFilter={setLabelFilter}
               assortments={assortments.data?.assortments ?? []}
               massDisabled={selected.length === 0}
               onMass={() => mass.mutate()}
@@ -848,6 +855,7 @@ function Row({
 async function loadPage(q: string, filter: string, sort: string, groupBy: string, page: number) {
   const params = new URLSearchParams({ page: String(page), per_page: String(pageSize) })
   if (q) params.set('q', q)
+  params.set('lang', uiLanguage)
   if (filter) params.set('filter', filter)
   if (sort) params.set('sort', sort)
   if (groupBy) params.set('group', groupBy)
@@ -861,6 +869,7 @@ function TableFilters({
   setGroupBy,
   setFilter,
   setGroup,
+  setLabelFilter,
   assortments,
   massDisabled,
   onMass,
@@ -871,6 +880,7 @@ function TableFilters({
   setGroupBy: (value: string) => void
   setFilter: (value: string) => void
   setGroup: (value: string | null) => void
+  setLabelFilter: (value: string) => void
   assortments: Json[]
   massDisabled: boolean
   onMass: () => void
@@ -881,11 +891,13 @@ function TableFilters({
     setGroupBy('')
     setFilter('')
     setGroup(null)
+    setLabelFilter('')
   }
   const applyAssortment = (item: Json) => {
     const query = (item.query as Json) ?? {}
-    setFilter(String(query.text ?? ''))
+    setFilter('')
     setGroup(query.group ? String(query.group) : null)
+    setLabelFilter(labelSearchFilter(query))
   }
   if (menu) {
     return (
@@ -919,6 +931,15 @@ function TableFilters({
   )
 }
 
+function createGroups(typeKey: string, group: string | null) {
+  if (typeKey === 'supplier' || !group) {
+    return typeKey === 'supplier' ? {} : { food: 'bread' }
+  }
+  const splitAt = group.indexOf(':')
+  if (splitAt > 0) return { [group.slice(0, splitAt)]: group.slice(splitAt + 1) }
+  return { food: group }
+}
+
 function NewObject({ session, typeKey, singular }: { session: PanesSession; typeKey?: string; singular?: string }) {
   const [open, setOpen] = useState(false)
   const [nummer, setNummer] = useState('')
@@ -930,13 +951,12 @@ function NewObject({ session, typeKey, singular }: { session: PanesSession; type
       className="create-row"
       onSubmit={(event) => {
         event.preventDefault()
-        const group = session.group?.split(':')[1]
         void api<Json>('/v1/objects', {
           method: 'POST',
           body: JSON.stringify({
-            type: typeKey || 'artikel',
-            groups: group ? { sortiment: group } : { sortiment: 'friluft' },
-            values: { nummer, namn: { sv: nummer, en: nummer, de: nummer }, status: 'utkast' },
+            type: typeKey || 'product',
+            groups: createGroups(typeKey || 'product', session.group),
+            values: { number: nummer, name: { en: nummer }, status: 'draft' },
           }),
         })
           .then((created) => {
@@ -1027,8 +1047,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     const language = session.language || 'sv'
     enrichSelection({
       id: session.objectId,
-      key: textValue(stored.nummer) || String(object.data.key ?? ''),
-      name: textValue(stored.namn, language),
+      key: recordNumber(stored) || String(object.data.key ?? ''),
+      name: recordTitle(stored, language),
       type: String(object.data.type ?? ''),
     })
   }, [session.objectId, session.language, object.data])
@@ -1050,7 +1070,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const attributes = (defs.data?.attributes as Json[] | undefined) ?? []
   const lists = (defs.data?.value_lists as Json[] | undefined) ?? []
   const families = (defs.data?.unit_families as Json[] | undefined) ?? []
-  const label = textValue((object.data.values as Json)?.nummer) || String(object.data.id ?? '')
+  const label = recordNumber(object.data.values as Json) || String(object.data.id ?? '')
   const suggestionCount = suggestionIndex(suggestions.data).get(session.objectId) ?? 0
   const save = () => {
     if (Object.keys(draft).length === 0) return
@@ -1069,8 +1089,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
   }
   const status = textValue(values.status)
-  const number = textValue(values.nummer)
-  const name = textValue(values.namn, uiLanguage)
+  const number = recordNumber(values)
+  const name = recordTitle(values, uiLanguage)
   const dirty = Object.keys(draft).length > 0
   const typeDef = ((defs.data?.types as Json[]) ?? []).find((item) => item.key === object.data?.type)
   const typeIds = new Set(((typeDef?.attributes as unknown[]) ?? []).map(String))
@@ -1159,12 +1179,12 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
 }
 
 const fieldSectionDefs: Array<{ id: string; title: string; keys: string[] }> = [
-  { id: 'identity', title: copy.identity, keys: ['nummer', 'namn'] },
-  { id: 'description', title: copy.description, keys: ['beskrivning'] },
-  { id: 'classification', title: copy.classification, keys: ['status', 'farg', 'aktiv'] },
-  { id: 'measures', title: copy.measures, keys: ['vikt', 'langd', 'spann'] },
-  { id: 'dates', title: copy.dates, keys: ['lanserad'] },
-  { id: 'references', title: copy.references, keys: ['bild', 'ersatter'] },
+  { id: 'identity', title: copy.identity, keys: ['number', 'name', 'company_name', 'gtin', 'brand', 'org_number', 'gln', 'nummer', 'namn'] },
+  { id: 'description', title: copy.description, keys: ['description', 'ingredients', 'beskrivning'] },
+  { id: 'classification', title: copy.classification, keys: ['status', 'allergens', 'traces', 'labels', 'nutriscore', 'nova', 'country', 'country_of_origin', 'certifications', 'storage', 'packaging', 'packaging_material', 'deposit', 'active', 'farg', 'aktiv'] },
+  { id: 'measures', title: copy.measures, keys: ['net_weight', 'net_volume', 'units_per_pack', 'height', 'width', 'depth', 'gross_weight', 'energy', 'fat', 'saturated_fat', 'carbohydrates', 'sugars', 'fiber', 'protein', 'salt', 'fat_content', 'cocoa_content', 'caffeine', 'shelf_life_days', 'lead_time_days', 'co2_footprint', 'vikt', 'langd', 'spann'] },
+  { id: 'dates', title: copy.dates, keys: ['launched', 'lanserad'] },
+  { id: 'references', title: copy.references, keys: ['product', 'supplier', 'replaces', 'image', 'website', 'bild', 'ersatter'] },
 ]
 
 function fieldSections(keys: string[]) {
@@ -1376,19 +1396,19 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
   const current = useQuery({
     queryKey: ['object-ref', id],
     queryFn: () =>
-      batchGetObjects([id], { groups: true, fields: ['nummer', 'namn'], languages: [uiLanguage] }).then(
+      batchGetObjects([id], { groups: true, fields: ['number', 'name', 'company_name', 'nummer', 'namn'], languages: [uiLanguage] }).then(
         (rows) => rows[0] ?? null,
       ),
     enabled: /^[0-9a-f-]{36}$/i.test(id),
   })
   const label = current.data
-    ? `${textValue((current.data.values as Json)?.nummer)} · ${textValue((current.data.values as Json)?.namn)}`
+    ? `${recordNumber(current.data.values as Json)} · ${recordTitle(current.data.values as Json, uiLanguage)}`
     : ''
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const found = useQuery({
     queryKey: ['ref-pick', q],
-    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(q)}&per_page=8`),
+    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(q)}&per_page=8&lang=${uiLanguage}`),
     enabled: open && q.trim().length > 1,
   })
   return (
@@ -1419,7 +1439,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
                   setOpen(false)
                 }}
               >
-                {String(doc.key)} · {textValue(doc.a_namn__sv)}
+                {String(doc.key)} · {catalogName(doc)}
               </button>
             )
           })}

@@ -20,12 +20,12 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   page.on('pageerror', (error) => errors.push(error.message))
 
   await login(page)
-  await expect(page.getByTestId('structure-tree')).toContainText('Tents')
+  await expect(page.getByTestId('structure-tree')).toContainText('Cheese')
   const filter = page.getByTestId('quick-filter').first()
   if ((await filter.inputValue()) !== '') await filter.fill('')
   await expect(page.getByTestId('object-row').first()).toBeVisible()
   await expect(page.getByTestId('object-table')).toContainText('Name')
-  const named = page.getByTestId('object-row').filter({ hasText: 'Regel' }).first()
+  const named = page.getByTestId('object-row').filter({ hasText: 'Cheddar' }).first()
   if ((await named.count()) > 0) await named.click()
   else await page.getByTestId('object-row').first().click()
   await page.locator('[data-view-type="object_detail"]').first().click()
@@ -58,7 +58,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
 
   await page.keyboard.press('Control+k')
   await expect(page.getByTestId('palette')).toBeVisible()
-  await page.getByTestId('palette-input').fill('talt')
+  await page.getByTestId('palette-input').fill('cheese')
   const hits = page.getByTestId('palette').locator('.hit')
   await expect(hits.filter({ hasText: '·' }).first()).toBeVisible()
   await page.keyboard.press('ArrowDown')
@@ -99,9 +99,9 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   const before = await page.getByTestId('activity-log').innerText()
   const response = await page.request.post('/v1/objects', {
     data: {
-      type: 'artikel',
-      groups: { sortiment: 'friluft' },
-      values: { nummer: `ART-LIVE-${Date.now().toString().slice(-5)}`, namn: { sv: 'Live' }, status: 'utkast' },
+      type: 'product',
+      groups: { food: 'bread' },
+      values: { number: `ART-LIVE-${Date.now().toString().slice(-5)}`, name: { en: 'Live' }, status: 'draft' },
     },
   })
   expect(response.ok()).toBeTruthy()

@@ -307,7 +307,7 @@ test('dock overlay matches the pane fraction and the window edge', async ({ page
   await grid.evaluate((node) => {
     node.scrollTop = 0
   })
-  await page.getByTestId('quick-filter').fill('___none___')
+  await page.getByTestId('quick-filter').fill('qqqqqqqqqqqq')
   const status = page.locator('.table-status')
   await expect(status).toContainText('no rows')
   const statusBox = await status.boundingBox()

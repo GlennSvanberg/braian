@@ -21,16 +21,16 @@ test('final data-model and polish shots', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Data model' }).click()
   const tree = page.getByTestId('data-model').first()
-  await tree.getByTestId('group-friluft').locator('.twist').click()
-  await expect(tree.getByTestId('group-sovsack')).toBeVisible()
+  await tree.getByTestId('group-dairy').locator('.twist').click()
+  await expect(tree.getByTestId('group-yoghurt')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
-  await tree.getByTestId('group-sovsack').locator('.model-node').click()
-  await expect(page.getByTestId('attribute-table')).toContainText('Weight')
-  await expect(page.getByTestId('attribute-table')).toContainText('from Outdoor')
+  await tree.getByTestId('group-yoghurt').locator('.model-node').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('Fat content')
+  await expect(page.getByTestId('attribute-table')).toContainText('from Dairy')
   await page.screenshot({ path: `${shots}/class-card.png` })
-  await tree.getByTestId('group-talt').locator('.model-node').click()
-  await expect(page.getByTestId('attribute-table')).toContainText('Length')
+  await tree.getByTestId('group-cheese').locator('.model-node').click()
+  await expect(page.getByTestId('attribute-table')).toContainText('Fat content')
   await expect(page.getByTestId('model-preview')).toContainText('from')
 
   const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
