@@ -1623,8 +1623,9 @@ mod tests {
     }
 
     /// The seed stores ids. A second run repairs leftover keys and does not
-    /// replace a saved view or selection. Renaming an attribute key leaves
-    /// those column ids in place.
+    /// replace a saved view or selection. Renaming the brand key leaves the
+    /// stored column id in place. `number` is a locked standard attribute, so
+    /// this uses brand, which the product view already stores by id.
     #[tokio::test]
     async fn seeded_views_keep_ids_across_a_second_seed_and_an_attribute_rename() {
         load_test_database_url();
@@ -1750,13 +1751,15 @@ mod tests {
         assert_eq!(organic["query"]["labels"], "organic_eu");
         assert_refs_are_ids(&defs, &json!({}), &organic["query"]);
 
+        let brand = braian_model::resolve(&defs, braian_model::RefKind::Attribute, "brand", None)
+            .expect("brand");
         let mut renamed = defs.clone();
         renamed.model_revision += 1;
         braian_model::apply_all(
             &mut renamed,
             &[braian_model::ModelChange::RenameAttributeKey {
-                key: "number".into(),
-                new_key: "item_number".into(),
+                key: "brand".into(),
+                new_key: "brand_label".into(),
             }],
         )
         .expect("rename");
@@ -1773,11 +1776,12 @@ mod tests {
 
         let products = stored_view(store, PRODUCTS_WORKSPACE, PRODUCTS_VIEW).await;
         let columns = products["state"]["columns"].as_array().expect("columns");
+        assert!(columns.iter().any(|column| column == &brand.id));
         assert!(columns.iter().any(|column| column == &number.id));
         assert!(
             columns
                 .iter()
-                .all(|column| column != "number" && column != "item_number")
+                .all(|column| column != "brand" && column != "brand_label" && column != "number")
         );
         assert_eq!(products["state"]["sort"], number.id);
         let articles = stored_view(store, ARTICLES_WORKSPACE, ARTICLES_VIEW).await;
