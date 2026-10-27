@@ -38,9 +38,13 @@ impl EmptyDb {
     }
 
     async fn connect(&self) -> PgConn {
+        PgConn::connect(self.config()).await.unwrap()
+    }
+
+    fn config(&self) -> tokio_postgres::Config {
         let mut config = admin::parse_config(&self.admin_url).unwrap();
         config.dbname(&self.name);
-        PgConn::connect(config).await.unwrap()
+        config
     }
 }
 
@@ -590,6 +594,210 @@ async fn selection_type_comes_from_the_query_or_the_most_hits() {
         .get(0);
     assert!(reindex);
 
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn relations_and_object_refs_become_links() {
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    let source = branch_migrations();
+    let dir = std::env::temp_dir().join(format!("braian-v22-{}", Uuid::now_v7()));
+    fs::create_dir_all(&dir).unwrap();
+    for entry in fs::read_dir(&source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        let Some(version) = migration_version(&name) else {
+            continue;
+        };
+        if version <= 22 {
+            fs::copy(entry.path(), dir.join(name)).unwrap();
+        }
+    }
+    migrate(&mut conn.client, &dir).await;
+    let relations: String = conn
+        .client
+        .query_one("SELECT to_regclass('public.relations')::text", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(relations, "relations");
+
+    let product = Uuid::parse_str("018f0000-0000-7000-8000-000000000200").unwrap();
+    let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap();
+    let number = "018f0000-0000-7000-8000-000000000100";
+    let product_attr = "018f0000-0000-7000-8000-00000000011a";
+    let principal = Uuid::now_v7();
+    let batch = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+            &[&principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO batches (id, actor, kind, source) VALUES ($1, $2, 'interactive', 'test')",
+            &[&batch, &principal],
+        )
+        .await
+        .unwrap();
+    let definitions = serde_json::json!({
+        "model_revision": 1,
+        "languages": ["en"],
+        "unit_families": [],
+        "attributes": [
+            {
+                "id": number,
+                "key": "number",
+                "labels": {"en": "Number"},
+                "language_dependent": false,
+                "multiple": false,
+                "kind": {"type": "text", "max_length": 64},
+                "index": {"searchable": true, "filterable": true, "sortable": true}
+            },
+            {
+                "id": product_attr,
+                "key": "product",
+                "labels": {"en": "Product"},
+                "language_dependent": false,
+                "multiple": false,
+                "required": true,
+                "kind": {"type": "object_ref", "type_key": "product"},
+                "index": {"searchable": false, "filterable": false, "sortable": false}
+            }
+        ],
+        "types": [
+            {
+                "id": product,
+                "key": "product",
+                "labels": {"en": "Product"},
+                "key_attribute": number,
+                "attributes": [number],
+                "structures": []
+            },
+            {
+                "id": article,
+                "key": "article",
+                "labels": {"en": "Article"},
+                "key_attribute": number,
+                "attributes": [number, product_attr],
+                "structures": []
+            }
+        ],
+        "structures": []
+    });
+    conn.client
+        .execute(
+            "INSERT INTO definition_revisions (model_revision, definitions, batch_id) VALUES (1, $1, $2)",
+            &[&definitions, &batch],
+        )
+        .await
+        .unwrap();
+    let product_id = Uuid::now_v7();
+    let article_id = Uuid::now_v7();
+    for (id, type_id, key) in [(product_id, product, "P1"), (article_id, article, "A1")] {
+        conn.client
+            .execute(
+                "INSERT INTO objects (id, type_id, key, version, model_revision) VALUES ($1, $2, $3, 1, 1)",
+                &[&id, &type_id, &key],
+            )
+            .await
+            .unwrap();
+    }
+    let values = serde_json::json!({ product_attr: product_id.to_string() });
+    conn.client
+        .execute(
+            "INSERT INTO object_values (object_id, part, \"values\", version, is_latest) VALUES ($1, '', $2, 1, true)",
+            &[&article_id, &values],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO relations (from_id, to_id, kind) VALUES ($1, $2, 'article_of'), ($1, $1, 'related')",
+            &[&article_id, &product_id],
+        )
+        .await
+        .unwrap();
+
+    migrate(&mut conn.client, &source).await;
+    let gone: Option<String> = conn
+        .client
+        .query_one("SELECT to_regclass('public.relations')::text", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(gone.is_none(), "{gone:?}");
+    let relation_links: i64 = conn
+        .client
+        .query_one(
+            "SELECT count(*) FROM links WHERE from_id = $1 AND to_id = $2",
+            &[&article_id, &product_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        relation_links, 1,
+        "the article_of row is a link and the self-link is dropped"
+    );
+    let objects_before: i64 = conn
+        .client
+        .query_one("SELECT count(*) FROM objects WHERE key IS NOT NULL", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(objects_before, 2);
+
+    drop(conn);
+    let store =
+        braian_store::Store::connect_config(db.config(), braian_store::StorageForm::Document)
+            .await
+            .unwrap();
+    assert!(store.upgrade_object_refs().await.unwrap());
+    assert!(!store.upgrade_object_refs().await.unwrap());
+    let conn = db.connect().await;
+    let links: i64 = conn
+        .client
+        .query_one("SELECT count(*) FROM links", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(links, 2);
+    let still: i64 = conn
+        .client
+        .query_one(
+            "SELECT count(*) FROM objects WHERE id = $1 OR id = $2",
+            &[&product_id, &article_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(still, 2);
+    let value: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT \"values\" FROM object_values WHERE object_id = $1 AND is_latest",
+            &[&article_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(value.get(product_attr).is_none(), "{value}");
+    let document: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let encoded = document.to_string();
+    assert!(!encoded.contains("object_ref"), "{document}");
+    assert!(encoded.contains("product_articles"), "{document}");
     let _ = fs::remove_dir_all(&dir);
 }
 

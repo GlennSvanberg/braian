@@ -918,16 +918,41 @@ async fn a_person_keeps_one_field_and_an_agent_relation_stays_a_proposal() {
     assert_eq!(proposal["source"], "import");
     assert!(proposal["actor_name"].is_string(), "{proposal}");
 
+    let (status, _, link_type) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"related","label":"Related","from_types":["item"],"to_types":["item"],"from_key":"related_by","from_label":"Related by","to_key":"related","to_label":"Related","from_cardinality":"many","to_cardinality":"many"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{link_type}");
+    let (status, _, missing) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{id}/relations"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
     let (status, _, relation) = call(
         &app,
         "POST",
-        &format!("/v1/objects/{id}/relations"),
+        "/v1/operations/create_link",
         Some(AGENT),
         &[("content-type", "application/json")],
-        Some(&format!(r#"{{"to":"{other}","kind":"related"}}"#)),
+        Some(&format!(
+            r#"{{"type":"related","from_id":"{id}","to_id":"{other}"}}"#
+        )),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{relation}");
+    assert_eq!(status, StatusCode::OK, "{relation}");
+    assert_eq!(relation["needs_approval"], true, "{relation}");
     let (status, _, graph) = call(
         &app,
         "GET",
@@ -938,19 +963,13 @@ async fn a_person_keeps_one_field_and_an_agent_relation_stays_a_proposal() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{graph}");
-    assert!(graph["relations"].as_array().unwrap().is_empty(), "{graph}");
+    assert!(graph["links"].as_array().unwrap().is_empty(), "{graph}");
 
     let (status, _, listed) = call(&app, "GET", "/v1/proposals", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     let pending = &listed["pending"];
     assert!(pending["total"].as_i64().unwrap() >= 1, "{listed}");
-    let relation_id = listed["proposals"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|row| row["title"] == "Relation" && row["status"] == "open")
-        .and_then(|row| row["id"].as_str())
-        .expect("relation proposal");
+    let relation_id = relation["proposal_id"].as_str().expect("link proposal");
     let (status, _, accepted) = call(
         &app,
         "POST",
@@ -975,7 +994,7 @@ async fn a_person_keeps_one_field_and_an_agent_relation_stays_a_proposal() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{linked}");
-    assert_eq!(linked["relations"].as_array().unwrap().len(), 1, "{linked}");
+    assert_eq!(linked["links"].as_array().unwrap().len(), 1, "{linked}");
 }
 
 #[tokio::test]
@@ -2844,14 +2863,30 @@ async fn deleting_a_type_counts_then_removes_objects_links_and_selections() {
     assert_eq!(status, StatusCode::OK, "{second}");
     let first_id = first["id"].as_str().unwrap();
     let second_id = second["id"].as_str().unwrap();
-    db.store()
-        .set_relation(
-            braian_model::ObjectId::from_uuid(uuid::Uuid::parse_str(first_id).unwrap()),
-            braian_model::ObjectId::from_uuid(uuid::Uuid::parse_str(second_id).unwrap()),
-            "related",
-        )
-        .await
-        .unwrap();
+    let (status, _, link_type) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"related","label":"Related","from_types":["item"],"to_types":["item"],"from_key":"related_by","from_label":"Related by","to_key":"related","to_label":"Related","from_cardinality":"many","to_cardinality":"many"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{link_type}");
+    let (status, _, linked) = call(
+        &app,
+        "POST",
+        "/v1/links",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"type":"related","from_id":"{first_id}","to_id":"{second_id}"}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
     let user = db
         .store()
         .create_user("del@example.com", "x", "editor", "Del")
@@ -2878,7 +2913,7 @@ async fn deleting_a_type_counts_then_removes_objects_links_and_selections() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{dry}");
-    assert_eq!(dry["objects"], 2, "{dry}");
+    assert_eq!(dry["objects"], 3, "{dry}");
     assert_eq!(dry["values"], 3, "{dry}");
     assert_eq!(dry["links"], 1, "{dry}");
     assert_eq!(dry["selections"], 1, "{dry}");
@@ -2951,12 +2986,10 @@ async fn deleting_a_type_counts_then_removes_objects_links_and_selections() {
         let (status, _, body) = call(
             &app,
             "POST",
-            "/v1/operations/delete_relation",
+            "/v1/operations/remove_link",
             Some(token),
             &[("content-type", "application/json")],
-            Some(&format!(
-                r#"{{"from":"{first_id}","to":"{second_id}","kind":"related"}}"#
-            )),
+            Some(r#"{"id":"018f0000-0000-7000-8000-000000000099"}"#),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
@@ -3392,8 +3425,8 @@ async fn attribute_definitions_list_usage_and_a_draft_step() {
     assert_eq!(status, StatusCode::OK, "{demo_list}");
     assert_eq!(
         demo_list["attributes"].as_array().map(Vec::len),
-        Some(54),
-        "the demo has 54 attributes after the standard attributes"
+        Some(52),
+        "the demo has 52 attributes after the standard attributes"
     );
 }
 

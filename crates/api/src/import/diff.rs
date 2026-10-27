@@ -1,6 +1,6 @@
 //! Cell parsing and row classification for the import preview.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use braian_model::{
     Attribute, AttributeId, AttributeKind, AttributePatch, DefinitionSet, ErrorCode, LanguageTag,
@@ -51,6 +51,7 @@ pub fn classify_row(
     existing: Option<&StoredObject>,
     duplicate_of: Option<u32>,
     resolve_ref: &mut dyn FnMut(&str, &str) -> Option<Uuid>,
+    current_links: &BTreeMap<(String, bool), BTreeSet<String>>,
 ) -> Classified {
     let Some(type_id) = model.type_id(type_key) else {
         return failed_row(
@@ -73,6 +74,7 @@ pub fn classify_row(
     let mut values: BTreeMap<AttributeId, Value> = BTreeMap::new();
     let mut languages: BTreeMap<AttributeId, BTreeMap<LanguageTag, Value>> = BTreeMap::new();
     let mut groups = BTreeMap::new();
+    let mut link_plans: Vec<Value> = Vec::new();
     let mut action = String::new();
     for column in columns {
         if column.target == "unmapped" {
@@ -119,6 +121,7 @@ pub fn classify_row(
             &mut values,
             &mut languages,
             &mut groups,
+            &mut link_plans,
             resolve_ref,
         ) {
             Ok(()) => {
@@ -137,6 +140,10 @@ pub fn classify_row(
         }
     }
     merge_languages(&mut values, languages);
+    if !link_plans.is_empty() {
+        cell_view.insert("links".into(), Value::Array(link_plans.clone()));
+    }
+    let links_changed = links_differ(&link_plans, current_links);
     if !action.is_empty()
         && action != "upsert"
         && action != "update"
@@ -208,7 +215,7 @@ pub fn classify_row(
             &groups,
             &existing.object.groups,
         );
-        if patch.is_empty() {
+        if patch.is_empty() && !links_changed {
             return Classified {
                 key,
                 outcome: RowOutcome {
@@ -246,7 +253,11 @@ pub fn classify_row(
                 object_key: Some(existing.key.clone()),
                 base_version: Some(existing.version as i64),
                 cells: Value::Object(cell_view),
-                patch: serde_json::to_value(&patch).ok(),
+                patch: if patch.is_empty() {
+                    None
+                } else {
+                    serde_json::to_value(&patch).ok()
+                },
                 errors: Value::Array(Vec::new()),
             },
         };
@@ -289,6 +300,107 @@ pub fn classify_row(
     }
 }
 
+fn apply_link_cell(
+    defs: &DefinitionSet,
+    target: &Target,
+    text: &str,
+    link_plans: &mut Vec<Value>,
+    resolve_ref: &mut dyn FnMut(&str, &str) -> Option<Uuid>,
+) -> Result<(), Value> {
+    let Some(rest) = target.id.strip_prefix("link:") else {
+        return Err(err(
+            "unknown_target",
+            "That field is not in the data model.",
+        ));
+    };
+    let Some((type_key, direction)) = rest.rsplit_once(':') else {
+        return Err(err(
+            "unknown_target",
+            "That field is not in the data model.",
+        ));
+    };
+    let outgoing = direction == "out";
+    let Some(link) = defs
+        .types
+        .iter()
+        .find(|item| item.is_link() && item.key == type_key)
+    else {
+        return Err(err("unknown_link_type", "That link type does not exist."));
+    };
+    let Some(spec) = link.link.as_ref() else {
+        return Err(err("unknown_link_type", "That link type does not exist."));
+    };
+    let opposite = if outgoing {
+        &spec.to_types
+    } else {
+        &spec.from_types
+    };
+    let mut peers = Vec::new();
+    let mut keys = Vec::new();
+    for token in text.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        if let Ok(id) = Uuid::parse_str(token) {
+            peers.push(id.to_string());
+            keys.push(token.to_owned());
+            continue;
+        }
+        let mut found = None;
+        for type_id in opposite {
+            let Some(object_type) = defs.types.iter().find(|item| item.id == *type_id) else {
+                continue;
+            };
+            if let Some(id) = resolve_ref(&object_type.key, token) {
+                found = Some(id);
+                break;
+            }
+        }
+        let Some(id) = found else {
+            return Err(err("invalid_object_ref", "That object was not found."));
+        };
+        peers.push(id.to_string());
+        keys.push(token.to_owned());
+    }
+    link_plans.push(json!({
+        "type": type_key,
+        "outgoing": outgoing,
+        "peers": peers,
+        "keys": keys,
+    }));
+    Ok(())
+}
+
+fn links_differ(plans: &[Value], current: &BTreeMap<(String, bool), BTreeSet<String>>) -> bool {
+    for plan in plans {
+        let key = plan
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let outgoing = plan
+            .get("outgoing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let keys = plan
+            .get("keys")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        let had = current.get(&(key, outgoing)).cloned().unwrap_or_default();
+        if keys != had {
+            return true;
+        }
+    }
+    false
+}
+
 fn failed_row(row_no: u32, cells: &[Option<String>], code: &str, message: &str) -> Classified {
     let _ = row_no;
     let mut view = Map::new();
@@ -321,8 +433,12 @@ fn apply_cell(
     values: &mut BTreeMap<AttributeId, Value>,
     languages: &mut BTreeMap<AttributeId, BTreeMap<LanguageTag, Value>>,
     groups: &mut BTreeMap<braian_model::StructureId, braian_model::GroupId>,
+    link_plans: &mut Vec<Value>,
     resolve_ref: &mut dyn FnMut(&str, &str) -> Option<Uuid>,
 ) -> Result<(), Value> {
+    if target.kind == "link" {
+        return apply_link_cell(defs, target, text, link_plans, resolve_ref);
+    }
     if target.id.starts_with("membership:") {
         let Some(structure_key) = target.structure_key.as_deref() else {
             return Err(err("unknown_structure", "That structure does not exist."));
@@ -893,6 +1009,84 @@ pub fn seen_key(seen: &mut HashMap<String, u32>, key: &str, row_no: u32) -> Opti
 
 #[cfg(test)]
 mod tests {
+
+    const LINK_CATALOG: &str = r#"{
+  "model_revision": 1,
+  "languages": ["en"],
+  "unit_families": [],
+  "value_lists": [],
+  "attributes": [{
+    "id": "018f0000-0000-7000-8000-000000000100",
+    "key": "number",
+    "labels": {"en": "Number"},
+    "language_dependent": false,
+    "multiple": false,
+    "kind": {"type": "text", "max_length": 64},
+    "index": {"searchable": true, "filterable": false, "sortable": true}
+  }],
+  "types": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000201",
+      "key": "article",
+      "labels": {"en": "Article"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000200",
+      "key": "product",
+      "labels": {"en": "Product"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000202",
+      "key": "supplier",
+      "labels": {"en": "Supplier"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000210",
+      "key": "product_articles",
+      "labels": {"en": "Product"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": ["018f0000-0000-7000-8000-000000000200"],
+        "to_types": ["018f0000-0000-7000-8000-000000000201"],
+        "from_label": {"key": "product", "labels": {"en": "Product"}},
+        "to_label": {"key": "articles", "labels": {"en": "Articles"}},
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000211",
+      "key": "supplier_articles",
+      "labels": {"en": "Supplier"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": ["018f0000-0000-7000-8000-000000000202"],
+        "to_types": ["018f0000-0000-7000-8000-000000000201"],
+        "from_label": {"key": "supplier", "labels": {"en": "Supplier"}},
+        "to_label": {"key": "articles", "labels": {"en": "Articles"}},
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    }
+  ],
+  "structures": []
+}"#;
+
     use super::*;
 
     fn defs() -> DefinitionSet {
@@ -962,6 +1156,7 @@ mod tests {
             None,
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(created.outcome.status, "new");
         let mut seen = HashMap::new();
@@ -979,6 +1174,7 @@ mod tests {
             None,
             Some(2),
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(duplicate.outcome.errors[0]["code"], "duplicate_id");
         let existing = StoredObject {
@@ -999,6 +1195,7 @@ mod tests {
             Some(&existing),
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(same.outcome.status, "unchanged");
         let changed = classify_row(
@@ -1013,6 +1210,7 @@ mod tests {
             Some(&existing),
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(changed.outcome.status, "changed");
         assert_eq!(changed.outcome.cells["1"]["state"], "changed");
@@ -1028,6 +1226,7 @@ mod tests {
             Some(&existing),
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(empty.outcome.status, "unchanged");
         let deleted = classify_row(
@@ -1042,6 +1241,7 @@ mod tests {
             Some(&existing),
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(deleted.outcome.status, "delete");
         let missing = classify_row(
@@ -1056,6 +1256,7 @@ mod tests {
             None,
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(missing.outcome.errors[0]["code"], "delete_not_found");
         assert_ne!(deleted.outcome.cells["0"]["state"], "new");
@@ -1102,6 +1303,7 @@ mod tests {
             None,
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(created.outcome.status, "new");
         let existing = StoredObject {
@@ -1127,6 +1329,7 @@ mod tests {
             Some(&existing),
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(dated.outcome.status, "failed");
         assert_eq!(dated.outcome.cells["2"]["state"], "error");
@@ -1154,6 +1357,7 @@ mod tests {
             Some(&existing),
             None,
             &mut resolve,
+            &BTreeMap::new(),
         );
         assert_eq!(flagged.outcome.status, "failed");
         assert_eq!(
@@ -1164,5 +1368,127 @@ mod tests {
         assert_ne!(flagged.outcome.cells["0"]["state"], "new");
         assert_eq!(flagged.outcome.cells["1"]["state"], "changed");
         assert!(flagged.outcome.cells["1"].get("before").is_some());
+    }
+
+    #[test]
+    fn product_and_supplier_numbers_import_as_links() {
+        let defs: DefinitionSet = serde_json::from_str(LINK_CATALOG).unwrap();
+        let model = CompiledModel::compile(&defs).unwrap();
+        let targets = super::super::mapping::targets_for(&defs, "article");
+        let product = targets
+            .iter()
+            .find(|target| target.attribute_key.as_deref() == Some("product"))
+            .expect("product column");
+        let supplier = targets
+            .iter()
+            .find(|target| target.attribute_key.as_deref() == Some("supplier"))
+            .expect("supplier column");
+        assert_eq!(product.kind, "link");
+        assert_eq!(product.id, "link:product_articles:in");
+        assert_eq!(supplier.id, "link:supplier_articles:in");
+        let columns = vec![
+            MappedColumn {
+                index: 0,
+                target: "type:number".into(),
+            },
+            MappedColumn {
+                index: 1,
+                target: product.id.clone(),
+            },
+            MappedColumn {
+                index: 2,
+                target: supplier.id.clone(),
+            },
+        ];
+        let product_id = Uuid::from_u128(0x200);
+        let supplier_id = Uuid::from_u128(0x202);
+        let mut resolve = |type_key: &str, key: &str| match (type_key, key) {
+            ("product", "P-1") => Some(product_id),
+            ("product", "P-2") => Some(Uuid::from_u128(0x201)),
+            ("supplier", "S-9") => Some(supplier_id),
+            _ => None,
+        };
+        let article_id =
+            TypeId::from_uuid(Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap());
+        let number = model.attribute_by_key("number").unwrap().id;
+        let existing = StoredObject {
+            object: Object {
+                id: ObjectId::from_uuid(Uuid::from_u128(0x301)),
+                type_id: article_id,
+                model_revision: defs.model_revision,
+                groups: BTreeMap::new(),
+                values: BTreeMap::from([(number, Value::String("A-1".into()))]),
+            },
+            key: "A-1".into(),
+            version: 3,
+            deleted_at: None,
+        };
+        let mut current = BTreeMap::new();
+        current.insert(
+            ("product_articles".into(), false),
+            BTreeSet::from(["P-1".into()]),
+        );
+        current.insert(
+            ("supplier_articles".into(), false),
+            BTreeSet::from(["S-9".into()]),
+        );
+        let same = classify_row(
+            &model,
+            &defs,
+            &targets,
+            "article",
+            &columns,
+            Some(0),
+            2,
+            &[Some("A-1".into()), Some("P-1".into()), Some("S-9".into())],
+            Some(&existing),
+            None,
+            &mut resolve,
+            &current,
+        );
+        assert_eq!(same.outcome.status, "unchanged");
+        let moved = classify_row(
+            &model,
+            &defs,
+            &targets,
+            "article",
+            &columns,
+            Some(0),
+            3,
+            &[Some("A-1".into()), Some("P-2".into()), Some("S-9".into())],
+            Some(&existing),
+            None,
+            &mut resolve,
+            &current,
+        );
+        assert_eq!(moved.outcome.status, "changed");
+        assert!(moved.outcome.patch.is_none());
+        let plans = moved.outcome.cells["links"].as_array().unwrap();
+        let product_plan = plans
+            .iter()
+            .find(|plan| plan["type"] == "product_articles")
+            .unwrap();
+        assert_eq!(product_plan["outgoing"], false);
+        assert_eq!(product_plan["keys"][0], "P-2");
+        assert_eq!(product_plan["peers"][0], Uuid::from_u128(0x201).to_string());
+        let missing = classify_row(
+            &model,
+            &defs,
+            &targets,
+            "article",
+            &columns,
+            Some(0),
+            4,
+            &[Some("A-1".into()), Some("P-1".into()), Some("NOPE".into())],
+            Some(&existing),
+            None,
+            &mut resolve,
+            &current,
+        );
+        assert_eq!(missing.outcome.status, "failed");
+        assert_eq!(
+            missing.outcome.cells["2"]["error"]["code"],
+            "invalid_object_ref"
+        );
     }
 }

@@ -8,7 +8,7 @@ export type PlacedNode<T extends RankedNode> = T & { x: number; y: number }
 const columnGap = 220
 const rowGap = 64
 
-/** Layered layout: sources on the left, the object in the middle, relations on the right. */
+/** Ranked columns for tests. The live graph uses the force layout in graph-scene. */
 export function placeNodes<T extends RankedNode>(nodes: T[]): Array<PlacedNode<T>> {
   const byRank = new Map<number, T[]>()
   for (const node of nodes) {

@@ -39,7 +39,7 @@ const graph: Json = {
   key: 'ART-TENT-2',
   type: 'article',
   groups: { assortment: 'tents' },
-  relations: [{ kind: 'article_of', object_id: 'prod', key: 'PROD-TENT', type_id: 'ignored' }],
+  links: [{ link_type: 'product_articles', label: 'Article of', object_id: 'prod', key: 'PROD-TENT', type_id: 'ignored', direction: 'incoming' }],
   attributes: [
     { key: 'name', label: 'Name', sources: [{ from: 'type' }] },
     { key: 'number', label: 'Number', sources: [{ from: 'type' }] },
@@ -145,7 +145,7 @@ describe('graph scene', () => {
         key: 'ART-TENT-2',
         type: 'article',
         groups: { assortment: 'tents' },
-        relations: [],
+        links: [],
         attributes: [
           {
             key: 'weight',
@@ -166,7 +166,7 @@ describe('graph scene', () => {
   it('upgrades a key to a human name without duplicating the node', () => {
     const first = buildScene({ graph, values, defs })
     const second = buildScene({
-      graph: { id: 'prod', key: 'PROD-TENT', type: 'product', groups: {}, relations: [], attributes: [] },
+      graph: { id: 'prod', key: 'PROD-TENT', type: 'product', groups: {}, links: [], attributes: [] },
       values: { name: { en: 'Ridge tents' }, number: 'PROD-TENT' },
       defs,
     })

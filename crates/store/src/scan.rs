@@ -68,6 +68,8 @@ pub struct ExportObject {
     pub type_id: Uuid,
     pub version: i64,
     pub values: BTreeMap<AttributeId, Value>,
+    /// Peer numbers keyed by `{link_type_id}:out` or `{link_type_id}:in`.
+    pub links: BTreeMap<String, Vec<String>>,
 }
 
 const WHERE: &str = r#"
@@ -149,7 +151,13 @@ impl Store {
             }
             let ids: Vec<Uuid> = heads.iter().map(|row| row.get(0)).collect();
             let parts = tx.query(PARTS, &[&ids]).await?;
-            let chunk = assemble(self.form(), heads, parts)?;
+            let peers = link_peer_keys(&tx, &ids).await?;
+            let mut chunk = assemble(self.form(), heads, parts)?;
+            for object in &mut chunk {
+                if let Some(links) = peers.get(&object.id) {
+                    object.links.clone_from(links);
+                }
+            }
             total += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
             visit(chunk).await?;
             self.yield_between_bulk_batches().await;
@@ -183,6 +191,47 @@ fn binds<'a>(
     ]
 }
 
+async fn link_peer_keys(
+    tx: &tokio_postgres::Transaction<'_>,
+    ids: &[Uuid],
+) -> Result<BTreeMap<Uuid, BTreeMap<String, Vec<String>>>, Error> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let rows = tx
+        .query(
+            "SELECT l.link_type_id, l.from_id AS endpoint, true AS outgoing, COALESCE(peer.key, '') AS peer_key
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             JOIN objects peer ON peer.id = l.to_id AND peer.deleted_at IS NULL
+             WHERE l.from_id = ANY($1)
+             UNION ALL
+             SELECT l.link_type_id, l.to_id, false, COALESCE(peer.key, '')
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             JOIN objects peer ON peer.id = l.from_id AND peer.deleted_at IS NULL
+             WHERE l.to_id = ANY($1)
+             ORDER BY endpoint, link_type_id, outgoing, peer_key",
+            &[&ids],
+        )
+        .await?;
+    let mut peers: BTreeMap<Uuid, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    for row in rows {
+        let endpoint: Uuid = row.get(1);
+        let link_type: Uuid = row.get(0);
+        let outgoing: bool = row.get(2);
+        let key: String = row.get(3);
+        let slot = format!("{link_type}:{}", if outgoing { "out" } else { "in" });
+        peers
+            .entry(endpoint)
+            .or_default()
+            .entry(slot)
+            .or_default()
+            .push(key);
+    }
+    Ok(peers)
+}
+
 fn assemble(
     form: StorageForm,
     heads: Vec<tokio_postgres::Row>,
@@ -207,6 +256,7 @@ fn assemble(
             type_id: row.get(2),
             version: row.get(3),
             values,
+            links: BTreeMap::new(),
         });
     }
     Ok(objects)

@@ -240,6 +240,13 @@ function LinkPicker({
   )
 }
 
+export function linkChoices(defs: Json | undefined, typeKey: string) {
+  return sectionsFor(defs, typeKey, []).map((section) => ({
+    key: section.link_type,
+    label: section.label,
+  }))
+}
+
 function sectionsFor(defs: Json | undefined, typeKey: string, links: LinkSide[]): LinkSide[] {
   const types = ((defs?.types as Json[]) ?? []).filter((item) => item.kind === 'link')
   const mine = types.filter((item) => {

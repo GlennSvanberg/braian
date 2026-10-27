@@ -27,11 +27,6 @@ pub enum ProposalWrite {
         /// For an update, the object must still be at this version or the transaction rolls back.
         expect_version: Option<(ObjectId, u64)>,
     },
-    Relation {
-        from: Uuid,
-        to: Uuid,
-        kind: String,
-    },
     Assortment {
         id: Uuid,
         owner: Uuid,
@@ -245,6 +240,208 @@ impl Store {
         Ok(true)
     }
 
+    /// Turns stored object references into links and drops those attributes from the latest model.
+    ///
+    /// Relation rows are already links by the time this runs. A second call finds no
+    /// `object_ref` attributes and does nothing. Search is asked to rebuild because
+    /// those values leave the object documents.
+    pub async fn upgrade_object_refs(&self) -> Result<bool, Error> {
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT model_revision, definitions FROM definition_revisions ORDER BY model_revision DESC LIMIT 1 FOR UPDATE",
+                &[],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Ok(false);
+        };
+        let revision: i64 = row.get(0);
+        let document: Value = row.get(1);
+        let defs: DefinitionSet = serde_json::from_value(document)
+            .map_err(|error| Error::Definitions(error.to_string()))?;
+        let ref_ids: Vec<AttributeId> = defs
+            .attributes
+            .iter()
+            .filter(|attribute| {
+                matches!(
+                    attribute.kind,
+                    braian_model::AttributeKind::ObjectRef { .. }
+                )
+            })
+            .map(|attribute| attribute.id)
+            .collect();
+        if ref_ids.is_empty() {
+            return Ok(false);
+        }
+        let value_rows = tx
+            .query(
+                "SELECT object_id, \"values\" FROM object_values WHERE is_latest",
+                &[],
+            )
+            .await?;
+        let object_rows = tx.query("SELECT id, type_id FROM objects", &[]).await?;
+        let mut object_types: HashMap<Uuid, Uuid> = HashMap::new();
+        for row in &object_rows {
+            object_types.insert(row.get(0), row.get(1));
+        }
+        let mut by_object: HashMap<Uuid, Vec<Value>> = HashMap::new();
+        for row in &value_rows {
+            by_object.entry(row.get(0)).or_default().push(row.get(1));
+        }
+        let mut max_values: BTreeMap<AttributeId, i64> = BTreeMap::new();
+        let mut stored: Vec<(Uuid, AttributeId, Vec<Uuid>)> = Vec::new();
+        for (object_id, parts) in &by_object {
+            for attribute in &ref_ids {
+                let mut targets = Vec::new();
+                for part in parts {
+                    if let Some(value) = part.get(attribute.as_uuid().to_string()) {
+                        collect_uuids(value, &mut targets);
+                    }
+                }
+                targets.sort();
+                targets.dedup();
+                if targets.is_empty() {
+                    continue;
+                }
+                let count = i64::try_from(targets.len()).unwrap_or(i64::MAX);
+                let slot = max_values.entry(*attribute).or_insert(0);
+                if count > *slot {
+                    *slot = count;
+                }
+                stored.push((*object_id, *attribute, targets));
+            }
+        }
+        let Some(converted) = braian_model::convert_object_refs(&defs, &max_values) else {
+            return Ok(false);
+        };
+        let mut defs = converted.defs;
+        defs.model_revision = u64::try_from(revision)
+            .map_err(|_| Error::Data("definition revision does not fit".into()))?
+            + 1;
+        let actor_id: Uuid = tx
+            .query_one(
+                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'human', 'System', 'system')
+                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name
+                 RETURNING id",
+                &[&Uuid::now_v7()],
+            )
+            .await?
+            .get(0);
+        let actor = Actor {
+            actor: PrincipalId::from_uuid(actor_id),
+            on_behalf_of: None,
+            kind: crate::ids::BatchKind::Bulk,
+            source: "object-refs-to-links".into(),
+        };
+        let (receipt, groups) = self.write_definitions_in(&tx, &actor, &defs).await?;
+        for plan in &converted.plans {
+            let Some(link_type) = defs.types.iter().find(|item| item.id == plan.link_type_id)
+            else {
+                continue;
+            };
+            let Some(spec) = link_type.link.as_ref() else {
+                continue;
+            };
+            let from_one = spec.from_cardinality == braian_model::Cardinality::One;
+            let to_one = spec.to_cardinality == braian_model::Cardinality::One;
+            for (holder, attribute, targets) in &stored {
+                if *attribute != plan.attribute_id {
+                    continue;
+                }
+                let Some(holder_type) = object_types.get(holder).copied() else {
+                    continue;
+                };
+                if !spec
+                    .to_types
+                    .iter()
+                    .any(|type_id| type_id.as_uuid() == holder_type)
+                {
+                    continue;
+                }
+                for target in targets {
+                    if target == holder {
+                        continue;
+                    }
+                    let Some(target_type) = object_types.get(target).copied() else {
+                        continue;
+                    };
+                    if !spec
+                        .from_types
+                        .iter()
+                        .any(|type_id| type_id.as_uuid() == target_type)
+                    {
+                        continue;
+                    }
+                    let link_id = ref_link_id(attribute.as_uuid(), *target, *holder);
+                    let exists: bool = tx
+                        .query_one(
+                            "SELECT EXISTS (SELECT 1 FROM objects WHERE id = $1)",
+                            &[&link_id],
+                        )
+                        .await?
+                        .get(0);
+                    if exists {
+                        continue;
+                    }
+                    tx.execute(
+                        "INSERT INTO objects (id, type_id, key, version, model_revision, updated_by)
+                         VALUES ($1, $2, NULL, 1, $3, $4)",
+                        &[
+                            &link_id,
+                            &plan.link_type_id.as_uuid(),
+                            &as_i64(defs.model_revision)?,
+                            &actor_id,
+                        ],
+                    )
+                    .await?;
+                    let marker = split::create_marker(&BTreeMap::new());
+                    insert_change(
+                        &tx,
+                        receipt.batch_id,
+                        Some(ObjectId::from_uuid(link_id)),
+                        Some(1),
+                        ChangeOp::Create,
+                        &actor,
+                        &marker,
+                    )
+                    .await?;
+                    tx.execute(
+                        "INSERT INTO links (object_id, link_type_id, from_id, to_id, from_one, to_one)
+                         VALUES ($1, $2, $3, $4, $5, $6)",
+                        &[
+                            &link_id,
+                            &plan.link_type_id.as_uuid(),
+                            &target,
+                            &holder,
+                            &from_one,
+                            &to_one,
+                        ],
+                    )
+                    .await?;
+                }
+            }
+        }
+        for attribute in &converted.strip {
+            let key = attribute.as_uuid().to_string();
+            tx.execute(
+                "UPDATE object_values SET \"values\" = \"values\" - $1 WHERE is_latest AND \"values\" ? $1",
+                &[&key],
+            )
+            .await?;
+        }
+        tx.execute(
+            "UPDATE indexer_progress SET reindex_requested = true, updated_at = now() WHERE id = 1",
+            &[],
+        )
+        .await?;
+        tx.commit().await?;
+        self.remember(Arc::new(CachedDefs::from_groups(defs, groups)))
+            .await;
+        Ok(true)
+    }
+
     /// Objects of this type with no group in the structure.
     pub async fn unplaced_count(
         &self,
@@ -400,19 +597,6 @@ impl Store {
                 let batch = insert_batch(tx, actor).await?;
                 let defs = self.defs_for(tx).await?;
                 apply_ops(tx, self.form(), &defs, batch, actor, &ops).await?
-            }
-            ProposalWrite::Relation { from, to, kind } => {
-                tx.execute(
-                    "INSERT INTO relations (from_id, to_id, kind) VALUES ($1, $2, $3)
-                     ON CONFLICT DO NOTHING",
-                    &[&from, &to, &kind],
-                )
-                .await?;
-                WriteReceipt {
-                    batch_id: BatchId::from_uuid(Uuid::nil()),
-                    last_seq: 0,
-                    versions: Vec::new(),
-                }
             }
             ProposalWrite::Assortment {
                 id,
@@ -2685,6 +2869,40 @@ fn release_heap() {
             malloc_trim(0);
         }
     }
+}
+
+fn collect_uuids(value: &Value, out: &mut Vec<Uuid>) {
+    match value {
+        Value::String(text) => {
+            if let Ok(id) = Uuid::parse_str(text.trim()) {
+                out.push(id);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_uuids(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values() {
+                collect_uuids(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ref_link_id(attribute: Uuid, from_id: Uuid, to_id: Uuid) -> Uuid {
+    let label = format!("object-ref-link:{attribute}:{from_id}:{to_id}");
+    let mut hash = 0xcbf29ce484222325u128;
+    for byte in label.as_bytes() {
+        hash ^= u128::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let mut bytes = hash.to_le_bytes();
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
 }
 
 fn as_i64(value: u64) -> Result<i64, Error> {

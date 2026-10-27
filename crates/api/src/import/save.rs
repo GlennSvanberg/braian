@@ -254,6 +254,7 @@ async fn write_new(
         return;
     }
     if store.import_chunk(batch, actor, &objects).await.is_ok() {
+        apply_imported_links(state, store, batch, actor, rows, errors).await;
         return;
     }
     for (object, row_no) in objects.into_iter().zip(row_nos) {
@@ -270,6 +271,7 @@ async fn write_new(
                 .await;
         }
     }
+    apply_imported_links(state, store, batch, actor, rows, errors).await;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -287,41 +289,47 @@ async fn write_ops(
     for row in rows {
         match op_for(row, status) {
             Some(op) => ops.push((row.row_no, op)),
+            None if row
+                .cells
+                .get("links")
+                .and_then(Value::as_array)
+                .is_some_and(|links| !links.is_empty()) => {}
             None => {
                 errors.push(json!({ "row": row.row_no, "code": "corrupt", "message": "The prepared row could not be read." }));
             }
         }
     }
     let plain: Vec<ObjectOp> = ops.iter().map(|(_, op)| op.clone()).collect();
-    if plain.is_empty() {
-        return;
-    }
-    match store.write_ops(batch, actor, plain).await {
-        Ok(_) => {}
-        Err(error) if is_conflict(&error) => {
-            for (row_no, op) in ops {
-                if let Err(error) = store.write_ops(batch, actor, vec![op]).await {
-                    let code = if is_conflict(&error) {
-                        "stale"
-                    } else {
-                        "write_failed"
-                    };
-                    errors
-                        .push(json!({ "row": row_no, "code": code, "message": error.to_string() }));
-                    let _ = state
-                        .store
-                        .mark_import_row(
-                            session_id,
-                            row_no,
-                            "failed",
-                            &json!([{ "code": code, "message": error.to_string() }]),
-                        )
-                        .await;
+    if !plain.is_empty() {
+        match store.write_ops(batch, actor, plain).await {
+            Ok(_) => {}
+            Err(error) if is_conflict(&error) => {
+                for (row_no, op) in ops {
+                    if let Err(error) = store.write_ops(batch, actor, vec![op]).await {
+                        let code = if is_conflict(&error) {
+                            "stale"
+                        } else {
+                            "write_failed"
+                        };
+                        errors.push(
+                            json!({ "row": row_no, "code": code, "message": error.to_string() }),
+                        );
+                        let _ = state
+                            .store
+                            .mark_import_row(
+                                session_id,
+                                row_no,
+                                "failed",
+                                &json!([{ "code": code, "message": error.to_string() }]),
+                            )
+                            .await;
+                    }
                 }
             }
+            Err(error) => errors.push(json!({ "message": error.to_string() })),
         }
-        Err(error) => errors.push(json!({ "message": error.to_string() })),
     }
+    apply_imported_links(state, store, batch, actor, rows, errors).await;
 }
 
 fn op_for(row: &ImportRowOut, status: &str) -> Option<ObjectOp> {
@@ -390,5 +398,130 @@ async fn finish(
         .await;
     if let Ok(Some(session)) = state.store.import_session(session_id).await {
         emit_import(state, &session);
+    }
+}
+
+async fn apply_imported_links(
+    state: &AppState,
+    store: &braian_store::Store,
+    batch: braian_store::BatchId,
+    actor: &Actor,
+    rows: &[ImportRowOut],
+    errors: &mut Vec<Value>,
+) {
+    let Ok(cached) = state.models.get(&state.store).await else {
+        return;
+    };
+    for row in rows {
+        let Some(plans) = row.cells.get("links").and_then(Value::as_array) else {
+            continue;
+        };
+        let Some(holder) = row.object_id else {
+            continue;
+        };
+        let holder = ObjectId::from_uuid(holder);
+        let Ok(existing) = store.links_for(holder).await else {
+            continue;
+        };
+        let mut ops = Vec::new();
+        for plan in plans {
+            let Some(type_key) = plan.get("type").and_then(Value::as_str) else {
+                continue;
+            };
+            let outgoing = plan
+                .get("outgoing")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let Some(link_type) = cached
+                .defs
+                .types
+                .iter()
+                .find(|item| item.is_link() && item.key == type_key)
+            else {
+                continue;
+            };
+            let Some(spec) = link_type.link.as_ref() else {
+                continue;
+            };
+            let peers: Vec<Uuid> = plan
+                .get("peers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item.as_str().and_then(|text| Uuid::parse_str(text).ok()))
+                .collect();
+            let one = if outgoing {
+                spec.from_cardinality == braian_model::Cardinality::One
+            } else {
+                spec.to_cardinality == braian_model::Cardinality::One
+            };
+            let mine: Vec<_> = existing
+                .iter()
+                .filter(|link| link.link_type_id == link_type.id && link.outgoing == outgoing)
+                .collect();
+            let create = |peer: Uuid| {
+                crate::links::link_create(
+                    &cached,
+                    &crate::links::CreateLink {
+                        id: None,
+                        link_type: type_key.to_owned(),
+                        from_id: if outgoing { holder.as_uuid() } else { peer },
+                        to_id: if outgoing { peer } else { holder.as_uuid() },
+                        values: std::collections::BTreeMap::new(),
+                    },
+                )
+            };
+            if one {
+                let Some(peer) = peers.first().copied() else {
+                    continue;
+                };
+                if let Some(current) = mine.first() {
+                    if current.peer_id.as_uuid() == peer {
+                        continue;
+                    }
+                    let Ok(Some(stored)) = store.get_object(current.id).await else {
+                        continue;
+                    };
+                    ops.push(ObjectOp::UpdateLink {
+                        id: current.id,
+                        patch: ObjectPatch {
+                            values: braian_model::ValuePatch {
+                                attributes: std::collections::BTreeMap::new(),
+                            },
+                            groups: std::collections::BTreeMap::new(),
+                        },
+                        base_version: stored.version,
+                        read_version: stored.version,
+                        from_id: if outgoing {
+                            None
+                        } else {
+                            Some(ObjectId::from_uuid(peer))
+                        },
+                        to_id: if outgoing {
+                            Some(ObjectId::from_uuid(peer))
+                        } else {
+                            None
+                        },
+                    });
+                } else if let Ok(op) = create(peer) {
+                    ops.push(op);
+                }
+            } else {
+                for peer in peers {
+                    if mine.iter().any(|link| link.peer_id.as_uuid() == peer) {
+                        continue;
+                    }
+                    if let Ok(op) = create(peer) {
+                        ops.push(op);
+                    }
+                }
+            }
+        }
+        if ops.is_empty() {
+            continue;
+        }
+        if let Err(error) = store.write_ops(batch, actor, ops).await {
+            errors.push(json!({ "row": row.row_no, "message": error.to_string() }));
+        }
     }
 }

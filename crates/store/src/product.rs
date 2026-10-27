@@ -1139,66 +1139,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn delete_relation(
-        &self,
-        from_id: ObjectId,
-        to_id: ObjectId,
-        kind: &str,
-    ) -> Result<u64, Error> {
-        let client = self.pool().get().await?;
-        let removed = client
-            .execute(
-                "DELETE FROM relations WHERE from_id = $1 AND to_id = $2 AND kind = $3",
-                &[&from_id.as_uuid(), &to_id.as_uuid(), &kind],
-            )
-            .await?;
-        Ok(removed)
-    }
-
-    pub async fn set_relation(
-        &self,
-        from_id: ObjectId,
-        to_id: ObjectId,
-        kind: &str,
-    ) -> Result<(), Error> {
-        let client = self.pool().get().await?;
-        client
-            .execute(
-                "INSERT INTO relations (from_id, to_id, kind) VALUES ($1, $2, $3)
-                 ON CONFLICT DO NOTHING",
-                &[&from_id.as_uuid(), &to_id.as_uuid(), &kind],
-            )
-            .await?;
-        Ok(())
-    }
-
-    pub async fn relations_for(&self, id: ObjectId) -> Result<Vec<Value>, Error> {
-        let client = self.pool().get().await?;
-        let rows = client
-            .query(
-                "SELECT r.kind, r.to_id, o.key, o.type_id
-                 FROM relations r JOIN objects o ON o.id = r.to_id
-                 WHERE r.from_id = $1
-                 UNION ALL
-                 SELECT r.kind, r.from_id, o.key, o.type_id
-                 FROM relations r JOIN objects o ON o.id = r.from_id
-                 WHERE r.to_id = $1",
-                &[&id.as_uuid()],
-            )
-            .await?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                serde_json::json!({
-                    "kind": row.get::<_, String>(0),
-                    "object_id": row.get::<_, Uuid>(1),
-                    "key": row.get::<_, String>(2),
-                    "type_id": row.get::<_, Uuid>(3),
-                })
-            })
-            .collect())
-    }
-
     pub async fn history(
         &self,
         object_id: Option<Uuid>,

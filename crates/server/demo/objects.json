@@ -4,14 +4,21 @@
     "type": "supplier",
     "values": {
       "number": "SUP-NORTH",
-      "name": { "en": "Northmill Foods" },
+      "name": {
+        "en": "Northmill Foods"
+      },
       "org_number": "556100-0101",
       "gln": "7300000000018",
       "country": "se",
       "city": "York",
       "website": "https://northmill.example",
-      "certifications": ["brc", "krav"],
-      "lead_time_days": { "value": "5" },
+      "certifications": [
+        "brc",
+        "krav"
+      ],
+      "lead_time_days": {
+        "value": "5"
+      },
       "active": true,
       "status": "ok"
     }
@@ -21,14 +28,21 @@
     "type": "supplier",
     "values": {
       "number": "SUP-COAST",
-      "name": { "en": "Coast & Meadow" },
+      "name": {
+        "en": "Coast & Meadow"
+      },
       "org_number": "556200-0202",
       "gln": "7300000000025",
       "country": "dk",
       "city": "Aberdeen",
       "website": "https://coastmeadow.example",
-      "certifications": ["ifs", "msc"],
-      "lead_time_days": { "value": "8" },
+      "certifications": [
+        "ifs",
+        "msc"
+      ],
+      "lead_time_days": {
+        "value": "8"
+      },
       "active": true,
       "status": "ok"
     }
@@ -39,24 +53,59 @@
     "group": "plant_drinks",
     "values": {
       "number": "PROD-OAT",
-      "name": { "en": "Organic oat drink" },
-      "description": { "en": "A plain oat drink for coffee, cereal and cooking. Synthetic demo recipe." },
+      "name": {
+        "en": "Organic oat drink"
+      },
+      "description": {
+        "en": "A plain oat drink for coffee, cereal and cooking. Synthetic demo recipe."
+      },
       "brand": "Meadow Route",
-      "ingredients": { "en": "Water, oats 10%, rapeseed oil, sea salt." },
-      "allergens": ["gluten"],
+      "ingredients": {
+        "en": "Water, oats 10%, rapeseed oil, sea salt."
+      },
+      "allergens": [
+        "gluten"
+      ],
       "traces": [],
-      "labels": ["organic_eu", "vegan"],
+      "labels": [
+        "organic_eu",
+        "vegan"
+      ],
       "nutriscore": "a",
       "nova": "2",
       "country_of_origin": "se",
-      "energy": { "value": "180", "unit": "kJ" },
-      "fat": { "value": "1.5", "unit": "g" },
-      "saturated_fat": { "value": "0.2", "unit": "g" },
-      "carbohydrates": { "value": "6.5", "unit": "g" },
-      "sugars": { "value": "3.2", "unit": "g" },
-      "fiber": { "value": "0.8", "unit": "g" },
-      "protein": { "value": "1.1", "unit": "g" },
-      "salt": { "value": "0.09", "unit": "g" },
+      "energy": {
+        "value": "180",
+        "unit": "kJ"
+      },
+      "fat": {
+        "value": "1.5",
+        "unit": "g"
+      },
+      "saturated_fat": {
+        "value": "0.2",
+        "unit": "g"
+      },
+      "carbohydrates": {
+        "value": "6.5",
+        "unit": "g"
+      },
+      "sugars": {
+        "value": "3.2",
+        "unit": "g"
+      },
+      "fiber": {
+        "value": "0.8",
+        "unit": "g"
+      },
+      "protein": {
+        "value": "1.1",
+        "unit": "g"
+      },
+      "salt": {
+        "value": "0.09",
+        "unit": "g"
+      },
       "status": "ok"
     }
   },
@@ -66,25 +115,59 @@
     "group": "cheese",
     "values": {
       "number": "PROD-CHEDDAR",
-      "name": { "en": "Mature cheddar" },
-      "description": { "en": "A firm cow's-milk cheddar aged for several months. Synthetic demo recipe." },
+      "name": {
+        "en": "Mature cheddar"
+      },
+      "description": {
+        "en": "A firm cow's-milk cheddar aged for several months. Synthetic demo recipe."
+      },
       "brand": "Harbor & Rye",
-      "ingredients": { "en": "Pasteurised cow's milk, salt, starter culture, rennet." },
-      "allergens": ["milk"],
+      "ingredients": {
+        "en": "Pasteurised cow's milk, salt, starter culture, rennet."
+      },
+      "allergens": [
+        "milk"
+      ],
       "traces": [],
       "labels": [],
       "nutriscore": "d",
       "nova": "3",
       "country_of_origin": "gb",
-      "energy": { "value": "1720", "unit": "kJ" },
-      "fat": { "value": "35", "unit": "g" },
-      "saturated_fat": { "value": "22", "unit": "g" },
-      "carbohydrates": { "value": "0.1", "unit": "g" },
-      "sugars": { "value": "0.1", "unit": "g" },
-      "fiber": { "value": "0", "unit": "g" },
-      "protein": { "value": "25", "unit": "g" },
-      "salt": { "value": "1.8", "unit": "g" },
-      "fat_content": { "value": "35" },
+      "energy": {
+        "value": "1720",
+        "unit": "kJ"
+      },
+      "fat": {
+        "value": "35",
+        "unit": "g"
+      },
+      "saturated_fat": {
+        "value": "22",
+        "unit": "g"
+      },
+      "carbohydrates": {
+        "value": "0.1",
+        "unit": "g"
+      },
+      "sugars": {
+        "value": "0.1",
+        "unit": "g"
+      },
+      "fiber": {
+        "value": "0",
+        "unit": "g"
+      },
+      "protein": {
+        "value": "25",
+        "unit": "g"
+      },
+      "salt": {
+        "value": "1.8",
+        "unit": "g"
+      },
+      "fat_content": {
+        "value": "35"
+      },
       "status": "ok"
     }
   },
@@ -94,25 +177,59 @@
     "group": "coffee_tea",
     "values": {
       "number": "PROD-COFFEE",
-      "name": { "en": "Breakfast filter coffee" },
-      "description": { "en": "A medium-roast filter coffee blended from synthetic lots. Not a real brand." },
+      "name": {
+        "en": "Breakfast filter coffee"
+      },
+      "description": {
+        "en": "A medium-roast filter coffee blended from synthetic lots. Not a real brand."
+      },
       "brand": "Copper Kettle",
-      "ingredients": { "en": "Roasted coffee beans." },
+      "ingredients": {
+        "en": "Roasted coffee beans."
+      },
       "allergens": [],
       "traces": [],
-      "labels": ["fairtrade"],
+      "labels": [
+        "fairtrade"
+      ],
       "nutriscore": "b",
       "nova": "1",
       "country_of_origin": "et",
-      "energy": { "value": "4", "unit": "kJ" },
-      "fat": { "value": "0", "unit": "g" },
-      "saturated_fat": { "value": "0", "unit": "g" },
-      "carbohydrates": { "value": "0", "unit": "g" },
-      "sugars": { "value": "0", "unit": "g" },
-      "fiber": { "value": "0", "unit": "g" },
-      "protein": { "value": "0.2", "unit": "g" },
-      "salt": { "value": "0", "unit": "g" },
-      "caffeine": { "value": "40" },
+      "energy": {
+        "value": "4",
+        "unit": "kJ"
+      },
+      "fat": {
+        "value": "0",
+        "unit": "g"
+      },
+      "saturated_fat": {
+        "value": "0",
+        "unit": "g"
+      },
+      "carbohydrates": {
+        "value": "0",
+        "unit": "g"
+      },
+      "sugars": {
+        "value": "0",
+        "unit": "g"
+      },
+      "fiber": {
+        "value": "0",
+        "unit": "g"
+      },
+      "protein": {
+        "value": "0.2",
+        "unit": "g"
+      },
+      "salt": {
+        "value": "0",
+        "unit": "g"
+      },
+      "caffeine": {
+        "value": "40"
+      },
       "status": "ok"
     }
   },
@@ -122,25 +239,64 @@
     "group": "chocolate",
     "values": {
       "number": "PROD-CHOC",
-      "name": { "en": "Dark chocolate 70%" },
-      "description": { "en": "A dark bar with 70% cocoa. Synthetic demo recipe, not a shop brand." },
+      "name": {
+        "en": "Dark chocolate 70%"
+      },
+      "description": {
+        "en": "A dark bar with 70% cocoa. Synthetic demo recipe, not a shop brand."
+      },
       "brand": "Little Kiln",
-      "ingredients": { "en": "Cocoa mass, cane sugar, cocoa butter, vanilla." },
+      "ingredients": {
+        "en": "Cocoa mass, cane sugar, cocoa butter, vanilla."
+      },
       "allergens": [],
-      "traces": ["milk", "nuts"],
-      "labels": ["organic_eu", "fairtrade", "vegan"],
+      "traces": [
+        "milk",
+        "nuts"
+      ],
+      "labels": [
+        "organic_eu",
+        "fairtrade",
+        "vegan"
+      ],
       "nutriscore": "e",
       "nova": "4",
       "country_of_origin": "be",
-      "energy": { "value": "2400", "unit": "kJ" },
-      "fat": { "value": "42", "unit": "g" },
-      "saturated_fat": { "value": "25", "unit": "g" },
-      "carbohydrates": { "value": "34", "unit": "g" },
-      "sugars": { "value": "29", "unit": "g" },
-      "fiber": { "value": "11", "unit": "g" },
-      "protein": { "value": "8", "unit": "g" },
-      "salt": { "value": "0.02", "unit": "g" },
-      "cocoa_content": { "value": "70" },
+      "energy": {
+        "value": "2400",
+        "unit": "kJ"
+      },
+      "fat": {
+        "value": "42",
+        "unit": "g"
+      },
+      "saturated_fat": {
+        "value": "25",
+        "unit": "g"
+      },
+      "carbohydrates": {
+        "value": "34",
+        "unit": "g"
+      },
+      "sugars": {
+        "value": "29",
+        "unit": "g"
+      },
+      "fiber": {
+        "value": "11",
+        "unit": "g"
+      },
+      "protein": {
+        "value": "8",
+        "unit": "g"
+      },
+      "salt": {
+        "value": "0.02",
+        "unit": "g"
+      },
+      "cocoa_content": {
+        "value": "70"
+      },
       "status": "ok"
     }
   },
@@ -151,26 +307,66 @@
     "values": {
       "number": "ART-OAT-1L",
       "gtin": "07310000000017",
-      "name": { "en": "Organic oat drink 1 L" },
-      "product": "018f1000-0000-7000-8000-000000000011",
-      "supplier": "018f1000-0000-7000-8000-000000000001",
-      "net_volume": { "value": "1", "unit": "l" },
-      "units_per_pack": { "value": "1" },
+      "name": {
+        "en": "Organic oat drink 1 L"
+      },
+      "net_volume": {
+        "value": "1",
+        "unit": "l"
+      },
+      "units_per_pack": {
+        "value": "1"
+      },
       "packaging": "carton",
-      "packaging_material": ["cardboard", "plastic"],
+      "packaging_material": [
+        "cardboard",
+        "plastic"
+      ],
       "deposit": false,
       "storage": "ambient",
-      "shelf_life_days": { "value": "270" },
-      "height": { "value": "230", "unit": "mm" },
-      "width": { "value": "75", "unit": "mm" },
-      "depth": { "value": "75", "unit": "mm" },
-      "gross_weight": { "value": "1050", "unit": "g" },
-      "labels": ["organic_eu", "vegan"],
+      "shelf_life_days": {
+        "value": "270"
+      },
+      "height": {
+        "value": "230",
+        "unit": "mm"
+      },
+      "width": {
+        "value": "75",
+        "unit": "mm"
+      },
+      "depth": {
+        "value": "75",
+        "unit": "mm"
+      },
+      "gross_weight": {
+        "value": "1050",
+        "unit": "g"
+      },
+      "labels": [
+        "organic_eu",
+        "vegan"
+      ],
       "launched": "2024-03-12",
       "active": true,
       "status": "ok",
-      "co2_footprint": { "value": "0.42", "unit": "kgCO2e" }
-    }
+      "co2_footprint": {
+        "value": "0.42",
+        "unit": "kgCO2e"
+      }
+    },
+    "links": [
+      {
+        "id": "018f3100-0000-7000-8000-000000000001",
+        "type": "product_articles",
+        "from": "018f1000-0000-7000-8000-000000000011"
+      },
+      {
+        "id": "018f3100-0000-7000-8000-000000000002",
+        "type": "supplier_articles",
+        "from": "018f1000-0000-7000-8000-000000000001"
+      }
+    ]
   },
   {
     "id": "018f1000-0000-7000-8000-000000000022",
@@ -179,26 +375,65 @@
     "values": {
       "number": "ART-CHED-200",
       "gtin": "07310000000024",
-      "name": { "en": "Mature cheddar 200 g" },
-      "product": "018f1000-0000-7000-8000-000000000012",
-      "supplier": "018f1000-0000-7000-8000-000000000002",
-      "net_weight": { "value": "200", "unit": "g" },
-      "units_per_pack": { "value": "1" },
+      "name": {
+        "en": "Mature cheddar 200 g"
+      },
+      "net_weight": {
+        "value": "200",
+        "unit": "g"
+      },
+      "units_per_pack": {
+        "value": "1"
+      },
       "packaging": "tray",
-      "packaging_material": ["plastic"],
+      "packaging_material": [
+        "plastic"
+      ],
       "deposit": false,
       "storage": "chilled",
-      "shelf_life_days": { "value": "90" },
-      "height": { "value": "20", "unit": "mm" },
-      "width": { "value": "90", "unit": "mm" },
-      "depth": { "value": "90", "unit": "mm" },
-      "gross_weight": { "value": "215", "unit": "g" },
+      "shelf_life_days": {
+        "value": "90"
+      },
+      "height": {
+        "value": "20",
+        "unit": "mm"
+      },
+      "width": {
+        "value": "90",
+        "unit": "mm"
+      },
+      "depth": {
+        "value": "90",
+        "unit": "mm"
+      },
+      "gross_weight": {
+        "value": "215",
+        "unit": "g"
+      },
       "launched": "2023-09-01",
       "active": true,
       "status": "ok",
-      "fat_content": { "value": "35" },
-      "co2_footprint": { "value": "2.4", "unit": "kgCO2e" }
-    }
+      "fat_content": {
+        "value": "35"
+      },
+      "co2_footprint": {
+        "value": "2.4",
+        "unit": "kgCO2e"
+      }
+    },
+    "links": [
+      {
+        "id": "018f3100-0000-7000-8000-000000000003",
+        "type": "product_articles",
+        "from": "018f1000-0000-7000-8000-000000000012",
+        "sort_order": "1"
+      },
+      {
+        "id": "018f3100-0000-7000-8000-000000000004",
+        "type": "supplier_articles",
+        "from": "018f1000-0000-7000-8000-000000000002"
+      }
+    ]
   },
   {
     "id": "018f1000-0000-7000-8000-000000000023",
@@ -207,27 +442,70 @@
     "values": {
       "number": "ART-CHED-400",
       "gtin": "07310000000031",
-      "name": { "en": "Mature cheddar 400 g" },
-      "product": "018f1000-0000-7000-8000-000000000012",
-      "supplier": "018f1000-0000-7000-8000-000000000002",
-      "net_weight": { "value": "400", "unit": "g" },
-      "units_per_pack": { "value": "1" },
+      "name": {
+        "en": "Mature cheddar 400 g"
+      },
+      "net_weight": {
+        "value": "400",
+        "unit": "g"
+      },
+      "units_per_pack": {
+        "value": "1"
+      },
       "packaging": "tray",
-      "packaging_material": ["plastic"],
+      "packaging_material": [
+        "plastic"
+      ],
       "deposit": false,
       "storage": "chilled",
-      "shelf_life_days": { "value": "90" },
-      "height": { "value": "30", "unit": "mm" },
-      "width": { "value": "110", "unit": "mm" },
-      "depth": { "value": "110", "unit": "mm" },
-      "gross_weight": { "value": "425", "unit": "g" },
+      "shelf_life_days": {
+        "value": "90"
+      },
+      "height": {
+        "value": "30",
+        "unit": "mm"
+      },
+      "width": {
+        "value": "110",
+        "unit": "mm"
+      },
+      "depth": {
+        "value": "110",
+        "unit": "mm"
+      },
+      "gross_weight": {
+        "value": "425",
+        "unit": "g"
+      },
       "launched": "2025-11-04",
       "active": true,
       "status": "draft",
-      "replaces": "018f1000-0000-7000-8000-000000000022",
-      "fat_content": { "value": "35" },
-      "co2_footprint": { "value": "4.6", "unit": "kgCO2e" }
-    }
+      "fat_content": {
+        "value": "35"
+      },
+      "co2_footprint": {
+        "value": "4.6",
+        "unit": "kgCO2e"
+      }
+    },
+    "links": [
+      {
+        "id": "018f3100-0000-7000-8000-000000000005",
+        "type": "product_articles",
+        "from": "018f1000-0000-7000-8000-000000000012",
+        "sort_order": "2"
+      },
+      {
+        "id": "018f3100-0000-7000-8000-000000000006",
+        "type": "supplier_articles",
+        "from": "018f1000-0000-7000-8000-000000000002"
+      },
+      {
+        "id": "018f3100-0000-7000-8000-000000000007",
+        "type": "replaces",
+        "from": "018f1000-0000-7000-8000-000000000022"
+      }
+    ]
   },
   {
     "id": "018f1000-0000-7000-8000-000000000024",
@@ -236,26 +514,65 @@
     "values": {
       "number": "ART-COFFEE-250",
       "gtin": "07310000000048",
-      "name": { "en": "Breakfast filter coffee 250 g" },
-      "product": "018f1000-0000-7000-8000-000000000013",
-      "supplier": "018f1000-0000-7000-8000-000000000001",
-      "net_weight": { "value": "250", "unit": "g" },
-      "units_per_pack": { "value": "1" },
+      "name": {
+        "en": "Breakfast filter coffee 250 g"
+      },
+      "net_weight": {
+        "value": "250",
+        "unit": "g"
+      },
+      "units_per_pack": {
+        "value": "1"
+      },
       "packaging": "bag",
-      "packaging_material": ["paper", "aluminium"],
+      "packaging_material": [
+        "paper",
+        "aluminium"
+      ],
       "deposit": false,
       "storage": "ambient",
-      "shelf_life_days": { "value": "365" },
-      "height": { "value": "180", "unit": "mm" },
-      "width": { "value": "90", "unit": "mm" },
-      "depth": { "value": "50", "unit": "mm" },
-      "gross_weight": { "value": "265", "unit": "g" },
+      "shelf_life_days": {
+        "value": "365"
+      },
+      "height": {
+        "value": "180",
+        "unit": "mm"
+      },
+      "width": {
+        "value": "90",
+        "unit": "mm"
+      },
+      "depth": {
+        "value": "50",
+        "unit": "mm"
+      },
+      "gross_weight": {
+        "value": "265",
+        "unit": "g"
+      },
       "launched": "2024-01-15",
       "active": true,
       "status": "ok",
-      "caffeine": { "value": "40" },
-      "co2_footprint": { "value": "1.8", "unit": "kgCO2e" }
-    }
+      "caffeine": {
+        "value": "40"
+      },
+      "co2_footprint": {
+        "value": "1.8",
+        "unit": "kgCO2e"
+      }
+    },
+    "links": [
+      {
+        "id": "018f3100-0000-7000-8000-000000000008",
+        "type": "product_articles",
+        "from": "018f1000-0000-7000-8000-000000000013"
+      },
+      {
+        "id": "018f3100-0000-7000-8000-000000000009",
+        "type": "supplier_articles",
+        "from": "018f1000-0000-7000-8000-000000000001"
+      }
+    ]
   },
   {
     "id": "018f1000-0000-7000-8000-000000000025",
@@ -264,26 +581,69 @@
     "values": {
       "number": "ART-CHOC-100",
       "gtin": "07310000000055",
-      "name": { "en": "Dark chocolate 70% 100 g" },
-      "product": "018f1000-0000-7000-8000-000000000014",
-      "supplier": "018f1000-0000-7000-8000-000000000002",
-      "net_weight": { "value": "100", "unit": "g" },
-      "units_per_pack": { "value": "1" },
+      "name": {
+        "en": "Dark chocolate 70% 100 g"
+      },
+      "net_weight": {
+        "value": "100",
+        "unit": "g"
+      },
+      "units_per_pack": {
+        "value": "1"
+      },
       "packaging": "box",
-      "packaging_material": ["paper", "aluminium"],
+      "packaging_material": [
+        "paper",
+        "aluminium"
+      ],
       "deposit": false,
       "storage": "ambient",
-      "shelf_life_days": { "value": "300" },
-      "height": { "value": "8", "unit": "mm" },
-      "width": { "value": "160", "unit": "mm" },
-      "depth": { "value": "75", "unit": "mm" },
-      "gross_weight": { "value": "112", "unit": "g" },
+      "shelf_life_days": {
+        "value": "300"
+      },
+      "height": {
+        "value": "8",
+        "unit": "mm"
+      },
+      "width": {
+        "value": "160",
+        "unit": "mm"
+      },
+      "depth": {
+        "value": "75",
+        "unit": "mm"
+      },
+      "gross_weight": {
+        "value": "112",
+        "unit": "g"
+      },
       "launched": "2022-10-20",
       "active": true,
       "status": "ok",
-      "labels": ["organic_eu", "fairtrade", "vegan"],
-      "cocoa_content": { "value": "70" },
-      "co2_footprint": { "value": "0.9", "unit": "kgCO2e" }
-    }
+      "labels": [
+        "organic_eu",
+        "fairtrade",
+        "vegan"
+      ],
+      "cocoa_content": {
+        "value": "70"
+      },
+      "co2_footprint": {
+        "value": "0.9",
+        "unit": "kgCO2e"
+      }
+    },
+    "links": [
+      {
+        "id": "018f3100-0000-7000-8000-00000000000a",
+        "type": "product_articles",
+        "from": "018f1000-0000-7000-8000-000000000014"
+      },
+      {
+        "id": "018f3100-0000-7000-8000-00000000000b",
+        "type": "supplier_articles",
+        "from": "018f1000-0000-7000-8000-000000000002"
+      }
+    ]
   }
 ]

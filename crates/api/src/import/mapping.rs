@@ -195,6 +195,7 @@ pub fn targets_for(defs: &DefinitionSet, type_key: &str) -> Vec<Target> {
             group_id: None,
         });
     }
+    push_link_targets(defs, object_type, &mut targets);
     targets.sort_by(|left, right| left.id.cmp(&right.id));
     targets.push(action_target());
     targets
@@ -210,6 +211,57 @@ enum Provenance {
         structure: String,
         group: String,
     },
+}
+
+fn push_link_targets(
+    defs: &DefinitionSet,
+    object_type: &braian_model::ObjectType,
+    targets: &mut Vec<Target>,
+) {
+    let taken = |targets: &[Target], key: &str| {
+        targets
+            .iter()
+            .any(|target| target.attribute_key.as_deref() == Some(key))
+    };
+    for link in defs.types.iter().filter(|item| item.is_link()) {
+        let Some(spec) = link.link.as_ref() else {
+            continue;
+        };
+        if spec.from_types.contains(&object_type.id) && !taken(targets, &spec.to_label.key) {
+            targets.push(link_target(
+                link,
+                &spec.to_label.key,
+                &spec.to_label.text("en"),
+                true,
+            ));
+        }
+        if spec.to_types.contains(&object_type.id) && !taken(targets, &spec.from_label.key) {
+            targets.push(link_target(
+                link,
+                &spec.from_label.key,
+                &spec.from_label.text("en"),
+                false,
+            ));
+        }
+    }
+}
+
+fn link_target(link: &braian_model::ObjectType, key: &str, label: &str, outgoing: bool) -> Target {
+    Target {
+        id: format!("link:{}:{}", link.key, if outgoing { "out" } else { "in" }),
+        label: label.to_owned(),
+        kind: "link".to_owned(),
+        key_attribute: false,
+        source: label.to_owned(),
+        attribute_key: Some(key.to_owned()),
+        language: None,
+        structure_key: None,
+        group_key: None,
+        unit: None,
+        attribute_id: Some(link.id.as_uuid().to_string()),
+        structure_id: None,
+        group_id: None,
+    }
 }
 
 fn action_target() -> Target {
@@ -518,7 +570,13 @@ fn rank_targets(header: &str, targets: &[Target], units: &[String]) -> Vec<Score
             .score
             .partial_cmp(&left.score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| left.target.cmp(&right.target))
+            .then_with(|| {
+                let left_link = left.target.starts_with("link:");
+                let right_link = right.target.starts_with("link:");
+                left_link
+                    .cmp(&right_link)
+                    .then_with(|| left.target.cmp(&right.target))
+            })
     });
     scored
 }

@@ -75,8 +75,10 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
                 .map_err(|error| anyhow::anyhow!("object id: {error}"))?,
         );
         // A previous run, or an edit that changed the business key, still owns this id.
-        if store.get_object(id).await?.is_some() || store.get_by_key(type_id, key).await?.is_some()
-        {
+        let present = store.get_object(id).await?.is_some()
+            || store.get_by_key(type_id, key).await?.is_some();
+        if present {
+            seed_row_links(store, &actor, &model, defs.model_revision, row).await?;
             continue;
         }
         let groups = match row["group"].as_str().filter(|key| !key.is_empty()) {
@@ -119,6 +121,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         store
             .write_batch(&actor, vec![ObjectOp::Create(object)])
             .await?;
+        seed_row_links(store, &actor, &model, defs.model_revision, row).await?;
     }
 
     // The seeded proposal points at ART-CHED-400. Heroes are written above;
@@ -1069,22 +1072,6 @@ fn fill_values(model: &CompiledModel, slot: &Slot) -> anyhow::Result<BTreeMap<At
                 "gtin",
                 json!(format!("{:014}", 7_300_000_000_000u64 + u64::from(index))),
             )?;
-            if let Some(product) = slot.product {
-                put_attr(
-                    model,
-                    &mut values,
-                    "product",
-                    json!(synthetic_id(product).as_uuid().to_string()),
-                )?;
-            }
-            if let Some(supplier) = slot.supplier {
-                put_attr(
-                    model,
-                    &mut values,
-                    "supplier",
-                    json!(synthetic_id(supplier).as_uuid().to_string()),
-                )?;
-            }
             put_attr(model, &mut values, "units_per_pack", whole(1 + (index % 6)))?;
             if uses_volume(group) {
                 let ml = 250 + (index % 4) * 250;
@@ -1225,19 +1212,7 @@ fn synthetic_object(
     } else {
         BTreeMap::new()
     };
-    let mut values = fill_values(model, &slot)?;
-    if slot.type_key == "article" && index.is_multiple_of(11) {
-        let article_n = index - suppliers - products;
-        if article_n > 0 {
-            let previous = index - 1;
-            put_attr(
-                model,
-                &mut values,
-                "replaces",
-                json!(synthetic_id(previous).as_uuid().to_string()),
-            )?;
-        }
-    }
+    let values = fill_values(model, &slot)?;
     Ok(Object {
         id: synthetic_id(index),
         type_id,
@@ -1255,13 +1230,6 @@ async fn seed_catalog(
     target: u32,
 ) -> anyhow::Result<()> {
     let existing: HashSet<String> = store.keys_with_prefix("SYN-").await?.into_iter().collect();
-    if existing.len() >= target as usize {
-        println!(
-            "seed catalog already has {} synthetic objects (target {target})",
-            existing.len()
-        );
-        return Ok(());
-    }
     let (suppliers, products, articles) = catalog_plan(target);
     if suppliers + products + articles != target {
         return Err(anyhow::anyhow!(
@@ -1277,33 +1245,188 @@ async fn seed_catalog(
     let batch = store.open_batch(&bulk).await?;
     let mut pending = Vec::new();
     let mut inserted = 0u32;
-    for index in 0..target {
-        let key = format!("SYN-{index:06}");
-        if existing.contains(&key) {
-            continue;
+    if existing.len() < target as usize {
+        for index in 0..target {
+            let key = format!("SYN-{index:06}");
+            if existing.contains(&key) {
+                continue;
+            }
+            let object = synthetic_object(model, revision, index, suppliers, products)?;
+            let errors = model.validate(&object);
+            if !errors.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "seed {key} failed validation: {}",
+                    errors[0].message
+                ));
+            }
+            pending.push(ObjectOp::Create(object));
+            if pending.len() == 400 {
+                let chunk = std::mem::take(&mut pending);
+                inserted += u32::try_from(chunk.len()).unwrap_or(0);
+                store.write_ops(batch, &bulk, chunk).await?;
+            }
         }
-        let object = synthetic_object(model, revision, index, suppliers, products)?;
-        let errors = model.validate(&object);
-        if !errors.is_empty() {
-            return Err(anyhow::anyhow!(
-                "seed {key} failed validation: {}",
-                errors[0].message
-            ));
+        if !pending.is_empty() {
+            inserted += u32::try_from(pending.len()).unwrap_or(0);
+            store.write_ops(batch, &bulk, pending).await?;
         }
-        pending.push(ObjectOp::Create(object));
-        if pending.len() == 400 {
-            let chunk = std::mem::take(&mut pending);
-            inserted += u32::try_from(chunk.len()).unwrap_or(0);
-            store.write_ops(batch, &bulk, chunk).await?;
-        }
-    }
-    if !pending.is_empty() {
-        inserted += u32::try_from(pending.len()).unwrap_or(0);
-        store.write_ops(batch, &bulk, pending).await?;
     }
     println!(
         "seed catalog inserted {inserted} synthetic objects (target {target}, {suppliers} suppliers, {products} products, {articles} articles)"
     );
+    seed_catalog_links(
+        &store,
+        &bulk,
+        batch,
+        model,
+        revision,
+        (suppliers, products, articles),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn seed_row_links(
+    store: &Store,
+    actor: &Actor,
+    model: &CompiledModel,
+    revision: u64,
+    row: &Value,
+) -> anyhow::Result<()> {
+    let Some(links) = row.get("links").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let to_id = ObjectId::from_uuid(Uuid::parse_str(row["id"].as_str().unwrap_or_default())?);
+    for link in links {
+        let id = ObjectId::from_uuid(Uuid::parse_str(link["id"].as_str().unwrap_or_default())?);
+        if store.get_object(id).await?.is_some() {
+            continue;
+        }
+        let type_key = link["type"].as_str().unwrap_or("");
+        let from_id =
+            ObjectId::from_uuid(Uuid::parse_str(link["from"].as_str().unwrap_or_default())?);
+        let op = link_op(
+            model,
+            revision,
+            id,
+            type_key,
+            from_id,
+            to_id,
+            link.get("sort_order"),
+        )?;
+        store.write_batch(actor, vec![op]).await?;
+    }
+    Ok(())
+}
+
+fn link_op(
+    model: &CompiledModel,
+    revision: u64,
+    id: ObjectId,
+    type_key: &str,
+    from_id: ObjectId,
+    to_id: ObjectId,
+    sort_order: Option<&Value>,
+) -> anyhow::Result<ObjectOp> {
+    let type_id = model
+        .type_id(type_key)
+        .ok_or_else(|| anyhow::anyhow!("unknown link type {type_key}"))?;
+    let mut values = BTreeMap::new();
+    if let Some(order) = sort_order.and_then(Value::as_str) {
+        let attribute = model
+            .attribute_by_key("sort_order")
+            .ok_or_else(|| anyhow::anyhow!("sort_order is missing"))?;
+        values.insert(attribute.id, json!({ "value": order }));
+    }
+    Ok(ObjectOp::CreateLink {
+        object: Object {
+            id,
+            type_id,
+            model_revision: revision,
+            groups: BTreeMap::new(),
+            values,
+        },
+        from_id,
+        to_id,
+    })
+}
+
+fn synthetic_link_id(kind: u8, index: u32) -> ObjectId {
+    let mut bytes = [
+        0x01, 0x8f, 0x31, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    bytes[11] = kind;
+    let be = index.to_be_bytes();
+    bytes[12..16].copy_from_slice(&be);
+    ObjectId::from_uuid(Uuid::from_bytes(bytes))
+}
+
+async fn seed_catalog_links(
+    store: &Store,
+    actor: &Actor,
+    batch: braian_store::BatchId,
+    model: &CompiledModel,
+    revision: u64,
+    counts: (u32, u32, u32),
+) -> anyhow::Result<()> {
+    let (suppliers, products, articles) = counts;
+    let mut pending = Vec::new();
+    for article_n in 0..articles {
+        let index = suppliers + products + article_n;
+        let slot = slot_for(index, suppliers, products);
+        let to_id = synthetic_id(index);
+        if let Some(product) = slot.product {
+            let id = synthetic_link_id(1, index);
+            if store.get_object(id).await?.is_none() {
+                let order = json!(((article_n / products.max(1)) + 1).to_string());
+                pending.push(link_op(
+                    model,
+                    revision,
+                    id,
+                    "product_articles",
+                    synthetic_id(product),
+                    to_id,
+                    Some(&order),
+                )?);
+            }
+        }
+        if let Some(supplier) = slot.supplier {
+            let id = synthetic_link_id(2, index);
+            if store.get_object(id).await?.is_none() {
+                pending.push(link_op(
+                    model,
+                    revision,
+                    id,
+                    "supplier_articles",
+                    synthetic_id(supplier),
+                    to_id,
+                    None,
+                )?);
+            }
+        }
+        if index.is_multiple_of(11) && article_n > 0 {
+            let id = synthetic_link_id(3, index);
+            if store.get_object(id).await?.is_none() {
+                pending.push(link_op(
+                    model,
+                    revision,
+                    id,
+                    "replaces",
+                    synthetic_id(index - 1),
+                    to_id,
+                    None,
+                )?);
+            }
+        }
+        if pending.len() >= 400 {
+            let chunk = std::mem::take(&mut pending);
+            store.write_ops(batch, actor, chunk).await?;
+        }
+    }
+    if !pending.is_empty() {
+        store.write_ops(batch, actor, pending).await?;
+    }
     Ok(())
 }
 
@@ -1446,16 +1569,23 @@ mod tests {
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }));
         assert!(defs.value_lists.iter().all(|list| list.key != "eco_label"));
+        let product_articles = defs
+            .types
+            .iter()
+            .find(|item| item.key == "product_articles")
+            .expect("product articles");
+        assert!(product_articles.is_link());
+        let spec = product_articles.link.as_ref().expect("ends");
+        assert_eq!(spec.from_label.key, "product");
+        assert_eq!(spec.to_label.key, "articles");
+        assert!(spec.to_cardinality == braian_model::Cardinality::One);
         assert!(
-            defs.attributes
+            defs.types
                 .iter()
-                .any(|item| item.key == "product" && item.required)
+                .any(|item| item.key == "supplier_articles" && item.is_link())
         );
-        assert!(
-            defs.attributes
-                .iter()
-                .any(|item| item.key == "supplier" && item.required)
-        );
+        assert!(defs.attributes.iter().any(|item| item.key == "sort_order"));
+        assert!(defs.attributes.iter().all(|item| item.key != "product"));
     }
 
     #[test]

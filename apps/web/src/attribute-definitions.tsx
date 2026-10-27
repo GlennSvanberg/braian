@@ -22,7 +22,6 @@ const KINDS: Array<[string, string]> = [
   ['value_list', copy.kindValueList],
   ['range', copy.kindRange],
   ['file_ref', copy.kindFile],
-  ['object_ref', copy.kindReference],
 ]
 
 export function AttributeDefinitions() {

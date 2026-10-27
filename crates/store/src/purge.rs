@@ -43,18 +43,6 @@ pub async fn measure(
             )
             .await?
             .get(0);
-        let links: i64 = client
-            .query_one(
-                "SELECT count(*)::bigint FROM relations r
-                 WHERE EXISTS (
-                   SELECT 1 FROM objects o
-                   WHERE o.deleted_at IS NULL AND o.type_id = ANY($1)
-                     AND (o.id = r.from_id OR o.id = r.to_id)
-                 )",
-                &[types],
-            )
-            .await?
-            .get(0);
         let typed_links: i64 = client
             .query_one(
                 "SELECT count(*)::bigint FROM links l
@@ -92,7 +80,7 @@ pub async fn measure(
         let ref_links = link_values_on_types(client, types, &purge.link_attributes).await?;
         counts.removed += objects + cascaded;
         counts.values += values;
-        counts.links += links + typed_links + ref_links;
+        counts.links += typed_links + ref_links;
         counts.selections += selections;
     }
     if !purge.drop_attributes.is_empty() {
@@ -462,16 +450,6 @@ async fn delete_types(
                 AND (o.id = l.object_id OR o.id = l.from_id OR o.id = l.to_id)
             )",
         &[types, &extra_ids],
-    )
-    .await?;
-    tx.execute(
-        "DELETE FROM relations r
-         WHERE EXISTS (
-           SELECT 1 FROM objects o
-           WHERE o.deleted_at IS NULL AND o.type_id = ANY($1)
-             AND (o.id = r.from_id OR o.id = r.to_id)
-         )",
-        &[types],
     )
     .await?;
     tx.execute(

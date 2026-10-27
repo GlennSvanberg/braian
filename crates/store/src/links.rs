@@ -1,5 +1,7 @@
 //! Link rows. A link is also an object; this table is the two ends.
 
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
 use braian_model::{Cardinality, DefinitionSet, ObjectId, TypeId};
 use tokio_postgres::Transaction;
 use uuid::Uuid;
@@ -177,6 +179,47 @@ pub fn map_cardinality(error: tokio_postgres::Error, label: &str) -> Error {
 }
 
 impl crate::session::Store {
+    /// Peer numbers for each end in `ids`, keyed by link type id and direction.
+    pub async fn link_peer_index(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, BTreeMap<(Uuid, bool), BTreeSet<String>>>, Error> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT l.link_type_id, l.from_id AS endpoint, true AS outgoing, COALESCE(peer.key, '') AS peer_key
+                 FROM links l
+                 JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+                 JOIN objects peer ON peer.id = l.to_id AND peer.deleted_at IS NULL
+                 WHERE l.from_id = ANY($1)
+                 UNION ALL
+                 SELECT l.link_type_id, l.to_id, false, COALESCE(peer.key, '')
+                 FROM links l
+                 JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+                 JOIN objects peer ON peer.id = l.from_id AND peer.deleted_at IS NULL
+                 WHERE l.to_id = ANY($1)",
+                &[&ids],
+            )
+            .await?;
+        let mut index = HashMap::new();
+        for row in rows {
+            let endpoint: Uuid = row.get(1);
+            let link_type: Uuid = row.get(0);
+            let outgoing: bool = row.get(2);
+            let key: String = row.get(3);
+            index
+                .entry(endpoint)
+                .or_insert_with(BTreeMap::new)
+                .entry((link_type, outgoing))
+                .or_insert_with(BTreeSet::new)
+                .insert(key);
+        }
+        Ok(index)
+    }
+
     pub async fn links_for(&self, id: ObjectId) -> Result<Vec<LinkView>, Error> {
         let client = self.pool().get().await?;
         links_for(&**client, id).await

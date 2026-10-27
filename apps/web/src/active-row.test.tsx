@@ -324,7 +324,7 @@ describe('active row', () => {
     expect(screen.getByTestId('palette-active').textContent).toBe('Split beside the table')
 
     fireEvent.pointerDown(screen.getByRole('option', { name: /Graph/ }))
-    expect(screen.getByTestId('palette-active').textContent).toBe('Relations and where values come from')
+    expect(screen.getByTestId('palette-active').textContent).toBe('Links and where values come from')
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(screen.getByTestId('palette-active').textContent).toBe('obj-9')
     expect(screen.getByTestId('detail').textContent).toBe('obj-9')

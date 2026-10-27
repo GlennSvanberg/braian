@@ -31,7 +31,6 @@ const KINDS = [
   ['value_list', copy.kindValueList],
   ['range', copy.kindRange],
   ['file_ref', copy.kindFile],
-  ['object_ref', copy.kindReference],
 ] as const
 
 let selection: ModelSelection | null = null
