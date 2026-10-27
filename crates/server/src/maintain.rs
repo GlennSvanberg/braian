@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_person_named_System_is_left_untouched_while_legacy_system_merges() {
+    async fn a_person_named_system_is_untouched() {
         let db = TestDb::create().await;
         let client = connect(&db.database_url()).await;
         let person = Uuid::now_v7();
