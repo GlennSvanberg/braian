@@ -415,6 +415,12 @@ mod tests {
             }],
         );
         assert!(key_change.is_err(), "{key_change:?}");
+        let deleted = apply_all(
+            &mut defs,
+            &[ModelChange::DeleteAttribute { key: "name".into() }],
+        );
+        assert!(deleted.is_err(), "{deleted:?}");
+        assert!(defs.attributes.iter().any(|item| item.id == ids.name));
     }
 
     #[test]

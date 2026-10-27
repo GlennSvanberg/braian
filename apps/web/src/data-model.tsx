@@ -139,6 +139,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<'listed' | 'name' | 'kind'>('listed')
   const selectionKey = selection ? (selection.kind === 'type' ? selection.typeKey : `${selection.structure}/${selection.group}`) : ''
+  const keyAttribute = keyAttributeOf(defs, selection)
   useEffect(() => {
     setMessage('')
   }, [selectionKey])
@@ -203,7 +204,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
                   : { structure: selection.structure, group: selection.group }),
               })
             }
-            onDelete={row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
+            onDelete={standardAttribute(row.id) || row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
           />
         ))}
         {selection.kind === 'type' ? visibleRows(rows, filter, sort).filter((row) => !standardAttribute(row.id)).map((row) => (
@@ -212,7 +213,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
             row={row}
             families={families}
             defs={defs}
-            locked={false}
+            locked={row.id === keyAttribute}
             onUpdate={(patch) => run('model.update_attribute', { key: row.key, ...patch })}
             onRenameKey={(newKey) => run('model.rename_attribute_key', { key: row.key, new_key: newKey })}
             onRemove={() =>
@@ -221,6 +222,7 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
                 type: selection.typeKey,
               })
             }
+            onDelete={row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
           />
         )) : null}
         <AddRow
@@ -565,6 +567,12 @@ const STANDARD_ATTRIBUTE_IDS = new Set([
 
 function standardAttribute(id: string) {
   return STANDARD_ATTRIBUTE_IDS.has(id)
+}
+
+function keyAttributeOf(defs: Json | undefined, selection: ModelSelection | null) {
+  if (!defs || selection?.kind !== 'type') return ''
+  const objectType = ((defs.types as Json[]) ?? []).find((item) => String(item.key) === selection.typeKey)
+  return String(objectType?.key_attribute ?? '')
 }
 
 function AllowedTrees({ defs, typeKey }: { defs: Json | undefined; typeKey: string }) {
