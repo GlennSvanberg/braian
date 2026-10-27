@@ -75,6 +75,84 @@ impl Drop for ProposalLock {
     }
 }
 
+/// How many times to pick another handle when a concurrent insert takes the one
+/// we just chose. The unique violation aborts the statement; rolling back to
+/// the savepoint leaves the caller's transaction open for the next attempt.
+const SYSTEM_HANDLE_ATTEMPTS: usize = 8;
+
+/// Inserts [`crate::SYSTEM_PRINCIPAL`] or updates that row's name, kind and handle.
+///
+/// `system` is preferred. When another principal holds it, the next free
+/// `system-2`, `system-3`, ... is used, through `system-64`. The other row is
+/// not updated. A unique-index race retries inside a savepoint so the caller's
+/// transaction stays usable.
+async fn upsert_system_principal(tx: &Transaction<'_>) -> Result<PrincipalId, Error> {
+    let id = crate::SYSTEM_PRINCIPAL.as_uuid();
+    for _ in 0..SYSTEM_HANDLE_ATTEMPTS {
+        tx.batch_execute("SAVEPOINT upsert_system_principal")
+            .await?;
+        let inserted = tx
+            .query_opt(
+                "INSERT INTO principals (id, kind, name, handle)
+                 SELECT $1, 'integration', 'System', free.candidate
+                 FROM (
+                     SELECT options.candidate
+                     FROM (
+                         SELECT 'system'::text AS candidate, 0 AS ordinality
+                         UNION ALL
+                         SELECT 'system-' || n::text, n
+                         FROM generate_series(2, 64) AS n
+                     ) options
+                     WHERE NOT EXISTS (
+                         SELECT 1
+                         FROM principals existing
+                         WHERE existing.handle = options.candidate
+                           AND existing.id <> $1
+                     )
+                     ORDER BY options.ordinality
+                     LIMIT 1
+                 ) free
+                 ON CONFLICT (id) DO UPDATE
+                 SET name = EXCLUDED.name,
+                     kind = EXCLUDED.kind,
+                     handle = EXCLUDED.handle
+                 RETURNING id",
+                &[&id],
+            )
+            .await;
+        match inserted {
+            Ok(Some(row)) => {
+                tx.batch_execute("RELEASE SAVEPOINT upsert_system_principal")
+                    .await?;
+                return Ok(PrincipalId::from_uuid(row.get(0)));
+            }
+            Ok(None) => {
+                tx.batch_execute("RELEASE SAVEPOINT upsert_system_principal")
+                    .await?;
+                return Err(Error::Data(
+                    "no free handle for the system principal".into(),
+                ));
+            }
+            Err(error) if unique_violation(&error) => {
+                tx.batch_execute("ROLLBACK TO SAVEPOINT upsert_system_principal")
+                    .await?;
+                tx.batch_execute("RELEASE SAVEPOINT upsert_system_principal")
+                    .await?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(Error::Data(
+        "the system principal handle was taken on every attempt".into(),
+    ))
+}
+
+fn unique_violation(error: &tokio_postgres::Error) -> bool {
+    error
+        .code()
+        .is_some_and(|code| *code == tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
+}
+
 impl Store {
     /// Inserts a principal with a stable handle, or updates kind and name when the handle exists.
     ///
@@ -99,6 +177,20 @@ impl Store {
             )
             .await?;
         Ok(PrincipalId::from_uuid(row.get(0)))
+    }
+
+    /// Inserts the service principal, or refreshes its name, kind and handle.
+    ///
+    /// The row is [`crate::SYSTEM_PRINCIPAL`]. A different principal that already
+    /// has the handle `system` is left untouched. This row then uses the first
+    /// free handle in `system`, `system-2`, `system-3`, and so on. A later call
+    /// moves it back to `system` when that handle is free again.
+    pub async fn ensure_system_principal(&self) -> Result<PrincipalId, Error> {
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let id = upsert_system_principal(&tx).await?;
+        tx.commit().await?;
+        Ok(id)
     }
 
     pub async fn create_principal(
@@ -213,17 +305,9 @@ impl Store {
         defs.model_revision = u64::try_from(revision)
             .map_err(|_| Error::Data("definition revision does not fit".into()))?
             + 1;
-        let actor_id: Uuid = tx
-            .query_one(
-                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'integration', 'System', 'system')
-                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
-                 RETURNING id",
-                &[&Uuid::now_v7()],
-            )
-            .await?
-            .get(0);
+        let actor_id = upsert_system_principal(&tx).await?;
         let actor = Actor {
-            actor: PrincipalId::from_uuid(actor_id),
+            actor: actor_id,
             on_behalf_of: None,
             kind: crate::ids::BatchKind::Bulk,
             source: "standard-attributes".into(),
@@ -320,15 +404,7 @@ impl Store {
         defs.model_revision = u64::try_from(revision)
             .map_err(|_| Error::Data("definition revision does not fit".into()))?
             + 1;
-        let actor_id: Uuid = tx
-            .query_one(
-                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'integration', 'System', 'system')
-                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
-                 RETURNING id",
-                &[&Uuid::now_v7()],
-            )
-            .await?
-            .get(0);
+        let actor_id = upsert_system_principal(&tx).await?.as_uuid();
         let actor = Actor {
             actor: PrincipalId::from_uuid(actor_id),
             on_behalf_of: None,
