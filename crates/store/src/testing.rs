@@ -166,6 +166,7 @@ fn template_name() -> String {
         include_str!("../migrations/V13__assortment_view.sql"),
         include_str!("../migrations/V14__class_attributes_view.sql"),
         include_str!("../migrations/V15__change_log.sql"),
+        include_str!("../migrations/V16__english_view_types.sql"),
         include_str!("../migrations/V17__selection_type.sql"),
     ];
     for sql in sqls {

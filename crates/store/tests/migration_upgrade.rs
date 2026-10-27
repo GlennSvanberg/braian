@@ -199,7 +199,7 @@ async fn view_types_are_english_and_have_no_dashboard() {
     assert_eq!(titles["job_history"], "Jobs");
     assert_eq!(titles["proposal"], "Proposals");
     assert_eq!(titles["embed"], "Embedded view");
-    assert_eq!(titles["assortment_list"], "Assortments");
+    assert_eq!(titles["assortment_list"], "Selections");
     assert_eq!(titles["class_attributes"], "Classes");
 }
 
