@@ -336,13 +336,12 @@ pub(crate) fn changes_from(
             let attributes = string_list(args, "attributes").unwrap_or_default();
             if let Some(type_key) =
                 optional_str(args, "type").or_else(|| optional_str(args, "type_key"))
+                && args.get("structure").is_none()
             {
-                if args.get("structure").is_none() {
-                    return Ok(vec![ModelChange::ReorderTypeAttributes {
-                        type_key,
-                        attributes,
-                    }]);
-                }
+                return Ok(vec![ModelChange::ReorderTypeAttributes {
+                    type_key,
+                    attributes,
+                }]);
             }
             Ok(vec![ModelChange::ReorderAttributes {
                 structure: required_str(args, "structure")?,

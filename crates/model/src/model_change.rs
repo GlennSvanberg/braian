@@ -968,17 +968,19 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             bounds,
         } => create_attribute(
             defs,
-            key,
-            label,
-            kind,
-            unit.as_deref(),
-            *multiple,
-            *languages,
-            *required,
-            *searchable,
-            *filterable,
-            *sortable,
-            bounds,
+            AttributeDraft {
+                key,
+                label,
+                kind,
+                unit: unit.as_deref(),
+                multiple: *multiple,
+                languages: *languages,
+                required: *required,
+                searchable: *searchable,
+                filterable: *filterable,
+                sortable: *sortable,
+                bounds,
+            },
         ),
         ModelChange::MoveClass {
             structure,
@@ -1811,10 +1813,10 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
             .ok_or_else(|| format!("unknown attribute {key}"))?;
         current.kind.clone()
     };
-    if let Some(kind_name) = kind {
-        if kind_token(&next_kind) != kind_name.to_lowercase().as_str() {
-            next_kind = attribute_kind(kind_name, next_kind.unit_family_id())?;
-        }
+    if let Some(kind_name) = kind
+        && kind_token(&next_kind) != kind_name.to_lowercase().as_str()
+    {
+        next_kind = attribute_kind(kind_name, next_kind.unit_family_id())?;
     }
     if clear_unit {
         set_unit_family(&mut next_kind, None)?;
@@ -1885,20 +1887,34 @@ fn update_attribute(defs: &mut DefinitionSet, patch: AttributeUpdate<'_>) -> Res
     Ok(())
 }
 
-fn create_attribute(
-    defs: &mut DefinitionSet,
-    key: &str,
-    label: &str,
-    kind: &str,
-    unit: Option<&str>,
+struct AttributeDraft<'a> {
+    key: &'a str,
+    label: &'a str,
+    kind: &'a str,
+    unit: Option<&'a str>,
     multiple: bool,
     languages: bool,
     required: bool,
     searchable: bool,
     filterable: bool,
     sortable: bool,
-    bounds: &AttributeBounds,
-) -> Result<(), ApplyError> {
+    bounds: &'a AttributeBounds,
+}
+
+fn create_attribute(defs: &mut DefinitionSet, draft: AttributeDraft<'_>) -> Result<(), ApplyError> {
+    let AttributeDraft {
+        key,
+        label,
+        kind,
+        unit,
+        multiple,
+        languages,
+        required,
+        searchable,
+        filterable,
+        sortable,
+        bounds,
+    } = draft;
     let unit_family = match unit {
         Some(unit) => Some(family_for_unit(defs, unit)?),
         None => None,
