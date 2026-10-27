@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, catalogName, type Json } from './api'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
+import { assortmentSearchFilter, labelCodes } from './assortment-filter'
 import { assortmentDisplayName } from './demo-labels'
 import { searchDocuments, structureCaption } from './graph-scene'
 import { copy } from './i18n'
@@ -25,10 +26,7 @@ function groupChip(group: string, defs?: Json) {
 }
 
 function filterOf(query: Json) {
-  const parts = []
-  if (query.type) parts.push(`type_key:=${String(query.type)}`)
-  if (query.group) parts.push(`groups:=${String(query.group)}`)
-  return parts.join(' && ')
+  return assortmentSearchFilter(query)
 }
 
 export function AssortmentList({ session }: { session: AssortmentSession }) {
@@ -121,7 +119,9 @@ export function AssortmentList({ session }: { session: AssortmentSession }) {
           <div className="assortment-query">
             {query.type ? <span className="filter-chip">{String(query.type)}</span> : null}
             {query.group ? <span className="filter-chip">{groupChip(String(query.group), defs.data)}</span> : null}
-            {query.text ? <span className="filter-chip">{String(query.text)}</span> : null}
+            {labelCodes(query.labels).map((code) => (
+              <span key={code} className="filter-chip">{code}</span>
+            ))}
           </div>
           <p className="hint">
             {found} {copy.matchingObjects}

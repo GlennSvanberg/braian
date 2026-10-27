@@ -48,6 +48,8 @@ I utveckling kör man `all`. I drift kör man varje roll som egen process och sk
 
 `just demo-3` skapar databasen `braian_demo3`, startar API:t på en ledig port och kör `hurl --test` mot `tests/hurl/phase-3`. Hurl 8.0.1 ska finnas på `PATH`. På Windows: `winget install Orange-OpenSource.Hurl`.
 
+`scripts/reset-demo-db.sh` återställer demodatabasen i `DATABASE_URL`. Det körs bara manuellt efter beslut. Det är inte inkopplat i deploy, CI eller någon systemd-unit. Kräv `--yes`. Skriptet vägrar ett namn som matchar `braian-perf-*-stack`, tar en tidsstämplad `pg_dump` och avbryter om backupen misslyckas. Stoppa API och indexer först. Skriptet stänger kvarvarande sessioner mot den databasen, droppar och skapar den, kör `braian seed` (migrationerna körs vid anslutning) och `braian reindex`.
+
 `braian api` läser `DATABASE_URL`, `BRAIAN_DEV_TOKENS` och `BRAIAN_API_ADDR` (standard `127.0.0.1:8090`). `braian openapi` skriver OpenAPI-dokumentet. `braian all` kör migrationer, demodata, indexer, live-ström och API. Indexern startar när `TYPESENSE_URL` är satt. En gammal `KAFKA_BROKERS` loggas och ignoreras. `just dev` startar dessutom webbgränssnittet på http://127.0.0.1:3000. Demokontot kommer från `BRAIAN_DEMO_EMAIL` och `BRAIAN_DEMO_PASSWORD` i `.env`.
 
 `just spike-1` mäter import och ändringar för ett dokument, en del per språk, och en del per språk och attributgrupp. Standard är tung nivå, 20 000 objekt och 2 000 ändringar per ändringstyp. Argument efter kommandot skickas vidare, till exempel `just spike-1 --objects 300`. Resultatet skrivs till `target/spike-1.json`. Spiken körs inte i CI. Siffrorna är indikativa när Postgres körs i Docker.

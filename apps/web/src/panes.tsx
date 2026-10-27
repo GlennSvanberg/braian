@@ -29,6 +29,7 @@ import {
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
+import { labelSearchFilter } from './assortment-filter'
 import { objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishColumns, publishSelection, publishTable } from './ui-context'
@@ -106,6 +107,7 @@ export function ObjectTable({
 }) {
   const initial = savedTable(view)
   const [filter, setFilter] = useState(initial.filter)
+  const [labelFilter, setLabelFilter] = useState('')
   const [queryText, setQueryText] = useState(initial.filter)
   const [sort, setSort] = useState(initial.sort)
   const [groupBy, setGroupBy] = useState(initial.groupBy)
@@ -195,7 +197,9 @@ export function ObjectTable({
   useEffect(() => {
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
-  const filterBy = objectTableFilter(typeKey, session.group, assortments.data?.assortments ?? [])
+  const filterBy = [objectTableFilter(typeKey, session.group, assortments.data?.assortments ?? []), labelFilter]
+    .filter(Boolean)
+    .join(' && ')
   const probe = useQuery({
     queryKey: ['objects', queryText, filterBy, sort, groupBy, 1],
     queryFn: () => loadPage(queryText, filterBy, sort, groupBy, 1),
@@ -557,6 +561,7 @@ export function ObjectTable({
             setGroupBy={setGroupBy}
             setFilter={setFilter}
             setGroup={session.setGroup}
+            setLabelFilter={setLabelFilter}
             assortments={assortments.data?.assortments ?? []}
             massDisabled={selected.length === 0}
             onMass={() => mass.mutate()}
@@ -576,6 +581,7 @@ export function ObjectTable({
                 setGroupBy={setGroupBy}
                 setFilter={setFilter}
                 setGroup={session.setGroup}
+                setLabelFilter={setLabelFilter}
                 assortments={assortments.data?.assortments ?? []}
                 massDisabled={selected.length === 0}
                 onMass={() => mass.mutate()}
@@ -591,6 +597,7 @@ export function ObjectTable({
               setGroupBy={setGroupBy}
               setFilter={setFilter}
               setGroup={session.setGroup}
+              setLabelFilter={setLabelFilter}
               assortments={assortments.data?.assortments ?? []}
               massDisabled={selected.length === 0}
               onMass={() => mass.mutate()}
@@ -862,6 +869,7 @@ function TableFilters({
   setGroupBy,
   setFilter,
   setGroup,
+  setLabelFilter,
   assortments,
   massDisabled,
   onMass,
@@ -872,6 +880,7 @@ function TableFilters({
   setGroupBy: (value: string) => void
   setFilter: (value: string) => void
   setGroup: (value: string | null) => void
+  setLabelFilter: (value: string) => void
   assortments: Json[]
   massDisabled: boolean
   onMass: () => void
@@ -882,11 +891,13 @@ function TableFilters({
     setGroupBy('')
     setFilter('')
     setGroup(null)
+    setLabelFilter('')
   }
   const applyAssortment = (item: Json) => {
     const query = (item.query as Json) ?? {}
-    setFilter(String(query.text ?? ''))
+    setFilter('')
     setGroup(query.group ? String(query.group) : null)
+    setLabelFilter(labelSearchFilter(query))
   }
   if (menu) {
     return (

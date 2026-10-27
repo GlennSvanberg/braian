@@ -165,7 +165,7 @@
       "width": { "value": "75", "unit": "mm" },
       "depth": { "value": "75", "unit": "mm" },
       "gross_weight": { "value": "1050", "unit": "g" },
-      "image": "018f1000-0000-7000-8000-0000000000aa",
+      "labels": ["organic_eu", "vegan"],
       "launched": "2024-03-12",
       "active": true,
       "status": "ok",
@@ -281,6 +281,7 @@
       "launched": "2022-10-20",
       "active": true,
       "status": "ok",
+      "labels": ["organic_eu", "fairtrade", "vegan"],
       "cocoa_content": { "value": "70" },
       "co2_footprint": { "value": "0.9", "unit": "kgCO2e" }
     }

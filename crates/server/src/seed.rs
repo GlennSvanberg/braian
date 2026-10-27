@@ -207,31 +207,18 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         )
         .await?;
     store
-        .register_job_type(
-            "dq.status",
-            "Status check",
-            &["status".into()],
-            Some(Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?),
-        )
-        .await?;
-    store
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2")?,
             user.id,
             "Organic",
-            &json!({ "type": "article", "text": "Organic" }),
+            &organic_assortment_query(),
         )
         .await?;
+    // Status check is a registered stub, not a runner. Drop it from databases seeded before.
+    store.delete_job_type("dq.status").await?;
     store
         .register_job_type("bulk.write", "Bulk write", &["status".into()], None)
         .await?;
-    seed_job_run(
-        store,
-        "018f2000-0000-7000-8000-0000000000b1",
-        "dq.status",
-        user.principal_id,
-    )
-    .await?;
     seed_job_run(
         store,
         "018f2000-0000-7000-8000-0000000000b2",
@@ -241,6 +228,14 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
     .await?;
     seed_proposal(store, user.principal_id).await?;
     Ok(())
+}
+
+/// Saved query for the Organic assortment.
+///
+/// Membership is the filterable `labels` value `organic_eu`. The search filter
+/// is `a_labels:=organic_eu`. A text query for "Organic" is not used.
+fn organic_assortment_query() -> Value {
+    json!({ "labels": "organic_eu" })
 }
 
 fn catalog_layout(tree: &str, assortments: &str, table: &str, right: &[&str]) -> Value {
@@ -973,6 +968,14 @@ fn fill_values(model: &CompiledModel, slot: &Slot) -> anyhow::Result<BTreeMap<At
                 json!(!index.is_multiple_of(17)),
             )?;
             put_attr(model, &mut values, "name", json!({ "en": name }))?;
+            let mut labels = Vec::new();
+            let product_organic = slot
+                .product
+                .is_some_and(|product| product.is_multiple_of(4));
+            if index.is_multiple_of(4) || product_organic {
+                labels.push("organic_eu");
+            }
+            put_attr(model, &mut values, "labels", json!(labels))?;
             put_attr(
                 model,
                 &mut values,
@@ -1403,5 +1406,141 @@ mod tests {
             );
         }
         assert_eq!(first.len(), 3);
+    }
+
+    #[test]
+    fn organic_assortment_contains_only_objects_with_the_label() {
+        let (defs, compiled) = model();
+        let query = organic_assortment_query();
+        assert_eq!(query["labels"], "organic_eu");
+        assert!(query.get("text").is_none());
+        let (suppliers, products, _) = catalog_plan(DEFAULT_SEED_COUNT);
+        let mut objects = Vec::new();
+        for index in 0..DEFAULT_SEED_COUNT {
+            objects.push(
+                synthetic_object(&compiled, defs.model_revision, index, suppliers, products)
+                    .expect("object"),
+            );
+        }
+        for row in serde_json::from_str::<Vec<Value>>(OBJECTS).expect("heroes") {
+            objects.push(hero_object(&compiled, &defs, &row));
+            if row["values"]["number"] == "ART-OAT-1L" {
+                assert!(row["values"].get("image").is_none());
+            }
+        }
+        let mut products_in = 0;
+        let mut articles_in = 0;
+        let mut products_out = 0;
+        let mut articles_out = 0;
+        for object in &objects {
+            let labels = label_codes(&compiled, object);
+            let included = assortment_includes(&query, &labels);
+            assert_eq!(
+                included,
+                labels.iter().any(|label| label == "organic_eu"),
+                "assortment membership must be the organic_eu label"
+            );
+            let type_key = defs
+                .types
+                .iter()
+                .find(|item| item.id == object.type_id)
+                .map(|item| item.key.as_str())
+                .unwrap_or("");
+            let name = english_name(&compiled, object);
+            if name.starts_with("Organic ") {
+                assert!(
+                    included,
+                    "{name} is named Organic but has no organic_eu label"
+                );
+            }
+            match type_key {
+                "product" if included => products_in += 1,
+                "product" => products_out += 1,
+                "article" if included => articles_in += 1,
+                "article" => articles_out += 1,
+                _ => assert!(!included, "suppliers are not in the organic assortment"),
+            }
+        }
+        assert!(products_in > 0 && articles_in > 0);
+        assert!(products_out > 0 && articles_out > 0);
+    }
+
+    fn hero_object(compiled: &CompiledModel, defs: &DefinitionSet, row: &Value) -> Object {
+        let type_key = row["type"].as_str().unwrap();
+        let type_id = compiled.type_id(type_key).expect(type_key);
+        let id = ObjectId::from_uuid(Uuid::parse_str(row["id"].as_str().unwrap()).unwrap());
+        let groups = match row["group"].as_str() {
+            Some(group_key) => {
+                let structure = compiled.structure_id("food").unwrap();
+                let group = compiled.group_id("food", group_key).unwrap();
+                BTreeMap::from([(structure, group)])
+            }
+            None => BTreeMap::new(),
+        };
+        let mut values = BTreeMap::new();
+        for (name, value) in row["values"].as_object().unwrap() {
+            let attribute = compiled.attribute_by_key(name).expect(name);
+            values.insert(attribute.id, value.clone());
+        }
+        let object = Object {
+            id,
+            type_id,
+            model_revision: defs.model_revision,
+            groups,
+            values,
+        };
+        let errors = compiled.validate(&object);
+        assert!(
+            errors.is_empty(),
+            "{}: {}",
+            row["values"]["number"],
+            errors
+                .first()
+                .map(|error| error.message.as_str())
+                .unwrap_or("")
+        );
+        object
+    }
+
+    fn label_codes(model: &CompiledModel, object: &Object) -> Vec<String> {
+        let Some(attribute) = model.attribute_by_key("labels") else {
+            return Vec::new();
+        };
+        let Some(value) = object.values.get(&attribute.id) else {
+            return Vec::new();
+        };
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn english_name(model: &CompiledModel, object: &Object) -> String {
+        let Some(attribute) = model.attribute_by_key("name") else {
+            return String::new();
+        };
+        object
+            .values
+            .get(&attribute.id)
+            .and_then(|value| value.get("en"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    }
+
+    fn assortment_includes(query: &Value, labels: &[String]) -> bool {
+        match query.get("labels") {
+            Some(Value::String(code)) => labels.iter().any(|label| label == code),
+            Some(Value::Array(codes)) => codes.iter().all(|code| {
+                code.as_str()
+                    .is_some_and(|code| labels.iter().any(|label| label == code))
+            }),
+            _ => false,
+        }
     }
 }

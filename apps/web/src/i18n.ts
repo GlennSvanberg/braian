@@ -139,7 +139,6 @@ export const copy = {
   singular: 'Singular',
   plural: 'Plural',
   reviewWorkspace: 'Review',
-  toDo: 'To do',
   classTab: 'Class',
   impactTab: 'Impact',
   external: 'External',

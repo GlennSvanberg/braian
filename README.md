@@ -95,6 +95,8 @@ just dev
 
 The demo account is created from `BRAIAN_DEMO_EMAIL` and `BRAIAN_DEMO_PASSWORD` in `.env`. See `.env.example`. Those values are not in the source tree. Without `OPENAI_API_KEY`, the Ctrl+K panel says that no model is connected. Proposals, bulk edits, and undo still work. The catalog is synthetic. Its size is `BRAIAN_SEED_COUNT`. Tests do not write that database.
 
+`scripts/reset-demo-db.sh` drops and recreates that demo database. It runs only manually, after an explicit decision. It is not part of deploy, CI, or any systemd unit. Pass `--yes`. The script reads `DATABASE_URL` from the environment or from `.env`, refuses a name matching `braian-perf-*-stack`, writes a timestamped `pg_dump`, and stops if that backup fails. `braian seed` applies migrations on connect and loads the catalog. `braian reindex` rebuilds the search alias. Stop the API and the indexer first. The script terminates leftover sessions on that database before the drop.
+
 On Windows, install just with `winget install --id Casey.Just` or `scoop install just`. Without it, `.\scripts\up.ps1` and `.\scripts\dev.ps1` do the same work. A WSL2 checkout on the Linux filesystem is faster than a bind mount from `C:\`. More detail is in [docs/dev.md](docs/dev.md).
 
 ### Checks
