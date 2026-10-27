@@ -63,7 +63,7 @@ describe('type workspaces', () => {
 
   it('builds a template per type and none named Enrich', () => {
     const templates = workspaceTemplates(typeNames(defs, 'en'))
-    expect(templates.map((item) => item.name)).toEqual(['Products', 'Articles', 'Suppliers', 'Data model', 'Review', 'Overview'])
+    expect(templates.map((item) => item.name)).toEqual(['Products', 'Articles', 'Suppliers', 'Data model', 'Review'])
     expect(templates.some((item) => item.id === 'enrich' || /enrich/i.test(item.name))).toBe(false)
     const articles = templates[1]
     expect(articles?.views.map((view) => view.type)).toEqual([

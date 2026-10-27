@@ -78,16 +78,6 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
     ],
     layout: (ids) => splitPair('horizontal', 0.62, tabGroup([ids[0]]), tabGroup(ids.slice(1))),
   },
-  {
-    id: 'overview',
-    name: 'Overview',
-    summary: 'Dashboard and the setup list',
-    views: [
-      { type: 'dashboard', title: 'Overview', state: {} },
-      { type: 'data_model', title: 'To do', state: { checklist: ['languages', 'units', 'types', 'import'] } },
-    ],
-    layout: (ids) => splitPair('horizontal', 0.5, tabGroup([ids[0]]), tabGroup([ids[1]])),
-  },
   ]
 }
 

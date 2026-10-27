@@ -77,32 +77,12 @@ async function propose(name: string, args: Json) {
 export function DataModel({ view }: { view: View }) {
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const mode = String(view.state.mode ?? '')
-  if (Array.isArray(view.state.checklist)) return <Checklist defs={defs.data} items={view.state.checklist as string[]} />
   if (defs.isPending) return <div data-testid="data-model"><StateNote tone="loading" title={copy.loadingModel} /></div>
   if (defs.isError) return <div data-testid="data-model"><StateNote tone="error" title={copy.errorModel} detail={copy.validation} /></div>
   if (mode === 'classes') return <AttributeTable defs={defs.data} />
   if (mode === 'card' || mode === 'editor') return <ModelPreview defs={defs.data} />
   if (mode === 'impact') return <ImpactNote />
   return <ModelNav defs={defs.data} />
-}
-
-function Checklist({ defs, items }: { defs: Json | undefined; items: string[] }) {
-  const languages = ((defs?.languages as string[]) ?? []).join(', ')
-  const units = ((defs?.unit_families as Json[]) ?? []).map((item) => String(item.key)).join(', ')
-  const types = ((defs?.types as Json[]) ?? []).map((item) => String(item.key)).join(', ')
-  return (
-    <div data-testid="data-model">
-      <strong>{copy.dataModel}</strong>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-      <p>sv/en/de · {languages}</p>
-      <p>{units}</p>
-      <p>{types}</p>
-    </div>
-  )
 }
 
 function ModelNav({ defs }: { defs: Json | undefined }) {

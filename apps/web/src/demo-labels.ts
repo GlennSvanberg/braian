@@ -15,8 +15,6 @@ const WORKSPACE_BY_SHARE: Record<string, string> = {
 }
 
 const LEGACY_VIEW_TITLES: Record<string, string> = {
-  Översikt: copy.dashboard,
-  'Att göra': copy.toDo,
   Struktur: copy.structure,
   Klass: copy.classTab,
   Konsekvens: copy.impactTab,
