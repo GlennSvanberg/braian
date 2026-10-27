@@ -149,6 +149,7 @@ export const copy = {
   live: 'live',
   indexed: 'index',
   split: 'Split',
+  record: 'Record',
   identity: 'Identity',
   description: 'Description',
   classification: 'Classification',
