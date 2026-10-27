@@ -203,20 +203,37 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         .await?;
     store.delete_view_type("leverantor").await?; // english-check: allow-line
     save_views(store).await?;
+    // Selections belong to a type. The article Cheese keeps the food:cheese group.
+    // Organic is assigned to article: the generator marks more articles than
+    // products with organic_eu, and this seed runs before those objects exist.
+    // A second Cheese is the product example, so each type workspace has one.
+    let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201")?;
+    let product = Uuid::parse_str("018f0000-0000-7000-8000-000000000200")?;
     store
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1")?,
             user.id,
+            article,
             "Cheese",
-            &json!({ "type": "article", "group": "food:cheese" }),
+            &json!({ "group": "food:cheese" }),
         )
         .await?;
     store
         .save_assortment(
             Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2")?,
             user.id,
+            article,
             "Organic",
             &organic_assortment_query(),
+        )
+        .await?;
+    store
+        .save_assortment(
+            Uuid::parse_str("018f2000-0000-7000-8000-0000000000a3")?,
+            user.id,
+            product,
+            "Cheese",
+            &json!({ "group": "food:cheese" }),
         )
         .await?;
     // Status check is a registered stub, not a runner. Drop it from databases seeded before.
@@ -369,7 +386,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000308",
             "018f2000-0000-7000-8000-000000000003",
             "assortment_list",
-            "Assortments",
+            "Selections",
             "left",
             1,
             json!({}),
@@ -477,7 +494,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000508",
             "018f2000-0000-7000-8000-000000000005",
             "assortment_list",
-            "Assortments",
+            "Selections",
             "left",
             1,
             json!({}),
@@ -522,7 +539,7 @@ async fn save_views(store: &Store) -> anyhow::Result<()> {
             "018f2000-0000-7000-8000-000000000701",
             "018f2000-0000-7000-8000-000000000007",
             "assortment_list",
-            "Assortments",
+            "Selections",
             "left",
             0,
             json!({}),

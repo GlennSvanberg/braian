@@ -24,6 +24,7 @@ describe('model commands', () => {
     expect(modelCommandTitle('move bag to timber')?.title).toBe('Move bag to timber')
     const rows = withModelCommand('save assortment Summer tents', [ask])
     expect(rows[0]?.sourceId).toBe('assortment:save')
-    expect(rows[0]?.title).toBe('Save assortment Summer tents')
+    expect(rows[0]?.title).toBe('Save selection Summer tents')
+    expect(withModelCommand('save selection Summer tents', [ask])[0]?.title).toBe('Save selection Summer tents')
   })
 })

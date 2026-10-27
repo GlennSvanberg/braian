@@ -29,7 +29,7 @@ import {
 import { publishProposal } from './proposal-bus'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
-import { labelSearchFilter } from './assortment-filter'
+import { labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
 import { objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishColumns, publishSelection, publishTable } from './ui-context'
@@ -155,27 +155,10 @@ export function ObjectTable({
     return () => clearTimeout(timer)
   }, [filter, sort, groupBy, order, sizes, view, workspace])
 
-  const assortments = useQuery({
-    queryKey: ['assortments'],
-    queryFn: () => api<{ assortments: Json[] }>('/v1/assortments'),
-  })
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const barRef = useRef<HTMLDivElement>(null)
   const filtersRef = useRef<HTMLDivElement>(null)
   const [overflow, setOverflow] = useState(false)
-  useLayoutEffect(() => {
-    const bar = barRef.current
-    const filters = filtersRef.current
-    if (!bar || !filters) return
-    const update = () => {
-      const reserved = 140 + 124 + 88 + 36 + 32
-      setOverflow(filters.scrollWidth > bar.clientWidth - reserved)
-    }
-    const observer = new ResizeObserver(update)
-    observer.observe(bar)
-    update()
-    return () => observer.disconnect()
-  }, [assortments.data, groupBy, selected.length])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
@@ -194,10 +177,46 @@ export function ObjectTable({
   const names = typeNames(defs.data, uiLanguage)
   const bound = typeOfView(view, names) ?? (isGenericObjectTitle(view.title) ? names[0] : undefined)
   const typeKey = bound?.key ?? ''
+  const assortments = useQuery({
+    queryKey: ['assortments', typeKey],
+    queryFn: () => api<{ assortments: Json[] }>(`/v1/assortments?type=${encodeURIComponent(typeKey)}`),
+    enabled: Boolean(typeKey),
+  })
+  const selectionRows = (assortments.data?.assortments ?? []).filter((item) =>
+    selectionMatchesType(item, typeKey, bound?.id ?? ''),
+  )
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    const filters = filtersRef.current
+    if (!bar || !filters) return
+    const update = () => {
+      const reserved = 140 + 124 + 88 + 36 + 32
+      setOverflow(filters.scrollWidth > bar.clientWidth - reserved)
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(bar)
+    update()
+    return () => observer.disconnect()
+  }, [selectionRows.length, groupBy, selected.length])
   useEffect(() => {
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
-  const filterBy = [objectTableFilter(typeKey, session.group, assortments.data?.assortments ?? []), labelFilter]
+  useEffect(() => {
+    publishSelectionLabels(labelCodes(labelFilter.split(' && ').map((part) => part.replace(/^a_labels:=/, ''))))
+  }, [labelFilter])
+  useEffect(() => {
+    const onApply = (event: Event) => {
+      const item = (event as CustomEvent<Json>).detail
+      if (!item || !selectionMatchesType(item, typeKey, bound?.id ?? '')) return
+      const query = (item.query as Json) ?? {}
+      setFilter('')
+      session.setGroup(query.group ? String(query.group) : null)
+      setLabelFilter(labelSearchFilter(query))
+    }
+    window.addEventListener(SELECTION_APPLIED_EVENT, onApply)
+    return () => window.removeEventListener(SELECTION_APPLIED_EVENT, onApply)
+  }, [session, typeKey, bound?.id])
+  const filterBy = [objectTableFilter(typeKey, session.group), labelFilter]
     .filter(Boolean)
     .join(' && ')
   const probe = useQuery({
@@ -562,7 +581,7 @@ export function ObjectTable({
             setFilter={setFilter}
             setGroup={session.setGroup}
             setLabelFilter={setLabelFilter}
-            assortments={assortments.data?.assortments ?? []}
+            assortments={selectionRows}
             massDisabled={selected.length === 0}
             onMass={() => mass.mutate()}
             onExport={exportVisible}
@@ -582,7 +601,7 @@ export function ObjectTable({
                 setFilter={setFilter}
                 setGroup={session.setGroup}
                 setLabelFilter={setLabelFilter}
-                assortments={assortments.data?.assortments ?? []}
+                assortments={selectionRows}
                 massDisabled={selected.length === 0}
                 onMass={() => mass.mutate()}
                 onExport={exportVisible}
@@ -598,7 +617,7 @@ export function ObjectTable({
               setFilter={setFilter}
               setGroup={session.setGroup}
               setLabelFilter={setLabelFilter}
-              assortments={assortments.data?.assortments ?? []}
+              assortments={selectionRows}
               massDisabled={selected.length === 0}
               onMass={() => mass.mutate()}
               onExport={exportVisible}

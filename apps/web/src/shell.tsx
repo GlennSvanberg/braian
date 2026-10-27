@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
 import { api, recordTitle, textValue, type Json } from './api'
-import { AssortmentList } from './assortments'
+import { AssortmentList, NewSelectionDialog } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { ImportScreen } from './import/view'
 import { dropImportFiles, onImportLive, openImport, resumeImport, setImportDrag } from './import/controller'
@@ -26,7 +26,7 @@ import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
 import { CommandPalette } from './palette'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
-import { missingTypeWorkspaces, orderWorkspaces, typeShareToken } from './type-workspaces'
+import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
@@ -73,6 +73,7 @@ type Session = {
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
   listType: string | null
+  workspaceType?: string
   setListType: (value: string | null) => void
   push: (line: string) => void
   openWorkspace: (id: string) => void
@@ -478,8 +479,13 @@ export function Shell() {
     const focused = doc.focus && openIds.includes(doc.focus) ? doc.focus : openIds[0] ?? null
     const detail = surface.views.find((view) => view.type === 'object_detail')
     const language = typeof detail?.state.language === 'string' ? detail.state.language : 'en'
+    const workspaceType = typeKeyFromShare(surface.share_token)
     publishFrame({
-      workspace: { id: surface.id, name: workspaceDisplayName(surface.name, surface.share_token) },
+      workspace: {
+        id: surface.id,
+        name: workspaceDisplayName(surface.name, surface.share_token),
+        ...(workspaceType ? { type: workspaceType } : {}),
+      },
       panes: panesFromCatalog(openIds, focused, surface.views),
       focused,
       language,
@@ -519,6 +525,7 @@ export function Shell() {
     language: 'en',
     activity: [],
     listType,
+    workspaceType: typeKeyFromShare(workspace.data?.share_token),
     setGroup,
     setObjectId,
     setListType,
@@ -727,6 +734,7 @@ export function Shell() {
           } : null}
         />
       ) : null}
+      <NewSelectionDialog session={session} />
       {paletteMode ? (
         <CommandPalette
           key={paletteMode}

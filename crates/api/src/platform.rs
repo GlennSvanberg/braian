@@ -15,7 +15,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use braian_model::{AttributeId, AttributeKind, DefinitionSet, Object, ObjectId};
+use braian_model::{AttributeId, AttributeKind, DefinitionSet, Object, ObjectId, TypeId};
 use braian_search::SearchQuery;
 use braian_store::{
     Actor, BatchKind, HistoryEntry, ObjectOp, ObjectProjection, ProposalLock, ProposalRow,
@@ -68,6 +68,7 @@ pub fn routes() -> axum::Router<AppState> {
             "/v1/assortments",
             get(list_assortments).post(save_assortment),
         )
+        .route("/v1/assortments/{id}", get(get_assortment))
         .route("/v1/job-types", get(list_job_types).post(register_job_type))
         .route("/v1/job-types/{key}/runs", get(job_runs))
         .route("/v1/jobs/{id}", get(job_run))
@@ -456,8 +457,14 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "list_assortments",
+            title: "List selections",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
             name: "assortment.save",
-            title: "Save assortment",
+            title: "Save selection",
             permission: Role::Editor,
             needs_approval: true,
         },
@@ -988,10 +995,12 @@ async fn drive_agent(
             "args": args,
             "state": "run"
         }));
-        let result = if let Some(value) = context_tool_result(operation, &args, Some(&context)) {
+        let call_args = selection_args(operation, &args, &context);
+        let result = if let Some(value) = context_tool_result(operation, &call_args, Some(&context))
+        {
             value
         } else {
-            run_operation(state, identity, operation, &args, true)
+            run_operation(state, identity, operation, &call_args, true)
                 .await
                 .unwrap_or_else(|problem| json!({ "error": problem.detail, "code": problem.code }))
         };
@@ -1270,10 +1279,17 @@ fn compact_ui_context(context: &Value) -> Value {
         return empty_ui_context();
     }
     let workspace = match context.get("workspace") {
-        Some(value) if value.is_object() => json!({
-            "id": field_text(value, "id", 80),
-            "name": field_text(value, "name", 120),
-        }),
+        Some(value) if value.is_object() => {
+            let mut workspace = json!({
+                "id": field_text(value, "id", 80),
+                "name": field_text(value, "name", 120),
+            });
+            let kind = field_text(value, "type", 80);
+            if !kind.is_empty() {
+                workspace["type"] = json!(kind);
+            }
+            workspace
+        }
         _ => Value::Null,
     };
     let panes = context
@@ -1994,14 +2010,170 @@ async fn register_view_type(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Copies the workspace type into selection calls. The agent loop is the only
+/// caller that has the screen; a human request is left unchanged.
+fn selection_args(operation: &str, args: &Value, context: &Value) -> Value {
+    if operation != "list_assortments" && operation != "assortment.save" {
+        return args.clone();
+    }
+    let Some(token) = context
+        .get("workspace")
+        .and_then(|workspace| workspace.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    else {
+        return args.clone();
+    };
+    let mut call = args.clone();
+    if let Some(object) = call.as_object_mut() {
+        object.insert("workspace_type".into(), json!(token));
+    }
+    call
+}
+
+fn wrong_type() -> Problem {
+    Problem::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "wrong_type",
+        "A selection belongs to one type and cannot be used with another.",
+    )
+}
+
+fn missing_selection_type() -> Problem {
+    Problem::new(
+        StatusCode::BAD_REQUEST,
+        "assortment",
+        "a selection needs a type",
+    )
+}
+
+async fn resolve_selection_type(state: &AppState, token: &str) -> Result<Uuid, Problem> {
+    let cached = state.models.get(&state.store).await?;
+    Ok(wire::resolve_type(&cached.model, token)?.as_uuid())
+}
+
+fn query_type_token(query: &Value) -> Option<&str> {
+    query
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn strip_query_type(query: &mut Value) {
+    if let Some(object) = query.as_object_mut() {
+        object.remove("type");
+    }
+}
+
+async fn with_type_key(state: &AppState, mut row: Value) -> Value {
+    let Some(type_id) = row
+        .get("type_id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+    else {
+        return row;
+    };
+    let key = match state.models.get(&state.store).await {
+        Ok(cached) => wire::type_key(&cached.defs, TypeId::from_uuid(type_id)),
+        Err(_) => type_id.to_string(),
+    };
+    if let Some(object) = row.as_object_mut() {
+        object.insert("type".into(), json!(key));
+    }
+    row
+}
+
 async fn list_assortments(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<AssortmentTypeQuery>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
-    Ok(Json(
-        json!({ "assortments": state.store.list_assortments().await.map_err(store_status)? }),
-    ))
+    let type_id = match query
+        .r#type
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        Some(token) => Some(resolve_selection_type(&state, token).await?),
+        None => None,
+    };
+    let rows = state
+        .store
+        .list_assortments(type_id)
+        .await
+        .map_err(store_status)?;
+    let mut assortments = Vec::with_capacity(rows.len());
+    for row in rows {
+        assortments.push(with_type_key(&state, row).await);
+    }
+    Ok(Json(json!({ "assortments": assortments })))
+}
+
+async fn get_assortment(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+    Query(query): Query<AssortmentTypeQuery>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    let Some(row) = state.store.assortment(id).await.map_err(store_status)? else {
+        return Err(Problem::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "selection not found",
+        ));
+    };
+    if let Some(token) = query
+        .r#type
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        let want = resolve_selection_type(&state, token).await?;
+        let have = row
+            .get("type_id")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        if have != Some(want) {
+            return Err(wrong_type());
+        }
+    }
+    Ok(Json(with_type_key(&state, row).await))
+}
+
+async fn prepared_selection(
+    state: &AppState,
+    id: Option<Uuid>,
+    type_token: Option<&str>,
+    mut query: Value,
+) -> Result<(Uuid, Value), Problem> {
+    let Some(type_token) = type_token.map(str::trim).filter(|token| !token.is_empty()) else {
+        return Err(missing_selection_type());
+    };
+    let cached = state.models.get(&state.store).await?;
+    let type_id = wire::resolve_type(&cached.model, type_token)?.as_uuid();
+    if let Some(query_type) = query_type_token(&query) {
+        let query_id = wire::resolve_type(&cached.model, query_type)?.as_uuid();
+        if query_id != type_id {
+            return Err(wrong_type());
+        }
+    }
+    strip_query_type(&mut query);
+    if let Some(id) = id
+        && let Some(existing) = state.store.assortment(id).await.map_err(store_status)?
+    {
+        let have = existing
+            .get("type_id")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        if have != Some(type_id) {
+            return Err(wrong_type());
+        }
+    }
+    Ok((type_id, query))
 }
 
 async fn save_assortment(
@@ -2015,16 +2187,26 @@ async fn save_assortment(
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
             "no_user",
-            "sign in to save an assortment",
+            "sign in to save a selection",
         ));
     };
     let id = body.id.unwrap_or_else(Uuid::now_v7);
+    let (type_id, query) =
+        prepared_selection(&state, Some(id), body.r#type.as_deref(), body.query).await?;
     state
         .store
-        .save_assortment(id, owner, &body.name, &body.query)
+        .save_assortment(id, owner, type_id, &body.name, &query)
         .await
         .map_err(store_status)?;
-    Ok(Json(json!({ "id": id })))
+    let row = state
+        .store
+        .assortment(id)
+        .await
+        .map_err(store_status)?
+        .unwrap_or_else(
+            || json!({ "id": id, "name": body.name, "type_id": type_id, "query": query }),
+        );
+    Ok(Json(with_type_key(&state, row).await))
 }
 
 async fn propose_assortment(
@@ -2037,15 +2219,35 @@ async fn propose_assortment(
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "assortment", "missing name"))?;
+    let type_token = args
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|token| !token.trim().is_empty())
+        .or_else(|| {
+            args.get("workspace_type")
+                .and_then(Value::as_str)
+                .filter(|token| !token.trim().is_empty())
+        });
+    let id = args
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok());
     let query = args.get("query").cloned().unwrap_or(json!({}));
-    let id = Uuid::now_v7();
+    let (type_id, query) = prepared_selection(state, id, type_token, query).await?;
+    let proposal_id = Uuid::now_v7();
+    let title = format!("Save selection {name}");
     let row = ProposalRow {
         id: Uuid::now_v7(),
         object_id: None,
         object_key: Some(name.to_owned()),
         type_key: Some("assortment".into()),
         base_version: None,
-        patch: json!({ "name": name, "query": query, "id": args.get("id").cloned() }),
+        patch: json!({
+            "name": name,
+            "query": query,
+            "id": id,
+            "type": type_id,
+        }),
         status: "pending".into(),
         conflict: false,
         position: 0,
@@ -2053,8 +2255,8 @@ async fn propose_assortment(
     state
         .store
         .create_proposal(
-            id,
-            &format!("Save assortment {name}"),
+            proposal_id,
+            &title,
             "user",
             identity.actor.actor,
             identity.actor.on_behalf_of,
@@ -2064,7 +2266,7 @@ async fn propose_assortment(
         .await
         .map_err(store_status)?;
     Ok(
-        json!({ "proposal_id": id, "id": id, "needs_approval": true, "title": format!("Save assortment {name}") }),
+        json!({ "proposal_id": proposal_id, "id": proposal_id, "needs_approval": true, "title": title }),
     )
 }
 
@@ -2079,13 +2281,13 @@ async fn apply_assortment_row(
     let name = patch
         .get("name")
         .and_then(Value::as_str)
-        .unwrap_or("Assortment");
+        .unwrap_or("Selection");
     let query = patch.get("query").cloned().unwrap_or(json!({}));
     let Some(owner) = identity.user_id else {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
             "no_user",
-            "sign in to save an assortment",
+            "sign in to save a selection",
         ));
     };
     let id = patch
@@ -2093,6 +2295,14 @@ async fn apply_assortment_row(
         .and_then(Value::as_str)
         .and_then(|value| Uuid::parse_str(value).ok())
         .unwrap_or_else(Uuid::now_v7);
+    let type_token = patch
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|token| !token.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| query_type_token(&query).map(str::to_owned));
+    let (type_id, query) =
+        prepared_selection(state, Some(id), type_token.as_deref(), query).await?;
     let receipt = finish_row(
         state,
         identity,
@@ -2102,6 +2312,7 @@ async fn apply_assortment_row(
         ProposalWrite::Assortment {
             id,
             owner,
+            type_id,
             name: name.to_owned(),
             query,
         },
@@ -4029,18 +4240,25 @@ async fn assortment_allows(store: &Store, assortment: Option<Uuid>, body: &Value
     let Ok(Some(saved)) = store.assortment(assortment).await else {
         return false;
     };
-    let Some(query) = saved.get("query") else {
-        return true;
-    };
     if body.get("object_id").and_then(Value::as_str).is_none() {
         return false;
     }
-    if let Some(want) = query.get("type").and_then(Value::as_str)
-        && body.get("type").and_then(Value::as_str) != Some(want)
-    {
+    let Some(type_id) = saved.get("type_id").and_then(Value::as_str) else {
         return false;
+    };
+    let Some(event_type) = body.get("type").and_then(Value::as_str) else {
+        return false;
+    };
+    if event_type == type_id {
+        return true;
     }
-    true
+    let Ok(parsed) = Uuid::parse_str(type_id) else {
+        return false;
+    };
+    let Ok(defs) = store.definition_set().await else {
+        return false;
+    };
+    wire::type_key(&defs, TypeId::from_uuid(parsed)) == event_type
 }
 
 fn sign_webhook(secret: &str, payload: &str) -> String {
@@ -4139,6 +4357,39 @@ async fn run_operation(
                     .await?
                     .0,
             )
+        }
+        "list_assortments" => {
+            let workspace = args
+                .get("workspace_type")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|token| !token.is_empty());
+            let requested = args
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|token| !token.is_empty());
+            let token = match (workspace, requested) {
+                (Some(workspace), Some(requested)) => {
+                    let cached = state.models.get(&state.store).await?;
+                    let workspace_id = wire::resolve_type(&cached.model, workspace)?;
+                    let requested_id = wire::resolve_type(&cached.model, requested)?;
+                    if workspace_id != requested_id {
+                        return Err(wrong_type());
+                    }
+                    Some(workspace.to_owned())
+                }
+                (Some(workspace), None) => Some(workspace.to_owned()),
+                (None, Some(requested)) => Some(requested.to_owned()),
+                (None, None) => None,
+            };
+            Ok(list_assortments(
+                State(state.clone()),
+                Auth(identity.clone()),
+                Query(AssortmentTypeQuery { r#type: token }),
+            )
+            .await?
+            .0)
         }
         "list_objects" => Ok(list_objects(
             State(state.clone()),
@@ -4666,9 +4917,18 @@ struct ViewTypeBody {
 }
 
 #[derive(Deserialize)]
+struct AssortmentTypeQuery {
+    #[serde(rename = "type")]
+    r#type: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct AssortmentBody {
     id: Option<Uuid>,
     name: String,
+    /// Type id or key. Absent until validation so an agent still gets 403 first.
+    #[serde(default)]
+    r#type: Option<String>,
     query: Value,
 }
 

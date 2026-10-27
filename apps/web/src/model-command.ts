@@ -32,10 +32,10 @@ export function modelCommandTitle(query: string): ModelHint | null {
 }
 
 export function assortmentSaveTitle(query: string): { title: string; name: string } | null {
-  const match = query.trim().match(/^save assortment\s+(.+)$/i)
+  const match = query.trim().match(/^save (?:assortment|selection)\s+(.+)$/i)
   const name = match?.[1]?.trim() ?? ''
   if (!name) return null
-  return { title: `Save assortment ${name}`, name }
+  return { title: `Save selection ${name}`, name }
 }
 
 export function withModelCommand(query: string, rows: PaletteItem[]): PaletteItem[] {

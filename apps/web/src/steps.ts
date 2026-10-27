@@ -70,6 +70,10 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
     case 'set_relation':
     case 'rollback':
       return 'Preparing a proposal…'
+    case 'list_assortments':
+      return 'Listing selections…'
+    case 'assortment.save':
+      return 'Preparing a selection…'
     case 'model.command':
     case 'model.draft':
     case 'model.move_class':
@@ -87,7 +91,6 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
     case 'model.duplicate_group':
     case 'model.delete_group':
     case 'model.set_parent':
-    case 'assortment.save':
       return 'Preparing a data model proposal…'
     default:
       return `Running ${op}…`

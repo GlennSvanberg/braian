@@ -6,7 +6,7 @@ export type UiPane = { id: string; type: string; title: string; focused: boolean
 export type UiColumn = { id: string; header: string; hidden: boolean }
 
 export type UiContextSnapshot = {
-  workspace: { id: string; name: string } | null
+  workspace: { id: string; name: string; type?: string } | null
   panes: UiPane[]
   focused: string | null
   selection: SelectedObject[]

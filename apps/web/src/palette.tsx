@@ -7,6 +7,7 @@ import { ApiError, api, catalogName, textValue, type Json } from './api'
 import { streamAgent, type AgentEvent } from './agent-stream'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
+import { emitSavedSelection, requestNewSelection, selectionMatchesType } from './assortment-filter'
 import { workspaceDisplayName } from './demo-labels'
 import { sourceLabel, suggestedTitle } from './field-diff'
 import { copy, uiLanguage } from './i18n'
@@ -31,6 +32,7 @@ import { readUiContext, type UiColumn } from './ui-context'
 type SessionLike = {
   objectId: string | null
   listType?: string | null
+  workspaceType?: string | null
   group?: string | null
   setObjectId: (value: string | null) => void
   setProposalId: (value: string | null) => void
@@ -99,6 +101,12 @@ export function CommandPalette({
   const frecency = useMemo(() => readFrecency(), [query, turns.length, frecencyTick])
 
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), staleTime: 60_000 })
+  const workspaceType = session.workspaceType || session.listType || ''
+  const selections = useQuery({
+    queryKey: ['assortments', workspaceType],
+    queryFn: () => api<{ assortments: Json[] }>(`/v1/assortments?type=${encodeURIComponent(workspaceType)}`),
+    enabled: Boolean(workspaceType),
+  })
   const selectedObject = useQuery({
     queryKey: ['object', session.objectId],
     queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
@@ -106,6 +114,10 @@ export function CommandPalette({
     staleTime: 30_000,
   })
   const types = useMemo(() => typeNames(defs.data, uiLanguage), [defs.data])
+  const workspaceTypeId = types.find((type) => type.key === workspaceType)?.id ?? ''
+  const selectionItems = ((selections.data?.assortments ?? []) as Json[]).filter((item) =>
+    selectionMatchesType(item, workspaceType, workspaceTypeId),
+  )
   const suggestions = useQuery({
     queryKey: ['proposals'],
     queryFn: () => api<Json>('/v1/proposals'),
@@ -118,6 +130,20 @@ export function CommandPalette({
   const catalog = useMemo(
     () => [
       ...buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled),
+      {
+        id: 'selections',
+        group: 'views' as const,
+        title: `${copy.assortments} ›`,
+        subtitle: 'Saved selections for this type',
+        keywords: ['assortment', 'selection'],
+      },
+      {
+        id: 'selection:new',
+        group: 'views' as const,
+        title: copy.newSelection,
+        subtitle: copy.assortments,
+        keywords: ['assortment', 'selection'],
+      },
       ...columnEntries(tableColumns),
     ],
     [workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns],
@@ -175,14 +201,44 @@ export function CommandPalette({
       onClose()
       return
     }
+    if (id === 'selections') {
+      setStack((current) => [...current, {
+        label: copy.assortments,
+        rows: [
+          ...selectionItems.map((item) => ({
+            id: `selection:open:${String(item.id)}`,
+            sourceId: `selection:open:${String(item.id)}`,
+            group: 'views' as const,
+            title: String(item.name ?? ''),
+            subtitle: copy.assortments,
+          })),
+          { id: 'selection:new', sourceId: 'selection:new', group: 'views' as const, title: copy.newSelection, subtitle: copy.assortments },
+        ],
+      }])
+      setQuery('')
+      setActive(0)
+      return
+    }
+    if (id === 'selection:new') {
+      requestNewSelection()
+      onClose()
+      return
+    }
+    if (id.startsWith('selection:open:')) {
+      const item = selectionItems.find((row) => String(row.id) === id.slice('selection:open:'.length))
+      if (item) emitSavedSelection(item)
+      onClose()
+      return
+    }
     if (id === 'assortment:save') {
-      const name = query.replace(/^save assortment\s+/i, '').trim()
+      const name = query.replace(/^save (?:assortment|selection)\s+/i, '').trim()
+      const type = session.workspaceType || session.listType || ''
       void api<Json>('/v1/operations/assortment.save', {
         method: 'POST',
         body: JSON.stringify({
           name,
+          ...(type ? { type } : {}),
           query: {
-            ...(session.listType ? { type: session.listType } : {}),
             ...(session.group ? { group: session.group } : {}),
           },
         }),
