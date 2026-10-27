@@ -1044,7 +1044,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   useEffect(() => {
     if (!session.objectId || !object.data) return
     const stored = (object.data.values as Json) ?? {}
-    const language = session.language || 'sv'
+    const language = session.language || 'en'
     enrichSelection({
       id: session.objectId,
       key: recordNumber(stored) || String(object.data.key ?? ''),
@@ -1232,7 +1232,7 @@ function Editor({
   onChange: (value: unknown) => void
 }) {
   if (languageDependent) {
-    const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : { sv: textValue(value) }
+    const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : { en: textValue(value) }
     return (
       <div className="langs">
         {['sv', 'en', 'de'].map((language) => (

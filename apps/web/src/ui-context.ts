@@ -23,7 +23,7 @@ type Frame = {
   language: string
 }
 
-const blankFrame = (): Frame => ({ workspace: null, panes: [], focused: null, language: 'sv' })
+const blankFrame = (): Frame => ({ workspace: null, panes: [], focused: null, language: 'en' })
 
 let frame: Frame = blankFrame()
 let markedId: string | null = null
@@ -113,6 +113,6 @@ export function readUiContext(): UiContextSnapshot {
     filter: table?.filter ?? '',
     sort: table?.sort ?? '',
     columns: columns.map((column) => ({ ...column })),
-    language: frame.language || 'sv',
+    language: frame.language || 'en',
   }
 }

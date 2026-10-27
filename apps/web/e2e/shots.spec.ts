@@ -58,7 +58,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
 
   await page.getByRole('button', { name: 'Review' }).click()
   await expect(page.getByTestId('save-all')).toBeVisible()
-  await expect(page.getByTestId('proposal')).toContainText('ART-TALT-3')
+  await expect(page.getByTestId('proposal')).toContainText('ART-CHED-400')
   await page.screenshot({ path: `${shots}/proposal-${theme}.png` })
   await page.getByRole('button', { name: 'Jobs', exact: true }).click()
   await expect(page.getByTestId('jobs')).toBeVisible()

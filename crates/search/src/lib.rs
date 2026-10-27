@@ -249,7 +249,7 @@ impl Typesense {
 
     pub async fn search(&self, query: &SearchQuery) -> Result<SearchPage, Error> {
         let language = if query.language.is_empty() {
-            "sv"
+            "en"
         } else {
             query.language.as_str()
         };
