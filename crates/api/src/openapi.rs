@@ -184,8 +184,21 @@ impl utoipa::Modify for PlatformPaths {
             ),
             (HttpMethod::Get, "/v1/view-types", "List view types"),
             (HttpMethod::Post, "/v1/view-types", "Register a view type"),
-            (HttpMethod::Get, "/v1/assortments", "List saved searches"),
-            (HttpMethod::Post, "/v1/assortments", "Save an assortment"),
+            (
+                HttpMethod::Get,
+                "/v1/assortments",
+                "List selections. Optional type is an id or a key.",
+            ),
+            (
+                HttpMethod::Post,
+                "/v1/assortments",
+                "Save a selection. type is an id or a key and is not stored in query.",
+            ),
+            (
+                HttpMethod::Get,
+                "/v1/assortments/{id}",
+                "Read one selection. type must be that selection's type.",
+            ),
             (HttpMethod::Get, "/v1/job-types", "List job types"),
             (HttpMethod::Post, "/v1/job-types", "Register a job type"),
             (

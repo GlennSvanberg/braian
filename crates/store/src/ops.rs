@@ -35,6 +35,7 @@ pub enum ProposalWrite {
     Assortment {
         id: Uuid,
         owner: Uuid,
+        type_id: Uuid,
         name: String,
         query: Value,
     },
@@ -248,13 +249,16 @@ impl Store {
             ProposalWrite::Assortment {
                 id,
                 owner,
+                type_id,
                 name,
                 query,
             } => {
                 tx.execute(
-                    "INSERT INTO assortments (id, owner_id, name, query) VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, query = EXCLUDED.query",
-                    &[&id, &owner, &name, &query],
+                    "INSERT INTO assortments (id, owner_id, type_id, name, query)
+                     VALUES ($1, $2, $3, $4, $5)
+                     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, query = EXCLUDED.query,
+                       type_id = EXCLUDED.type_id",
+                    &[&id, &owner, &type_id, &name, &query],
                 )
                 .await?;
                 WriteReceipt {

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -198,7 +199,7 @@ async fn view_types_are_english_and_have_no_dashboard() {
     assert_eq!(titles["job_history"], "Jobs");
     assert_eq!(titles["proposal"], "Proposals");
     assert_eq!(titles["embed"], "Embedded view");
-    assert_eq!(titles["assortment_list"], "Assortments");
+    assert_eq!(titles["assortment_list"], "Selections");
     assert_eq!(titles["class_attributes"], "Classes");
 }
 
@@ -247,4 +248,233 @@ async fn branch_migrations_apply_after_main() {
         .unwrap()
         .get(0);
     assert_eq!(latest, max_migration_version(&branch_set));
+}
+
+/// V17 reads `query.type` when it is set, and otherwise assigns the type with
+/// the most matching live objects. A selection that already names a type keeps it.
+#[tokio::test]
+async fn selection_type_comes_from_the_query_or_the_most_hits() {
+    let source = branch_migrations();
+    let dir = env::temp_dir().join(format!("braian-v17-{}", Uuid::now_v7().simple()));
+    fs::create_dir_all(&dir).unwrap();
+    for entry in fs::read_dir(&source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("V17") {
+            continue;
+        }
+        fs::copy(entry.path(), dir.join(&name)).unwrap();
+    }
+
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    migrate(&mut conn.client, &dir).await;
+
+    let product = Uuid::parse_str("018f0000-0000-7000-8000-000000000200").unwrap();
+    let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap();
+    let principal = Uuid::now_v7();
+    let batch = Uuid::now_v7();
+    let user = Uuid::now_v7();
+    let workspace = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+            &[&principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO batches (id, actor, kind, source) VALUES ($1, $2, 'interactive', 'test')",
+            &[&batch, &principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO users (id, principal_id, email, password_hash, role, display_name)
+             VALUES ($1, $2, 'ada@example.com', 'x', 'admin', 'Ada')",
+            &[&user, &principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO workspaces (id, owner_id, name) VALUES ($1, $2, 'Products')",
+            &[&workspace, &user],
+        )
+        .await
+        .unwrap();
+    let definitions = serde_json::json!({
+        "model_revision": 1,
+        "languages": ["en"],
+        "types": [
+            {"id": product, "key": "product"},
+            {"id": article, "key": "article"}
+        ],
+        "structures": [{
+            "id": "018f0000-0000-7000-8000-000000000300",
+            "key": "food",
+            "groups": [{"id": "018f0000-0000-7000-8000-000000000400", "key": "cheese"}]
+        }]
+    });
+    conn.client
+        .execute(
+            "INSERT INTO definition_revisions (model_revision, definitions, batch_id) VALUES (1, $1, $2)",
+            &[&definitions, &batch],
+        )
+        .await
+        .unwrap();
+
+    for index in 0..6 {
+        insert_object(&conn.client, product, &format!("P{index}"), index == 0).await;
+    }
+    for index in 0..3 {
+        insert_object(&conn.client, article, &format!("A{index}"), true).await;
+    }
+
+    let cheese = Uuid::parse_str("018f2000-0000-7000-8000-0000000000a1").unwrap();
+    let organic = Uuid::parse_str("018f2000-0000-7000-8000-0000000000a2").unwrap();
+    let typed = Uuid::parse_str("018f2000-0000-7000-8000-0000000000a3").unwrap();
+    let missing = Uuid::parse_str("018f2000-0000-7000-8000-0000000000a4").unwrap();
+    let cheese_query = serde_json::json!({"type": "article", "group": "food:cheese"});
+    let typed_query = serde_json::json!({"type": product.to_string()});
+    let organic_query = serde_json::json!({"labels": "organic_eu"});
+    let missing_query = serde_json::json!({"labels": "no-such"});
+    for (id, name, query) in [
+        (cheese, "Cheese", cheese_query),
+        (organic, "Organic", organic_query),
+        (typed, "Named", typed_query),
+        (missing, "Empty", missing_query),
+    ] {
+        conn.client
+            .execute(
+                "INSERT INTO assortments (id, owner_id, name, query) VALUES ($1, $2, $3, $4)",
+                &[&id, &user, &name, &query],
+            )
+            .await
+            .unwrap();
+    }
+    let kept = Uuid::now_v7();
+    let renamed = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO views (id, workspace_id, type_key, title) VALUES
+             ($1, $3, 'assortment_list', 'Assortments'),
+             ($2, $3, 'assortment_list', 'My picks')",
+            &[&kept, &renamed, &workspace],
+        )
+        .await
+        .unwrap();
+
+    fs::copy(
+        source.join("V17__selection_type.sql"),
+        dir.join("V17__selection_type.sql"),
+    )
+    .unwrap();
+    migrate(&mut conn.client, &dir).await;
+
+    let row = conn
+        .client
+        .query_one(
+            "SELECT type_id, query FROM assortments WHERE id = $1",
+            &[&cheese],
+        )
+        .await
+        .unwrap();
+    let type_id: Uuid = row.get(0);
+    let query: serde_json::Value = row.get(1);
+    assert_eq!(type_id, article);
+    assert_eq!(query["group"], "food:cheese");
+    assert!(query.get("type").is_none(), "{query}");
+
+    let row = conn
+        .client
+        .query_one(
+            "SELECT type_id, query FROM assortments WHERE id = $1",
+            &[&typed],
+        )
+        .await
+        .unwrap();
+    let type_id: Uuid = row.get(0);
+    let query: serde_json::Value = row.get(1);
+    assert_eq!(type_id, product);
+    assert_eq!(query, serde_json::json!({}));
+
+    let row = conn
+        .client
+        .query_one(
+            "SELECT type_id, query FROM assortments WHERE id = $1",
+            &[&organic],
+        )
+        .await
+        .unwrap();
+    let type_id: Uuid = row.get(0);
+    let query: serde_json::Value = row.get(1);
+    assert_eq!(
+        type_id, article,
+        "three organic articles beat one organic product"
+    );
+    assert_eq!(query["labels"], "organic_eu");
+
+    let type_id: Uuid = conn
+        .client
+        .query_one("SELECT type_id FROM assortments WHERE id = $1", &[&missing])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        type_id, product,
+        "no label hits, and products are the larger set"
+    );
+
+    let title: String = conn
+        .client
+        .query_one(
+            "SELECT title FROM view_types WHERE key = 'assortment_list'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(title, "Selections");
+    let title: String = conn
+        .client
+        .query_one("SELECT title FROM views WHERE id = $1", &[&kept])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(title, "Selections");
+    let title: String = conn
+        .client
+        .query_one("SELECT title FROM views WHERE id = $1", &[&renamed])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(title, "My picks");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+async fn insert_object(client: &tokio_postgres::Client, type_id: Uuid, key: &str, organic: bool) {
+    let id = Uuid::now_v7();
+    client
+        .execute(
+            "INSERT INTO objects (id, type_id, key, version, model_revision) VALUES ($1, $2, $3, 1, 1)",
+            &[&id, &type_id, &key],
+        )
+        .await
+        .unwrap();
+    let values = if organic {
+        serde_json::json!({"labels": ["organic_eu"]})
+    } else {
+        serde_json::json!({})
+    };
+    client
+        .execute(
+            "INSERT INTO object_values (object_id, part, \"values\", version, is_latest) VALUES ($1, 'main', $2, 1, true)",
+            &[&id, &values],
+        )
+        .await
+        .unwrap();
 }

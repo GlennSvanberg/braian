@@ -4,6 +4,7 @@ import { Maximize2, Minimize2, MoreHorizontal, Plus, X } from 'lucide-react'
 import { ViewGlyph } from './chips'
 import { Kbd } from './components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
+import { requestNewSelection } from './assortment-filter'
 import { viewDisplayTitle } from './demo-labels'
 import { copy } from './i18n'
 import {
@@ -153,6 +154,7 @@ export function WorkspaceDock({
       {menu ? (
         <ViewMenu
           menu={menu}
+          viewType={viewList.find((view) => view.id === menu.view)?.type ?? ''}
           zoomed={doc.zoom === menu.view}
           onClose={() => setMenu(null)}
           onRun={(name, args) => {
@@ -452,12 +454,14 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
 
 function ViewMenu({
   menu,
+  viewType,
   zoomed,
   onClose,
   onRun,
   onAdd,
 }: {
   menu: { x: number; y: number; view: string }
+  viewType: string
   zoomed: boolean
   onClose: () => void
   onRun: (name: string, args?: Record<string, unknown>) => void
@@ -490,6 +494,18 @@ function ViewMenu({
         <span>{copy.addView}</span>
         <span><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
       </button>
+      {viewType === 'assortment_list' ? (
+        <button
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={() => {
+            onClose()
+            requestNewSelection()
+          }}
+        >
+          <span>{copy.newSelection}</span>
+        </button>
+      ) : null}
       {item('split', copy.splitLeft, [], { zone: 'left' })}
       {item('split', copy.splitRight, [], { zone: 'right' })}
       {item('split', copy.splitTop, [], { zone: 'top' })}

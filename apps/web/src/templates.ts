@@ -20,7 +20,7 @@ export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
   const tree = typeUsesTree(type.key)
   const views: WorkspaceTemplate['views'] = [
     ...(tree ? [{ type: 'structure_tree', title: 'Food', state: { expanded: ['dairy', 'beverages'] } }] : []),
-    { type: 'assortment_list', title: 'Assortments', state: {} },
+    { type: 'assortment_list', title: 'Selections', state: {} },
     {
       type: 'object_table',
       title: type.plural,
@@ -35,8 +35,8 @@ export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
     id: `type:${type.key}`,
     name: type.plural,
     summary: tree
-      ? 'Assortments, structure, list, detail, graph, history and classes'
-      : 'Assortments, list, detail, graph and history',
+      ? 'Selections, structure, list, detail, graph, history and classes'
+      : 'Selections, list, detail, graph and history',
     views,
     layout: (ids) =>
       splitPair(

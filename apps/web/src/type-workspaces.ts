@@ -15,6 +15,12 @@ export function isTypeWorkspace(shareToken?: string | null) {
   return Boolean(shareToken?.startsWith(TYPE_SHARE_PREFIX))
 }
 
+/** Type key encoded in a type workspace share token. Empty for other workspaces. */
+export function typeKeyFromShare(shareToken?: string | null) {
+  if (!shareToken?.startsWith(TYPE_SHARE_PREFIX)) return ''
+  return shareToken.slice(TYPE_SHARE_PREFIX.length)
+}
+
 /** Setup, data model, one workspace per type, then everything else, then Review. */
 export function orderWorkspaces<T extends { share_token?: string | null }>(rows: T[], types: TypeName[]): T[] {
   return rows

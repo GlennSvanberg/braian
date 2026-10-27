@@ -42,7 +42,7 @@ async function choose(table: Locator, name: string) {
   await table.page().getByRole('menuitem', { name, exact: true }).click()
 }
 
-test('selecting a structure group lists the same articles as its assortment', async ({ page }) => {
+test('selecting a structure group lists the same products as its selection', async ({ page }) => {
   test.setTimeout(120_000)
   await login(page)
   await resetEnrich(page)
@@ -53,8 +53,8 @@ test('selecting a structure group lists the same articles as its assortment', as
   const filter = table.getByTestId('quick-filter')
 
   await page.getByTestId('structure-tree').getByRole('treeitem', { name: 'Cheese' }).click()
-  await filter.fill('ART-CHED')
-  await expect(table.getByTestId('object-row').first()).toContainText('ART-CHED')
+  await filter.fill('PROD-CHEDDAR')
+  await expect(table.getByTestId('object-row').first()).toContainText('PROD-CHEDDAR')
   await expect(table).not.toContainText('no rows')
   const grouped = (await count.textContent()) ?? ''
   expect(grouped.startsWith('0 ')).toBeFalsy()
@@ -63,8 +63,8 @@ test('selecting a structure group lists the same articles as its assortment', as
   await choose(table, 'All')
   await expect(table.getByTestId('object-row').first()).toBeVisible()
   await choose(table, 'Cheese')
-  await filter.fill('ART-CHED')
-  await expect(table.getByTestId('object-row').first()).toContainText('ART-CHED')
+  await filter.fill('PROD-CHEDDAR')
+  await expect(table.getByTestId('object-row').first()).toContainText('PROD-CHEDDAR')
   await expect(count).toHaveText(grouped)
 
   await page.getByRole('button', { name: 'Light' }).click()

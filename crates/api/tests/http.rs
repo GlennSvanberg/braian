@@ -2520,3 +2520,166 @@ async fn a_failed_apply_leaves_the_row_pending_and_writes_nothing() {
     assert_eq!(pending["status"], "open", "{pending}");
     assert_eq!(pending["rows"][0]["status"], "pending", "{pending}");
 }
+
+#[tokio::test]
+async fn a_selection_cannot_be_used_with_another_type() {
+    let (db, app) = app().await;
+    let hash = braian_api::hash_password("secret-selection").unwrap();
+    db.store()
+        .create_user("selection@braian.local", &hash, "admin", "Selection")
+        .await
+        .unwrap();
+    let (status, headers, logged) = call(
+        &app,
+        "POST",
+        "/v1/login",
+        None,
+        &[("content-type", "application/json")],
+        Some(r#"{"email":"selection@braian.local","password":"secret-selection"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{logged}");
+    let cookie = headers
+        .get("set-cookie")
+        .and_then(|value| value.split(';').next())
+        .unwrap()
+        .to_owned();
+    let (status, _, widget) = call(
+        &app,
+        "POST",
+        "/v1/types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{
+                "key": "widget",
+                "labels": {},
+                "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                "attributes": ["018f0000-0000-7000-8000-000000000100"]
+            }"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{widget}");
+
+    let (status, _, saved) = call(
+        &app,
+        "POST",
+        "/v1/assortments",
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(r#"{"name":"Cheese","type":"item","query":{"group":"catalog:root"}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["type"], "item", "{saved}");
+    assert!(saved["query"].get("type").is_none(), "{saved}");
+    let id = saved["id"].as_str().unwrap();
+
+    let (status, _, wrong) = call(
+        &app,
+        "GET",
+        &format!("/v1/assortments/{id}?type=widget"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{wrong}");
+    assert_eq!(wrong["code"], "wrong_type", "{wrong}");
+
+    let (status, _, ok) = call(
+        &app,
+        "GET",
+        &format!("/v1/assortments/{id}?type=item"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ok}");
+    assert_eq!(ok["name"], "Cheese", "{ok}");
+
+    let (status, _, listed) = call(
+        &app,
+        "GET",
+        "/v1/assortments?type=item",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["assortments"].as_array().unwrap().len(),
+        1,
+        "{listed}"
+    );
+
+    let item_id = "018f0000-0000-7000-8000-000000000200";
+    let (status, _, by_id) = call(
+        &app,
+        "GET",
+        &format!("/v1/assortments?type={item_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id["assortments"][0]["id"], id, "{by_id}");
+
+    let (status, _, widgets) = call(
+        &app,
+        "GET",
+        "/v1/assortments?type=widget",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{widgets}");
+    assert_eq!(
+        widgets["assortments"].as_array().unwrap().len(),
+        0,
+        "{widgets}"
+    );
+
+    let (status, _, conflict) = call(
+        &app,
+        "POST",
+        "/v1/assortments",
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(r#"{"name":"Mixed","type":"item","query":{"type":"widget"}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{conflict}");
+    assert_eq!(conflict["code"], "wrong_type", "{conflict}");
+
+    let (status, _, moved) = call(
+        &app,
+        "POST",
+        "/v1/assortments",
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"id":"{id}","name":"Cheese","type":"widget","query":{{}}}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{moved}");
+    assert_eq!(moved["code"], "wrong_type", "{moved}");
+
+    let (status, _, unknown) = call(
+        &app,
+        "GET",
+        "/v1/assortments?type=nope",
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{unknown}");
+    assert_eq!(unknown["code"], "unknown_reference", "{unknown}");
+}

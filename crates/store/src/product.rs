@@ -491,53 +491,46 @@ impl Store {
         &self,
         id: Uuid,
         owner_id: Uuid,
+        type_id: Uuid,
         name: &str,
         query: &Value,
     ) -> Result<(), Error> {
         let client = self.pool().get().await?;
         client
             .execute(
-                "INSERT INTO assortments (id, owner_id, name, query) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, query = EXCLUDED.query",
-                &[&id, &owner_id, &name, query],
+                "INSERT INTO assortments (id, owner_id, type_id, name, query) VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, query = EXCLUDED.query, type_id = EXCLUDED.type_id",
+                &[&id, &owner_id, &type_id, &name, query],
             )
             .await?;
         Ok(())
     }
 
-    pub async fn list_assortments(&self) -> Result<Vec<Value>, Error> {
+    pub async fn list_assortments(&self, type_id: Option<Uuid>) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client
-            .query("SELECT id, name, query FROM assortments ORDER BY name", &[])
+            .query(
+                "SELECT id, name, type_id, query FROM assortments
+                 WHERE $1::uuid IS NULL OR type_id = $1
+                 ORDER BY name",
+                &[&type_id],
+            )
             .await?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                serde_json::json!({
-                    "id": row.get::<_, Uuid>("id"),
-                    "name": row.get::<_, String>("name"),
-                    "query": row.get::<_, Value>("query"),
-                })
-            })
-            .collect())
+        Ok(rows.iter().map(assortment_json).collect())
     }
 
     pub async fn assortment(&self, id: Uuid) -> Result<Option<Value>, Error> {
         let client = self.pool().get().await?;
         let Some(row) = client
             .query_opt(
-                "SELECT id, name, query FROM assortments WHERE id = $1",
+                "SELECT id, name, type_id, query FROM assortments WHERE id = $1",
                 &[&id],
             )
             .await?
         else {
             return Ok(None);
         };
-        Ok(Some(serde_json::json!({
-            "id": row.get::<_, Uuid>("id"),
-            "name": row.get::<_, String>("name"),
-            "query": row.get::<_, Value>("query"),
-        })))
+        Ok(Some(assortment_json(&row)))
     }
 
     pub async fn register_job_type(
@@ -1355,6 +1348,15 @@ impl Store {
             .map(|row| (row.get(0), row.get(1), row.get(2), row.get::<_, i64>(3)))
             .collect())
     }
+}
+
+fn assortment_json(row: &tokio_postgres::Row) -> Value {
+    serde_json::json!({
+        "id": row.get::<_, Uuid>("id"),
+        "name": row.get::<_, String>("name"),
+        "type_id": row.get::<_, Uuid>("type_id"),
+        "query": row.get::<_, Value>("query"),
+    })
 }
 
 fn push_pred(sql: &mut String, params_len: usize, clause: &str) {

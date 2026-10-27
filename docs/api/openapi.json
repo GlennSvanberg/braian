@@ -46,14 +46,23 @@
         "tags": [
           "platform"
         ],
-        "summary": "List saved searches",
+        "summary": "List selections. Optional type is an id or a key.",
         "responses": {}
       },
       "post": {
         "tags": [
           "platform"
         ],
-        "summary": "Save an assortment",
+        "summary": "Save a selection. type is an id or a key and is not stored in query.",
+        "responses": {}
+      }
+    },
+    "/v1/assortments/{id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read one selection. type must be that selection's type.",
         "responses": {}
       }
     },
