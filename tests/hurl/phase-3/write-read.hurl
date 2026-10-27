@@ -152,21 +152,21 @@ Content-Type: application/json
 {
   "type": "item",
   "groups": { "catalog": "root" },
-  "values": { "sku": "SKU-WARN", "name": { "sv": "Stol" }, "active": true }
+  "values": { "sku": "SKU-WARN", "name": { "sv": "Stol" }, "active": true, "tags": ["abcd"] }
 }
 HTTP 200
 [Captures]
 warn: jsonpath "$.id"
 
-PUT {{host}}/v1/attributes/name
+PUT {{host}}/v1/attributes/tags
 Authorization: Bearer {{token}}
 Content-Type: application/json
 {
-  "id": "018f0000-0000-7000-8000-000000000101",
-  "key": "name",
-  "labels": { "sv": "Namn", "en-GB": "Name" },
-  "language_dependent": true,
-  "multiple": false,
+  "id": "018f0000-0000-7000-8000-000000000108",
+  "key": "tags",
+  "labels": { "sv": "Taggar" },
+  "language_dependent": false,
+  "multiple": true,
   "kind": { "type": "text", "max_length": 3 },
   "index": { "searchable": true, "filterable": false, "sortable": false }
 }
@@ -192,7 +192,7 @@ PATCH {{host}}/v1/objects/{{warn}}
 Authorization: Bearer {{token}}
 If-Match: "2"
 Content-Type: application/json
-{ "values": { "name": { "sv": "1234" } } }
+{ "values": { "tags": ["1234"] } }
 HTTP 422
 [Asserts]
 jsonpath "$.errors[*].code" contains "text_too_long"
