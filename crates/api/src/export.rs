@@ -378,7 +378,7 @@ async fn prepare(state: &AppState, body: &ExportBody) -> Result<Prepared, Proble
         .as_deref()
         .map(str::trim)
         .filter(|lang| !lang.is_empty())
-        .unwrap_or("sv")
+        .unwrap_or("en")
         .to_owned();
     let columns = resolve_columns(&cached.model, &cached.defs, &body.columns, &lang)?;
     let scan = scan_from(&cached.model, body)?;

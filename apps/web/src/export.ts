@@ -30,7 +30,7 @@ export function exportPayload(input: {
   const headers = new Map(input.columns.map((column) => [column.id, column.header]))
   const body: ExportRequest = {
     columns: shown.map((id) => ({ id, header: headers.get(id) || id })),
-    lang: input.lang.trim() || 'sv',
+    lang: input.lang.trim() || 'en',
   }
   if (input.sort.trim()) body.sort = input.sort.trim()
   if (input.ids.length > 0) {

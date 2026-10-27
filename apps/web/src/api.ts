@@ -58,7 +58,7 @@ export function recordNumber(values: Json | undefined): string {
   return textValue(values.number) || textValue(values.nummer)
 }
 
-export function textValue(value: unknown, language = 'sv'): string {
+export function textValue(value: unknown, language = 'en'): string {
   if (value == null) return ''
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return String(value)

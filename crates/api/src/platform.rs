@@ -1335,41 +1335,12 @@ fn latest_user_text(messages: &[Value]) -> String {
         .unwrap_or_default()
 }
 
-fn reply_language(text: &str) -> &'static str {
-    let lower = text.to_lowercase();
-    if lower.contains('å')
-        || lower.contains('ä')
-        || lower.contains('ö')
-        || lower.contains("vilken")
-        || lower.contains("vilket")
-        || lower.contains("vilka")
-        || lower.contains("markerad")
-        || lower.contains("markerat")
-    {
-        return "sv";
-    }
-    if lower.contains("welche")
-        || lower.contains("welches")
-        || lower.contains("markiert")
-        || lower.contains("ausgewählt")
-        || lower.contains("ausgewahlt")
-    {
-        return "de";
-    }
-    "en"
-}
-
-fn agent_system_prompt(context: &Value, latest: &str) -> String {
-    let language = match reply_language(latest) {
-        "sv" => "Swedish",
-        "de" => "German",
-        _ => "English",
-    };
+fn agent_system_prompt(context: &Value, _latest: &str) -> String {
     let snapshot =
         serde_json::to_string(&compact_ui_context(context)).unwrap_or_else(|_| "{}".to_owned());
     format!(
         "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. \
-Answer in {language}, the language of the person's latest message. \
+Answer in English. \
 The UI snapshot is the current screen: workspace, open panes with their types, focused pane, selected objects (id, key, name, type), active filter and sort, the open table's columns (id, header, hidden), and the data language. \
 To hide or show a column, call ui_hide_column or ui_show_column with {{\"column\": id}}. \
 Answer questions about the selection, the open views, or the workspace from that snapshot. Do not call search or list_objects for those questions, and do not ask for a screenshot. \
@@ -1471,14 +1442,9 @@ fn object_label(item: &Value) -> String {
     }
 }
 
-fn format_selection(question: &str, items: &[Value]) -> String {
-    let language = reply_language(question);
+fn format_selection(items: &[Value]) -> String {
     if items.is_empty() {
-        return match language {
-            "sv" => "Ingenting är markerat.".to_owned(),
-            "de" => "Nichts ist markiert.".to_owned(),
-            _ => "Nothing is selected.".to_owned(),
-        };
+        return "Nothing is selected.".to_owned();
     }
     let labels = items
         .iter()
@@ -1487,17 +1453,9 @@ fn format_selection(question: &str, items: &[Value]) -> String {
         .collect::<Vec<_>>();
     let joined = labels.join(", ");
     if items.len() == 1 {
-        return match language {
-            "sv" => format!("{joined} är markerad."),
-            "de" => format!("{joined} ist markiert."),
-            _ => format!("{joined} is selected."),
-        };
+        return format!("{joined} is selected.");
     }
-    match language {
-        "sv" => format!("Markerade: {joined}."),
-        "de" => format!("Markiert: {joined}."),
-        _ => format!("Selected: {joined}."),
-    }
+    format!("Selected: {joined}.")
 }
 
 /// Direct answer when the person asks which object is marked and the snapshot says.
@@ -1510,7 +1468,7 @@ fn selection_reply(messages: &[Value], context: &Value) -> Option<String> {
         return None;
     }
     let snapshot = compact_ui_context(context);
-    Some(format_selection(&question, &selection_items(&snapshot)))
+    Some(format_selection(&selection_items(&snapshot)))
 }
 
 fn context_tool_result(name: &str, args: &Value, injected: Option<&Value>) -> Option<Value> {
@@ -1615,7 +1573,7 @@ async fn search(
     let page = search
         .search(&SearchQuery {
             text: query.q.unwrap_or_default(),
-            language: query.lang.unwrap_or_else(|| "sv".into()),
+            language: query.lang.unwrap_or_else(|| "en".into()),
             filter_by: query.filter.unwrap_or_default(),
             sort_by: query.sort.unwrap_or_default(),
             group_by: query.group.unwrap_or_default(),
@@ -5219,13 +5177,13 @@ mod tests {
         let reply = selection_reply(&messages, &context).expect("answer");
         assert!(reply.contains("SYN-000001"), "{reply}");
         assert!(reply.contains("Insulation 2"), "{reply}");
-        assert!(reply.contains("markerad"), "{reply}");
+        assert!(reply.contains("is selected"), "{reply}");
         assert!(selection_reply(&messages, &Value::Null).is_none());
 
         let prompt = agent_system_prompt(&context, "Vilken produkt är markerad?");
         assert!(prompt.contains("SYN-000001"), "{prompt}");
         assert!(prompt.contains("Insulation 2"), "{prompt}");
-        assert!(prompt.contains("Swedish"), "{prompt}");
+        assert!(prompt.contains("Answer in English"), "{prompt}");
         assert!(prompt.contains("object_detail"), "{prompt}");
         assert!(prompt.contains("get_object"), "{prompt}");
 

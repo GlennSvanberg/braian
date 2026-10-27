@@ -481,7 +481,7 @@ export function Shell() {
     const openIds = doc.zoom ? [doc.zoom] : layoutViews(doc.layout)
     const focused = doc.focus && openIds.includes(doc.focus) ? doc.focus : openIds[0] ?? null
     const detail = surface.views.find((view) => view.type === 'object_detail')
-    const language = typeof detail?.state.language === 'string' ? detail.state.language : 'sv'
+    const language = typeof detail?.state.language === 'string' ? detail.state.language : 'en'
     publishFrame({
       workspace: { id: surface.id, name: workspaceDisplayName(surface.name, surface.share_token) },
       panes: panesFromCatalog(openIds, focused, surface.views),
@@ -520,7 +520,7 @@ export function Shell() {
     group,
     objectId,
     proposalId,
-    language: 'sv',
+    language: 'en',
     activity: [],
     listType,
     setGroup,

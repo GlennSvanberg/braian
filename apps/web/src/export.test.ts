@@ -15,7 +15,7 @@ describe('exportPayload', () => {
       columns,
       hidden: ['status'],
       order: ['name', 'key', 'type', 'status', 'version'],
-      q: 'tält',
+      q: 'cheddar',
       filter: 'groups:=sortiment:friluft',
       sort: 'a_nummer:asc',
       ids: [],
@@ -30,7 +30,7 @@ describe('exportPayload', () => {
       ],
       lang: 'sv',
       sort: 'a_nummer:asc',
-      q: 'tält',
+      q: 'cheddar',
       filter: 'groups:=sortiment:friluft',
     })
     expect(body).not.toHaveProperty('format')
@@ -48,7 +48,7 @@ describe('exportPayload', () => {
       lang: '  ',
     })
     expect(body.ids).toEqual(['018f0000-0000-7000-8000-000000000001'])
-    expect(body.lang).toBe('sv')
+    expect(body.lang).toBe('en')
     expect(body.q).toBeUndefined()
     expect(body.filter).toBeUndefined()
     expect(body.columns.map((column) => column.id)).toEqual(['key', 'name', 'type', 'status', 'version'])
