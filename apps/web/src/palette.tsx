@@ -17,6 +17,7 @@ import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
 import { publishProposal } from './proposal-bus'
 import { modelFocus, openModelDialog, requestDiscardDraft, requestReview, stageModel } from './model-stage'
+import { isStandardAttribute, queueViewType, requestAttributeAction } from './attribute-actions'
 import { stepText } from './steps'
 import { createWorkspaceFromTemplate, workspaceTemplates } from './templates'
 import {
@@ -164,14 +165,26 @@ export function CommandPalette({
       { id: 'model:discard', group: 'object' as const, title: copy.discardDraft, subtitle: copy.dataModel, keywords: ['draft'] },
       { id: 'model:undo', group: 'object' as const, title: copy.undoModel, subtitle: copy.dataModel, keywords: ['undo'] },
       { id: 'model:delete-type', group: 'object' as const, title: copy.deleteType, subtitle: copy.dataModel, keywords: ['delete', 'type'] },
-      { id: 'model:delete-attribute', group: 'object' as const, title: copy.deleteAttribute, subtitle: copy.dataModel, keywords: ['delete', 'attribute'] },
+      ...(focusedStandard(defs.data)
+        ? []
+        : [{ id: 'model:delete-attribute', group: 'object' as const, title: copy.deleteAttribute, subtitle: copy.dataModel, keywords: ['delete', 'attribute'] }]),
       { id: 'model:delete-structure', group: 'object' as const, title: copy.deleteStructure, subtitle: copy.dataModel, keywords: ['delete', 'structure', 'tree'] },
       { id: 'model:delete-list', group: 'object' as const, title: copy.deleteValueList, subtitle: copy.dataModel, keywords: ['delete', 'list'] },
       { id: 'model:delete-option', group: 'object' as const, title: copy.deleteOption, subtitle: copy.dataModel, keywords: ['delete', 'option'] },
       { id: 'model:delete-family', group: 'object' as const, title: copy.deleteUnitFamily, subtitle: copy.dataModel, keywords: ['delete', 'unit'] },
       { id: 'model:delete-unit', group: 'object' as const, title: copy.deleteUnit, subtitle: copy.dataModel, keywords: ['delete', 'unit'] },
+      { id: 'attr:add-type', group: 'object' as const, title: copy.addToType, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'type', 'attach'] },
+      { id: 'attr:add-group', group: 'object' as const, title: copy.addToGroup, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'group', 'attach'] },
+      { id: 'attr:rename', group: 'object' as const, title: copy.renameAttribute, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'label', 'rename'] },
+      ...(focusedStandard(defs.data)
+        ? []
+        : [
+            { id: 'attr:rename-key', group: 'object' as const, title: copy.renameKey, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'key', 'rename'] },
+            { id: 'attr:delete', group: 'object' as const, title: copy.deleteMenu, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'delete'] },
+          ]),
+      { id: 'attr:new', group: 'object' as const, title: copy.newAttribute, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'create'] },
     ],
-    [workspaces, views, session.objectId, session.group, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns],
+    [workspaces, views, session.objectId, session.group, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns, defs.data],
   )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
@@ -334,7 +347,37 @@ export function CommandPalette({
         })
       return
     }
-    if (id === 'model:rename-key') {
+    if (id === 'goto:attribute-definitions') {
+      const here = views.find((view) => view.type === 'attribute_definitions')
+      if (here) {
+        dispatchUi('ui.open_view', { id: here.id, zone: 'center' })
+      } else {
+        queueViewType('attribute_definitions')
+        const model = workspaces.find((workspace) => workspace.share_token === 'braian-model')
+        if (model) {
+          dispatchUi('ui.open_workspace', { id: model.id })
+          session.openWorkspace(model.id)
+        }
+      }
+      onClose()
+      return
+    }
+    if (id === 'attr:add-type' || id === 'attr:add-group' || id === 'attr:rename' || id === 'attr:new') {
+      const action = id === 'attr:add-type' ? 'add-type' : id === 'attr:add-group' ? 'add-group' : id === 'attr:rename' ? 'rename' : 'new'
+      requestAttributeAction(action)
+      onClose()
+      return
+    }
+    if (id === 'attr:delete') {
+      requestAttributeAction('delete')
+      onClose()
+      return
+    }
+    if (id === 'model:rename-key' || id === 'attr:rename-key') {
+      if (requestAttributeAction('rename-key')) {
+        onClose()
+        return
+      }
       setQuery('rename attribute key ')
       setActive(0)
       return
@@ -763,6 +806,14 @@ export function CommandPalette({
   )
 }
 
+function focusedStandard(defs: Json | undefined) {
+  const target = modelFocus()
+  if (target?.kind !== 'attribute' || !defs) return false
+  const row = ((defs.attributes as Json[] | undefined) ?? []).find((item) => String(item.key) === target.key)
+  if (!row) return false
+  return isStandardAttribute(String(row.id ?? ''), String(row.key ?? ''))
+}
+
 function stepHint(event: AgentEvent, types: ReturnType<typeof typeNames>) {
   const key = typeof event.args?.type === 'string' ? event.args.type : typeof event.args?.type_key === 'string' ? event.args.type_key : ''
   const match = key ? types.find((item) => item.key === key) : undefined
@@ -812,6 +863,15 @@ function buildCatalog(
       subtitle: `Template · ${template.summary}`,
     })),
     { id: 'import:file', group: 'views', title: copy.importFile, subtitle: 'Drop an Excel or CSV file' },
+    ...(!views.some((view) => view.type === 'attribute_definitions')
+      ? [{
+          id: 'goto:attribute-definitions',
+          group: 'views' as const,
+          title: copy.attributeDefinitions,
+          subtitle: copy.dataModel,
+          keywords: ['attribute', 'definition', 'model'],
+        }]
+      : []),
     { id: 'model:rename-key', group: 'views', title: copy.renameKey, subtitle: 'Change a key. External integrations that use the old key will stop working', keywords: ['rename', 'key', 'attribute'] },
     { id: 'object:move-group', group: 'views', title: copy.moveToGroup, subtitle: 'Place the open object in a group', keywords: ['move', 'group', 'place'] },
     { id: 'model:allowed-trees', group: 'views', title: copy.allowedTrees, subtitle: 'Choose the trees a type may use', keywords: ['tree', 'structure', 'type'] },

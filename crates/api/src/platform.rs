@@ -553,6 +553,18 @@ fn registry() -> &'static [Operation] {
             needs_approval: true,
         },
         Operation {
+            name: "model.list_attribute_definitions",
+            title: "List attribute definitions",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "model.attribute_usage",
+            title: "Attribute usage",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
             name: "list_assortments",
             title: "List selections",
             permission: Role::Viewer,
@@ -4569,6 +4581,8 @@ async fn run_operation(
         return propose_operation(state, identity, name, args).await;
     }
     match name {
+        "model.list_attribute_definitions" => crate::attribute_catalog::list(state).await,
+        "model.attribute_usage" => crate::attribute_catalog::usage(state, args).await,
         "model.undo" => crate::model_draft::undo_model(state, identity).await,
         "search" => {
             let params = SearchParams {
@@ -5822,6 +5836,14 @@ mod tests {
         assert!(!tools.contains("model_delete_structure"));
         assert!(tools.contains("model_rename_attribute_key"));
         assert!(
+            tools.contains("model_list_attribute_definitions"),
+            "the agent can list attribute definitions"
+        );
+        assert!(
+            tools.contains("model_attribute_usage"),
+            "the agent can read attribute usage"
+        );
+        assert!(
             tools.contains("mass_edit"),
             "mass edit stays a proposal the person approves"
         );
@@ -5895,6 +5917,16 @@ mod tests {
             assert!(
                 deleting.contains(&required),
                 "{required} is missing from the registry"
+            );
+        }
+        for offered in ["model_list_attribute_definitions", "model_attribute_usage"] {
+            assert!(
+                tools.iter().any(|tool| tool == offered),
+                "{offered} is read-only and must be offered to the agent"
+            );
+            assert!(
+                !deleting.iter().any(|name| tool_name(name) == offered),
+                "{offered} must not be treated as a delete"
             );
         }
     }

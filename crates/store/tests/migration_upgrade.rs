@@ -207,6 +207,106 @@ async fn view_types_are_english_and_have_no_dashboard() {
     assert_eq!(titles["embed"], "Embedded view");
     assert_eq!(titles["assortment_list"], "Selections");
     assert_eq!(titles["class_attributes"], "Group attributes");
+    assert_eq!(titles["attribute_definitions"], "Attribute definitions");
+}
+
+#[tokio::test]
+async fn attribute_definitions_view_is_added_to_an_existing_data_model() {
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    migrate(&mut conn.client, &branch_migrations()).await;
+    let user = Uuid::now_v7();
+    let principal = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+            &[&principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO users (id, principal_id, email, password_hash, role, display_name)
+             VALUES ($1, $2, 'ada@example.com', 'x', 'admin', 'Ada')",
+            &[&user, &principal],
+        )
+        .await
+        .unwrap();
+    let workspace = Uuid::parse_str("018f2000-0000-7000-8000-000000000002").unwrap();
+    let layout = serde_json::json!({
+        "type": "split",
+        "dir": "horizontal",
+        "ratios": [0.22, 0.78],
+        "children": [
+            { "type": "tabs", "views": ["018f2000-0000-7000-8000-000000000201"], "active": 0 },
+            {
+                "type": "split",
+                "dir": "horizontal",
+                "ratios": [0.58, 0.42],
+                "children": [
+                    { "type": "tabs", "views": ["018f2000-0000-7000-8000-000000000202"], "active": 0 },
+                    { "type": "tabs", "views": ["018f2000-0000-7000-8000-000000000203"], "active": 0 }
+                ]
+            }
+        ]
+    });
+    conn.client
+        .execute(
+            "INSERT INTO workspaces (id, owner_id, name, locked, share_token, layout)
+             VALUES ($1, $2, 'Data model', false, 'braian-model', $3)",
+            &[&workspace, &user, &layout],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .batch_execute(include_str!(
+            "../migrations/V21__attribute_definitions_view.sql"
+        ))
+        .await
+        .unwrap();
+    let views: i64 = conn
+        .client
+        .query_one(
+            "SELECT COUNT(*) FROM views
+             WHERE workspace_id = $1 AND type_key = 'attribute_definitions'",
+            &[&workspace],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(views, 1);
+    let stored: serde_json::Value = conn
+        .client
+        .query_one("SELECT layout FROM workspaces WHERE id = $1", &[&workspace])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        stored
+            .to_string()
+            .contains("018f2000-0000-7000-8000-000000000204"),
+        "{stored}"
+    );
+    conn.client
+        .batch_execute(include_str!(
+            "../migrations/V21__attribute_definitions_view.sql"
+        ))
+        .await
+        .unwrap();
+    let views: i64 = conn
+        .client
+        .query_one(
+            "SELECT COUNT(*) FROM views
+             WHERE workspace_id = $1 AND type_key = 'attribute_definitions'",
+            &[&workspace],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        views, 1,
+        "running the migration again must not add a second view"
+    );
 }
 
 #[tokio::test]
