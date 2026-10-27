@@ -860,7 +860,7 @@ fn fill_values(model: &CompiledModel, slot: &Slot) -> anyhow::Result<BTreeMap<At
                 )),
             )?;
             put_attr(model, &mut values, "country", json!(country_code(index)))?;
-            let cities = ["Umeå", "Malmö", "Aarhus", "Hamburg", "Lyon", "Turin"];
+            let cities = ["York", "Bristol", "Aberdeen", "Leeds", "Norwich", "Dover"];
             put_attr(
                 model,
                 &mut values,

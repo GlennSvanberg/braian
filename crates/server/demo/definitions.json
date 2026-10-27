@@ -100,33 +100,25 @@
       "id": "018f0000-0000-7000-8000-000000000020",
       "key": "status",
       "labels": {
-        "sv": "Status",
-        "en": "Status",
-        "de": "Status"
+        "en": "Status"
       },
       "options": [
         {
           "code": "draft",
           "labels": {
-            "sv": "Utkast",
-            "en": "Draft",
-            "de": "Entwurf"
+            "en": "Draft"
           }
         },
         {
           "code": "ok",
           "labels": {
-            "sv": "OK",
-            "en": "OK",
-            "de": "OK"
+            "en": "OK"
           }
         },
         {
           "code": "discontinued",
           "labels": {
-            "sv": "Utgången",
-            "en": "Discontinued",
-            "de": "Ausgelaufen"
+            "en": "Discontinued"
           }
         }
       ]
@@ -135,121 +127,91 @@
       "id": "018f0000-0000-7000-8000-000000000021",
       "key": "allergens",
       "labels": {
-        "sv": "Allergener",
-        "en": "Allergens",
-        "de": "Allergene"
+        "en": "Allergens"
       },
       "options": [
         {
           "code": "celery",
           "labels": {
-            "sv": "Selleri",
-            "en": "Celery",
-            "de": "Sellerie"
+            "en": "Celery"
           }
         },
         {
           "code": "gluten",
           "labels": {
-            "sv": "Gluten",
-            "en": "Gluten",
-            "de": "Gluten"
+            "en": "Gluten"
           }
         },
         {
           "code": "crustaceans",
           "labels": {
-            "sv": "Kräftdjur",
-            "en": "Crustaceans",
-            "de": "Krebstiere"
+            "en": "Crustaceans"
           }
         },
         {
           "code": "eggs",
           "labels": {
-            "sv": "Ägg",
-            "en": "Eggs",
-            "de": "Eier"
+            "en": "Eggs"
           }
         },
         {
           "code": "fish",
           "labels": {
-            "sv": "Fisk",
-            "en": "Fish",
-            "de": "Fisch"
+            "en": "Fish"
           }
         },
         {
           "code": "lupin",
           "labels": {
-            "sv": "Lupin",
-            "en": "Lupin",
-            "de": "Lupinen"
+            "en": "Lupin"
           }
         },
         {
           "code": "milk",
           "labels": {
-            "sv": "Mjölk",
-            "en": "Milk",
-            "de": "Milch"
+            "en": "Milk"
           }
         },
         {
           "code": "molluscs",
           "labels": {
-            "sv": "Blötdjur",
-            "en": "Molluscs",
-            "de": "Weichtiere"
+            "en": "Molluscs"
           }
         },
         {
           "code": "mustard",
           "labels": {
-            "sv": "Senap",
-            "en": "Mustard",
-            "de": "Senf"
+            "en": "Mustard"
           }
         },
         {
           "code": "nuts",
           "labels": {
-            "sv": "Nötter",
-            "en": "Nuts",
-            "de": "Schalenfrüchte"
+            "en": "Nuts"
           }
         },
         {
           "code": "peanuts",
           "labels": {
-            "sv": "Jordnötter",
-            "en": "Peanuts",
-            "de": "Erdnüsse"
+            "en": "Peanuts"
           }
         },
         {
           "code": "sesame",
           "labels": {
-            "sv": "Sesam",
-            "en": "Sesame",
-            "de": "Sesam"
+            "en": "Sesame"
           }
         },
         {
           "code": "soybeans",
           "labels": {
-            "sv": "Sojabönor",
-            "en": "Soybeans",
-            "de": "Sojabohnen"
+            "en": "Soybeans"
           }
         },
         {
           "code": "sulphites",
           "labels": {
-            "sv": "Svaveldioxid och sulfit",
-            "en": "Sulphur dioxide and sulphites",
-            "de": "Schwefeldioxid und Sulfite"
+            "en": "Sulphur dioxide and sulphites"
           }
         }
       ]
@@ -258,121 +220,91 @@
       "id": "018f0000-0000-7000-8000-000000000022",
       "key": "traces",
       "labels": {
-        "sv": "Spår",
-        "en": "Traces",
-        "de": "Spuren"
+        "en": "Traces"
       },
       "options": [
         {
           "code": "celery",
           "labels": {
-            "sv": "Selleri",
-            "en": "Celery",
-            "de": "Sellerie"
+            "en": "Celery"
           }
         },
         {
           "code": "gluten",
           "labels": {
-            "sv": "Gluten",
-            "en": "Gluten",
-            "de": "Gluten"
+            "en": "Gluten"
           }
         },
         {
           "code": "crustaceans",
           "labels": {
-            "sv": "Kräftdjur",
-            "en": "Crustaceans",
-            "de": "Krebstiere"
+            "en": "Crustaceans"
           }
         },
         {
           "code": "eggs",
           "labels": {
-            "sv": "Ägg",
-            "en": "Eggs",
-            "de": "Eier"
+            "en": "Eggs"
           }
         },
         {
           "code": "fish",
           "labels": {
-            "sv": "Fisk",
-            "en": "Fish",
-            "de": "Fisch"
+            "en": "Fish"
           }
         },
         {
           "code": "lupin",
           "labels": {
-            "sv": "Lupin",
-            "en": "Lupin",
-            "de": "Lupinen"
+            "en": "Lupin"
           }
         },
         {
           "code": "milk",
           "labels": {
-            "sv": "Mjölk",
-            "en": "Milk",
-            "de": "Milch"
+            "en": "Milk"
           }
         },
         {
           "code": "molluscs",
           "labels": {
-            "sv": "Blötdjur",
-            "en": "Molluscs",
-            "de": "Weichtiere"
+            "en": "Molluscs"
           }
         },
         {
           "code": "mustard",
           "labels": {
-            "sv": "Senap",
-            "en": "Mustard",
-            "de": "Senf"
+            "en": "Mustard"
           }
         },
         {
           "code": "nuts",
           "labels": {
-            "sv": "Nötter",
-            "en": "Nuts",
-            "de": "Schalenfrüchte"
+            "en": "Nuts"
           }
         },
         {
           "code": "peanuts",
           "labels": {
-            "sv": "Jordnötter",
-            "en": "Peanuts",
-            "de": "Erdnüsse"
+            "en": "Peanuts"
           }
         },
         {
           "code": "sesame",
           "labels": {
-            "sv": "Sesam",
-            "en": "Sesame",
-            "de": "Sesam"
+            "en": "Sesame"
           }
         },
         {
           "code": "soybeans",
           "labels": {
-            "sv": "Sojabönor",
-            "en": "Soybeans",
-            "de": "Sojabohnen"
+            "en": "Soybeans"
           }
         },
         {
           "code": "sulphites",
           "labels": {
-            "sv": "Svaveldioxid och sulfit",
-            "en": "Sulphur dioxide and sulphites",
-            "de": "Schwefeldioxid und Sulfite"
+            "en": "Sulphur dioxide and sulphites"
           }
         }
       ]
@@ -381,65 +313,49 @@
       "id": "018f0000-0000-7000-8000-000000000023",
       "key": "labels",
       "labels": {
-        "sv": "Märkningar",
-        "en": "Labels",
-        "de": "Kennzeichnungen"
+        "en": "Labels"
       },
       "options": [
         {
           "code": "organic_eu",
           "labels": {
-            "sv": "Ekologisk (EU)",
-            "en": "Organic (EU)",
-            "de": "Bio (EU)"
+            "en": "Organic (EU)"
           }
         },
         {
           "code": "krav",
           "labels": {
-            "sv": "KRAV",
-            "en": "KRAV",
-            "de": "KRAV"
+            "en": "KRAV"
           }
         },
         {
           "code": "fairtrade",
           "labels": {
-            "sv": "Fairtrade",
-            "en": "Fairtrade",
-            "de": "Fairtrade"
+            "en": "Fairtrade"
           }
         },
         {
           "code": "keyhole",
           "labels": {
-            "sv": "Nyckelhålet",
-            "en": "Keyhole",
-            "de": "Schlüsselloch"
+            "en": "Keyhole"
           }
         },
         {
           "code": "msc",
           "labels": {
-            "sv": "MSC",
-            "en": "MSC",
-            "de": "MSC"
+            "en": "MSC"
           }
         },
         {
           "code": "vegan",
           "labels": {
-            "sv": "Vegansk",
-            "en": "Vegan",
-            "de": "Vegan"
+            "en": "Vegan"
           }
         },
         {
           "code": "gluten_free",
           "labels": {
-            "sv": "Glutenfri",
-            "en": "Gluten free",
-            "de": "Glutenfrei"
+            "en": "Gluten free"
           }
         }
       ]
@@ -448,49 +364,37 @@
       "id": "018f0000-0000-7000-8000-000000000024",
       "key": "nutriscore",
       "labels": {
-        "sv": "Nutri-Score",
-        "en": "Nutri-Score",
-        "de": "Nutri-Score"
+        "en": "Nutri-Score"
       },
       "options": [
         {
           "code": "a",
           "labels": {
-            "sv": "A",
-            "en": "A",
-            "de": "A"
+            "en": "A"
           }
         },
         {
           "code": "b",
           "labels": {
-            "sv": "B",
-            "en": "B",
-            "de": "B"
+            "en": "B"
           }
         },
         {
           "code": "c",
           "labels": {
-            "sv": "C",
-            "en": "C",
-            "de": "C"
+            "en": "C"
           }
         },
         {
           "code": "d",
           "labels": {
-            "sv": "D",
-            "en": "D",
-            "de": "D"
+            "en": "D"
           }
         },
         {
           "code": "e",
           "labels": {
-            "sv": "E",
-            "en": "E",
-            "de": "E"
+            "en": "E"
           }
         }
       ]
@@ -499,41 +403,31 @@
       "id": "018f0000-0000-7000-8000-000000000025",
       "key": "nova",
       "labels": {
-        "sv": "NOVA",
-        "en": "NOVA",
-        "de": "NOVA"
+        "en": "NOVA"
       },
       "options": [
         {
           "code": "1",
           "labels": {
-            "sv": "1",
-            "en": "1",
-            "de": "1"
+            "en": "1"
           }
         },
         {
           "code": "2",
           "labels": {
-            "sv": "2",
-            "en": "2",
-            "de": "2"
+            "en": "2"
           }
         },
         {
           "code": "3",
           "labels": {
-            "sv": "3",
-            "en": "3",
-            "de": "3"
+            "en": "3"
           }
         },
         {
           "code": "4",
           "labels": {
-            "sv": "4",
-            "en": "4",
-            "de": "4"
+            "en": "4"
           }
         }
       ]
@@ -542,217 +436,163 @@
       "id": "018f0000-0000-7000-8000-000000000026",
       "key": "country",
       "labels": {
-        "sv": "Land",
-        "en": "Country",
-        "de": "Land"
+        "en": "Country"
       },
       "options": [
         {
           "code": "se",
           "labels": {
-            "sv": "Sverige",
-            "en": "Sweden",
-            "de": "Schweden"
+            "en": "Sweden"
           }
         },
         {
           "code": "no",
           "labels": {
-            "sv": "Norge",
-            "en": "Norway",
-            "de": "Norwegen"
+            "en": "Norway"
           }
         },
         {
           "code": "dk",
           "labels": {
-            "sv": "Danmark",
-            "en": "Denmark",
-            "de": "Dänemark"
+            "en": "Denmark"
           }
         },
         {
           "code": "fi",
           "labels": {
-            "sv": "Finland",
-            "en": "Finland",
-            "de": "Finnland"
+            "en": "Finland"
           }
         },
         {
           "code": "de",
           "labels": {
-            "sv": "Tyskland",
-            "en": "Germany",
-            "de": "Deutschland"
+            "en": "Germany"
           }
         },
         {
           "code": "fr",
           "labels": {
-            "sv": "Frankrike",
-            "en": "France",
-            "de": "Frankreich"
+            "en": "France"
           }
         },
         {
           "code": "it",
           "labels": {
-            "sv": "Italien",
-            "en": "Italy",
-            "de": "Italien"
+            "en": "Italy"
           }
         },
         {
           "code": "es",
           "labels": {
-            "sv": "Spanien",
-            "en": "Spain",
-            "de": "Spanien"
+            "en": "Spain"
           }
         },
         {
           "code": "nl",
           "labels": {
-            "sv": "Nederländerna",
-            "en": "Netherlands",
-            "de": "Niederlande"
+            "en": "Netherlands"
           }
         },
         {
           "code": "pl",
           "labels": {
-            "sv": "Polen",
-            "en": "Poland",
-            "de": "Polen"
+            "en": "Poland"
           }
         },
         {
           "code": "be",
           "labels": {
-            "sv": "Belgien",
-            "en": "Belgium",
-            "de": "Belgien"
+            "en": "Belgium"
           }
         },
         {
           "code": "at",
           "labels": {
-            "sv": "Österrike",
-            "en": "Austria",
-            "de": "Österreich"
+            "en": "Austria"
           }
         },
         {
           "code": "ie",
           "labels": {
-            "sv": "Irland",
-            "en": "Ireland",
-            "de": "Irland"
+            "en": "Ireland"
           }
         },
         {
           "code": "pt",
           "labels": {
-            "sv": "Portugal",
-            "en": "Portugal",
-            "de": "Portugal"
+            "en": "Portugal"
           }
         },
         {
           "code": "gb",
           "labels": {
-            "sv": "Storbritannien",
-            "en": "United Kingdom",
-            "de": "Vereinigtes Königreich"
+            "en": "United Kingdom"
           }
         },
         {
           "code": "ch",
           "labels": {
-            "sv": "Schweiz",
-            "en": "Switzerland",
-            "de": "Schweiz"
+            "en": "Switzerland"
           }
         },
         {
           "code": "gr",
           "labels": {
-            "sv": "Grekland",
-            "en": "Greece",
-            "de": "Griechenland"
+            "en": "Greece"
           }
         },
         {
           "code": "us",
           "labels": {
-            "sv": "USA",
-            "en": "United States",
-            "de": "USA"
+            "en": "United States"
           }
         },
         {
           "code": "br",
           "labels": {
-            "sv": "Brasilien",
-            "en": "Brazil",
-            "de": "Brasilien"
+            "en": "Brazil"
           }
         },
         {
           "code": "ke",
           "labels": {
-            "sv": "Kenya",
-            "en": "Kenya",
-            "de": "Kenia"
+            "en": "Kenya"
           }
         },
         {
           "code": "et",
           "labels": {
-            "sv": "Etiopien",
-            "en": "Ethiopia",
-            "de": "Äthiopien"
+            "en": "Ethiopia"
           }
         },
         {
           "code": "co",
           "labels": {
-            "sv": "Colombia",
-            "en": "Colombia",
-            "de": "Kolumbien"
+            "en": "Colombia"
           }
         },
         {
           "code": "in",
           "labels": {
-            "sv": "Indien",
-            "en": "India",
-            "de": "Indien"
+            "en": "India"
           }
         },
         {
           "code": "vn",
           "labels": {
-            "sv": "Vietnam",
-            "en": "Vietnam",
-            "de": "Vietnam"
+            "en": "Vietnam"
           }
         },
         {
           "code": "jp",
           "labels": {
-            "sv": "Japan",
-            "en": "Japan",
-            "de": "Japan"
+            "en": "Japan"
           }
         },
         {
           "code": "nz",
           "labels": {
-            "sv": "Nya Zeeland",
-            "en": "New Zealand",
-            "de": "Neuseeland"
+            "en": "New Zealand"
           }
         }
       ]
@@ -761,73 +601,55 @@
       "id": "018f0000-0000-7000-8000-000000000027",
       "key": "packaging",
       "labels": {
-        "sv": "Förpackning",
-        "en": "Packaging",
-        "de": "Verpackung"
+        "en": "Packaging"
       },
       "options": [
         {
           "code": "bottle",
           "labels": {
-            "sv": "Flaska",
-            "en": "Bottle",
-            "de": "Flasche"
+            "en": "Bottle"
           }
         },
         {
           "code": "carton",
           "labels": {
-            "sv": "Kartong",
-            "en": "Carton",
-            "de": "Karton"
+            "en": "Carton"
           }
         },
         {
           "code": "can",
           "labels": {
-            "sv": "Burk",
-            "en": "Can",
-            "de": "Dose"
+            "en": "Can"
           }
         },
         {
           "code": "bag",
           "labels": {
-            "sv": "Påse",
-            "en": "Bag",
-            "de": "Beutel"
+            "en": "Bag"
           }
         },
         {
           "code": "jar",
           "labels": {
-            "sv": "Burk med lock",
-            "en": "Jar",
-            "de": "Glas"
+            "en": "Jar"
           }
         },
         {
           "code": "tray",
           "labels": {
-            "sv": "Tråg",
-            "en": "Tray",
-            "de": "Schale"
+            "en": "Tray"
           }
         },
         {
           "code": "box",
           "labels": {
-            "sv": "Ask",
-            "en": "Box",
-            "de": "Schachtel"
+            "en": "Box"
           }
         },
         {
           "code": "pouch",
           "labels": {
-            "sv": "Påse",
-            "en": "Pouch",
-            "de": "Beutel"
+            "en": "Pouch"
           }
         }
       ]
@@ -836,65 +658,49 @@
       "id": "018f0000-0000-7000-8000-000000000028",
       "key": "packaging_material",
       "labels": {
-        "sv": "Förpackningsmaterial",
-        "en": "Packaging material",
-        "de": "Verpackungsmaterial"
+        "en": "Packaging material"
       },
       "options": [
         {
           "code": "glass",
           "labels": {
-            "sv": "Glas",
-            "en": "Glass",
-            "de": "Glas"
+            "en": "Glass"
           }
         },
         {
           "code": "pet",
           "labels": {
-            "sv": "PET",
-            "en": "PET",
-            "de": "PET"
+            "en": "PET"
           }
         },
         {
           "code": "cardboard",
           "labels": {
-            "sv": "Kartong",
-            "en": "Cardboard",
-            "de": "Karton"
+            "en": "Cardboard"
           }
         },
         {
           "code": "aluminium",
           "labels": {
-            "sv": "Aluminium",
-            "en": "Aluminium",
-            "de": "Aluminium"
+            "en": "Aluminium"
           }
         },
         {
           "code": "paper",
           "labels": {
-            "sv": "Papper",
-            "en": "Paper",
-            "de": "Papier"
+            "en": "Paper"
           }
         },
         {
           "code": "plastic",
           "labels": {
-            "sv": "Plast",
-            "en": "Plastic",
-            "de": "Kunststoff"
+            "en": "Plastic"
           }
         },
         {
           "code": "steel",
           "labels": {
-            "sv": "Stål",
-            "en": "Steel",
-            "de": "Stahl"
+            "en": "Steel"
           }
         }
       ]
@@ -903,33 +709,25 @@
       "id": "018f0000-0000-7000-8000-000000000029",
       "key": "storage",
       "labels": {
-        "sv": "Förvaring",
-        "en": "Storage",
-        "de": "Lagerung"
+        "en": "Storage"
       },
       "options": [
         {
           "code": "ambient",
           "labels": {
-            "sv": "Rumstemperatur",
-            "en": "Ambient",
-            "de": "Raumtemperatur"
+            "en": "Ambient"
           }
         },
         {
           "code": "chilled",
           "labels": {
-            "sv": "Kyld",
-            "en": "Chilled",
-            "de": "Gekühlt"
+            "en": "Chilled"
           }
         },
         {
           "code": "frozen",
           "labels": {
-            "sv": "Fryst",
-            "en": "Frozen",
-            "de": "Tiefgekühlt"
+            "en": "Frozen"
           }
         }
       ]
@@ -938,49 +736,37 @@
       "id": "018f0000-0000-7000-8000-00000000002a",
       "key": "certifications",
       "labels": {
-        "sv": "Certifieringar",
-        "en": "Certifications",
-        "de": "Zertifizierungen"
+        "en": "Certifications"
       },
       "options": [
         {
           "code": "brc",
           "labels": {
-            "sv": "BRC",
-            "en": "BRC",
-            "de": "BRC"
+            "en": "BRC"
           }
         },
         {
           "code": "ifs",
           "labels": {
-            "sv": "IFS",
-            "en": "IFS",
-            "de": "IFS"
+            "en": "IFS"
           }
         },
         {
           "code": "krav",
           "labels": {
-            "sv": "KRAV",
-            "en": "KRAV",
-            "de": "KRAV"
+            "en": "KRAV"
           }
         },
         {
           "code": "msc",
           "labels": {
-            "sv": "MSC",
-            "en": "MSC",
-            "de": "MSC"
+            "en": "MSC"
           }
         },
         {
           "code": "fairtrade",
           "labels": {
-            "sv": "Fairtrade",
-            "en": "Fairtrade",
-            "de": "Fairtrade"
+            "en": "Fairtrade"
           }
         }
       ]
@@ -991,9 +777,7 @@
       "id": "018f0000-0000-7000-8000-000000000100",
       "key": "number",
       "labels": {
-        "sv": "Nummer",
-        "en": "Number",
-        "de": "Nummer"
+        "en": "Number"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1011,9 +795,7 @@
       "id": "018f0000-0000-7000-8000-000000000101",
       "key": "name",
       "labels": {
-        "sv": "Namn",
-        "en": "Name",
-        "de": "Name"
+        "en": "Name"
       },
       "language_dependent": true,
       "multiple": false,
@@ -1031,9 +813,7 @@
       "id": "018f0000-0000-7000-8000-000000000102",
       "key": "description",
       "labels": {
-        "sv": "Beskrivning",
-        "en": "Description",
-        "de": "Beschreibung"
+        "en": "Description"
       },
       "language_dependent": true,
       "multiple": false,
@@ -1052,9 +832,7 @@
       "id": "018f0000-0000-7000-8000-000000000103",
       "key": "status",
       "labels": {
-        "sv": "Status",
-        "en": "Status",
-        "de": "Status"
+        "en": "Status"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1072,9 +850,7 @@
       "id": "018f0000-0000-7000-8000-000000000104",
       "key": "active",
       "labels": {
-        "sv": "Aktiv",
-        "en": "Active",
-        "de": "Aktiv"
+        "en": "Active"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1091,9 +867,7 @@
       "id": "018f0000-0000-7000-8000-000000000105",
       "key": "image",
       "labels": {
-        "sv": "Bild",
-        "en": "Image",
-        "de": "Bild"
+        "en": "Image"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1111,9 +885,7 @@
       "id": "018f0000-0000-7000-8000-000000000106",
       "key": "launched",
       "labels": {
-        "sv": "Lanserad",
-        "en": "Launched",
-        "de": "Lanciert"
+        "en": "Launched"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1130,9 +902,7 @@
       "id": "018f0000-0000-7000-8000-000000000107",
       "key": "replaces",
       "labels": {
-        "sv": "Ersätter",
-        "en": "Replaces",
-        "de": "Ersetzt"
+        "en": "Replaces"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1150,9 +920,7 @@
       "id": "018f0000-0000-7000-8000-000000000108",
       "key": "co2_footprint",
       "labels": {
-        "sv": "CO2-avtryck",
-        "en": "CO2 footprint",
-        "de": "CO2-Fußabdruck"
+        "en": "CO2 footprint"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1171,9 +939,7 @@
       "id": "018f0000-0000-7000-8000-000000000109",
       "key": "brand",
       "labels": {
-        "sv": "Varumärke",
-        "en": "Brand",
-        "de": "Marke"
+        "en": "Brand"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1191,9 +957,7 @@
       "id": "018f0000-0000-7000-8000-00000000010a",
       "key": "ingredients",
       "labels": {
-        "sv": "Ingredienser",
-        "en": "Ingredients",
-        "de": "Zutaten"
+        "en": "Ingredients"
       },
       "language_dependent": true,
       "multiple": false,
@@ -1212,9 +976,7 @@
       "id": "018f0000-0000-7000-8000-00000000010b",
       "key": "allergens",
       "labels": {
-        "sv": "Allergener",
-        "en": "Allergens",
-        "de": "Allergene"
+        "en": "Allergens"
       },
       "language_dependent": false,
       "multiple": true,
@@ -1232,9 +994,7 @@
       "id": "018f0000-0000-7000-8000-00000000010c",
       "key": "traces",
       "labels": {
-        "sv": "Spår",
-        "en": "Traces",
-        "de": "Spuren"
+        "en": "Traces"
       },
       "language_dependent": false,
       "multiple": true,
@@ -1252,9 +1012,7 @@
       "id": "018f0000-0000-7000-8000-00000000010d",
       "key": "labels",
       "labels": {
-        "sv": "Märkningar",
-        "en": "Labels",
-        "de": "Kennzeichnungen"
+        "en": "Labels"
       },
       "language_dependent": false,
       "multiple": true,
@@ -1272,9 +1030,7 @@
       "id": "018f0000-0000-7000-8000-00000000010e",
       "key": "nutriscore",
       "labels": {
-        "sv": "Nutri-Score",
-        "en": "Nutri-Score",
-        "de": "Nutri-Score"
+        "en": "Nutri-Score"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1292,9 +1048,7 @@
       "id": "018f0000-0000-7000-8000-00000000010f",
       "key": "nova",
       "labels": {
-        "sv": "NOVA",
-        "en": "NOVA",
-        "de": "NOVA"
+        "en": "NOVA"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1312,9 +1066,7 @@
       "id": "018f0000-0000-7000-8000-000000000110",
       "key": "country_of_origin",
       "labels": {
-        "sv": "Ursprungsland",
-        "en": "Country of origin",
-        "de": "Herkunftsland"
+        "en": "Country of origin"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1332,9 +1084,7 @@
       "id": "018f0000-0000-7000-8000-000000000111",
       "key": "energy",
       "labels": {
-        "sv": "Energi",
-        "en": "Energy",
-        "de": "Energie"
+        "en": "Energy"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1353,9 +1103,7 @@
       "id": "018f0000-0000-7000-8000-000000000112",
       "key": "fat",
       "labels": {
-        "sv": "Fett",
-        "en": "Fat",
-        "de": "Fett"
+        "en": "Fat"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1375,9 +1123,7 @@
       "id": "018f0000-0000-7000-8000-000000000113",
       "key": "saturated_fat",
       "labels": {
-        "sv": "Mättat fett",
-        "en": "Saturated fat",
-        "de": "Gesättigtes Fett"
+        "en": "Saturated fat"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1397,9 +1143,7 @@
       "id": "018f0000-0000-7000-8000-000000000114",
       "key": "carbohydrates",
       "labels": {
-        "sv": "Kolhydrater",
-        "en": "Carbohydrates",
-        "de": "Kohlenhydrate"
+        "en": "Carbohydrates"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1419,9 +1163,7 @@
       "id": "018f0000-0000-7000-8000-000000000115",
       "key": "sugars",
       "labels": {
-        "sv": "Sockerarter",
-        "en": "Sugars",
-        "de": "Zucker"
+        "en": "Sugars"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1441,9 +1183,7 @@
       "id": "018f0000-0000-7000-8000-000000000116",
       "key": "fiber",
       "labels": {
-        "sv": "Fiber",
-        "en": "Fiber",
-        "de": "Ballaststoffe"
+        "en": "Fiber"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1463,9 +1203,7 @@
       "id": "018f0000-0000-7000-8000-000000000117",
       "key": "protein",
       "labels": {
-        "sv": "Protein",
-        "en": "Protein",
-        "de": "Eiweiß"
+        "en": "Protein"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1485,9 +1223,7 @@
       "id": "018f0000-0000-7000-8000-000000000118",
       "key": "salt",
       "labels": {
-        "sv": "Salt",
-        "en": "Salt",
-        "de": "Salz"
+        "en": "Salt"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1507,9 +1243,7 @@
       "id": "018f0000-0000-7000-8000-000000000119",
       "key": "gtin",
       "labels": {
-        "sv": "GTIN",
-        "en": "GTIN",
-        "de": "GTIN"
+        "en": "GTIN"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1527,9 +1261,7 @@
       "id": "018f0000-0000-7000-8000-00000000011a",
       "key": "product",
       "labels": {
-        "sv": "Produkt",
-        "en": "Product",
-        "de": "Produkt"
+        "en": "Product"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1548,9 +1280,7 @@
       "id": "018f0000-0000-7000-8000-00000000011b",
       "key": "supplier",
       "labels": {
-        "sv": "Leverantör",
-        "en": "Supplier",
-        "de": "Lieferant"
+        "en": "Supplier"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1569,9 +1299,7 @@
       "id": "018f0000-0000-7000-8000-00000000011c",
       "key": "net_weight",
       "labels": {
-        "sv": "Nettovikt",
-        "en": "Net weight",
-        "de": "Nettogewicht"
+        "en": "Net weight"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1590,9 +1318,7 @@
       "id": "018f0000-0000-7000-8000-00000000011d",
       "key": "net_volume",
       "labels": {
-        "sv": "Nettovolym",
-        "en": "Net volume",
-        "de": "Nettovolumen"
+        "en": "Net volume"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1611,9 +1337,7 @@
       "id": "018f0000-0000-7000-8000-00000000011e",
       "key": "units_per_pack",
       "labels": {
-        "sv": "Antal per förpackning",
-        "en": "Units per pack",
-        "de": "Stück pro Packung"
+        "en": "Units per pack"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1632,9 +1356,7 @@
       "id": "018f0000-0000-7000-8000-00000000011f",
       "key": "packaging",
       "labels": {
-        "sv": "Förpackning",
-        "en": "Packaging",
-        "de": "Verpackung"
+        "en": "Packaging"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1652,9 +1374,7 @@
       "id": "018f0000-0000-7000-8000-000000000120",
       "key": "packaging_material",
       "labels": {
-        "sv": "Förpackningsmaterial",
-        "en": "Packaging material",
-        "de": "Verpackungsmaterial"
+        "en": "Packaging material"
       },
       "language_dependent": false,
       "multiple": true,
@@ -1672,9 +1392,7 @@
       "id": "018f0000-0000-7000-8000-000000000121",
       "key": "deposit",
       "labels": {
-        "sv": "Pant",
-        "en": "Deposit",
-        "de": "Pfand"
+        "en": "Deposit"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1691,9 +1409,7 @@
       "id": "018f0000-0000-7000-8000-000000000122",
       "key": "storage",
       "labels": {
-        "sv": "Förvaring",
-        "en": "Storage",
-        "de": "Lagerung"
+        "en": "Storage"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1711,9 +1427,7 @@
       "id": "018f0000-0000-7000-8000-000000000123",
       "key": "shelf_life_days",
       "labels": {
-        "sv": "Hållbarhet (dagar)",
-        "en": "Shelf life (days)",
-        "de": "Haltbarkeit (Tage)"
+        "en": "Shelf life (days)"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1732,9 +1446,7 @@
       "id": "018f0000-0000-7000-8000-000000000124",
       "key": "height",
       "labels": {
-        "sv": "Höjd",
-        "en": "Height",
-        "de": "Höhe"
+        "en": "Height"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1753,9 +1465,7 @@
       "id": "018f0000-0000-7000-8000-000000000125",
       "key": "width",
       "labels": {
-        "sv": "Bredd",
-        "en": "Width",
-        "de": "Breite"
+        "en": "Width"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1774,9 +1484,7 @@
       "id": "018f0000-0000-7000-8000-000000000126",
       "key": "depth",
       "labels": {
-        "sv": "Djup",
-        "en": "Depth",
-        "de": "Tiefe"
+        "en": "Depth"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1795,9 +1503,7 @@
       "id": "018f0000-0000-7000-8000-000000000127",
       "key": "gross_weight",
       "labels": {
-        "sv": "Bruttovikt",
-        "en": "Gross weight",
-        "de": "Bruttogewicht"
+        "en": "Gross weight"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1816,9 +1522,7 @@
       "id": "018f0000-0000-7000-8000-000000000128",
       "key": "company_name",
       "labels": {
-        "sv": "Företagsnamn",
-        "en": "Company name",
-        "de": "Firmenname"
+        "en": "Company name"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1836,9 +1540,7 @@
       "id": "018f0000-0000-7000-8000-000000000129",
       "key": "org_number",
       "labels": {
-        "sv": "Organisationsnummer",
-        "en": "Organisation number",
-        "de": "Organisationsnummer"
+        "en": "Organisation number"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1856,9 +1558,7 @@
       "id": "018f0000-0000-7000-8000-00000000012a",
       "key": "gln",
       "labels": {
-        "sv": "GLN",
-        "en": "GLN",
-        "de": "GLN"
+        "en": "GLN"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1876,9 +1576,7 @@
       "id": "018f0000-0000-7000-8000-00000000012b",
       "key": "country",
       "labels": {
-        "sv": "Land",
-        "en": "Country",
-        "de": "Land"
+        "en": "Country"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1896,9 +1594,7 @@
       "id": "018f0000-0000-7000-8000-00000000012c",
       "key": "city",
       "labels": {
-        "sv": "Ort",
-        "en": "City",
-        "de": "Ort"
+        "en": "City"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1916,9 +1612,7 @@
       "id": "018f0000-0000-7000-8000-00000000012d",
       "key": "website",
       "labels": {
-        "sv": "Webbplats",
-        "en": "Website",
-        "de": "Webseite"
+        "en": "Website"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1936,9 +1630,7 @@
       "id": "018f0000-0000-7000-8000-00000000012e",
       "key": "certifications",
       "labels": {
-        "sv": "Certifieringar",
-        "en": "Certifications",
-        "de": "Zertifizierungen"
+        "en": "Certifications"
       },
       "language_dependent": false,
       "multiple": true,
@@ -1956,9 +1648,7 @@
       "id": "018f0000-0000-7000-8000-00000000012f",
       "key": "lead_time_days",
       "labels": {
-        "sv": "Ledtid (dagar)",
-        "en": "Lead time (days)",
-        "de": "Lieferzeit (Tage)"
+        "en": "Lead time (days)"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1977,9 +1667,7 @@
       "id": "018f0000-0000-7000-8000-000000000130",
       "key": "fat_content",
       "labels": {
-        "sv": "Fetthalt",
-        "en": "Fat content",
-        "de": "Fettgehalt"
+        "en": "Fat content"
       },
       "language_dependent": false,
       "multiple": false,
@@ -1998,9 +1686,7 @@
       "id": "018f0000-0000-7000-8000-000000000131",
       "key": "cocoa_content",
       "labels": {
-        "sv": "Kakaohalt",
-        "en": "Cocoa content",
-        "de": "Kakaoanteil"
+        "en": "Cocoa content"
       },
       "language_dependent": false,
       "multiple": false,
@@ -2019,9 +1705,7 @@
       "id": "018f0000-0000-7000-8000-000000000132",
       "key": "caffeine",
       "labels": {
-        "sv": "Koffein",
-        "en": "Caffeine",
-        "de": "Koffein"
+        "en": "Caffeine"
       },
       "language_dependent": false,
       "multiple": false,
@@ -2041,19 +1725,13 @@
       "id": "018f0000-0000-7000-8000-000000000200",
       "key": "product",
       "labels": {
-        "sv": "Produkt",
-        "en": "Product",
-        "de": "Produkt"
+        "en": "Product"
       },
       "singular": {
-        "sv": "Produkt",
-        "en": "Product",
-        "de": "Produkt"
+        "en": "Product"
       },
       "plural": {
-        "sv": "Produkter",
-        "en": "Products",
-        "de": "Produkte"
+        "en": "Products"
       },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
@@ -2083,19 +1761,13 @@
       "id": "018f0000-0000-7000-8000-000000000201",
       "key": "article",
       "labels": {
-        "sv": "Artikel",
-        "en": "Article",
-        "de": "Artikel"
+        "en": "Article"
       },
       "singular": {
-        "sv": "Artikel",
-        "en": "Article",
-        "de": "Artikel"
+        "en": "Article"
       },
       "plural": {
-        "sv": "Artiklar",
-        "en": "Articles",
-        "de": "Artikel"
+        "en": "Articles"
       },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
@@ -2128,19 +1800,13 @@
       "id": "018f0000-0000-7000-8000-000000000202",
       "key": "supplier",
       "labels": {
-        "sv": "Leverantör",
-        "en": "Supplier",
-        "de": "Lieferant"
+        "en": "Supplier"
       },
       "singular": {
-        "sv": "Leverantör",
-        "en": "Supplier",
-        "de": "Lieferant"
+        "en": "Supplier"
       },
       "plural": {
-        "sv": "Leverantörer",
-        "en": "Suppliers",
-        "de": "Lieferanten"
+        "en": "Suppliers"
       },
       "key_attribute": "018f0000-0000-7000-8000-000000000100",
       "attributes": [
@@ -2163,18 +1829,14 @@
       "id": "018f0000-0000-7000-8000-000000000300",
       "key": "food",
       "labels": {
-        "sv": "Mat",
-        "en": "Food",
-        "de": "Lebensmittel"
+        "en": "Food"
       },
       "groups": [
         {
           "id": "018f0000-0000-7000-8000-000000000310",
           "key": "dairy",
           "labels": {
-            "sv": "Mejeri & ägg",
-            "en": "Dairy & eggs",
-            "de": "Milch & Eier"
+            "en": "Dairy & eggs"
           },
           "attributes": [
             "018f0000-0000-7000-8000-000000000130"
@@ -2184,9 +1846,7 @@
           "id": "018f0000-0000-7000-8000-000000000311",
           "key": "milk",
           "labels": {
-            "sv": "Mjölk",
-            "en": "Milk",
-            "de": "Milch"
+            "en": "Milk"
           },
           "parent": "018f0000-0000-7000-8000-000000000310"
         },
@@ -2194,9 +1854,7 @@
           "id": "018f0000-0000-7000-8000-000000000312",
           "key": "cheese",
           "labels": {
-            "sv": "Ost",
-            "en": "Cheese",
-            "de": "Käse"
+            "en": "Cheese"
           },
           "parent": "018f0000-0000-7000-8000-000000000310"
         },
@@ -2204,9 +1862,7 @@
           "id": "018f0000-0000-7000-8000-000000000313",
           "key": "yoghurt",
           "labels": {
-            "sv": "Yoghurt",
-            "en": "Yoghurt",
-            "de": "Joghurt"
+            "en": "Yoghurt"
           },
           "parent": "018f0000-0000-7000-8000-000000000310"
         },
@@ -2214,18 +1870,14 @@
           "id": "018f0000-0000-7000-8000-000000000314",
           "key": "beverages",
           "labels": {
-            "sv": "Drycker",
-            "en": "Beverages",
-            "de": "Getränke"
+            "en": "Beverages"
           }
         },
         {
           "id": "018f0000-0000-7000-8000-000000000315",
           "key": "juice",
           "labels": {
-            "sv": "Juice",
-            "en": "Juice",
-            "de": "Saft"
+            "en": "Juice"
           },
           "parent": "018f0000-0000-7000-8000-000000000314"
         },
@@ -2233,9 +1885,7 @@
           "id": "018f0000-0000-7000-8000-000000000316",
           "key": "soft_drinks",
           "labels": {
-            "sv": "Läsk",
-            "en": "Soft drinks",
-            "de": "Erfrischungsgetränke"
+            "en": "Soft drinks"
           },
           "parent": "018f0000-0000-7000-8000-000000000314"
         },
@@ -2243,9 +1893,7 @@
           "id": "018f0000-0000-7000-8000-000000000317",
           "key": "coffee_tea",
           "labels": {
-            "sv": "Kaffe & te",
-            "en": "Coffee & tea",
-            "de": "Kaffee & Tee"
+            "en": "Coffee & tea"
           },
           "parent": "018f0000-0000-7000-8000-000000000314",
           "attributes": [
@@ -2256,9 +1904,7 @@
           "id": "018f0000-0000-7000-8000-000000000318",
           "key": "plant_drinks",
           "labels": {
-            "sv": "Växtdrycker",
-            "en": "Plant drinks",
-            "de": "Pflanzendrinks"
+            "en": "Plant drinks"
           },
           "parent": "018f0000-0000-7000-8000-000000000314"
         },
@@ -2266,18 +1912,14 @@
           "id": "018f0000-0000-7000-8000-000000000319",
           "key": "pantry",
           "labels": {
-            "sv": "Skafferi",
-            "en": "Pantry",
-            "de": "Vorrat"
+            "en": "Pantry"
           }
         },
         {
           "id": "018f0000-0000-7000-8000-00000000031a",
           "key": "pasta_rice",
           "labels": {
-            "sv": "Pasta & ris",
-            "en": "Pasta & rice",
-            "de": "Pasta & Reis"
+            "en": "Pasta & rice"
           },
           "parent": "018f0000-0000-7000-8000-000000000319"
         },
@@ -2285,9 +1927,7 @@
           "id": "018f0000-0000-7000-8000-00000000031b",
           "key": "cereals",
           "labels": {
-            "sv": "Spannmål",
-            "en": "Cereals",
-            "de": "Getreide"
+            "en": "Cereals"
           },
           "parent": "018f0000-0000-7000-8000-000000000319"
         },
@@ -2295,9 +1935,7 @@
           "id": "018f0000-0000-7000-8000-00000000031c",
           "key": "canned",
           "labels": {
-            "sv": "Konserver",
-            "en": "Canned",
-            "de": "Konserven"
+            "en": "Canned"
           },
           "parent": "018f0000-0000-7000-8000-000000000319"
         },
@@ -2305,9 +1943,7 @@
           "id": "018f0000-0000-7000-8000-00000000031d",
           "key": "spices",
           "labels": {
-            "sv": "Kryddor",
-            "en": "Spices",
-            "de": "Gewürze"
+            "en": "Spices"
           },
           "parent": "018f0000-0000-7000-8000-000000000319"
         },
@@ -2315,27 +1951,21 @@
           "id": "018f0000-0000-7000-8000-00000000031e",
           "key": "bread",
           "labels": {
-            "sv": "Bröd",
-            "en": "Bread",
-            "de": "Brot"
+            "en": "Bread"
           }
         },
         {
           "id": "018f0000-0000-7000-8000-00000000031f",
           "key": "snacks",
           "labels": {
-            "sv": "Snacks & godis",
-            "en": "Snacks & sweets",
-            "de": "Snacks & Süßes"
+            "en": "Snacks & sweets"
           }
         },
         {
           "id": "018f0000-0000-7000-8000-000000000320",
           "key": "chips",
           "labels": {
-            "sv": "Chips",
-            "en": "Chips",
-            "de": "Chips"
+            "en": "Chips"
           },
           "parent": "018f0000-0000-7000-8000-00000000031f"
         },
@@ -2343,9 +1973,7 @@
           "id": "018f0000-0000-7000-8000-000000000321",
           "key": "chocolate",
           "labels": {
-            "sv": "Choklad",
-            "en": "Chocolate",
-            "de": "Schokolade"
+            "en": "Chocolate"
           },
           "parent": "018f0000-0000-7000-8000-00000000031f",
           "attributes": [
@@ -2356,27 +1984,21 @@
           "id": "018f0000-0000-7000-8000-000000000322",
           "key": "fruit_vegetables",
           "labels": {
-            "sv": "Frukt & grönt",
-            "en": "Fruit & vegetables",
-            "de": "Obst & Gemüse"
+            "en": "Fruit & vegetables"
           }
         },
         {
           "id": "018f0000-0000-7000-8000-000000000323",
           "key": "meat_fish",
           "labels": {
-            "sv": "Kött, fisk & vegetariskt",
-            "en": "Meat, fish & vegetarian",
-            "de": "Fleisch, Fisch & Vegetarisch"
+            "en": "Meat, fish & vegetarian"
           }
         },
         {
           "id": "018f0000-0000-7000-8000-000000000324",
           "key": "frozen",
           "labels": {
-            "sv": "Fryst",
-            "en": "Frozen",
-            "de": "Tiefgekühlt"
+            "en": "Frozen"
           }
         }
       ],
