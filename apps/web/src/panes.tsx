@@ -1961,8 +1961,10 @@ export function ProposalView({ session }: { session: PanesSession }) {
   })
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const [dropped, setDropped] = useState<string[]>([])
+  const [error, setError] = useState('')
   useEffect(() => {
     setDropped([])
+    setError('')
   }, [session.proposalId])
   useEffect(() => {
     if (session.proposalId) return
@@ -1990,18 +1992,34 @@ export function ProposalView({ session }: { session: PanesSession }) {
       const failed = (result.failed as Json[] | undefined) ?? []
       session.push(failed.length > 0 ? String(failed[0]?.detail ?? copy.validation) : copy.saved)
       setDropped([])
+      setError('')
       void queryClient.invalidateQueries({ queryKey: ['proposals'] })
       void queryClient.invalidateQueries({ queryKey: ['proposal'] })
       void queryClient.invalidateQueries({ queryKey: ['object'] })
       void queryClient.invalidateQueries({ queryKey: ['objects'] })
+    },
+    onError: (reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : copy.validation
+      setError(message)
+      session.push(message)
+      void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+      void queryClient.invalidateQueries({ queryKey: ['proposal'] })
     },
   })
   const discard = useMutation({
     mutationFn: () => api(`/v1/proposals/${session.proposalId}/discard`, { method: 'POST' }),
     onSuccess: () => {
       session.push(copy.discard)
+      setError('')
       session.setProposalId(null)
       void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+    },
+    onError: (reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : copy.validation
+      setError(message)
+      session.push(message)
+      void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+      void queryClient.invalidateQueries({ queryKey: ['proposal'] })
     },
   })
   const proposals = (list.data?.proposals as Json[] | undefined) ?? []
@@ -2037,6 +2055,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
         {proposal.data?.status ? <MetaChip tone={statusTone(String(proposal.data.status))}>{String(proposal.data.status)}</MetaChip> : null}
         <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending} onClick={saveAll}>{copy.saveAll}</button>
         <button type="button" data-testid="discard-all" onClick={() => discard.mutate()}>{copy.discardAll}</button>
+        {error ? <p className="error" data-testid="proposal-error">{error}</p> : null}
         {consequence.length > 0 && session.proposalId ? (
           <button type="button" onClick={() => publishProposal(session.proposalId ?? '')}>{copy.reviewChange}</button>
         ) : null}
