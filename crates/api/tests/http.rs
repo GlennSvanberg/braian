@@ -3396,3 +3396,173 @@ async fn attribute_definitions_list_usage_and_a_draft_step() {
         "the demo has 54 attributes after the standard attributes"
     );
 }
+
+#[tokio::test]
+async fn links_round_trip_and_an_agent_cannot_delete_them() {
+    let (_db, app) = app().await;
+    let make = |sku: &str| format!(r#"{{"type":"item","values":{{"sku":"{sku}","active":true}}}}"#);
+    let mut ids = Vec::new();
+    for sku in ["LINK-A", "LINK-B", "LINK-C"] {
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/v1/objects",
+            Some(HUMAN),
+            &[("content-type", "application/json")],
+            Some(&make(sku)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        ids.push(body["id"].as_str().unwrap().to_owned());
+    }
+    let (status, _, created) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"pairs_with","label":"Pairs with","from_types":["item"],"to_types":["item"],"from_key":"pairs_with","from_label":"Pairs with","to_key":"paired_with","to_label":"Pairs with","from_cardinality":"one","to_cardinality":"many","attributes":["note"]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{created}");
+
+    let (status, _, denied) = call(
+        &app,
+        "DELETE",
+        "/v1/link-types/pairs_with?dry_run=true",
+        Some(AGENT),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let proposal = format!(
+        r#"{{"type":"pairs_with","from_id":"{}","to_id":"{}","values":{{"note":"aged"}}}}"#,
+        ids[0], ids[1]
+    );
+    let (status, _, suggested) = call(
+        &app,
+        "POST",
+        "/v1/operations/create_link",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&proposal),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{suggested}");
+    assert_eq!(suggested["needs_approval"], true, "{suggested}");
+    let proposal_id = suggested["proposal_id"].as_str().unwrap();
+    let (status, _, accepted) = call(
+        &app,
+        "POST",
+        &format!("/v1/proposals/{proposal_id}/accept"),
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        accepted["failed"].as_array().unwrap().is_empty(),
+        "{accepted}"
+    );
+
+    let (status, _, left) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{}", ids[0]),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{left}");
+    assert_eq!(left["links"][0]["direction"], "out", "{left}");
+    assert_eq!(left["links"][0]["links"][0]["peer_id"], ids[1], "{left}");
+    let (status, _, right) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{}", ids[1]),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{right}");
+    assert_eq!(right["links"][0]["direction"], "in", "{right}");
+    assert_eq!(right["links"][0]["links"][0]["peer_id"], ids[0], "{right}");
+
+    let again = format!(
+        r#"{{"type":"pairs_with","from_id":"{}","to_id":"{}"}}"#,
+        ids[0], ids[2]
+    );
+    let (status, _, blocked) = call(
+        &app,
+        "POST",
+        "/v1/links",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&again),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{blocked}");
+
+    let (status, _, dry) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/objects/{}?dry_run=true", ids[0]),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert!(dry["links"].as_i64().unwrap() >= 1, "{dry}");
+    let (status, _, agent_dry) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/objects/{}?dry_run=true", ids[0]),
+        Some(AGENT),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{agent_dry}");
+
+    let link_id = left["links"][0]["links"][0]["id"].as_str().unwrap();
+    let (status, _, agent_link) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/links/{link_id}?dry_run=true"),
+        Some(AGENT),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{agent_link}");
+    let (status, _, _) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/links/{link_id}"),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, after) = call(
+        &app,
+        "GET",
+        &format!("/v1/objects/{}", ids[1]),
+        Some(HUMAN),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert!(after.get("links").is_none() || after["links"].as_array().unwrap().is_empty());
+}

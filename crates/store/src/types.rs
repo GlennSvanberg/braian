@@ -67,6 +67,36 @@ pub enum ObjectOp {
         id: ObjectId,
         base_version: Option<u64>,
     },
+    /// A link object plus the row that points from one object to another.
+    CreateLink {
+        object: Object,
+        from_id: ObjectId,
+        to_id: ObjectId,
+    },
+    /// Values and, when set, a new source or target for an existing link.
+    UpdateLink {
+        id: ObjectId,
+        patch: braian_model::ObjectPatch,
+        base_version: u64,
+        read_version: u64,
+        from_id: Option<ObjectId>,
+        to_id: Option<ObjectId>,
+    },
+}
+
+/// One link as seen from an object. `outgoing` means that object is the source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkView {
+    pub id: ObjectId,
+    pub link_type_id: braian_model::TypeId,
+    pub from_id: ObjectId,
+    pub to_id: ObjectId,
+    pub peer_id: ObjectId,
+    pub peer_key: String,
+    pub peer_type_id: braian_model::TypeId,
+    pub outgoing: bool,
+    /// True when the link object stores a value of its own.
+    pub has_values: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

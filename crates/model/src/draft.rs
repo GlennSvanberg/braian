@@ -226,6 +226,9 @@ mod tests {
                 attributes: vec![AttributeId::from_uuid(Uuid::from_u128(1))],
                 structures: Some(vec![]),
                 defaults: Default::default(),
+
+                kind: Default::default(),
+                link: None,
             }],
             structures: vec![],
         }

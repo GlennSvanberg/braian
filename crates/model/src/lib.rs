@@ -11,6 +11,7 @@ mod edit;
 mod error;
 mod id;
 mod language;
+mod link;
 mod model_change;
 mod object;
 mod patch;
@@ -23,9 +24,9 @@ pub use consequence::{
     consequence_sentence, grouped, purge_for, tally,
 };
 pub use definition::{
-    Attribute, AttributeKind, Class, DefinitionSet, Group, IndexFlags, NumberValue, ObjectType,
-    SharedValueList, Structure, TextForm, Unit, UnitFamily, ValueOption, default_plural,
-    operation_title,
+    Attribute, AttributeKind, Cardinality, Class, DefinitionSet, Group, IndexFlags, LinkLabel,
+    LinkSpec, NumberValue, ObjectType, SharedValueList, Structure, TextForm, TypeKind, Unit,
+    UnitFamily, ValueOption, default_plural, operation_title,
 };
 pub use draft::{ModelDraft, change_removed_definitions, restored_definitions, undo_purge};
 pub use edit::{
@@ -37,6 +38,7 @@ pub use id::{
     AttributeId, ClassId, GroupId, ObjectId, StructureId, TypeId, UnitFamilyId, ValueListId,
 };
 pub use language::{LanguageTag, LanguageTagError};
+pub use link::explain_link;
 pub use model_change::{
     ApplyError, AttributeBounds, ChangeImpact, ModelChange, NamedOption, UnitSpec, apply_all,
     change_needs_reindex, deletes_data, diff as model_diff, interpret, preview,

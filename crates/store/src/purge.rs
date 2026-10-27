@@ -55,6 +55,33 @@ pub async fn measure(
             )
             .await?
             .get(0);
+        let typed_links: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM links l
+                 WHERE EXISTS (
+                   SELECT 1 FROM objects o
+                   WHERE o.deleted_at IS NULL AND o.type_id = ANY($1)
+                     AND (o.id = l.object_id OR o.id = l.from_id OR o.id = l.to_id)
+                 )",
+                &[types],
+            )
+            .await?
+            .get(0);
+        let cascaded: i64 = client
+            .query_one(
+                "SELECT count(DISTINCT l.object_id)::bigint
+                 FROM links l
+                 JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+                 WHERE NOT (link_obj.type_id = ANY($1))
+                   AND EXISTS (
+                     SELECT 1 FROM objects o
+                     WHERE o.deleted_at IS NULL AND o.type_id = ANY($1)
+                       AND (o.id = l.from_id OR o.id = l.to_id)
+                   )",
+                &[types],
+            )
+            .await?
+            .get(0);
         let selections: i64 = client
             .query_one(
                 "SELECT count(*)::bigint FROM assortments WHERE type_id = ANY($1)",
@@ -63,9 +90,9 @@ pub async fn measure(
             .await?
             .get(0);
         let ref_links = link_values_on_types(client, types, &purge.link_attributes).await?;
-        counts.removed += objects;
+        counts.removed += objects + cascaded;
         counts.values += values;
-        counts.links += links + ref_links;
+        counts.links += links + typed_links + ref_links;
         counts.selections += selections;
     }
     if !purge.drop_attributes.is_empty() {
@@ -411,6 +438,32 @@ async fn delete_types(
     purge: &DataPurge,
 ) -> Result<i64, Error> {
     let types = &purge.delete_types;
+    let extra = tx
+        .query(
+            "SELECT DISTINCT l.object_id
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             WHERE NOT (link_obj.type_id = ANY($1))
+               AND EXISTS (
+                 SELECT 1 FROM objects o
+                 WHERE o.deleted_at IS NULL AND o.type_id = ANY($1)
+                   AND (o.id = l.from_id OR o.id = l.to_id)
+               )",
+            &[types],
+        )
+        .await?;
+    let extra_ids: Vec<Uuid> = extra.iter().map(|row| row.get(0)).collect();
+    tx.execute(
+        "DELETE FROM links l
+         WHERE l.object_id = ANY($2)
+            OR EXISTS (
+              SELECT 1 FROM objects o
+              WHERE o.deleted_at IS NULL AND o.type_id = ANY($1)
+                AND (o.id = l.object_id OR o.id = l.from_id OR o.id = l.to_id)
+            )",
+        &[types, &extra_ids],
+    )
+    .await?;
     tx.execute(
         "DELETE FROM relations r
          WHERE EXISTS (
@@ -441,6 +494,33 @@ async fn delete_types(
     .await?;
     tx.execute("DELETE FROM assortments WHERE type_id = ANY($1)", &[types])
         .await?;
+    let mut last = 0i64;
+    if !extra_ids.is_empty() {
+        let cascaded = tx
+            .query(
+                "UPDATE objects
+                 SET version = version + 1, updated_at = now(), deleted_at = now()
+                 WHERE deleted_at IS NULL AND id = ANY($1)
+                 RETURNING id, version",
+                &[&extra_ids],
+            )
+            .await?;
+        for row in cascaded {
+            let id: Uuid = row.get(0);
+            let version: i64 = row.get(1);
+            let seq = insert_change(
+                tx,
+                batch,
+                Some(ObjectId::from_uuid(id)),
+                Some(version),
+                ChangeOp::Delete,
+                actor,
+                &serde_json::json!({ "link_removed": true }),
+            )
+            .await?;
+            last = last.max(seq);
+        }
+    }
     let rows = tx
         .query(
             "UPDATE objects
@@ -450,7 +530,6 @@ async fn delete_types(
             &[types],
         )
         .await?;
-    let mut last = 0i64;
     for row in rows {
         let id: Uuid = row.get(0);
         let version: i64 = row.get(1);

@@ -147,6 +147,53 @@ pub enum ModelChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         defaults: Option<BTreeMap<String, String>>,
     },
+    /// A link type. It does not receive number or name.
+    CreateLinkType {
+        key: String,
+        #[serde(default)]
+        label: String,
+        from_types: Vec<String>,
+        to_types: Vec<String>,
+        from_key: String,
+        #[serde(default)]
+        from_label: String,
+        to_key: String,
+        #[serde(default)]
+        to_label: String,
+        #[serde(default = "default_many")]
+        from_cardinality: String,
+        #[serde(default = "default_many")]
+        to_cardinality: String,
+        /// Attribute keys to attach. A missing key is created as short text.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attributes: Vec<String>,
+    },
+    UpdateLinkType {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_types: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_types: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_cardinality: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_cardinality: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attributes: Option<Vec<String>>,
+    },
+    DeleteLinkType {
+        key: String,
+    },
     CreateValueList {
         key: String,
         #[serde(default)]
@@ -411,6 +458,10 @@ fn default_filterable() -> bool {
     true
 }
 
+fn default_many() -> String {
+    "many".to_owned()
+}
+
 /// A step that removes stored data or a definition that data hangs on.
 ///
 /// The agent is not offered these, and cannot propose them.
@@ -420,6 +471,7 @@ pub fn deletes_data(change: &ModelChange) -> bool {
         ModelChange::DeleteStructure { .. }
             | ModelChange::DeleteGroup { .. }
             | ModelChange::DeleteType { .. }
+            | ModelChange::DeleteLinkType { .. }
             | ModelChange::DeleteAttribute { .. }
             | ModelChange::DeleteValueList { .. }
             | ModelChange::DeleteValueOption { .. }
@@ -753,7 +805,14 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
     for object_type in &after.types {
         let old = before.types.iter().find(|item| item.id == object_type.id);
         if old.is_none() {
-            lines.push(format!("Create type {}", object_type.key));
+            if object_type.is_link() {
+                lines.push(format!(
+                    "Create link type {}",
+                    object_type.singular_label("en")
+                ));
+            } else {
+                lines.push(format!("Create type {}", object_type.key));
+            }
         }
         let old_keys = attribute_keys(
             before,
@@ -773,6 +832,12 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
             usage_fields.insert(key.clone());
         }
         if let Some(previous) = old {
+            if previous.link != object_type.link || previous.kind != object_type.kind {
+                lines.push(format!(
+                    "Update link type {}",
+                    object_type.singular_label("en")
+                ));
+            }
             if previous.singular != object_type.singular || previous.labels != object_type.labels {
                 lines.push(format!(
                     "Type {} singular is {}",
@@ -818,7 +883,11 @@ pub fn diff(before: &DefinitionSet, after: &DefinitionSet) -> ChangeImpact {
     }
     for old in &before.types {
         if after.types.iter().all(|item| item.id != old.id) {
-            lines.push(format!("Delete type {}", old.key));
+            if old.is_link() {
+                lines.push(format!("Delete link type {}", old.singular_label("en")));
+            } else {
+                lines.push(format!("Delete type {}", old.key));
+            }
         }
     }
     ChangeImpact {
@@ -1100,6 +1169,59 @@ fn apply_one(defs: &mut DefinitionSet, change: &ModelChange) -> Result<(), Apply
             structures.as_deref(),
             defaults.as_ref(),
         ),
+        ModelChange::CreateLinkType {
+            key,
+            label,
+            from_types,
+            to_types,
+            from_key,
+            from_label,
+            to_key,
+            to_label,
+            from_cardinality,
+            to_cardinality,
+            attributes,
+        } => create_link_type(
+            defs,
+            key,
+            label,
+            from_types,
+            to_types,
+            from_key,
+            from_label,
+            to_key,
+            to_label,
+            from_cardinality,
+            to_cardinality,
+            attributes,
+        ),
+        ModelChange::UpdateLinkType {
+            key,
+            label,
+            from_types,
+            to_types,
+            from_key,
+            from_label,
+            to_key,
+            to_label,
+            from_cardinality,
+            to_cardinality,
+            attributes,
+        } => update_link_type(
+            defs,
+            key,
+            label.as_deref(),
+            from_types.as_deref(),
+            to_types.as_deref(),
+            from_key.as_deref(),
+            from_label.as_deref(),
+            to_key.as_deref(),
+            to_label.as_deref(),
+            from_cardinality.as_deref(),
+            to_cardinality.as_deref(),
+            attributes.as_deref(),
+        ),
+        ModelChange::DeleteLinkType { .. } => Ok(()),
         ModelChange::CreateValueList {
             key,
             label,
@@ -1989,9 +2111,252 @@ fn create_type(
         attributes: Vec::new(),
         structures: Some(ids),
         defaults: defaults.cloned().unwrap_or_default(),
+        kind: Default::default(),
+        link: None,
     };
     crate::standard::attach_standard_attributes(&mut object_type);
     defs.types.push(object_type);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_link_type(
+    defs: &mut DefinitionSet,
+    key: &str,
+    label: &str,
+    from_types: &[String],
+    to_types: &[String],
+    from_key: &str,
+    from_label: &str,
+    to_key: &str,
+    to_label: &str,
+    from_cardinality: &str,
+    to_cardinality: &str,
+    attributes: &[String],
+) -> Result<(), ApplyError> {
+    let key = key.trim();
+    crate::refs::check_new_key(key)?;
+    if defs.types.iter().any(|item| eq_key(&item.key, key)) {
+        return Ok(());
+    }
+    let from_key = side_key(from_key)?;
+    let to_key = side_key(to_key)?;
+    if from_key.eq_ignore_ascii_case(&to_key) {
+        return Err("the two side keys have to differ".into());
+    }
+    let from_ids = resolve_entity_types(defs, from_types, "from")?;
+    let to_ids = resolve_entity_types(defs, to_types, "to")?;
+    let from_cardinality = crate::link::parse_cardinality(from_cardinality)?;
+    let to_cardinality = crate::link::parse_cardinality(to_cardinality)?;
+    ensure_text_attributes(defs, attributes)?;
+    let mut attached = Vec::new();
+    for attribute in attributes {
+        let attribute = attribute.trim();
+        if let Some(found) = defs
+            .attributes
+            .iter()
+            .find(|item| eq_key(&item.key, attribute) && !attached.contains(&item.id))
+        {
+            attached.push(found.id);
+        }
+    }
+    let caption = if label.trim().is_empty() {
+        key
+    } else {
+        label.trim()
+    };
+    crate::standard::ensure_standard_rows(defs);
+    let mut object_type = ObjectType {
+        id: crate::id::TypeId::from_uuid(stable_uuid(&format!("type:{key}"))),
+        key: key.to_owned(),
+        labels: label_map(defs, caption),
+        singular: label_map(defs, caption),
+        plural: label_map(defs, caption),
+        key_attribute: crate::standard::standard_ids().created_at,
+        attributes: attached,
+        structures: Some(Vec::new()),
+        defaults: BTreeMap::new(),
+        kind: crate::definition::TypeKind::Link,
+        link: Some(crate::definition::LinkSpec {
+            from_types: from_ids,
+            to_types: to_ids,
+            from_label: side_label(defs, &from_key, from_label),
+            to_label: side_label(defs, &to_key, to_label),
+            from_cardinality,
+            to_cardinality,
+        }),
+    };
+    crate::standard::attach_standard_attributes(&mut object_type);
+    defs.types.push(object_type);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_link_type(
+    defs: &mut DefinitionSet,
+    key: &str,
+    label: Option<&str>,
+    from_types: Option<&[String]>,
+    to_types: Option<&[String]>,
+    from_key: Option<&str>,
+    from_label: Option<&str>,
+    to_key: Option<&str>,
+    to_label: Option<&str>,
+    from_cardinality: Option<&str>,
+    to_cardinality: Option<&str>,
+    attributes: Option<&[String]>,
+) -> Result<(), ApplyError> {
+    let id = crate::refs::type_id(defs, key)?;
+    let current = defs
+        .types
+        .iter()
+        .find(|item| item.id == id)
+        .ok_or_else(|| format!("unknown type {key}"))?;
+    if !current.is_link() {
+        return Err(format!("{key} is not a link type").into());
+    }
+    let mut spec = current
+        .link
+        .clone()
+        .ok_or_else(|| format!("link type {key} has no ends"))?;
+    if let Some(types) = from_types {
+        spec.from_types = resolve_entity_types(defs, types, "from")?;
+    }
+    if let Some(types) = to_types {
+        spec.to_types = resolve_entity_types(defs, types, "to")?;
+    }
+    if let Some(value) = from_key {
+        spec.from_label.key = side_key(value)?;
+    }
+    if let Some(value) = to_key {
+        spec.to_label.key = side_key(value)?;
+    }
+    if spec.from_label.key.eq_ignore_ascii_case(&spec.to_label.key) {
+        return Err("the two side keys have to differ".into());
+    }
+    if let Some(value) = from_label {
+        spec.from_label.labels = label_map(defs, value.trim());
+    }
+    if let Some(value) = to_label {
+        spec.to_label.labels = label_map(defs, value.trim());
+    }
+    if let Some(value) = from_cardinality {
+        spec.from_cardinality = crate::link::parse_cardinality(value)?;
+    }
+    if let Some(value) = to_cardinality {
+        spec.to_cardinality = crate::link::parse_cardinality(value)?;
+    }
+    let attached = if let Some(attributes) = attributes {
+        ensure_text_attributes(defs, attributes)?;
+        let mut ids = Vec::new();
+        for attribute in attributes {
+            let attribute = attribute.trim();
+            if let Some(found) = defs
+                .attributes
+                .iter()
+                .find(|item| eq_key(&item.key, attribute))
+                && !ids.contains(&found.id)
+            {
+                ids.push(found.id);
+            }
+        }
+        Some(ids)
+    } else {
+        None
+    };
+    let renamed = label
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|label| label_map(defs, label));
+    let object_type = defs
+        .types
+        .iter_mut()
+        .find(|item| item.id == id)
+        .ok_or_else(|| format!("unknown type {key}"))?;
+    object_type.link = Some(spec);
+    if let Some(labels) = renamed {
+        object_type.labels = labels.clone();
+        object_type.singular = labels.clone();
+        object_type.plural = labels;
+    }
+    if let Some(ids) = attached {
+        let standard = [
+            crate::standard::standard_ids().created_at,
+            crate::standard::standard_ids().updated_at,
+            crate::standard::standard_ids().updated_by,
+        ];
+        object_type.attributes.retain(|id| standard.contains(id));
+        for id in ids {
+            if !object_type.attributes.contains(&id) {
+                object_type.attributes.push(id);
+            }
+        }
+    }
+    crate::standard::attach_standard_attributes(object_type);
+    Ok(())
+}
+
+fn side_key(key: &str) -> Result<String, ApplyError> {
+    let key = key.trim();
+    crate::refs::check_new_key(key)?;
+    Ok(key.to_owned())
+}
+
+fn side_label(defs: &DefinitionSet, key: &str, label: &str) -> crate::definition::LinkLabel {
+    let text = if label.trim().is_empty() {
+        key
+    } else {
+        label.trim()
+    };
+    crate::definition::LinkLabel {
+        key: key.to_owned(),
+        labels: label_map(defs, text),
+    }
+}
+
+fn resolve_entity_types(
+    defs: &DefinitionSet,
+    tokens: &[String],
+    side: &str,
+) -> Result<Vec<crate::id::TypeId>, ApplyError> {
+    let mut ids = Vec::new();
+    for token in tokens {
+        let id = crate::refs::type_id(defs, token)?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    crate::link::check_ends(defs, &ids, side)?;
+    Ok(ids)
+}
+
+fn ensure_text_attributes(defs: &mut DefinitionSet, keys: &[String]) -> Result<(), ApplyError> {
+    let bounds = AttributeBounds::default();
+    for key in keys {
+        let key = key.trim();
+        if key.is_empty() {
+            return Err("attribute key is empty".into());
+        }
+        if defs.attributes.iter().any(|item| eq_key(&item.key, key)) {
+            continue;
+        }
+        create_attribute(
+            defs,
+            AttributeDraft {
+                key,
+                label: key,
+                kind: "text",
+                unit: None,
+                multiple: false,
+                languages: false,
+                required: false,
+                searchable: false,
+                filterable: false,
+                sortable: false,
+                bounds: &bounds,
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -2529,6 +2894,9 @@ mod tests {
                 attributes: vec![weight],
                 structures: None,
                 defaults: BTreeMap::new(),
+
+                kind: Default::default(),
+                link: None,
             }],
             structures: vec![Structure {
                 id: structure,
@@ -2871,5 +3239,47 @@ mod tests {
         assert_eq!(state["sort"], weight.as_uuid().to_string());
         crate::refs::translate_view_state(&mut state, &after);
         assert_eq!(state["columns"][0], weight.as_uuid().to_string());
+    }
+
+    #[test]
+    fn a_link_type_has_no_number_or_name_and_an_entity_keeps_both() {
+        let mut defs = base();
+        apply_all(
+            &mut defs,
+            &[ModelChange::CreateLinkType {
+                key: "pairs_with".into(),
+                label: "Pairs with".into(),
+                from_types: vec!["item".into()],
+                to_types: vec!["item".into()],
+                from_key: "pairs_with".into(),
+                from_label: "Pairs with".into(),
+                to_key: "paired_with".into(),
+                to_label: "Pairs with".into(),
+                from_cardinality: "many".into(),
+                to_cardinality: "one".into(),
+                attributes: vec!["note".into()],
+            }],
+        )
+        .expect("link type");
+        let link = defs
+            .types
+            .iter()
+            .find(|item| item.key == "pairs_with")
+            .unwrap();
+        assert!(link.is_link());
+        assert!(!link.attributes.contains(&crate::standard::number_id()));
+        assert!(!link.attributes.contains(&crate::standard::name_id()));
+        assert!(
+            link.attributes
+                .contains(&crate::standard::standard_ids().created_at)
+        );
+        assert!(link.attributes.iter().any(|id| {
+            defs.attributes
+                .iter()
+                .any(|attribute| attribute.id == *id && attribute.key == "note")
+        }));
+        let entity = defs.types.iter().find(|item| item.key == "item").unwrap();
+        assert!(!entity.is_link());
+        assert_eq!(entity.attributes.len(), 1);
     }
 }

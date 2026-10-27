@@ -609,6 +609,364 @@
         ]
       }
     },
+    "/v1/link-types": {
+      "post": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "post_link_type",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkTypeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Link type saved"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/link-types/{key}": {
+      "delete": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "delete_link_type",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Link type key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consequence analysis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsequenceReport"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "An agent or MCP token cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "definitions"
+        ],
+        "operationId": "patch_link_type",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Link type key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkTypePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Link type updated"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/links": {
+      "get": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "list_links",
+        "parameters": [
+          {
+            "name": "object",
+            "in": "query",
+            "description": "Object whose links are listed, from both directions",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Links grouped by type and direction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LinkSide"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "post_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Filed as a suggestion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suggestion"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cardinality",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/links/{id}": {
+      "delete": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "delete_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted, or the consequence analysis when dry_run is set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsequenceReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An agent or import cannot delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "patch_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Link version the edit started from",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Filed as a suggestion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suggestion"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "If-Match is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/login": {
       "post": {
         "tags": [
@@ -3134,6 +3492,14 @@
           }
         }
       },
+      "Cardinality": {
+        "type": "string",
+        "description": "How many links one object may have on this side of a link type.",
+        "enum": [
+          "one",
+          "many"
+        ]
+      },
       "ChangeResponse": {
         "type": "object",
         "required": [
@@ -3314,6 +3680,37 @@
           "values": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "CreateLink": {
+        "type": "object",
+        "required": [
+          "type",
+          "from_id",
+          "to_id"
+        ],
+        "properties": {
+          "from_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "to_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object"
           }
         }
       },
@@ -3659,6 +4056,251 @@
         "type": "string",
         "description": "BCP 47 language tag with an optional region, for example sv or en-GB"
       },
+      "LinkItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "peer_id",
+          "peer_key",
+          "peer_type",
+          "has_values"
+        ],
+        "properties": {
+          "has_values": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "peer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "peer_key": {
+            "type": "string"
+          },
+          "peer_type": {
+            "type": "string"
+          }
+        }
+      },
+      "LinkLabel": {
+        "type": "object",
+        "description": "The name shown on one side of a link, and the key used later in an attribute path.",
+        "required": [
+          "key",
+          "labels"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "LinkSide": {
+        "type": "object",
+        "required": [
+          "link_type",
+          "label",
+          "direction",
+          "links"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "link_type": {
+            "type": "string"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkItem"
+            }
+          }
+        }
+      },
+      "LinkSpec": {
+        "type": "object",
+        "description": "Ends of a link type. `from_label` is what the target shows. `to_label` is what the source shows.",
+        "required": [
+          "from_types",
+          "to_types",
+          "from_label",
+          "to_label",
+          "from_cardinality",
+          "to_cardinality"
+        ],
+        "properties": {
+          "from_cardinality": {
+            "$ref": "#/components/schemas/Cardinality"
+          },
+          "from_label": {
+            "$ref": "#/components/schemas/LinkLabel"
+          },
+          "from_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeId"
+            }
+          },
+          "to_cardinality": {
+            "$ref": "#/components/schemas/Cardinality"
+          },
+          "to_label": {
+            "$ref": "#/components/schemas/LinkLabel"
+          },
+          "to_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeId"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "LinkTypeBody": {
+        "type": "object",
+        "required": [
+          "key",
+          "from_types",
+          "to_types",
+          "from_key",
+          "to_key"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "from_cardinality": {
+            "type": "string"
+          },
+          "from_key": {
+            "type": "string"
+          },
+          "from_label": {
+            "type": "string"
+          },
+          "from_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "to_cardinality": {
+            "type": "string"
+          },
+          "to_key": {
+            "type": "string"
+          },
+          "to_label": {
+            "type": "string"
+          },
+          "to_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LinkTypePatch": {
+        "type": "object",
+        "properties": {
+          "attributes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "from_cardinality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_cardinality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "Me": {
         "type": "object",
         "required": [
@@ -3726,6 +4368,12 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkSide"
+            }
           },
           "model_revision": {
             "type": "integer",
@@ -3807,6 +4455,10 @@
           "key_attribute": {
             "$ref": "#/components/schemas/AttributeId"
           },
+          "kind": {
+            "$ref": "#/components/schemas/TypeKind",
+            "description": "Missing means a normal type. Stored sets from before link types stay entities."
+          },
           "labels": {
             "type": "object",
             "additionalProperties": {
@@ -3815,6 +4467,17 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "link": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LinkSpec",
+                "description": "Present only when `kind` is `link`."
+              }
+            ]
           },
           "plural": {
             "type": "object",
@@ -3848,6 +4511,28 @@
           }
         },
         "additionalProperties": false
+      },
+      "PatchLink": {
+        "type": "object",
+        "properties": {
+          "from_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "to_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "values": {
+            "type": "object"
+          }
+        }
       },
       "PatchObject": {
         "type": "object",
@@ -4207,6 +4892,14 @@
         "type": "string",
         "format": "uuid",
         "description": "Id of an object type."
+      },
+      "TypeKind": {
+        "type": "string",
+        "description": "An object type is either a normal record or a link between two records.",
+        "enum": [
+          "entity",
+          "link"
+        ]
       },
       "Unit": {
         "type": "object",

@@ -37,6 +37,7 @@ pub(crate) struct TypeInfo {
     pub(crate) attributes: HashSet<AttributeId>,
     /// `None` allows every tree. `Some` is the allowed list, empty for none.
     pub(crate) structures: Option<Vec<StructureId>>,
+    pub(crate) kind: braian_model::TypeKind,
 }
 
 #[derive(Debug, Clone)]
@@ -344,6 +345,7 @@ fn index(defs: &DefinitionSet) -> CompiledModel {
                     key_attribute: object_type.key_attribute,
                     attributes: object_type.attributes.iter().copied().collect(),
                     structures: object_type.structures.clone(),
+                    kind: object_type.kind,
                 },
             )
         })
@@ -827,6 +829,9 @@ mod tests {
                 attributes: vec![sku.id],
                 structures: None,
                 defaults: BTreeMap::new(),
+
+                kind: Default::default(),
+                link: None,
             }],
             structures: vec![],
         }
@@ -1373,6 +1378,9 @@ mod tests {
                 attributes: vec![name.id, weight.id],
                 structures: None,
                 defaults: BTreeMap::new(),
+
+                kind: Default::default(),
+                link: None,
             }],
             structures: vec![
                 Structure {
@@ -1487,6 +1495,9 @@ mod tests {
                 attributes: vec![name.id],
                 structures: None,
                 defaults: BTreeMap::new(),
+
+                kind: Default::default(),
+                link: None,
             }],
             structures: vec![Structure {
                 id: assortment,

@@ -660,6 +660,48 @@ fn registry() -> &'static [Operation] {
             permission: Role::Editor,
             needs_approval: false,
         },
+        Operation {
+            name: "list_links",
+            title: "List links",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "create_link",
+            title: "Create link",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "update_link",
+            title: "Edit link",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "remove_link",
+            title: "Remove link",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "model.create_link_type",
+            title: "New link type",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.update_link_type",
+            title: "Update link type",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
+        Operation {
+            name: "model.delete_link_type",
+            title: "Delete link type",
+            permission: Role::Editor,
+            needs_approval: true,
+        },
     ]
 }
 
@@ -804,9 +846,11 @@ const AGENT_COMMIT_EXCLUDED: &[&str] = &[
     "model.delete_unit_family",
     "model.delete_value_list",
     "model.delete_value_option",
+    "model.delete_link_type",
     "model.detach_attribute",
     "model.remove_attribute",
     "model.undo",
+    "remove_link",
 ];
 
 fn exposed_to_agent(op: &Operation) -> bool {
@@ -873,7 +917,12 @@ fn agent_must_propose(identity: &Identity, op: &Operation) -> bool {
     !identity.may_commit()
         && matches!(
             op.name,
-            "create_object" | "patch_object" | "set_relation" | "move_to_group"
+            "create_object"
+                | "patch_object"
+                | "set_relation"
+                | "move_to_group"
+                | "create_link"
+                | "update_link"
         )
 }
 
@@ -3527,6 +3576,13 @@ async fn apply_row(
     if crate::model_proposal::is_model_row(row) {
         return crate::model_proposal::apply_row(state, identity, proposal_id, row_id, row).await;
     }
+    if row
+        .get("patch")
+        .and_then(|patch| patch.get("link"))
+        .is_some()
+    {
+        return apply_link_row(state, identity, proposal_id, row_id, row).await;
+    }
     if row.get("type_key").and_then(Value::as_str) == Some("assortment") {
         return apply_assortment_row(state, identity, proposal_id, row_id, row).await;
     }
@@ -3652,6 +3708,81 @@ async fn finish_row(
         .commit_proposal_row(&identity.actor, proposal_id, row_id, status, write)
         .await
         .map_err(proposal_write_error)
+}
+
+async fn apply_link_row(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    row: &Value,
+) -> Result<Option<i64>, Problem> {
+    let cached = state.models.get(&state.store).await?;
+    let link = row
+        .get("patch")
+        .and_then(|patch| patch.get("link"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Some(object_id) = row.get("object_id").and_then(Value::as_str) {
+        let id = ObjectId::from_uuid(Uuid::parse_str(object_id).map_err(|error| {
+            Problem::new(StatusCode::BAD_REQUEST, "invalid_id", error.to_string())
+        })?);
+        let stored = state
+            .store
+            .get_object(id)
+            .await
+            .map_err(store_status)?
+            .ok_or_else(|| store_status(braian_store::Error::NotFound(id)))?;
+        let Some(base) = row
+            .get("base_version")
+            .and_then(Value::as_i64)
+            .filter(|base| *base >= 0)
+        else {
+            return Err(base_version_required());
+        };
+        let body = crate::links::patch_body(&link)?;
+        let op = crate::links::link_update(&cached, &stored, &body, base as u64)?;
+        let Some(receipt) = finish_row(
+            state,
+            identity,
+            proposal_id,
+            row_id,
+            "accepted",
+            ProposalWrite::Objects {
+                ops: vec![op],
+                expect_version: Some((id, base as u64)),
+            },
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        state.emit(json!({ "seq": receipt.last_seq, "op": "update", "object_id": id.as_uuid() }));
+        state.index_after_commit(id.as_uuid(), receipt.last_seq);
+        return Ok(Some(receipt.last_seq));
+    }
+    let body = crate::links::create_body(&link)?;
+    let op = crate::links::link_create(&cached, &body)?;
+    let Some(receipt) = finish_row(
+        state,
+        identity,
+        proposal_id,
+        row_id,
+        "accepted",
+        ProposalWrite::Objects {
+            ops: vec![op],
+            expect_version: None,
+        },
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    state.emit(json!({ "seq": receipt.last_seq, "op": "create" }));
+    if let Some((id, _)) = receipt.versions.first() {
+        state.index_after_commit(id.as_uuid(), receipt.last_seq);
+    }
+    Ok(Some(receipt.last_seq))
 }
 
 fn agent_cannot_discard() -> Problem {
@@ -4575,7 +4706,12 @@ async fn run_operation(
     let agent_write = from_agent
         && matches!(
             op.name,
-            "create_object" | "patch_object" | "set_relation" | "move_to_group"
+            "create_object"
+                | "patch_object"
+                | "set_relation"
+                | "move_to_group"
+                | "create_link"
+                | "update_link"
         );
     if op.needs_approval || agent_must_propose(identity, op) || agent_write {
         return propose_operation(state, identity, name, args).await;
@@ -4935,6 +5071,63 @@ async fn run_operation(
                 .map_err(store_status)?;
             Ok(json!({ "ok": true }))
         }
+        "list_links" => {
+            let object = args
+                .get("object")
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok());
+            let listed = crate::links::list_links(
+                State(state.clone()),
+                Auth(identity.clone()),
+                Query(crate::links::LinksQuery { object }),
+            )
+            .await?;
+            Ok(serde_json::to_value(&listed.0).unwrap_or_else(|_| json!([])))
+        }
+        "create_link" => {
+            let body = crate::links::create_body(args)?;
+            let response =
+                crate::links::post_link(State(state.clone()), Auth(identity.clone()), Json(body))
+                    .await?;
+            Ok(json!({ "status": response.status().as_u16() }))
+        }
+        "update_link" => {
+            let id = uuid_arg(args, "id")?;
+            let body = crate::links::patch_body(args)?;
+            let mut headers = HeaderMap::new();
+            if let Some(version) = args.get("base_version").and_then(Value::as_u64) {
+                headers.insert(
+                    header::IF_MATCH,
+                    header::HeaderValue::from_str(&version.to_string()).map_err(|error| {
+                        Problem::new(StatusCode::BAD_REQUEST, "invalid_body", error.to_string())
+                    })?,
+                );
+            }
+            let response = crate::links::patch_link(
+                State(state.clone()),
+                Auth(identity.clone()),
+                Path(id),
+                headers,
+                Json(body),
+            )
+            .await?;
+            Ok(json!({ "status": response.status().as_u16() }))
+        }
+        "remove_link" => {
+            let id = uuid_arg(args, "id")?;
+            state
+                .store
+                .write_batch(
+                    &identity.actor,
+                    vec![ObjectOp::Delete {
+                        id: ObjectId::from_uuid(id),
+                        base_version: None,
+                    }],
+                )
+                .await
+                .map_err(store_status)?;
+            Ok(json!({ "ok": true }))
+        }
         "delete_relation" => {
             let from = uuid_arg(args, "from")?;
             let to = uuid_arg(args, "to")?;
@@ -5007,6 +5200,40 @@ async fn propose_operation(
             let mut patched = args.clone();
             patched["groups"] = Value::Object(groups);
             Box::pin(propose_operation(state, identity, "patch_object", &patched)).await
+        }
+        "create_link" | "update_link" => {
+            let id = Uuid::now_v7();
+            let object_id = args
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|text| Uuid::parse_str(text).ok());
+            let row = ProposalRow {
+                id: Uuid::now_v7(),
+                object_id,
+                object_key: None,
+                type_key: args.get("type").and_then(Value::as_str).map(str::to_owned),
+                base_version: args.get("base_version").and_then(Value::as_i64),
+                patch: json!({ "link": args }),
+                status: "pending".into(),
+                conflict: false,
+                position: 0,
+            };
+            state
+                .store
+                .create_proposal(
+                    id,
+                    "Link proposal",
+                    crate::auth::suggestion_source(identity.kind),
+                    identity.actor.actor,
+                    identity.actor.on_behalf_of,
+                    false,
+                    &[row],
+                )
+                .await
+                .map_err(store_status)?;
+            Ok(
+                json!({ "proposal_id": id, "needs_approval": true, "source": crate::auth::suggestion_source(identity.kind) }),
+            )
         }
         "create_object" | "patch_object" | "set_relation" => {
             if name == "patch_object" && args.get("base_version").and_then(Value::as_i64).is_none()
@@ -5912,6 +6139,8 @@ mod tests {
             "model.detach_attribute",
             "delete_object",
             "delete_relation",
+            "remove_link",
+            "model.delete_link_type",
             "discard_proposal",
         ] {
             assert!(

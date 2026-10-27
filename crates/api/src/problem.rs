@@ -120,6 +120,12 @@ pub fn store_status(error: StoreError) -> Problem {
             Problem::new(StatusCode::NOT_FOUND, "not_found", id.to_string())
         }
         StoreError::Deleted(id) => Problem::new(StatusCode::GONE, "deleted", id.to_string()),
+        StoreError::LinkRejected(message) => {
+            Problem::new(StatusCode::UNPROCESSABLE_ENTITY, "link_rejected", message)
+        }
+        StoreError::LinkCardinality(message) => {
+            Problem::new(StatusCode::CONFLICT, "link_cardinality", message)
+        }
         StoreError::DuplicateKey { type_id, key } => Problem::new(
             StatusCode::CONFLICT,
             "duplicate_key",

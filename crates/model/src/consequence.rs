@@ -284,7 +284,9 @@ fn purge_one(defs: &DefinitionSet, change: &ModelChange) -> DataPurge {
         return DataPurge::default();
     }
     match change {
-        ModelChange::DeleteType { key } => type_purge(defs, key),
+        ModelChange::DeleteType { key } | ModelChange::DeleteLinkType { key } => {
+            type_purge(defs, key)
+        }
         ModelChange::DeleteAttribute { key } => attribute_purge(defs, key, None, None),
         ModelChange::DeleteValueList { key } => value_list_purge(defs, key, None),
         ModelChange::DeleteValueOption { list, option } => {
@@ -585,10 +587,13 @@ fn caption(defs: &DefinitionSet, labels: &BTreeMap<LanguageTag, String>, fallbac
 /// Applies a destructive definition edit. Returns whether `change` was one of them.
 pub fn apply_destructive(defs: &mut DefinitionSet, change: &ModelChange) -> Result<bool, String> {
     match change {
-        ModelChange::DeleteType { key } => {
-            let id = find_type(defs, key)
-                .map(|item| item.id)
+        ModelChange::DeleteType { key } | ModelChange::DeleteLinkType { key } => {
+            let (id, is_link) = find_type(defs, key)
+                .map(|item| (item.id, item.is_link()))
                 .ok_or_else(|| format!("unknown type {key}"))?;
+            if matches!(change, ModelChange::DeleteLinkType { .. }) && !is_link {
+                return Err(format!("{key} is not a link type"));
+            }
             defs.types.retain(|item| item.id != id);
             Ok(true)
         }
@@ -810,6 +815,9 @@ mod tests {
                     ],
                     structures: None,
                     defaults: BTreeMap::new(),
+
+                    kind: Default::default(),
+                    link: None,
                 },
                 ObjectType {
                     id: TypeId::from_uuid(article),
@@ -821,6 +829,9 @@ mod tests {
                     attributes: vec![AttributeId::from_uuid(name)],
                     structures: None,
                     defaults: BTreeMap::new(),
+
+                    kind: Default::default(),
+                    link: None,
                 },
             ],
             structures: vec![Structure {

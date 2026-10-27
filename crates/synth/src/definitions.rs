@@ -151,6 +151,8 @@ pub fn definitions_with(tier: Tier, seed: u64, budget: IndexBudget) -> Definitio
             attributes: buckets[0].clone(),
             structures: None,
             defaults: BTreeMap::new(),
+            kind: Default::default(),
+            link: None,
         }],
         structures: vec![
             Structure {

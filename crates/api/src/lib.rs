@@ -16,6 +16,7 @@ mod feedback;
 mod headers;
 pub mod import;
 mod keys;
+mod links;
 mod model_draft;
 mod model_proposal;
 mod objects;
@@ -118,6 +119,16 @@ pub fn into_router(state: AppState) -> axum::Router {
         .route("/v1/languages", put(definitions::put_languages))
         .route("/v1/resolve/{kind}/{id_or_key}", get(keys::resolve_ref))
         .route("/v1/model/keys", post(keys::rename_key))
+        .route("/v1/links", get(links::list_links).post(links::post_link))
+        .route(
+            "/v1/links/{id}",
+            patch(links::patch_link).delete(links::delete_link),
+        )
+        .route("/v1/link-types", post(links::post_link_type))
+        .route(
+            "/v1/link-types/{key}",
+            patch(links::patch_link_type).delete(links::delete_link_type),
+        )
         .route("/v1/objects", post(objects::create_object))
         .route("/v1/objects:batchGet", post(objects::batch_get))
         .route(
