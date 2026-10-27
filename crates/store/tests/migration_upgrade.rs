@@ -1490,6 +1490,134 @@ async fn attribute_paths_rewrite_saved_shapes_and_keep_unknown_tokens() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// V25 adds the claim columns. A proposal stored before that migration still
+/// opens, and two startups (migrate, then clear only expired leases) leave it
+/// claimable. The demo seed inserts proposals through the same `create_proposal`
+/// path; that path has to work after the upgrade.
+#[tokio::test]
+async fn an_old_proposal_survives_the_claim_columns_and_two_startups() {
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    let source = branch_migrations();
+    let dir = std::env::temp_dir().join(format!("braian-v25-{}", Uuid::now_v7()));
+    fs::create_dir_all(&dir).unwrap();
+    for entry in fs::read_dir(&source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if migration_version(&name).is_some_and(|version| version < 25) {
+            fs::copy(entry.path(), dir.join(name)).unwrap();
+        }
+    }
+    migrate(&mut conn.client, &dir).await;
+
+    let actor = Uuid::now_v7();
+    let proposal_id = Uuid::now_v7();
+    let row_id = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+            &[&actor],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO proposals (id, title, source, status, actor, conflict)
+             VALUES ($1, 'Before the lease', 'user', 'open', $2, false)",
+            &[&proposal_id, &actor],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO proposal_rows (id, proposal_id, object_key, type_key, patch, status, position)
+             VALUES ($1, $2, 'SKU-OLD', 'item', '{\"values\":{\"sku\":\"SKU-OLD\"}}', 'pending', 0)",
+            &[&row_id, &proposal_id],
+        )
+        .await
+        .unwrap();
+
+    migrate(&mut conn.client, &source).await;
+    let claimed_by: Option<Uuid> = conn
+        .client
+        .query_one(
+            "SELECT claimed_by FROM proposals WHERE id = $1",
+            &[&proposal_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(claimed_by.is_none());
+    let stale = Uuid::now_v7();
+    conn.client
+        .execute(
+            "UPDATE proposals
+             SET claimed_by = $2, claimed_until = now() - interval '1 minute'
+             WHERE id = $1",
+            &[&proposal_id, &stale],
+        )
+        .await
+        .unwrap();
+    drop(conn);
+
+    let first = braian_store::Store::connect_config(db.config(), braian_store::STORAGE_FORM)
+        .await
+        .unwrap();
+    drop(first);
+    let second = braian_store::Store::connect_config(db.config(), braian_store::STORAGE_FORM)
+        .await
+        .unwrap();
+    let stored = second.proposal(proposal_id).await.unwrap().unwrap();
+    assert_eq!(stored["status"], "open", "{stored}");
+    assert_eq!(stored["rows"][0]["status"], "pending", "{stored}");
+    let lock = second.claim_proposal(proposal_id).await.unwrap();
+    let busy = second.claim_proposal(proposal_id).await.unwrap_err();
+    assert!(
+        matches!(busy, braian_store::Error::ProposalBusy(_)),
+        "{busy}"
+    );
+    lock.release().await.unwrap();
+
+    let created = Uuid::now_v7();
+    second
+        .create_proposal(
+            created,
+            "After the upgrade",
+            "user",
+            braian_store::PrincipalId::from_uuid(actor),
+            None,
+            false,
+            &[braian_store::ProposalRow {
+                id: Uuid::now_v7(),
+                object_id: None,
+                object_key: Some("SKU-NEW".into()),
+                type_key: Some("item".into()),
+                base_version: None,
+                patch: serde_json::json!({ "values": { "sku": "SKU-NEW" } }),
+                status: "pending".into(),
+                conflict: false,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+    second
+        .create_proposal(
+            Uuid::now_v7(),
+            "After the upgrade, again",
+            "agent",
+            braian_store::PrincipalId::from_uuid(actor),
+            None,
+            false,
+            &[],
+        )
+        .await
+        .unwrap();
+    let again = second.proposal(created).await.unwrap().unwrap();
+    assert_eq!(again["title"], "After the upgrade");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 async fn insert_object(client: &tokio_postgres::Client, type_id: Uuid, key: &str, organic: bool) {
     let id = Uuid::now_v7();
     client

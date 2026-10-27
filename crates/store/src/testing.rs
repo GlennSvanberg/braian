@@ -175,6 +175,7 @@ fn template_name() -> String {
         include_str!("../migrations/V22__links.sql"),
         include_str!("../migrations/V23__links_replace_relations.sql"),
         include_str!("../migrations/V24__attribute_paths.sql"),
+        include_str!("../migrations/V25__proposal_claim.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {
@@ -197,6 +198,11 @@ pub async fn append_changes(
 /// Expires open leases so the next claim replays them.
 pub async fn expire_claims(store: &Store, lane: &str) -> Result<(), Error> {
     store.expire_claims(lane).await
+}
+
+/// Expires one proposal lease so the next claim can take it without waiting.
+pub async fn expire_proposal_claim(store: &Store, id: Uuid) -> Result<(), Error> {
+    store.expire_proposal_claim(id).await
 }
 
 async fn admin_conn(admin_url: &str) -> Result<PgConn, Error> {

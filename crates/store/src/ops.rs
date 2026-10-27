@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use braian_model::{AttributeId, DefinitionSet, GroupId, Object, ObjectId, StructureId, TypeId};
 use futures::StreamExt;
@@ -45,34 +47,81 @@ struct CommittedProposalRow {
     definitions: Option<(DefinitionSet, HashMap<AttributeId, usize>)>,
 }
 
-/// Holds `proposals` so a second accept waits, then sees the rows are no longer pending.
+const PROPOSAL_LOCK_HELD: u8 = 0;
+const PROPOSAL_LOCK_RELEASED: u8 = 1;
+const PROPOSAL_LOCK_ABANDONED: u8 = 2;
+
+/// How long a claim stays live without a row write renewing it.
+///
+/// The claim is a row update, not a connection. A crash leaves it until this
+/// passes, or until the next process startup clears an already expired lease.
+const PROPOSAL_LEASE: Duration = Duration::from_secs(60);
+
+/// Exclusive claim on one proposal. The database row holds the lease.
+///
+/// No pool connection is checked out while this value is alive. Row writes
+/// take their own short transactions and renew the lease. [`Self::release`]
+/// clears the claim. Drop does the same unless [`Self::abandon`] ran, which
+/// is how a crash is simulated: the lease stays until it expires or startup
+/// clears it.
 pub struct ProposalLock {
-    client: Option<deadpool_postgres::Object>,
+    store: Store,
+    id: Uuid,
+    token: Uuid,
+    state: AtomicU8,
+}
+
+impl std::fmt::Debug for ProposalLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProposalLock")
+            .field("id", &self.id)
+            .field("token", &self.token)
+            .field("state", &self.state.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProposalLock {
-    /// Releases the lock. The row writes have already committed on their own.
-    pub async fn release(mut self) -> Result<(), Error> {
-        let Some(client) = self.client.take() else {
-            return Ok(());
-        };
-        client.batch_execute("ROLLBACK").await?;
+    pub fn token(&self) -> Uuid {
+        self.token
+    }
+
+    /// Clears the claim when this worker still holds it.
+    pub async fn release(self) -> Result<(), Error> {
+        if self.state.swap(PROPOSAL_LOCK_RELEASED, Ordering::AcqRel) == PROPOSAL_LOCK_HELD {
+            self.store
+                .release_proposal_claim(self.id, self.token)
+                .await?;
+        }
         Ok(())
+    }
+
+    /// Leaves the lease in the database, as a killed process would.
+    pub fn abandon(self) {
+        self.state.store(PROPOSAL_LOCK_ABANDONED, Ordering::Release);
     }
 }
 
 impl Drop for ProposalLock {
     fn drop(&mut self) {
-        let Some(client) = self.client.take() else {
+        if self.state.swap(PROPOSAL_LOCK_RELEASED, Ordering::AcqRel) != PROPOSAL_LOCK_HELD {
             return;
-        };
-        // A cancelled accept must not return the pooled connection mid-transaction.
+        }
+        let store = self.store.clone();
+        let id = self.id;
+        let token = self.token;
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                let _ = client.batch_execute("ROLLBACK").await;
+                let _ = store.release_proposal_claim(id, token).await;
             });
         }
     }
+}
+
+fn lease_millis() -> i64 {
+    i64::try_from(PROPOSAL_LEASE.as_millis())
+        .unwrap_or(i64::MAX)
+        .max(1)
 }
 
 /// How many times to pick another handle when a concurrent insert takes the one
@@ -574,27 +623,92 @@ impl Store {
             .collect()
     }
 
-    /// Locks the proposal until [`ProposalLock::release`]. Row writes use their own transactions.
-    pub async fn lock_proposal(&self, id: Uuid) -> Result<ProposalLock, Error> {
-        let client = self.pool().get().await?;
-        client.batch_execute("BEGIN").await?;
-        let locked = client
-            .query_opt("SELECT id FROM proposals WHERE id = $1 FOR UPDATE", &[&id])
-            .await;
-        let locked = match locked {
-            Ok(row) => row,
-            Err(error) => {
-                let _ = client.batch_execute("ROLLBACK").await;
-                return Err(error.into());
-            }
+    /// Claims `id` for this worker and returns as soon as that update commits.
+    ///
+    /// The lease lives on `proposals.claimed_until`. Two callers cannot both
+    /// win: the row is locked only for this statement, and the update runs
+    /// only when the previous lease is missing or already due. A live lease
+    /// is [`Error::ProposalBusy`].
+    pub async fn claim_proposal(&self, id: Uuid) -> Result<ProposalLock, Error> {
+        let mut client = self.pool().get().await?;
+        let tx = client.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT (claimed_until > now()) AS live
+                 FROM proposals WHERE id = $1 FOR UPDATE",
+                &[&id],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Err(Error::ProposalNotFound(id));
         };
-        if locked.is_none() {
-            let _ = client.batch_execute("ROLLBACK").await;
-            return Err(Error::Data(format!("proposal {id} was not found")));
+        let live: Option<bool> = row.get(0);
+        if live == Some(true) {
+            return Err(Error::ProposalBusy(id));
         }
+        let token = Uuid::now_v7();
+        let millis = lease_millis();
+        tx.execute(
+            "UPDATE proposals
+             SET claimed_by = $2,
+                 claimed_until = now() + ($3::bigint * interval '1 millisecond')
+             WHERE id = $1",
+            &[&id, &token, &millis],
+        )
+        .await?;
+        tx.commit().await?;
         Ok(ProposalLock {
-            client: Some(client),
+            store: self.clone(),
+            id,
+            token,
+            state: AtomicU8::new(PROPOSAL_LOCK_HELD),
         })
+    }
+
+    async fn release_proposal_claim(&self, id: Uuid, token: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "UPDATE proposals
+                 SET claimed_by = NULL, claimed_until = NULL
+                 WHERE id = $1 AND claimed_by = $2",
+                &[&id, &token],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Makes a live claim look expired so the next claim can take it.
+    ///
+    /// Tests use this instead of waiting out [`PROPOSAL_LEASE`].
+    async fn extend_proposal_lease(
+        &self,
+        tx: &Transaction<'_>,
+        id: Uuid,
+        claim: Uuid,
+    ) -> Result<(), Error> {
+        let millis = lease_millis();
+        tx.execute(
+            "UPDATE proposals
+             SET claimed_until = now() + ($3::bigint * interval '1 millisecond')
+             WHERE id = $1 AND claimed_by = $2",
+            &[&id, &claim, &millis],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn expire_proposal_claim(&self, id: Uuid) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "UPDATE proposals
+                 SET claimed_until = now() - interval '1 second'
+                 WHERE id = $1",
+                &[&id],
+            )
+            .await?;
+        Ok(())
     }
 
     /// Sets the row status and applies `write` in one transaction.
@@ -609,14 +723,18 @@ impl Store {
         row_id: Uuid,
         status: &str,
         write: ProposalWrite,
+        claim: Uuid,
     ) -> Result<Option<WriteReceipt>, Error> {
         let mut client = self.pool().get().await?;
         let tx = client.transaction().await?;
         let outcome = self
-            .commit_proposal_row_in(&tx, actor, proposal_id, row_id, status, write)
+            .commit_proposal_row_in(&tx, actor, proposal_id, row_id, status, write, claim)
             .await;
         match outcome {
             Ok(value) => {
+                // The row write may have taken longer than the lease. Refresh
+                // it before commit, while this transaction still holds the row.
+                self.extend_proposal_lease(&tx, proposal_id, claim).await?;
                 tx.commit().await?;
                 if let Some(committed) = value.as_ref()
                     && let Some((defs, groups)) = committed.definitions.as_ref()
@@ -636,6 +754,8 @@ impl Store {
         }
     }
 
+    // The claim token has to travel with the row, the status and the write.
+    #[expect(clippy::too_many_arguments)]
     async fn commit_proposal_row_in(
         &self,
         tx: &Transaction<'_>,
@@ -644,7 +764,31 @@ impl Store {
         row_id: Uuid,
         status: &str,
         write: ProposalWrite,
+        claim: Uuid,
     ) -> Result<Option<CommittedProposalRow>, Error> {
+        let proposal = tx
+            .query_opt(
+                "SELECT claimed_by FROM proposals WHERE id = $1 FOR UPDATE",
+                &[&proposal_id],
+            )
+            .await?;
+        let Some(proposal) = proposal else {
+            return Err(Error::ProposalNotFound(proposal_id));
+        };
+        let holder: Option<Uuid> = proposal.get(0);
+        if holder != Some(claim) {
+            let row_status: Option<String> = tx
+                .query_opt(
+                    "SELECT status FROM proposal_rows WHERE proposal_id = $1 AND id = $2",
+                    &[&proposal_id, &row_id],
+                )
+                .await?
+                .map(|row| row.get(0));
+            if row_status.as_deref() == Some("pending") {
+                return Err(Error::ProposalClaimLost(proposal_id));
+            }
+            return Ok(None);
+        }
         let claimed = tx
             .query_opt(
                 "UPDATE proposal_rows SET status = $3

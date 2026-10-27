@@ -70,6 +70,20 @@ pub enum Error {
     EmptyChunk,
     #[error("index claim on {lane} from {from_seq} is no longer held")]
     ClaimLost { lane: String, from_seq: i64 },
+    #[error("proposal {0} was not found")]
+    ProposalNotFound(uuid::Uuid),
+    #[error("proposal {id} cannot move from {from} to {to}")]
+    ProposalTransition {
+        id: uuid::Uuid,
+        from: String,
+        to: String,
+    },
+    /// Another worker holds a live lease on this proposal.
+    #[error("proposal {0} is already being applied")]
+    ProposalBusy(uuid::Uuid),
+    /// The lease expired or another worker took the proposal.
+    #[error("proposal {0} is no longer held")]
+    ProposalClaimLost(uuid::Uuid),
 }
 
 impl Error {

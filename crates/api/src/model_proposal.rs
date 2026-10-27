@@ -140,6 +140,7 @@ pub async fn apply_row(
     proposal_id: Uuid,
     row_id: Uuid,
     row: &Value,
+    claim: Uuid,
 ) -> Result<Option<i64>, Problem> {
     let change: ModelChange =
         serde_json::from_value(row.get("patch").cloned().unwrap_or(json!({})))
@@ -175,6 +176,7 @@ pub async fn apply_row(
                     defs,
                     purge: Box::new(purge),
                 },
+                claim,
             )
             .await
         {

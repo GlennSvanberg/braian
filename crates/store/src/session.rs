@@ -165,6 +165,15 @@ impl Store {
         client
             .batch_execute("SELECT ensure_change_partitions(3)")
             .await?;
+        // A dead worker's proposal lease must not survive this process starting.
+        // A lease that is still in the future belongs to a live worker and stays.
+        client
+            .batch_execute(
+                "UPDATE proposals
+                 SET claimed_by = NULL, claimed_until = NULL
+                 WHERE claimed_until IS NOT NULL AND claimed_until < now()",
+            )
+            .await?;
         crate::ops::backfill_attribute_parts(&mut client).await?;
         drop(client);
         handle.abort();

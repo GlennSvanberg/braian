@@ -165,6 +165,24 @@ pub fn store_status(error: StoreError) -> Problem {
             "agent_requires_behalf",
             format!("agent {id} requires on_behalf_of"),
         ),
+        StoreError::ProposalNotFound(_) => {
+            Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal")
+        }
+        StoreError::ProposalTransition { from, to, .. } => Problem::new(
+            StatusCode::CONFLICT,
+            "invalid_transition",
+            format!("a proposal cannot move from {from} to {to}"),
+        ),
+        StoreError::ProposalBusy(_) => Problem::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this proposal is already being applied",
+        ),
+        StoreError::ProposalClaimLost(_) => Problem::new(
+            StatusCode::CONFLICT,
+            "claim_lost",
+            "this proposal is no longer held",
+        ),
         other => {
             tracing::error!(error = %other, "store request failed");
             Problem::new(
