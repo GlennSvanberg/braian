@@ -368,6 +368,8 @@ async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
     assert_open_seq_blocks(store, cursor).await;
 
     early.batch_execute("ROLLBACK").await.unwrap();
+    // "Nothing else is open" has to hold for the reads below, not just usually.
+    let quiet = quiet_database(&db.database_url()).await;
     let tail = store.changes_after(cursor, 10).await.unwrap();
     assert_eq!(
         tail.iter().map(|row| row.seq).collect::<Vec<_>>(),
@@ -375,21 +377,11 @@ async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
     );
     assert!(tail.iter().all(|row| row.seq != low));
     assert_eq!(store.safe_change_seq().await.unwrap(), high);
-    // The pressure gauge writes on its own connection. While that statement
-    // holds an xid, a leading hole looks open and the claim waits. Retry until
-    // the database is quiet again.
-    let mut interactive = None;
-    for _ in 0..20 {
-        interactive = store
-            .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
-            .await
-            .unwrap();
-        if interactive.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let interactive = interactive.expect("interactive");
+    let interactive = store
+        .claim_changes("interactive", Uuid::now_v7(), 10, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .expect("interactive");
     assert_eq!(interactive.events[0].seq, high);
     assert!(
         store
@@ -400,6 +392,55 @@ async fn an_aborted_seq_is_skipped_once_nothing_else_is_open() {
         "aborted bulk seq was claimed as a row"
     );
     assert_eq!(store.lane_committed("bulk").await.unwrap(), high);
+    quiet.batch_execute("COMMIT").await.unwrap();
+}
+
+/// Keeps every other transaction in this database out until the returned
+/// session commits.
+///
+/// Two backends besides the test take an xid here on their own schedule, and
+/// the log rightly treats an aborted seq as one that may still commit while
+/// either is open:
+///
+/// - The store's pressure gauge upserts `interactive_pressure` on its own
+///   connection every 15 ms. `SHARE` waits for a running upsert to commit and
+///   blocks the next one at its table lock, before it takes an xid.
+/// - An autovacuum worker that connects to this database also analyzes the
+///   shared `pg_database`, which every parallel test churns with `CREATE` and
+///   `DROP DATABASE`. Analyze takes an xid. Holding `SHARE UPDATE EXCLUSIVE`
+///   waits for a running one and makes autovacuum skip the table. It does not
+///   block `CREATE DATABASE`. The `SHARE` lock above also keeps autovacuum off
+///   `interactive_pressure`.
+///
+/// `LOCK TABLE` takes no xid, so this session is not counted as open either.
+async fn quiet_database(url: &str) -> tokio_postgres::Client {
+    let quiet = begin(url).await;
+    quiet
+        .batch_execute(
+            "LOCK TABLE interactive_pressure IN SHARE MODE;
+             LOCK TABLE pg_catalog.pg_database IN SHARE UPDATE EXCLUSIVE MODE",
+        )
+        .await
+        .unwrap();
+    let open: Vec<String> = quiet
+        .query(
+            "SELECT backend_type || ': ' || coalesce(query, '')
+             FROM pg_stat_activity
+             WHERE datname = current_database()
+               AND pid <> pg_backend_pid()
+               AND backend_xid IS NOT NULL",
+            &[],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert!(
+        open.is_empty(),
+        "another transaction is still open: {open:?}"
+    );
+    quiet
 }
 
 /// The blocking transaction starts after the read's first activity check and
