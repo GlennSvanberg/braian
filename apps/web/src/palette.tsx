@@ -257,7 +257,7 @@ export function CommandPalette({
           id: `link:type:${String(item.key)}`,
           sourceId: `link:type:${String(item.key)}`,
           group: 'object' as const,
-          title: String(item.key),
+          title: textValue(item.labels, uiLanguage) || textValue(item.singular, uiLanguage) || String(item.key),
           subtitle: copy.linkTo,
         }))
       setStack((current) => [...current, { label: copy.linkTo, rows }])
@@ -947,7 +947,7 @@ function buildCatalog(
       { id: 'object:open', group: 'object', title: selectedSingular ? `Open ${selectedSingular}` : 'Open detail', subtitle: selectedSingular ? `On this ${selectedSingular}` : 'On the selected object', kbd: 'Enter' },
       { id: 'object:right', group: 'object', title: 'Open to the right', subtitle: 'Split beside the table' },
       { id: 'object:history', group: 'object', title: 'History', subtitle: 'As it was, and restore' },
-      { id: 'object:graph', group: 'object', title: 'Graph', subtitle: 'Relations and where values come from' },
+      { id: 'object:graph', group: 'object', title: 'Graph', subtitle: 'Links and where values come from' },
       { id: 'object:copy', group: 'object', title: 'Copy id', subtitle: objectId },
     )
   }

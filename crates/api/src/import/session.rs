@@ -1,6 +1,6 @@
 //! Disk spool, parse/diff workers, and live progress events.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -449,7 +449,16 @@ async fn flush_chunk(
         .get_by_keys(type_id, &keys)
         .await
         .map_err(|error| error.to_string())?;
-    let refs = preload_refs(state, model, targets, columns, buffer).await?;
+    let ids: Vec<Uuid> = existing
+        .values()
+        .map(|item| item.object.id.as_uuid())
+        .collect();
+    let peer_index = state
+        .store
+        .link_peer_index(&ids)
+        .await
+        .map_err(|error| error.to_string())?;
+    let refs = preload_refs(state, model, defs, targets, columns, buffer).await?;
     let mut rows = Vec::new();
     for (row_no, cells) in buffer.drain(..) {
         let key = id_column.and_then(|index| {
@@ -479,6 +488,7 @@ async fn flush_chunk(
             found,
             duplicate,
             &mut resolve,
+            &current_link_sets(defs, found, &peer_index),
         );
         match classified.outcome.status.as_str() {
             "new" => counters.new += 1,
@@ -530,9 +540,34 @@ async fn flush_chunk(
     Ok(())
 }
 
+fn current_link_sets(
+    defs: &braian_model::DefinitionSet,
+    found: Option<&braian_store::StoredObject>,
+    peer_index: &HashMap<Uuid, BTreeMap<(Uuid, bool), BTreeSet<String>>>,
+) -> BTreeMap<(String, bool), BTreeSet<String>> {
+    let Some(stored) = found else {
+        return BTreeMap::new();
+    };
+    let Some(sides) = peer_index.get(&stored.object.id.as_uuid()) else {
+        return BTreeMap::new();
+    };
+    let mut sets = BTreeMap::new();
+    for ((type_id, outgoing), keys) in sides {
+        let type_key = defs
+            .types
+            .iter()
+            .find(|item| item.id.as_uuid() == *type_id)
+            .map(|item| item.key.clone())
+            .unwrap_or_default();
+        sets.insert((type_key, *outgoing), keys.clone());
+    }
+    sets
+}
+
 async fn preload_refs(
     state: &AppState,
     model: &braian_rules::CompiledModel,
+    defs: &braian_model::DefinitionSet,
     targets: &[mapping::Target],
     columns: &[MappedColumn],
     buffer: &[(u32, Vec<Option<String>>)],
@@ -544,6 +579,49 @@ async fn preload_refs(
             let Some(target) = mapping::find_target(targets, &column.target) else {
                 continue;
             };
+            if target.kind == "link" {
+                let Some(rest) = target.id.strip_prefix("link:") else {
+                    continue;
+                };
+                let Some((type_key, direction)) = rest.rsplit_once(':') else {
+                    continue;
+                };
+                let Some(link) = defs
+                    .types
+                    .iter()
+                    .find(|item| item.is_link() && item.key == type_key)
+                else {
+                    continue;
+                };
+                let Some(spec) = link.link.as_ref() else {
+                    continue;
+                };
+                let opposite = if direction == "out" {
+                    &spec.to_types
+                } else {
+                    &spec.from_types
+                };
+                let Some(text) = cells.get(column.index).and_then(|cell| cell.clone()) else {
+                    continue;
+                };
+                for token in text.split(',') {
+                    let token = token.trim();
+                    if token.is_empty() || Uuid::parse_str(token).is_ok() {
+                        continue;
+                    }
+                    for type_id in opposite {
+                        let Some(object_type) = defs.types.iter().find(|item| item.id == *type_id)
+                        else {
+                            continue;
+                        };
+                        wanted
+                            .entry(object_type.key.clone())
+                            .or_default()
+                            .push(token.to_owned());
+                    }
+                }
+                continue;
+            }
             let Some(attribute_key) = target.attribute_key.as_deref() else {
                 continue;
             };

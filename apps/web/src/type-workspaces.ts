@@ -31,7 +31,7 @@ export function orderWorkspaces<T extends { share_token?: string | null }>(rows:
 
 export function missingTypeWorkspaces(rows: Array<{ share_token?: string | null }>, types: TypeName[]) {
   const tokens = new Set(rows.map((row) => row.share_token).filter((token): token is string => Boolean(token)))
-  return types.filter((type) => type.id && type.key && !tokens.has(typeShareToken(type.key)))
+  return types.filter((type) => type.kind !== 'link' && type.id && type.key && !tokens.has(typeShareToken(type.key)))
 }
 
 /** A type with no `structures` field still uses a tree. An empty list does not. */

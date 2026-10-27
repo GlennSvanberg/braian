@@ -956,24 +956,6 @@
       }
     },
     {
-      "id": "018f0000-0000-7000-8000-000000000107",
-      "key": "replaces",
-      "labels": {
-        "en": "Replaces"
-      },
-      "language_dependent": false,
-      "multiple": false,
-      "kind": {
-        "type": "object_ref",
-        "type_key": "article"
-      },
-      "index": {
-        "searchable": false,
-        "filterable": true,
-        "sortable": false
-      }
-    },
-    {
       "id": "018f0000-0000-7000-8000-000000000108",
       "key": "co2_footprint",
       "labels": {
@@ -1313,44 +1295,6 @@
         "filterable": true,
         "sortable": true
       }
-    },
-    {
-      "id": "018f0000-0000-7000-8000-00000000011a",
-      "key": "product",
-      "labels": {
-        "en": "Product"
-      },
-      "language_dependent": false,
-      "multiple": false,
-      "kind": {
-        "type": "object_ref",
-        "type_key": "product"
-      },
-      "index": {
-        "searchable": false,
-        "filterable": true,
-        "sortable": false
-      },
-      "required": true
-    },
-    {
-      "id": "018f0000-0000-7000-8000-00000000011b",
-      "key": "supplier",
-      "labels": {
-        "en": "Supplier"
-      },
-      "language_dependent": false,
-      "multiple": false,
-      "kind": {
-        "type": "object_ref",
-        "type_key": "supplier"
-      },
-      "index": {
-        "searchable": false,
-        "filterable": true,
-        "sortable": false
-      },
-      "required": true
     },
     {
       "id": "018f0000-0000-7000-8000-00000000011c",
@@ -1775,6 +1719,24 @@
         "filterable": true,
         "sortable": true
       }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000133",
+      "key": "sort_order",
+      "labels": {
+        "en": "Sort order"
+      },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": {
+        "type": "number",
+        "integer": true
+      },
+      "index": {
+        "searchable": false,
+        "filterable": false,
+        "sortable": true
+      }
     }
   ],
   "types": [
@@ -1844,8 +1806,6 @@
         "018f0000-0000-7000-8000-00000000a005",
         "018f0000-0000-7000-8000-000000000119",
         "018f0000-0000-7000-8000-00000000010d",
-        "018f0000-0000-7000-8000-00000000011a",
-        "018f0000-0000-7000-8000-00000000011b",
         "018f0000-0000-7000-8000-00000000011c",
         "018f0000-0000-7000-8000-00000000011d",
         "018f0000-0000-7000-8000-00000000011e",
@@ -1862,7 +1822,6 @@
         "018f0000-0000-7000-8000-000000000106",
         "018f0000-0000-7000-8000-000000000104",
         "018f0000-0000-7000-8000-000000000103",
-        "018f0000-0000-7000-8000-000000000107",
         "018f0000-0000-7000-8000-000000000108"
       ],
       "structures": [
@@ -1903,6 +1862,136 @@
       ],
       "structures": [],
       "defaults": {}
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000210",
+      "key": "product_articles",
+      "labels": {
+        "en": "Product"
+      },
+      "singular": {
+        "en": "Product"
+      },
+      "plural": {
+        "en": "Products"
+      },
+      "key_attribute": "018f0000-0000-7000-8000-00000000a003",
+      "attributes": [
+        "018f0000-0000-7000-8000-00000000a003",
+        "018f0000-0000-7000-8000-00000000a004",
+        "018f0000-0000-7000-8000-00000000a005",
+        "018f0000-0000-7000-8000-000000000133"
+      ],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": [
+          "018f0000-0000-7000-8000-000000000200"
+        ],
+        "to_types": [
+          "018f0000-0000-7000-8000-000000000201"
+        ],
+        "from_label": {
+          "key": "product",
+          "labels": {
+            "en": "Product"
+          }
+        },
+        "to_label": {
+          "key": "articles",
+          "labels": {
+            "en": "Articles"
+          }
+        },
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000211",
+      "key": "supplier_articles",
+      "labels": {
+        "en": "Supplier"
+      },
+      "singular": {
+        "en": "Supplier"
+      },
+      "plural": {
+        "en": "Suppliers"
+      },
+      "key_attribute": "018f0000-0000-7000-8000-00000000a003",
+      "attributes": [
+        "018f0000-0000-7000-8000-00000000a003",
+        "018f0000-0000-7000-8000-00000000a004",
+        "018f0000-0000-7000-8000-00000000a005"
+      ],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": [
+          "018f0000-0000-7000-8000-000000000202"
+        ],
+        "to_types": [
+          "018f0000-0000-7000-8000-000000000201"
+        ],
+        "from_label": {
+          "key": "supplier",
+          "labels": {
+            "en": "Supplier"
+          }
+        },
+        "to_label": {
+          "key": "articles",
+          "labels": {
+            "en": "Articles"
+          }
+        },
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000212",
+      "key": "replaces",
+      "labels": {
+        "en": "Replaces"
+      },
+      "singular": {
+        "en": "Replaces"
+      },
+      "plural": {
+        "en": "Replaces"
+      },
+      "key_attribute": "018f0000-0000-7000-8000-00000000a003",
+      "attributes": [
+        "018f0000-0000-7000-8000-00000000a003",
+        "018f0000-0000-7000-8000-00000000a004",
+        "018f0000-0000-7000-8000-00000000a005"
+      ],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": [
+          "018f0000-0000-7000-8000-000000000201"
+        ],
+        "to_types": [
+          "018f0000-0000-7000-8000-000000000201"
+        ],
+        "from_label": {
+          "key": "replaces",
+          "labels": {
+            "en": "Replaces"
+          }
+        },
+        "to_label": {
+          "key": "replaced_by",
+          "labels": {
+            "en": "Replaced by"
+          }
+        },
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
     }
   ],
   "structures": [

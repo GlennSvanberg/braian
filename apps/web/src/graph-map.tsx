@@ -20,7 +20,6 @@ import {
   expandStructure,
   expandClass,
   groupMembers,
-  objectRefIds,
   isLegendHidden,
   kindLabel,
   labelPriority,
@@ -54,6 +53,7 @@ import {
 } from './graph-chrome'
 import { openObjectLabel } from './type-labels'
 import { copy, uiLanguage } from './i18n'
+import { linkChoices } from './link-section'
 
 type SimNode = SimulationNodeDatum & SceneNode & { degree: number }
 type SimLink = SimulationLinkDatum<SimNode> & { id: string; label: string }
@@ -91,6 +91,7 @@ export function GraphMap({
   const [pinTick, setPinTick] = useState(0)
   const [busy, setBusy] = useState('')
   const [sheet, setSheet] = useState<SheetMode>('compact')
+  const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; typeKey: string } | null>(null)
   const [pane, setPane] = useState<{ width: number; height: number } | null>(null)
   const expandedRef = useRef(new Set<string>([focusKey]))
   const inflightRef = useRef(new Set<string>())
@@ -207,9 +208,8 @@ export function GraphMap({
           api<Json>(`/v1/objects/${node.objectId}/graph`),
           api<Json>(`/v1/objects/${node.objectId}`),
         ])
-        const relationIds = ((graph.relations as Json[]) ?? []).map((relation) => String(relation.object_id ?? '')).filter(Boolean)
-        const refIds = objectRefIds(defsRef.current, (object.values as Json) ?? {})
-        const nextKnown = await resolveNames([String(graph.id ?? node.objectId), ...relationIds, ...refIds], knownRef.current)
+        const linkIds = ((graph.links as Json[]) ?? []).map((item) => String(item.object_id ?? '')).filter(Boolean)
+        const nextKnown = await resolveNames([String(graph.id ?? node.objectId), ...linkIds], knownRef.current)
         knownRef.current = nextKnown
         setKnown(nextKnown)
         extra = buildScene({
@@ -1026,11 +1026,48 @@ export function GraphMap({
               selectRef.current(node.id)
               void expand(node)
             }}
+            onContextMenu={(event) => {
+              if (node.kind !== 'object' || !node.typeKey) return
+              event.preventDefault()
+              setLinkMenu({ x: event.clientX, y: event.clientY, typeKey: node.typeKey })
+            }}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && node.kind === 'object' && node.typeKey) {
+                event.preventDefault()
+                const rect = event.currentTarget.getBoundingClientRect()
+                setLinkMenu({ x: rect.left, y: rect.bottom, typeKey: node.typeKey })
+              }
+            }}
           >
             {node.caption}
           </button>
         ))}
       </div>
+      {linkMenu ? (
+        <div
+          className="menu"
+          role="menu"
+          data-testid="graph-link-menu"
+          style={{ position: 'fixed', left: linkMenu.x, top: linkMenu.y, zIndex: 30 }}
+        >
+          {linkChoices(defs, linkMenu.typeKey).map((choice) => (
+            <button
+              key={choice.key}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: choice.key } }))
+                setLinkMenu(null)
+              }}
+            >
+              {choice.label}
+            </button>
+          ))}
+          <button type="button" role="menuitem" onClick={() => setLinkMenu(null)}>
+            {copy.cancel}
+          </button>
+        </div>
+      ) : null}
       <div className="graph-a11y" data-testid="attribute-provenance">
         <p>{copy.attributeProvenance}</p>
         {scene.nodes
@@ -1165,6 +1202,16 @@ function GraphInspector({
       {placement === 'sheet' && node.objectId ? (
         <button type="button" className="primary graph-action" onClick={() => onOpen(node.objectId!)}>
           {openObjectLabel(node.typeName)}
+        </button>
+      ) : null}
+      {node.kind === 'object' && node.typeKey ? (
+        <button
+          type="button"
+          className="graph-action"
+          data-testid="graph-add-link"
+          onClick={() => window.dispatchEvent(new CustomEvent('braian-add-link', { detail: {} }))}
+        >
+          {copy.addLink}
         </button>
       ) : null}
       {placement === 'sheet' && node.properties.length > 0 ? (

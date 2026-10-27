@@ -67,7 +67,7 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
     case 'patch_object':
     case 'create_object':
     case 'mass_edit':
-    case 'set_relation':
+    case 'create_link':
     case 'rollback':
       return 'Preparing a proposal…'
     case 'list_assortments':

@@ -154,6 +154,7 @@ async fn connect() -> anyhow::Result<Store> {
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is not set"))?;
     let store = Store::connect(&database_url).await?;
     store.upgrade_standard_attributes().await?;
+    store.upgrade_object_refs().await?;
     Ok(store)
 }
 

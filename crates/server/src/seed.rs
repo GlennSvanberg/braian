@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use braian_model::{AttributeId, DefinitionSet, Object, ObjectId};
+use braian_model::{AttributeId, Cardinality, DefinitionSet, Object, ObjectId, TypeId};
 use braian_rules::CompiledModel;
 use braian_search::Typesense;
 use braian_store::{Actor, BatchKind, Error, ObjectOp, PrincipalId, ProposalRow, Store};
@@ -63,6 +63,11 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
     seed_demo_surface(store, &user, &defs).await?;
     let model =
         CompiledModel::compile(&defs).map_err(|errors| anyhow::anyhow!("{}", errors[0].message))?;
+    let links = LinkSeed {
+        model: &model,
+        defs: &defs,
+        revision: defs.model_revision,
+    };
     let rows: Vec<Value> = serde_json::from_str(OBJECTS)?;
     for row in &rows {
         let type_key = row["type"].as_str().unwrap_or("");
@@ -75,8 +80,10 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
                 .map_err(|error| anyhow::anyhow!("object id: {error}"))?,
         );
         // A previous run, or an edit that changed the business key, still owns this id.
-        if store.get_object(id).await?.is_some() || store.get_by_key(type_id, key).await?.is_some()
-        {
+        let present = store.get_object(id).await?.is_some()
+            || store.get_by_key(type_id, key).await?.is_some();
+        if present {
+            seed_row_links(store, &actor, &links, row).await?;
             continue;
         }
         let groups = match row["group"].as_str().filter(|key| !key.is_empty()) {
@@ -119,6 +126,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         store
             .write_batch(&actor, vec![ObjectOp::Create(object)])
             .await?;
+        seed_row_links(store, &actor, &links, row).await?;
     }
 
     // The seeded proposal points at ART-CHED-400. Heroes are written above;
@@ -131,7 +139,7 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(DEFAULT_SEED_COUNT);
     if target > 0 {
-        seed_catalog(store, &actor, &model, defs.model_revision, target).await?;
+        seed_catalog(store, &actor, &links, target).await?;
     }
 
     if let Some(search) = search {
@@ -1069,22 +1077,6 @@ fn fill_values(model: &CompiledModel, slot: &Slot) -> anyhow::Result<BTreeMap<At
                 "gtin",
                 json!(format!("{:014}", 7_300_000_000_000u64 + u64::from(index))),
             )?;
-            if let Some(product) = slot.product {
-                put_attr(
-                    model,
-                    &mut values,
-                    "product",
-                    json!(synthetic_id(product).as_uuid().to_string()),
-                )?;
-            }
-            if let Some(supplier) = slot.supplier {
-                put_attr(
-                    model,
-                    &mut values,
-                    "supplier",
-                    json!(synthetic_id(supplier).as_uuid().to_string()),
-                )?;
-            }
             put_attr(model, &mut values, "units_per_pack", whole(1 + (index % 6)))?;
             if uses_volume(group) {
                 let ml = 250 + (index % 4) * 250;
@@ -1225,19 +1217,7 @@ fn synthetic_object(
     } else {
         BTreeMap::new()
     };
-    let mut values = fill_values(model, &slot)?;
-    if slot.type_key == "article" && index.is_multiple_of(11) {
-        let article_n = index - suppliers - products;
-        if article_n > 0 {
-            let previous = index - 1;
-            put_attr(
-                model,
-                &mut values,
-                "replaces",
-                json!(synthetic_id(previous).as_uuid().to_string()),
-            )?;
-        }
-    }
+    let values = fill_values(model, &slot)?;
     Ok(Object {
         id: synthetic_id(index),
         type_id,
@@ -1250,18 +1230,12 @@ fn synthetic_object(
 async fn seed_catalog(
     store: &Store,
     actor: &Actor,
-    model: &CompiledModel,
-    revision: u64,
+    links: &LinkSeed<'_>,
     target: u32,
 ) -> anyhow::Result<()> {
+    let model = links.model;
+    let revision = links.revision;
     let existing: HashSet<String> = store.keys_with_prefix("SYN-").await?.into_iter().collect();
-    if existing.len() >= target as usize {
-        println!(
-            "seed catalog already has {} synthetic objects (target {target})",
-            existing.len()
-        );
-        return Ok(());
-    }
     let (suppliers, products, articles) = catalog_plan(target);
     if suppliers + products + articles != target {
         return Err(anyhow::anyhow!(
@@ -1277,33 +1251,306 @@ async fn seed_catalog(
     let batch = store.open_batch(&bulk).await?;
     let mut pending = Vec::new();
     let mut inserted = 0u32;
-    for index in 0..target {
-        let key = format!("SYN-{index:06}");
-        if existing.contains(&key) {
-            continue;
+    if existing.len() < target as usize {
+        for index in 0..target {
+            let key = format!("SYN-{index:06}");
+            if existing.contains(&key) {
+                continue;
+            }
+            let object = synthetic_object(model, revision, index, suppliers, products)?;
+            let errors = model.validate(&object);
+            if !errors.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "seed {key} failed validation: {}",
+                    errors[0].message
+                ));
+            }
+            pending.push(ObjectOp::Create(object));
+            if pending.len() == 400 {
+                let chunk = std::mem::take(&mut pending);
+                inserted += u32::try_from(chunk.len()).unwrap_or(0);
+                store.write_ops(batch, &bulk, chunk).await?;
+            }
         }
-        let object = synthetic_object(model, revision, index, suppliers, products)?;
-        let errors = model.validate(&object);
-        if !errors.is_empty() {
-            return Err(anyhow::anyhow!(
-                "seed {key} failed validation: {}",
-                errors[0].message
-            ));
+        if !pending.is_empty() {
+            inserted += u32::try_from(pending.len()).unwrap_or(0);
+            store.write_ops(batch, &bulk, pending).await?;
         }
-        pending.push(ObjectOp::Create(object));
-        if pending.len() == 400 {
-            let chunk = std::mem::take(&mut pending);
-            inserted += u32::try_from(chunk.len()).unwrap_or(0);
-            store.write_ops(batch, &bulk, chunk).await?;
-        }
-    }
-    if !pending.is_empty() {
-        inserted += u32::try_from(pending.len()).unwrap_or(0);
-        store.write_ops(batch, &bulk, pending).await?;
     }
     println!(
         "seed catalog inserted {inserted} synthetic objects (target {target}, {suppliers} suppliers, {products} products, {articles} articles)"
     );
+    seed_catalog_links(&store, &bulk, batch, links, (suppliers, products, articles)).await?;
+    Ok(())
+}
+
+/// The live model the seed writes links against.
+struct LinkSeed<'a> {
+    model: &'a CompiledModel,
+    defs: &'a DefinitionSet,
+    revision: u64,
+}
+
+struct PlannedLink {
+    op: ObjectOp,
+    type_id: TypeId,
+    from_id: ObjectId,
+    to_id: ObjectId,
+    from_one: bool,
+    to_one: bool,
+}
+
+/// Pairs and cardinality-one ends already chosen in this batch.
+struct LinkSeen {
+    pairs: HashSet<(TypeId, ObjectId, ObjectId)>,
+    froms: HashSet<(TypeId, ObjectId)>,
+    tos: HashSet<(TypeId, ObjectId)>,
+}
+
+impl LinkSeen {
+    fn blocks(&self, plan: &PlannedLink) -> bool {
+        self.pairs
+            .contains(&(plan.type_id, plan.from_id, plan.to_id))
+            || (plan.from_one && self.froms.contains(&(plan.type_id, plan.from_id)))
+            || (plan.to_one && self.tos.contains(&(plan.type_id, plan.to_id)))
+    }
+
+    fn remember(&mut self, plan: &PlannedLink) {
+        self.pairs.insert((plan.type_id, plan.from_id, plan.to_id));
+        if plan.from_one {
+            self.froms.insert((plan.type_id, plan.from_id));
+        }
+        if plan.to_one {
+            self.tos.insert((plan.type_id, plan.to_id));
+        }
+    }
+}
+
+async fn seed_row_links(
+    store: &Store,
+    actor: &Actor,
+    links: &LinkSeed<'_>,
+    row: &Value,
+) -> anyhow::Result<()> {
+    let Some(rows) = row.get("links").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let to_id = ObjectId::from_uuid(Uuid::parse_str(row["id"].as_str().unwrap_or_default())?);
+    let mut seen = LinkSeen {
+        pairs: HashSet::new(),
+        froms: HashSet::new(),
+        tos: HashSet::new(),
+    };
+    for link in rows {
+        let id = ObjectId::from_uuid(Uuid::parse_str(link["id"].as_str().unwrap_or_default())?);
+        if store.get_object(id).await?.is_some() {
+            continue;
+        }
+        let Some(plan) = plan_link(
+            links,
+            id,
+            link["type"].as_str().unwrap_or(""),
+            ObjectId::from_uuid(Uuid::parse_str(link["from"].as_str().unwrap_or_default())?),
+            to_id,
+            link.get("sort_order"),
+        ) else {
+            continue;
+        };
+        if link_already_held(store, &plan, &seen).await? {
+            seen.remember(&plan);
+            continue;
+        }
+        seen.remember(&plan);
+        store.write_batch(actor, vec![plan.op]).await?;
+    }
+    Ok(())
+}
+
+/// A link the current model can store. An upgraded demo has the link types and
+/// not `sort_order`; a missing type or attribute is skipped instead of failing boot.
+fn plan_link(
+    links: &LinkSeed<'_>,
+    id: ObjectId,
+    type_key: &str,
+    from_id: ObjectId,
+    to_id: ObjectId,
+    sort_order: Option<&Value>,
+) -> Option<PlannedLink> {
+    let object_type = links
+        .defs
+        .types
+        .iter()
+        .find(|item| item.key == type_key && item.is_link())?;
+    let spec = object_type.link.as_ref()?;
+    let mut values = BTreeMap::new();
+    if let Some(order) = sort_order.and_then(Value::as_str)
+        && let Some(attribute) = links.model.attribute_by_key("sort_order")
+        && object_type.attributes.contains(&attribute.id)
+    {
+        values.insert(attribute.id, json!({ "value": order }));
+    }
+    Some(PlannedLink {
+        op: ObjectOp::CreateLink {
+            object: Object {
+                id,
+                type_id: object_type.id,
+                model_revision: links.revision,
+                groups: BTreeMap::new(),
+                values,
+            },
+            from_id,
+            to_id,
+        },
+        type_id: object_type.id,
+        from_id,
+        to_id,
+        from_one: spec.from_cardinality == Cardinality::One,
+        to_one: spec.to_cardinality == Cardinality::One,
+    })
+}
+
+async fn link_already_held(
+    store: &Store,
+    plan: &PlannedLink,
+    seen: &LinkSeen,
+) -> anyhow::Result<bool> {
+    if seen.blocks(plan) {
+        return Ok(true);
+    }
+    Ok(store
+        .link_blocks(
+            plan.type_id,
+            plan.from_id,
+            plan.to_id,
+            plan.from_one,
+            plan.to_one,
+        )
+        .await?)
+}
+
+fn synthetic_link_id(kind: u8, index: u32) -> ObjectId {
+    let mut bytes = [
+        0x01, 0x8f, 0x31, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    bytes[11] = kind;
+    let be = index.to_be_bytes();
+    bytes[12..16].copy_from_slice(&be);
+    ObjectId::from_uuid(Uuid::from_bytes(bytes))
+}
+
+async fn seed_catalog_links(
+    store: &Store,
+    actor: &Actor,
+    batch: braian_store::BatchId,
+    links: &LinkSeed<'_>,
+    counts: (u32, u32, u32),
+) -> anyhow::Result<()> {
+    let (suppliers, products, articles) = counts;
+    let mut pending = Vec::new();
+    let mut seen = LinkSeen {
+        pairs: HashSet::new(),
+        froms: HashSet::new(),
+        tos: HashSet::new(),
+    };
+    for article_n in 0..articles {
+        let index = suppliers + products + article_n;
+        let slot = slot_for(index, suppliers, products);
+        let to_id = synthetic_id(index);
+        if let Some(product) = slot.product {
+            let order = json!(((article_n / products.max(1)) + 1).to_string());
+            queue_link(
+                store,
+                links,
+                &mut seen,
+                &mut pending,
+                LinkRequest {
+                    id: synthetic_link_id(1, index),
+                    type_key: "product_articles",
+                    from_id: synthetic_id(product),
+                    to_id,
+                    sort_order: Some(&order),
+                },
+            )
+            .await?;
+        }
+        if let Some(supplier) = slot.supplier {
+            queue_link(
+                store,
+                links,
+                &mut seen,
+                &mut pending,
+                LinkRequest {
+                    id: synthetic_link_id(2, index),
+                    type_key: "supplier_articles",
+                    from_id: synthetic_id(supplier),
+                    to_id,
+                    sort_order: None,
+                },
+            )
+            .await?;
+        }
+        if index.is_multiple_of(11) && article_n > 0 {
+            queue_link(
+                store,
+                links,
+                &mut seen,
+                &mut pending,
+                LinkRequest {
+                    id: synthetic_link_id(3, index),
+                    type_key: "replaces",
+                    from_id: synthetic_id(index - 1),
+                    to_id,
+                    sort_order: None,
+                },
+            )
+            .await?;
+        }
+        if pending.len() >= 400 {
+            let chunk = std::mem::take(&mut pending);
+            store.write_ops(batch, actor, chunk).await?;
+        }
+    }
+    if !pending.is_empty() {
+        store.write_ops(batch, actor, pending).await?;
+    }
+    Ok(())
+}
+
+struct LinkRequest<'a> {
+    id: ObjectId,
+    type_key: &'a str,
+    from_id: ObjectId,
+    to_id: ObjectId,
+    sort_order: Option<&'a Value>,
+}
+
+async fn queue_link(
+    store: &Store,
+    links: &LinkSeed<'_>,
+    seen: &mut LinkSeen,
+    pending: &mut Vec<ObjectOp>,
+    request: LinkRequest<'_>,
+) -> anyhow::Result<()> {
+    if store.get_object(request.id).await?.is_some() {
+        return Ok(());
+    }
+    let Some(plan) = plan_link(
+        links,
+        request.id,
+        request.type_key,
+        request.from_id,
+        request.to_id,
+        request.sort_order,
+    ) else {
+        return Ok(());
+    };
+    if link_already_held(store, &plan, seen).await? {
+        seen.remember(&plan);
+        return Ok(());
+    }
+    seen.remember(&plan);
+    pending.push(plan.op);
     Ok(())
 }
 
@@ -1446,16 +1693,23 @@ mod tests {
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }));
         assert!(defs.value_lists.iter().all(|list| list.key != "eco_label"));
+        let product_articles = defs
+            .types
+            .iter()
+            .find(|item| item.key == "product_articles")
+            .expect("product articles");
+        assert!(product_articles.is_link());
+        let spec = product_articles.link.as_ref().expect("ends");
+        assert_eq!(spec.from_label.key, "product");
+        assert_eq!(spec.to_label.key, "articles");
+        assert!(spec.to_cardinality == braian_model::Cardinality::One);
         assert!(
-            defs.attributes
+            defs.types
                 .iter()
-                .any(|item| item.key == "product" && item.required)
+                .any(|item| item.key == "supplier_articles" && item.is_link())
         );
-        assert!(
-            defs.attributes
-                .iter()
-                .any(|item| item.key == "supplier" && item.required)
-        );
+        assert!(defs.attributes.iter().any(|item| item.key == "sort_order"));
+        assert!(defs.attributes.iter().all(|item| item.key != "product"));
     }
 
     #[test]
@@ -1854,6 +2108,436 @@ mod tests {
             .count()
     }
 
+    /// V22 demo rows (object refs and a relation) migrate, then the seed runs twice.
+    ///
+    /// The converted link types have no `sort_order`, and their link ids are not
+    /// the ids in `objects.json`. Both seed runs have to finish, and the second
+    /// must not add a link.
+    #[tokio::test]
+    async fn upgraded_v22_demo_seeds_links_twice_and_system_cannot_commit() {
+        load_test_database_url();
+        let _restore = SeedEnv::set(&[
+            ("BRAIAN_DEMO_EMAIL", "upgraded-seed@example.com"),
+            ("BRAIAN_DEMO_PASSWORD", "seed-test-password"),
+            ("BRAIAN_SEED_COUNT", "12"),
+        ]);
+        let db = UpgradeDb::create().await;
+        let source =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../store/migrations");
+        let dir = std::env::temp_dir().join(format!("braian-v22-seed-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for entry in std::fs::read_dir(&source).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name().into_string().unwrap();
+            let Some(version) = name
+                .strip_prefix('V')
+                .and_then(|rest| rest.split_once('_'))
+                .and_then(|(number, _)| number.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if version <= 22 {
+                std::fs::copy(entry.path(), dir.join(name)).unwrap();
+            }
+        }
+        let mut setup = db.connect().await;
+        let migrations = refinery::load_sql_migrations(&dir).unwrap();
+        refinery::Runner::new(&migrations)
+            .run_async(&mut setup.client)
+            .await
+            .unwrap();
+        insert_v22_demo(&setup.client).await;
+        drop(setup);
+
+        let store = braian_store::Store::connect_config(db.config(), braian_store::STORAGE_FORM)
+            .await
+            .unwrap();
+        assert!(store.upgrade_object_refs().await.unwrap());
+        let defs = store.definition_set().await.unwrap();
+        assert!(defs.types.iter().any(|item| item.key == "product_articles"));
+        assert!(defs.attributes.iter().all(|item| item.key != "sort_order"));
+        braian_api::stored_principal_cannot_approve_discard_or_delete(&store)
+            .await
+            .unwrap();
+        let before = link_census(&db).await;
+        assert!(before.0 > 0, "upgrade should have written links");
+        assert_eq!(before.1, 0, "upgrade wrote duplicate pairs");
+
+        run(&store, None).await.expect("first seed");
+        let after_first = link_census(&db).await;
+        assert_eq!(after_first.0, before.0, "the first seed added links");
+        assert_eq!(after_first.1, 0, "the first seed duplicated a pair");
+
+        run(&store, None).await.expect("second seed");
+        let after_second = link_census(&db).await;
+        assert_eq!(after_second.0, after_first.0);
+        assert_eq!(after_second.1, 0);
+        braian_api::stored_principal_cannot_approve_discard_or_delete(&store)
+            .await
+            .unwrap();
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    async fn link_census(db: &UpgradeDb) -> (i64, i64) {
+        let conn = db.connect().await;
+        let links: i64 = conn
+            .client
+            .query_one(
+                "SELECT count(*) FROM links l
+                 JOIN objects object ON object.id = l.object_id AND object.deleted_at IS NULL",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        let duplicates: i64 = conn
+            .client
+            .query_one(
+                "SELECT count(*) FROM (
+                    SELECT 1
+                    FROM links l
+                    JOIN objects object ON object.id = l.object_id AND object.deleted_at IS NULL
+                    GROUP BY l.link_type_id, l.from_id, l.to_id
+                    HAVING count(*) > 1
+                 ) pairs",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        (links, duplicates)
+    }
+
+    async fn insert_v22_demo(client: &tokio_postgres::Client) {
+        let product = Uuid::parse_str("018f0000-0000-7000-8000-000000000200").unwrap();
+        let article = Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap();
+        let supplier = Uuid::parse_str("018f0000-0000-7000-8000-000000000202").unwrap();
+        let number = "018f0000-0000-7000-8000-000000000100";
+        let product_attr = "018f0000-0000-7000-8000-00000000011a";
+        let supplier_attr = "018f0000-0000-7000-8000-00000000011b";
+        let replaces_attr = "018f0000-0000-7000-8000-000000000107";
+        let principal = Uuid::now_v7();
+        let batch = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+                &[&principal as &(dyn tokio_postgres::types::ToSql + Sync)],
+            )
+            .await
+            .unwrap();
+        client
+            .execute(
+                "INSERT INTO batches (id, actor, kind, source) VALUES ($1, $2, 'interactive', 'test')",
+                &[
+                    &batch as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &principal,
+                ],
+            )
+            .await
+            .unwrap();
+        let text = json!({
+            "type": "text",
+            "max_length": 64
+        });
+        let index = json!({"searchable": true, "filterable": true, "sortable": true});
+        let definitions = json!({
+            "model_revision": 1,
+            "languages": ["en"],
+            "unit_families": [],
+            "attributes": [
+                attribute_json(number, "number", text.clone(), false, index.clone()),
+                attribute_json(product_attr, "product", json!({"type": "object_ref", "type_key": "product"}), true, index.clone()),
+                attribute_json(supplier_attr, "supplier", json!({"type": "object_ref", "type_key": "supplier"}), false, index.clone()),
+                attribute_json(replaces_attr, "replaces", json!({"type": "object_ref", "type_key": "article"}), false, index)
+            ],
+            "types": [
+                type_json(product, "product", "Product", number, json!([number])),
+                type_json(article, "article", "Article", number, json!([number, product_attr, supplier_attr, replaces_attr])),
+                type_json(supplier, "supplier", "Supplier", number, json!([number]))
+            ],
+            "structures": []
+        });
+        client
+            .execute(
+                "INSERT INTO definition_revisions (model_revision, definitions, batch_id) VALUES (1, $1, $2)",
+                &[
+                    &definitions as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &batch,
+                ],
+            )
+            .await
+            .unwrap();
+
+        let heroes = [
+            (
+                "018f1000-0000-7000-8000-000000000001",
+                supplier,
+                "SUP-NORTH",
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000002",
+                supplier,
+                "SUP-COAST",
+            ),
+            ("018f1000-0000-7000-8000-000000000011", product, "PROD-OAT"),
+            (
+                "018f1000-0000-7000-8000-000000000012",
+                product,
+                "PROD-CHEDDAR",
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000013",
+                product,
+                "PROD-COFFEE",
+            ),
+            ("018f1000-0000-7000-8000-000000000014", product, "PROD-CHOC"),
+            (
+                "018f1000-0000-7000-8000-000000000021",
+                article,
+                "ART-OAT-1L",
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000022",
+                article,
+                "ART-CHED-200",
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000023",
+                article,
+                "ART-CHED-400",
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000024",
+                article,
+                "ART-COFFEE-250",
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000025",
+                article,
+                "ART-CHOC-100",
+            ),
+        ];
+        for (id, type_id, key) in heroes {
+            let id = Uuid::parse_str(id).unwrap();
+            client
+                .execute(
+                    "INSERT INTO objects (id, type_id, key, version, model_revision) VALUES ($1, $2, $3, 1, 1)",
+                    &[
+                        &id as &(dyn tokio_postgres::types::ToSql + Sync),
+                        &type_id,
+                        &key,
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+        let refs = [
+            (
+                "018f1000-0000-7000-8000-000000000021",
+                "018f1000-0000-7000-8000-000000000011",
+                "018f1000-0000-7000-8000-000000000001",
+                None,
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000022",
+                "018f1000-0000-7000-8000-000000000012",
+                "018f1000-0000-7000-8000-000000000002",
+                None,
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000023",
+                "018f1000-0000-7000-8000-000000000012",
+                "018f1000-0000-7000-8000-000000000002",
+                Some("018f1000-0000-7000-8000-000000000022"),
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000024",
+                "018f1000-0000-7000-8000-000000000013",
+                "018f1000-0000-7000-8000-000000000001",
+                None,
+            ),
+            (
+                "018f1000-0000-7000-8000-000000000025",
+                "018f1000-0000-7000-8000-000000000014",
+                "018f1000-0000-7000-8000-000000000002",
+                None,
+            ),
+        ];
+        for (holder, product_id, supplier_id, replaces) in refs {
+            let mut values = serde_json::Map::new();
+            values.insert(product_attr.into(), json!(product_id));
+            values.insert(supplier_attr.into(), json!(supplier_id));
+            if let Some(replaces) = replaces {
+                values.insert(replaces_attr.into(), json!(replaces));
+            }
+            client
+                .execute(
+                    "INSERT INTO object_values (object_id, part, \"values\", version, is_latest) VALUES ($1, '', $2, 1, true)",
+                    &[
+                        &Uuid::parse_str(holder).unwrap() as &(dyn tokio_postgres::types::ToSql + Sync),
+                        &Value::Object(values),
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+        client
+            .execute(
+                "INSERT INTO relations (from_id, to_id, kind) VALUES ($1, $2, 'article_of')",
+                &[
+                    &Uuid::parse_str("018f1000-0000-7000-8000-000000000021").unwrap()
+                        as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &Uuid::parse_str("018f1000-0000-7000-8000-000000000011").unwrap(),
+                ],
+            )
+            .await
+            .unwrap();
+
+        let (suppliers, products, _) = catalog_plan(12);
+        for index in 0..12 {
+            let slot = slot_for(index, suppliers, products);
+            let type_id = match slot.type_key {
+                "supplier" => supplier,
+                "product" => product,
+                _ => article,
+            };
+            let id = synthetic_id(index).as_uuid();
+            let key = format!("SYN-{index:06}");
+            client
+                .execute(
+                    "INSERT INTO objects (id, type_id, key, version, model_revision) VALUES ($1, $2, $3, 1, 1)",
+                    &[
+                        &id as &(dyn tokio_postgres::types::ToSql + Sync),
+                        &type_id,
+                        &key,
+                    ],
+                )
+                .await
+                .unwrap();
+            if slot.type_key != "article" {
+                continue;
+            }
+            let mut values = serde_json::Map::new();
+            if let Some(product_index) = slot.product {
+                values.insert(
+                    product_attr.into(),
+                    json!(synthetic_id(product_index).as_uuid().to_string()),
+                );
+            }
+            if let Some(supplier_index) = slot.supplier {
+                values.insert(
+                    supplier_attr.into(),
+                    json!(synthetic_id(supplier_index).as_uuid().to_string()),
+                );
+            }
+            let article_n = index - suppliers - products;
+            if index.is_multiple_of(11) && article_n > 0 {
+                values.insert(
+                    replaces_attr.into(),
+                    json!(synthetic_id(index - 1).as_uuid().to_string()),
+                );
+            }
+            client
+                .execute(
+                    "INSERT INTO object_values (object_id, part, \"values\", version, is_latest) VALUES ($1, '', $2, 1, true)",
+                    &[
+                        &id as &(dyn tokio_postgres::types::ToSql + Sync),
+                        &Value::Object(values),
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    fn attribute_json(id: &str, key: &str, kind: Value, required: bool, index: Value) -> Value {
+        json!({
+            "id": id,
+            "key": key,
+            "labels": {"en": key},
+            "language_dependent": false,
+            "multiple": false,
+            "required": required,
+            "kind": kind,
+            "index": index
+        })
+    }
+
+    fn type_json(id: Uuid, key: &str, label: &str, number: &str, attributes: Value) -> Value {
+        json!({
+            "id": id,
+            "key": key,
+            "labels": {"en": label},
+            "key_attribute": number,
+            "attributes": attributes,
+            "structures": []
+        })
+    }
+
+    struct UpgradeDb {
+        name: String,
+        admin_url: String,
+    }
+
+    impl UpgradeDb {
+        async fn create() -> Self {
+            let admin_url = std::env::var("BRAIAN_TEST_DATABASE_URL").expect("database url");
+            let name = format!("u{:032x}", Uuid::now_v7().as_u128());
+            let mut config = braian_store::admin::parse_config(&admin_url).unwrap();
+            config.dbname("postgres");
+            let admin = braian_store::admin::PgConn::connect(config).await.unwrap();
+            braian_store::admin::create_database(&admin.client, &name)
+                .await
+                .unwrap();
+            Self { name, admin_url }
+        }
+
+        fn config(&self) -> tokio_postgres::Config {
+            let mut config = braian_store::admin::parse_config(&self.admin_url).unwrap();
+            config.dbname(&self.name);
+            config
+        }
+
+        async fn connect(&self) -> braian_store::admin::PgConn {
+            braian_store::admin::PgConn::connect(self.config())
+                .await
+                .unwrap()
+        }
+    }
+
+    impl Drop for UpgradeDb {
+        fn drop(&mut self) {
+            let url = self.admin_url.clone();
+            let name = self.name.clone();
+            let _ = std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("upgrade test cleanup");
+                runtime.block_on(async {
+                    for _ in 0..20 {
+                        let Ok(mut config) = braian_store::admin::parse_config(&url) else {
+                            return;
+                        };
+                        config.dbname("postgres");
+                        let Ok(admin) = braian_store::admin::PgConn::connect(config).await else {
+                            return;
+                        };
+                        if braian_store::admin::drop_database(&admin.client, &name)
+                            .await
+                            .is_ok()
+                        {
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                });
+            })
+            .join();
+        }
+    }
+
     fn load_test_database_url() {
         if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_some() {
             return;
@@ -1881,10 +2565,19 @@ mod tests {
 
     struct SeedEnv {
         previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn seed_env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        &LOCK
     }
 
     impl SeedEnv {
         fn set(pairs: &[(&'static str, &str)]) -> Self {
+            let _lock = seed_env_lock()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let previous = pairs
                 .iter()
                 .map(|(key, value)| {
@@ -1893,7 +2586,7 @@ mod tests {
                     (*key, old)
                 })
                 .collect();
-            Self { previous }
+            Self { previous, _lock }
         }
     }
 

@@ -123,6 +123,11 @@ enum ColumnKind {
     Version,
     Blank,
     Attribute(AttrColumn),
+    /// Peer numbers on one side of a link type. `outgoing` is the source's side.
+    Link {
+        link_type: Uuid,
+        outgoing: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -380,7 +385,13 @@ async fn prepare(state: &AppState, body: &ExportBody) -> Result<Prepared, Proble
         .filter(|lang| !lang.is_empty())
         .unwrap_or("en")
         .to_owned();
-    let columns = resolve_columns(&cached.model, &cached.defs, &body.columns, &lang)?;
+    let columns = resolve_columns(
+        &cached.model,
+        &cached.defs,
+        &body.columns,
+        &lang,
+        body.r#type.as_deref(),
+    )?;
     let scan = scan_from(&cached.model, body)?;
     let total = state
         .store
@@ -590,6 +601,7 @@ fn resolve_columns(
     defs: &DefinitionSet,
     requested: &[ColumnIn],
     lang: &str,
+    type_key: Option<&str>,
 ) -> Result<Vec<ResolvedColumn>, Problem> {
     let requested = if requested.is_empty() {
         vec![ColumnIn::Name("key".into()), ColumnIn::Name("type".into())]
@@ -605,7 +617,7 @@ fn resolve_columns(
     }
     Ok(requested
         .iter()
-        .map(|column| resolve_column(model, defs, column, lang))
+        .map(|column| resolve_column(model, defs, column, lang, type_key))
         .collect())
 }
 
@@ -614,6 +626,7 @@ fn resolve_column(
     defs: &DefinitionSet,
     column: &ColumnIn,
     lang: &str,
+    type_key: Option<&str>,
 ) -> ResolvedColumn {
     let (id, header, attribute) = column.parts();
     let header_of = |fallback: &str| {
@@ -638,6 +651,16 @@ fn resolve_column(
         _ => {
             let key = attribute_name(id, attribute);
             let Some(attribute) = attribute_for_column(model, &key) else {
+                if let Some((link_type, outgoing, label)) = link_column(defs, type_key, &key, lang)
+                {
+                    return ResolvedColumn {
+                        header: header_of(&label),
+                        kind: ColumnKind::Link {
+                            link_type,
+                            outgoing,
+                        },
+                    };
+                }
                 return ResolvedColumn {
                     header: header_of(&key),
                     kind: ColumnKind::Blank,
@@ -657,6 +680,42 @@ fn resolve_column(
             }
         }
     }
+}
+
+/// A column named like a link side. An attribute with the same key is chosen first.
+fn link_column(
+    defs: &DefinitionSet,
+    type_key: Option<&str>,
+    key: &str,
+    lang: &str,
+) -> Option<(Uuid, bool, String)> {
+    let object_type = type_key.and_then(|token| {
+        defs.types.iter().find(|item| {
+            item.key.eq_ignore_ascii_case(token) || item.id.as_uuid().to_string() == token
+        })
+    });
+    let mut found = None;
+    for link in defs.types.iter().filter(|item| item.is_link()) {
+        let Some(spec) = link.link.as_ref() else {
+            continue;
+        };
+        let on_type = |types: &[braian_model::TypeId]| {
+            object_type.is_none_or(|object_type| types.contains(&object_type.id))
+        };
+        if spec.to_label.key.eq_ignore_ascii_case(key) && on_type(&spec.from_types) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some((link.id.as_uuid(), true, spec.to_label.text(lang)));
+        }
+        if spec.from_label.key.eq_ignore_ascii_case(key) && on_type(&spec.to_types) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some((link.id.as_uuid(), false, spec.from_label.text(lang)));
+        }
+    }
+    found
 }
 
 fn attribute_for_column<'a>(
@@ -754,6 +813,22 @@ fn cells_for(
             ColumnKind::Version => Cell::Number(object.version as f64),
             ColumnKind::Blank => Cell::Blank,
             ColumnKind::Attribute(attr) => map_attribute(object.values.get(&attr.id), attr, lang),
+            ColumnKind::Link {
+                link_type,
+                outgoing,
+            } => {
+                let slot = format!("{link_type}:{}", if *outgoing { "out" } else { "in" });
+                let joined = object
+                    .links
+                    .get(&slot)
+                    .map(|keys| keys.join(", "))
+                    .unwrap_or_default();
+                if joined.is_empty() {
+                    Cell::Blank
+                } else {
+                    text_cell(&joined)
+                }
+            }
         })
         .collect()
 }
@@ -1246,14 +1321,97 @@ fn export_problem(error: ExportError) -> Problem {
 
 #[cfg(test)]
 mod tests {
+
+    const LINK_CATALOG: &str = r#"{
+  "model_revision": 1,
+  "languages": ["en"],
+  "unit_families": [],
+  "value_lists": [],
+  "attributes": [{
+    "id": "018f0000-0000-7000-8000-000000000100",
+    "key": "number",
+    "labels": {"en": "Number"},
+    "language_dependent": false,
+    "multiple": false,
+    "kind": {"type": "text", "max_length": 64},
+    "index": {"searchable": true, "filterable": false, "sortable": true}
+  }],
+  "types": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000201",
+      "key": "article",
+      "labels": {"en": "Article"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000200",
+      "key": "product",
+      "labels": {"en": "Product"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000202",
+      "key": "supplier",
+      "labels": {"en": "Supplier"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000210",
+      "key": "product_articles",
+      "labels": {"en": "Product"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": ["018f0000-0000-7000-8000-000000000200"],
+        "to_types": ["018f0000-0000-7000-8000-000000000201"],
+        "from_label": {"key": "product", "labels": {"en": "Product"}},
+        "to_label": {"key": "articles", "labels": {"en": "Articles"}},
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000211",
+      "key": "supplier_articles",
+      "labels": {"en": "Supplier"},
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": ["018f0000-0000-7000-8000-000000000100"],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": ["018f0000-0000-7000-8000-000000000202"],
+        "to_types": ["018f0000-0000-7000-8000-000000000201"],
+        "from_label": {"key": "supplier", "labels": {"en": "Supplier"}},
+        "to_label": {"key": "articles", "labels": {"en": "Articles"}},
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    }
+  ],
+  "structures": []
+}"#;
+
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use std::collections::{BTreeMap, HashMap};
+
     use super::{
-        AttrColumn, Cell, ValueShape, WIDTH_SAMPLE, column_widths, is_wide, map_attribute,
-        search_text, split_group_filter, text_units, write_xlsx,
+        AttrColumn, Cell, ColumnIn, DefinitionSet, ExportObject, ValueShape, WIDTH_SAMPLE,
+        cells_for, column_widths, is_wide, map_attribute, resolve_columns, search_text,
+        split_group_filter, text_units, write_xlsx,
     };
+    use braian_rules::CompiledModel;
     use serde_json::json;
+    use uuid::Uuid;
 
     struct TempFile(std::path::PathBuf);
 
@@ -1296,6 +1454,46 @@ mod tests {
     }
 
     use braian_model::AttributeId;
+
+    #[test]
+    fn product_and_supplier_columns_export_the_linked_numbers() {
+        let defs: DefinitionSet = serde_json::from_str(LINK_CATALOG).unwrap();
+        let model = CompiledModel::compile(&defs).unwrap();
+        let columns = resolve_columns(
+            &model,
+            &defs,
+            &[
+                ColumnIn::Name("key".into()),
+                ColumnIn::Name("product".into()),
+                ColumnIn::Name("supplier".into()),
+            ],
+            "en",
+            Some("article"),
+        )
+        .unwrap();
+        assert_eq!(columns[1].header, "Product");
+        assert_eq!(columns[2].header, "Supplier");
+        let product_type = Uuid::parse_str("018f0000-0000-7000-8000-000000000210").unwrap();
+        let supplier_type = Uuid::parse_str("018f0000-0000-7000-8000-000000000211").unwrap();
+        let mut links = BTreeMap::new();
+        links.insert(format!("{product_type}:in"), vec!["P-1".into()]);
+        links.insert(
+            format!("{supplier_type}:in"),
+            vec!["S-2".into(), "S-9".into()],
+        );
+        let object = ExportObject {
+            id: Uuid::nil(),
+            key: "A-1".into(),
+            type_id: Uuid::parse_str("018f0000-0000-7000-8000-000000000201").unwrap(),
+            version: 1,
+            values: BTreeMap::new(),
+            links,
+        };
+        let cells = cells_for(&object, &columns, &HashMap::new(), "en");
+        assert!(matches!(&cells[0], Cell::Text(text) if text == "A-1"));
+        assert!(matches!(&cells[1], Cell::Text(text) if text == "P-1"));
+        assert!(matches!(&cells[2], Cell::Text(text) if text == "S-2, S-9"));
+    }
 
     #[test]
     fn values_keep_excel_types_and_the_requested_language() {

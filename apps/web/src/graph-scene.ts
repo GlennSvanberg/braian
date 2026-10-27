@@ -411,13 +411,7 @@ export function buildScene(input: {
   for (const attribute of attributes) {
     const attrKey = String(attribute.key ?? '')
     if (!attrKey) continue
-    if (attributeKind(input.defs, attrKey) === 'object_ref') {
-      const caption = attributeCaption(input.defs, attribute)
-      for (const otherId of linkedObjectIds(values[attrKey])) {
-        putReferencedObject(nodes, edges, selfId, otherId, caption, input.defs, input.known)
-      }
-      continue
-    }
+    if (attributeKind(input.defs, attrKey) === 'object_ref') continue
     const valueId = `value:${objectId}:${attrKey}`
     const caption = attributeCaption(input.defs, attribute)
     const shown = formatValue(input.defs, attribute, values[attrKey])
@@ -443,17 +437,18 @@ export function buildScene(input: {
     for (const source of sources) linkSource(nodes, edges, valueId, selfId, source, input.defs)
   }
 
-  const relations = (input.graph.relations as Json[]) ?? []
-  for (const relation of relations) {
-    const otherId = String(relation.object_id ?? '')
+  const links = (input.graph.links as Json[]) ?? []
+  for (const linkRow of links) {
+    const otherId = String(linkRow.object_id ?? '')
     if (!otherId) continue
     const nodeId = `object:${otherId}`
     const record = input.known?.[otherId]
-    const relKey = String(relation.key ?? otherId)
-    const relationType = ((input.defs?.types as Json[]) ?? []).find((item) => String(item.id) === String(relation.type_id ?? ''))
+    const relKey = String(linkRow.key ?? otherId)
+    const relationType = ((input.defs?.types as Json[]) ?? []).find((item) => String(item.id) === String(linkRow.type_id ?? ''))
     const otherKey = record?.typeKey || String(relationType?.key ?? '')
     const typeNameForOther = otherKey ? typeLabel(input.defs, otherKey, uiLanguage) || otherKey : ''
     const caption = record?.name || typeNameForOther || copy.nodeObject
+    const edgeLabel = String(linkRow.label ?? '') || relationLabel(String(linkRow.link_type ?? ''))
     putNode(nodes, {
       id: nodeId,
       kind: 'object',
@@ -469,7 +464,7 @@ export function buildScene(input: {
         { label: copy.identity, value: relKey },
       ],
     })
-    putEdge(edges, link(selfId, relationLabel(String(relation.kind ?? '')), nodeId))
+    putEdge(edges, link(selfId, edgeLabel, nodeId))
   }
 
   return { nodes: [...nodes.values()], edges: [...edges.values()] }
@@ -577,61 +572,9 @@ export function expandClass(defs: Json | undefined, structure: string, classKey:
 
 export type MemberHit = { id: string; key: string; name: string; type: string; typeKey?: string; rawCaption?: boolean }
 
-export function objectRefIds(defs: Json | undefined, values: Json | undefined): string[] {
-  if (!values) return []
-  const ids: string[] = []
-  for (const attribute of (defs?.attributes as Json[]) ?? []) {
-    if (attributeKind(defs, String(attribute.key ?? '')) !== 'object_ref') continue
-    ids.push(...linkedObjectIds(values[String(attribute.key ?? '')]))
-  }
-  return ids
-}
-
 function attributeKind(defs: Json | undefined, key: string) {
   const found = ((defs?.attributes as Json[]) ?? []).find((item) => String(item.key) === key)
   return String(((found?.kind as Json | undefined)?.type) ?? '')
-}
-
-function linkedObjectIds(value: unknown): string[] {
-  const list = Array.isArray(value) ? value : [value]
-  const ids: string[] = []
-  for (const item of list) {
-    const id = textValue(item)
-    if (/^[0-9a-f-]{36}$/i.test(id)) ids.push(id)
-  }
-  return ids
-}
-
-function putReferencedObject(
-  nodes: Map<string, SceneNode>,
-  edges: Map<string, SceneEdge>,
-  selfId: string,
-  otherId: string,
-  label: string,
-  defs: Json | undefined,
-  known: Record<string, KnownObject> | undefined,
-) {
-  const nodeId = `object:${otherId}`
-  const record = known?.[otherId]
-  const otherKey = record?.typeKey || ''
-  const typeNameForOther = otherKey ? typeLabel(defs, otherKey, uiLanguage) || otherKey : ''
-  const caption = record?.name || typeNameForOther || copy.nodeObject
-  putNode(nodes, {
-    id: nodeId,
-    kind: 'object',
-    caption,
-    subtitle: typeNameForOther || copy.nodeObject,
-    rawCaption: record === undefined,
-    objectId: otherId,
-    typeKey: otherKey || undefined,
-    typeName: typeNameForOther || undefined,
-    properties: [
-      { label: copy.number, value: record?.key || otherId },
-      { label: copy.type, value: typeNameForOther || copy.nodeObject },
-      { label: copy.identity, value: record?.key || otherId },
-    ],
-  })
-  putEdge(edges, link(selfId, label, nodeId))
 }
 
 export function groupMembers(structure: string, group: string, hits: MemberHit[], defs?: Json): Scene {

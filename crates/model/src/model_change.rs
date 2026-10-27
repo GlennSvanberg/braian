@@ -2938,7 +2938,7 @@ fn attribute_kind(kind: &str, unit_family: Option<UnitFamilyId>) -> Result<Attri
         }),
         "range" => Ok(AttributeKind::Range { unit_family }),
         "file" | "file_ref" => Ok(AttributeKind::FileRef { media: false }),
-        "object" | "object_ref" => Ok(AttributeKind::ObjectRef { type_key: None }),
+        "object" | "object_ref" => Err("object references are link types".into()),
         other => Err(format!("unknown attribute type {other}")),
     }
 }
@@ -3399,6 +3399,14 @@ mod tests {
             sortable: false,
             bounds: AttributeBounds::default(),
         }
+    }
+
+    #[test]
+    fn an_object_reference_cannot_be_created() {
+        let mut defs = base();
+        let error = apply_all(&mut defs, &[create("brand", "object_ref", None)]).unwrap_err();
+        assert!(error.to_string().contains("link types"), "{error}");
+        assert!(defs.attributes.iter().all(|item| item.key != "brand"));
     }
 
     #[test]

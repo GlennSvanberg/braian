@@ -56,7 +56,7 @@ export function typeWorkspaceTemplate(type: TypeName): WorkspaceTemplate {
 
 export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] {
   return [
-  ...types.filter((type) => type.id && type.key).map(typeWorkspaceTemplate),
+  ...types.filter((type) => type.kind !== 'link' && type.id && type.key).map(typeWorkspaceTemplate),
   {
     id: 'model',
     name: 'Data model',

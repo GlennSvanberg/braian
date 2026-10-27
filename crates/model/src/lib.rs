@@ -38,7 +38,7 @@ pub use id::{
     AttributeId, ClassId, GroupId, ObjectId, StructureId, TypeId, UnitFamilyId, ValueListId,
 };
 pub use language::{LanguageTag, LanguageTagError};
-pub use link::explain_link;
+pub use link::{RefConversion, RefLinkPlan, convert_object_refs, explain_link};
 pub use model_change::{
     ApplyError, AttributeBounds, ChangeImpact, ModelChange, NamedOption, UnitSpec, apply_all,
     change_needs_reindex, deletes_data, diff as model_diff, groups_removed_by_structure_upserts,

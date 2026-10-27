@@ -82,7 +82,6 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/objects/{id}/as-of", get(as_of))
         .route("/v1/objects/{id}/rollback", post(rollback))
         .route("/v1/objects/{id}/graph", get(graph))
-        .route("/v1/objects/{id}/relations", post(set_relation))
         .route("/v1/impact", post(impact))
         .route("/v1/webhooks", get(list_webhooks).post(create_webhook))
 }
@@ -160,12 +159,6 @@ fn registry() -> &'static [Operation] {
             name: "impact",
             title: "Impact analysis",
             permission: Role::Viewer,
-            needs_approval: false,
-        },
-        Operation {
-            name: "set_relation",
-            title: "Set relation",
-            permission: Role::Editor,
             needs_approval: false,
         },
         Operation {
@@ -655,12 +648,6 @@ fn registry() -> &'static [Operation] {
             needs_approval: false,
         },
         Operation {
-            name: "delete_relation",
-            title: "Delete link",
-            permission: Role::Editor,
-            needs_approval: false,
-        },
-        Operation {
             name: "list_links",
             title: "List links",
             permission: Role::Viewer,
@@ -837,7 +824,6 @@ const AGENT_COMMIT_EXCLUDED: &[&str] = &[
     "accept_proposal",
     "discard_proposal",
     "delete_object",
-    "delete_relation",
     "model.delete_attribute",
     "model.delete_group",
     "model.delete_structure",
@@ -917,12 +903,7 @@ fn agent_must_propose(identity: &Identity, op: &Operation) -> bool {
     !identity.may_commit()
         && matches!(
             op.name,
-            "create_object"
-                | "patch_object"
-                | "set_relation"
-                | "move_to_group"
-                | "create_link"
-                | "update_link"
+            "create_object" | "patch_object" | "move_to_group" | "create_link" | "update_link"
         )
 }
 
@@ -3585,8 +3566,8 @@ fn patch_is_empty(patch: &Value) -> bool {
     values_empty && groups_empty
 }
 
-/// A relation suggestion stores `{ "relation": { "to", "kind" } }` from the HTTP
-/// route, or `{ "to", "kind" }` from the operation. Value patches are not relations.
+/// A relation suggestion stored before link types. Accepting it writes a link
+/// when a link type with that key exists. Value patches are not relations.
 fn relation_proposal(row: &Value) -> Option<(Uuid, String)> {
     let patch = row.get("patch")?;
     let nested = patch.get("relation");
@@ -3630,21 +3611,7 @@ async fn apply_row(
         return apply_assortment_row(state, identity, proposal_id, row_id, row).await;
     }
     if let Some((to, kind)) = relation_proposal(row) {
-        let from = row
-            .get("object_id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "invalid_id", "relation"))?;
-        let receipt = finish_row(
-            state,
-            identity,
-            proposal_id,
-            row_id,
-            "accepted",
-            ProposalWrite::Relation { from, to, kind },
-        )
-        .await?;
-        return Ok(receipt.map(|receipt| receipt.last_seq));
+        return accept_legacy_relation(state, identity, proposal_id, row_id, row, to, &kind).await;
     }
     let cached = state.models.get(&state.store).await?;
     let patch_body = row.get("patch").cloned().unwrap_or(json!({}));
@@ -4249,11 +4216,38 @@ async fn graph(
         .await
         .map_err(store_status)?
         .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "object"))?;
-    let relations = state
+    let link_views = state
         .store
-        .relations_for(ObjectId::from_uuid(id))
+        .links_for(ObjectId::from_uuid(id))
         .await
         .map_err(store_status)?;
+    let mut links = Vec::with_capacity(link_views.len());
+    for link in &link_views {
+        let link_type = cached
+            .defs
+            .types
+            .iter()
+            .find(|item| item.id == link.link_type_id);
+        let spec = link_type.and_then(|item| item.link.as_ref());
+        let label = spec
+            .map(|spec| {
+                if link.outgoing {
+                    spec.to_label.text("en")
+                } else {
+                    spec.from_label.text("en")
+                }
+            })
+            .unwrap_or_else(|| "Link".to_owned());
+        links.push(json!({
+            "id": link.id,
+            "link_type": link_type.map(|item| item.key.as_str()).unwrap_or(""),
+            "label": label,
+            "object_id": link.peer_id,
+            "key": link.peer_key,
+            "type_id": link.peer_type_id,
+            "direction": if link.outgoing { "outgoing" } else { "incoming" },
+        }));
+    }
     let entries = state
         .store
         .history(Some(id), None, 2000)
@@ -4290,7 +4284,7 @@ async fn graph(
         "key": stored.key,
         "type": wire::type_key(&cached.defs, stored.object.type_id),
         "groups": groups_to_wire(&cached.defs, &stored.object.groups),
-        "relations": relations,
+        "links": links,
         "attributes": attributes,
     })))
 }
@@ -4414,50 +4408,54 @@ fn covers(
     false
 }
 
-async fn set_relation(
-    State(state): State<AppState>,
-    Auth(identity): Auth,
-    Path(id): Path<Uuid>,
-    Json(body): Json<RelationBody>,
-) -> Result<StatusCode, Problem> {
-    require(&identity, Role::Editor)?;
-    if !identity.may_commit() {
-        let row = ProposalRow {
-            id: Uuid::now_v7(),
-            object_id: Some(id),
-            object_key: None,
-            type_key: None,
-            base_version: None,
-            patch: json!({ "relation": { "to": body.to, "kind": body.kind } }),
-            status: "pending".into(),
-            conflict: false,
-            position: 0,
-        };
-        state
-            .store
-            .create_proposal(
-                Uuid::now_v7(),
-                "Relation",
-                crate::auth::suggestion_source(identity.kind),
-                identity.actor.actor,
-                identity.actor.on_behalf_of,
-                false,
-                &[row],
+async fn accept_legacy_relation(
+    state: &AppState,
+    identity: &Identity,
+    proposal_id: Uuid,
+    row_id: Uuid,
+    row: &Value,
+    to: Uuid,
+    kind: &str,
+) -> Result<Option<i64>, Problem> {
+    let from = row
+        .get("object_id")
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "invalid_id", "relation"))?;
+    let cached = state.models.get(&state.store).await?;
+    let link_type = cached
+        .defs
+        .types
+        .iter()
+        .find(|item| item.is_link() && item.key == kind)
+        .ok_or_else(|| {
+            Problem::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unknown_link_type",
+                format!("no link type {kind}"),
             )
-            .await
-            .map_err(store_status)?;
-        return Ok(StatusCode::ACCEPTED);
-    }
-    let kind = match body.kind.as_str() {
-        "variant_of" | "article_of" | "related" => body.kind.as_str(),
-        _ => "related",
+        })?;
+    let body = crate::links::CreateLink {
+        id: None,
+        link_type: link_type.key.clone(),
+        from_id: from,
+        to_id: to,
+        values: BTreeMap::new(),
     };
-    state
-        .store
-        .set_relation(ObjectId::from_uuid(id), ObjectId::from_uuid(body.to), kind)
-        .await
-        .map_err(store_status)?;
-    Ok(StatusCode::NO_CONTENT)
+    let op = crate::links::link_create(&cached, &body)?;
+    let receipt = finish_row(
+        state,
+        identity,
+        proposal_id,
+        row_id,
+        "accepted",
+        ProposalWrite::Objects {
+            ops: vec![op],
+            expect_version: None,
+        },
+    )
+    .await?;
+    Ok(receipt.map(|receipt| receipt.last_seq))
 }
 
 async fn impact(
@@ -4694,6 +4692,52 @@ pub async fn execute(
     run_operation(state, identity, name, args, false).await
 }
 
+/// The stored `system` principal must not accept, discard or delete.
+///
+/// The kind is read from `principals`. A human row would pass `may_commit`.
+#[doc(hidden)]
+pub async fn stored_principal_cannot_approve_discard_or_delete(
+    store: &Store,
+) -> Result<(), String> {
+    let id = store
+        .principal_by_handle("system")
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("system principal is missing")?;
+    let record = store
+        .principal(id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("system principal is missing")?;
+    if record.kind != braian_store::PrincipalKind::Integration {
+        return Err(format!("system principal kind is {}", record.kind.as_str()));
+    }
+    if record.name != "System" {
+        return Err(format!("system principal name is {}", record.name));
+    }
+    let identity = Identity::from_principal(&record);
+    let state = AppState::new(store.clone(), Vec::new(), None);
+    let object_id = Uuid::nil();
+    for (name, code) in [
+        ("accept_proposal", "agent_cannot_accept"),
+        ("discard_proposal", "agent_cannot_discard"),
+        ("delete_object", "agent_cannot_delete"),
+    ] {
+        match run_operation(&state, &identity, name, &json!({ "id": object_id }), false).await {
+            Ok(value) => return Err(format!("{name} was allowed: {value}")),
+            Err(problem) => {
+                if problem.status != StatusCode::FORBIDDEN.as_u16() || problem.code != code {
+                    return Err(format!(
+                        "{name} returned {} {}",
+                        problem.status, problem.code
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn uuid_arg(args: &Value, key: &str) -> Result<Uuid, Problem> {
     args.get(key)
         .and_then(Value::as_str)
@@ -4749,12 +4793,7 @@ async fn run_operation(
     let agent_write = from_agent
         && matches!(
             op.name,
-            "create_object"
-                | "patch_object"
-                | "set_relation"
-                | "move_to_group"
-                | "create_link"
-                | "update_link"
+            "create_object" | "patch_object" | "move_to_group" | "create_link" | "update_link"
         );
     if op.needs_approval || agent_must_propose(identity, op) || agent_write {
         return propose_operation(state, identity, name, args).await;
@@ -5031,33 +5070,6 @@ async fn run_operation(
                     .0,
             )
         }
-        "set_relation" => {
-            let id = args
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| Uuid::parse_str(id).ok())
-                .unwrap_or_else(Uuid::nil);
-            let body = RelationBody {
-                to: args
-                    .get("to")
-                    .and_then(Value::as_str)
-                    .and_then(|id| Uuid::parse_str(id).ok())
-                    .unwrap_or_else(Uuid::nil),
-                kind: args
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or("related")
-                    .to_owned(),
-            };
-            set_relation(
-                State(state.clone()),
-                Auth(identity.clone()),
-                Path(id),
-                Json(body),
-            )
-            .await?;
-            Ok(json!({ "ok": true }))
-        }
         "accept_proposal" => {
             let id = args
                 .get("id")
@@ -5171,20 +5183,6 @@ async fn run_operation(
                 .map_err(store_status)?;
             Ok(json!({ "ok": true }))
         }
-        "delete_relation" => {
-            let from = uuid_arg(args, "from")?;
-            let to = uuid_arg(args, "to")?;
-            let kind = args
-                .get("kind")
-                .and_then(Value::as_str)
-                .unwrap_or("related");
-            state
-                .store
-                .delete_relation(ObjectId::from_uuid(from), ObjectId::from_uuid(to), kind)
-                .await
-                .map_err(store_status)?;
-            Ok(json!({ "ok": true }))
-        }
         "discard_proposal" => {
             let id = args
                 .get("id")
@@ -5278,7 +5276,7 @@ async fn propose_operation(
                 json!({ "proposal_id": id, "needs_approval": true, "source": crate::auth::suggestion_source(identity.kind) }),
             )
         }
-        "create_object" | "patch_object" | "set_relation" => {
+        "create_object" | "patch_object" => {
             if name == "patch_object" && args.get("base_version").and_then(Value::as_i64).is_none()
             {
                 return Err(base_version_required());
@@ -5592,12 +5590,6 @@ struct AsOfParams {
 #[derive(Deserialize)]
 struct RollbackBody {
     seq: i64,
-}
-
-#[derive(Deserialize)]
-struct RelationBody {
-    to: Uuid,
-    kind: String,
 }
 
 #[derive(Deserialize)]
@@ -6234,7 +6226,6 @@ mod tests {
             "model.remove_attribute",
             "model.detach_attribute",
             "delete_object",
-            "delete_relation",
             "remove_link",
             "model.delete_link_type",
             "discard_proposal",

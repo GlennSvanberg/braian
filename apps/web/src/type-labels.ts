@@ -8,6 +8,8 @@ export type TypeName = {
   key: string
   singular: string
   plural: string
+  /** `link` types are not records and do not get a workspace. */
+  kind?: string
   /** Missing means any tree. An empty list means the type has no tree. */
   structures?: string[]
   /** Label of the only allowed tree, when there is exactly one. */
@@ -88,7 +90,8 @@ export function typeNames(defs: Json | undefined, language = 'en'): TypeName[] {
       )
       structureLabel = stored(structure?.labels, language) || String(structure?.key ?? '') || undefined
     }
-    return { id: String(item.id ?? ''), key, singular, plural, structures, structureLabel }
+    const kind = item.kind === 'link' ? 'link' : 'entity'
+    return { id: String(item.id ?? ''), key, singular, plural, kind, structures, structureLabel }
   })
 }
 

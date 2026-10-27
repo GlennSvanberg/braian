@@ -310,12 +310,7 @@ impl utoipa::Modify for PlatformPaths {
             (
                 HttpMethod::Get,
                 "/v1/objects/{id}/graph",
-                "Relations and where each attribute comes from",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/objects/{id}/relations",
-                "Set a relation",
+                "Links and where each attribute comes from",
             ),
             (
                 HttpMethod::Post,

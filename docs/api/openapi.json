@@ -1518,16 +1518,7 @@
         "tags": [
           "platform"
         ],
-        "summary": "Relations and where each attribute comes from",
-        "responses": {}
-      }
-    },
-    "/v1/objects/{id}/relations": {
-      "post": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "Set a relation",
+        "summary": "Links and where each attribute comes from",
         "responses": {}
       }
     },
