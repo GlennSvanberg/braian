@@ -129,6 +129,11 @@ pub async fn run(store: &Store, search: Option<&Typesense>) -> anyhow::Result<()
             .await?;
     }
 
+    // The seeded proposal points at ART-CHED-400. Heroes are written above;
+    // seed_demo_surface runs before any of those rows exist, so a first seed
+    // against an empty database would otherwise skip the proposal.
+    seed_proposal(store, user.principal_id).await?;
+
     let target = std::env::var("BRAIAN_SEED_COUNT")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
@@ -226,7 +231,6 @@ async fn seed_demo_surface(store: &Store, user: &braian_store::UserRecord) -> an
         user.principal_id,
     )
     .await?;
-    seed_proposal(store, user.principal_id).await?;
     Ok(())
 }
 
@@ -1463,6 +1467,110 @@ mod tests {
         }
         assert!(products_in > 0 && articles_in > 0);
         assert!(products_out > 0 && articles_out > 0);
+    }
+
+    /// First seed on an empty database creates "Accept ART-CHED-400".
+    /// A second seed updates that row and does not insert another.
+    #[tokio::test]
+    async fn first_seed_creates_the_ched_proposal_once() {
+        load_test_database_url();
+        let _restore = SeedEnv::set(&[
+            ("BRAIAN_DEMO_EMAIL", "seed-test@example.com"),
+            ("BRAIAN_DEMO_PASSWORD", "seed-test-password"),
+            // Heroes are enough for the proposal. Skip the synthetic bulk.
+            ("BRAIAN_SEED_COUNT", "0"),
+        ]);
+        let db = braian_store::testing::TestDb::create().await;
+        let proposal_id = Uuid::parse_str("018f2000-0000-7000-8000-0000000000c1").unwrap();
+
+        run(db.store(), None).await.expect("first seed");
+        let proposal = db
+            .store()
+            .proposal(proposal_id)
+            .await
+            .expect("proposal query")
+            .expect("proposal after the first seed");
+        assert_eq!(proposal["title"], "Accept ART-CHED-400");
+        let rows = proposal["rows"].as_array().expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["object_key"], "ART-CHED-400");
+        assert_eq!(matching_proposals(db.store()).await, 1);
+
+        run(db.store(), None).await.expect("second seed");
+        let again = db
+            .store()
+            .proposal(proposal_id)
+            .await
+            .expect("proposal query")
+            .expect("proposal after the second seed");
+        assert_eq!(again["title"], "Accept ART-CHED-400");
+        assert_eq!(matching_proposals(db.store()).await, 1);
+    }
+
+    async fn matching_proposals(store: &Store) -> usize {
+        store
+            .list_proposals()
+            .await
+            .expect("list proposals")
+            .iter()
+            .filter(|item| item["title"] == "Accept ART-CHED-400")
+            .count()
+    }
+
+    fn load_test_database_url() {
+        if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_some() {
+            return;
+        }
+        let mut candidates = vec![std::path::PathBuf::from(".env")];
+        candidates.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.env"));
+        for path in candidates {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                if key == "BRAIAN_TEST_DATABASE_URL" && std::env::var_os(key).is_none() {
+                    unsafe { std::env::set_var(key, value.trim_matches('"')) };
+                }
+            }
+        }
+    }
+
+    struct SeedEnv {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl SeedEnv {
+        fn set(pairs: &[(&'static str, &str)]) -> Self {
+            let previous = pairs
+                .iter()
+                .map(|(key, value)| {
+                    let old = std::env::var_os(key);
+                    unsafe { std::env::set_var(key, value) };
+                    (*key, old)
+                })
+                .collect();
+            Self { previous }
+        }
+    }
+
+    impl Drop for SeedEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
     }
 
     fn hero_object(compiled: &CompiledModel, defs: &DefinitionSet, row: &Value) -> Object {
