@@ -25,8 +25,8 @@ import {
   subscribeImport,
   undoImport,
   type ImportSession,
-  type ImportTarget,
 } from './controller'
+import { TargetMenu } from './target-menu'
 import {
   alternativeChoices,
   ariaMap,
@@ -319,57 +319,6 @@ function Mapping() {
           {copy.importApprove}
         </button>
       </footer>
-    </div>
-  )
-}
-
-function TargetMenu({
-  targets,
-  onPick,
-  onClose,
-}: {
-  targets: ImportTarget[]
-  onPick: (id: string) => void
-  onClose: () => void
-}) {
-  const [query, setQuery] = useState('')
-  const root = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    const onPointer = (event: PointerEvent) => {
-      if (root.current && event.target instanceof Node && !root.current.contains(event.target)) onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('pointerdown', onPointer)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('pointerdown', onPointer)
-    }
-  }, [onClose])
-  const needle = query.trim().toLowerCase()
-  const filtered = targets.filter((target) => `${target.label} ${target.id}`.toLowerCase().includes(needle))
-  return (
-    <div className="import-menu" ref={root} data-testid="import-popover" data-import-menu-open="true">
-      <input
-        autoFocus
-        value={query}
-        placeholder={copy.importSearchFields}
-        onChange={(event) => setQuery(event.target.value)}
-      />
-      <div className="import-menu-list">
-        <button type="button" onClick={() => onPick('unmapped')}>{copy.importDontImport}</button>
-        {filtered.map((target) => (
-          <button key={target.id} type="button" onClick={() => onPick(target.id)}>
-            {target.key ? '🔑 ' : ''}{target.label}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }

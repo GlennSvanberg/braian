@@ -98,22 +98,46 @@ type StoredTarget = {
   group_id?: string | null
 }
 
-/** Decisions keep `type:sku`. A saved mapping stores `type:<attribute id>`. */
+const PARTS = ['value', 'unit', 'min', 'max', 'code', 'label']
+
+function pathPart(id: string): string {
+  const body = id.includes('@') && !id.split('@')[1]?.includes(':') ? id.split('@')[0] : id
+  const part = body.split('.').at(-1) ?? ''
+  return PARTS.includes(part) ? part : ''
+}
+
+/** Decisions keep `type:sku`. A saved mapping stores the attribute path (`<id>` or `<id>.unit`). */
 export function storedTargetId(target: StoredTarget): string | null {
   const [body, language = ''] = target.id.split('@')
   const suffix = language && !language.includes(':') ? `@${language}` : ''
   const bare = suffix ? body : target.id
   if (!bare) return null
+  const part = pathPart(bare)
   if (bare.startsWith('membership:') && target.structure_id) return `membership:${target.structure_id}`
-  if (bare.startsWith('type:') && target.attribute_id) return `type:${target.attribute_id}${suffix}`
-  if (bare.startsWith('group:') && target.structure_id && target.group_id && target.attribute_id) {
-    return `group:${target.structure_id}/${target.group_id}:${target.attribute_id}${suffix}`
+  if (bare.startsWith('link:') && target.attribute_id) {
+    const side = bare.split(':').at(-1)
+    return side ? `link:${target.attribute_id}:${side}` : null
   }
+  if (bare.startsWith('type:') && target.attribute_id) {
+    return part ? `${target.attribute_id}.${part}${suffix}` : `${target.attribute_id}${suffix}`
+  }
+  if (bare.startsWith('group:') && target.structure_id && target.group_id && target.attribute_id) {
+    const base = `group:${target.structure_id}/${target.group_id}:${target.attribute_id}`
+    return part ? `${base}.${part}${suffix}` : `${base}${suffix}`
+  }
+  if (part && target.attribute_id) return `${target.attribute_id}.${part}${suffix}`
   return null
 }
 
 export function targetForStored<T extends StoredTarget>(targets: T[], stored: string): T | undefined {
-  return targets.find((target) => target.id === stored || storedTargetId(target) === stored)
+  const legacy = stored.startsWith('type:') ? stored.slice('type:'.length) : ''
+  return targets.find((target) => {
+    const saved = storedTargetId(target)
+    if (target.id === stored || saved === stored) return true
+    if (!legacy) return false
+    if (saved === legacy) return true
+    return !pathPart(target.id) && target.id.startsWith('type:') && target.attribute_id === legacy
+  })
 }
 
 export function dedupedTargets<T extends { id: string; label: string }>(targets: T[]): T[] {

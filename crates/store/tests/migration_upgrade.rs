@@ -1054,6 +1054,442 @@ async fn a_taken_relation_key_becomes_a_link_that_can_be_removed() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Saved filters, sorts and import targets from every shape a V23 database can
+/// hold become attribute paths. Column settings stay. An unknown token stays.
+#[tokio::test]
+async fn attribute_paths_rewrite_saved_shapes_and_keep_unknown_tokens() {
+    let db = EmptyDb::create().await;
+    let mut conn = db.connect().await;
+    let source = branch_migrations();
+    let dir = std::env::temp_dir().join(format!("braian-v23-paths-{}", Uuid::now_v7()));
+    fs::create_dir_all(&dir).unwrap();
+    for entry in fs::read_dir(&source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        let Some(version) = migration_version(&name) else {
+            continue;
+        };
+        if version <= 23 {
+            fs::copy(entry.path(), dir.join(name)).unwrap();
+        }
+    }
+    migrate(&mut conn.client, &dir).await;
+
+    let name_id = "018f0000-0000-7000-8000-000000000101";
+    let name_en_id = "018f0000-0000-7000-8000-0000000001e1";
+    let weight_id = "018f0000-0000-7000-8000-00000000011c";
+    let size_id = "018f0000-0000-7000-8000-000000000140";
+    let size_min_id = "018f0000-0000-7000-8000-0000000001c1";
+    let brand_id = "018f0000-0000-7000-8000-000000000142";
+    let article_id = "018f0000-0000-7000-8000-000000000201";
+    let product_id = "018f0000-0000-7000-8000-000000000200";
+    let link_id = "018f0000-0000-7000-8000-000000000210";
+    let food_id = "018f0000-0000-7000-8000-000000000300";
+    let cheese_id = "018f0000-0000-7000-8000-000000000400";
+    let missing_id = "018f0000-0000-7000-8000-000000000099";
+    let name_us = name_id.replace('-', "_");
+    let weight_us = weight_id.replace('-', "_");
+    let size_us = size_id.replace('-', "_");
+    let missing_us = missing_id.replace('-', "_");
+
+    let definitions = serde_json::json!({
+        "model_revision": 1,
+        "languages": ["en", "sv", "en-GB"],
+        "attributes": [
+            {"id": name_id, "key": "name"},
+            {"id": name_en_id, "key": "name__en"},
+            {"id": weight_id, "key": "net_weight"},
+            {"id": size_id, "key": "size"},
+            {"id": size_min_id, "key": "size__min"},
+            {"id": brand_id, "key": "brand"}
+        ],
+        "types": [
+            {"id": article_id, "key": "article"},
+            {"id": product_id, "key": "product"},
+            {"id": link_id, "key": "articles"}
+        ],
+        "structures": [{
+            "id": food_id,
+            "key": "food",
+            "groups": [{"id": cheese_id, "key": "cheese"}]
+        }]
+    });
+    let principal = Uuid::now_v7();
+    let user = Uuid::now_v7();
+    let batch = Uuid::now_v7();
+    let workspace = Uuid::now_v7();
+    conn.client
+        .execute(
+            "INSERT INTO principals (id, kind, name) VALUES ($1, 'human', 'Ada')",
+            &[&principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO batches (id, actor, kind, source) VALUES ($1, $2, 'interactive', 'test')",
+            &[&batch, &principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO users (id, principal_id, email, password_hash, role, display_name)
+             VALUES ($1, $2, 'ada-paths@example.com', 'x', 'admin', 'Ada')",
+            &[&user, &principal],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO workspaces (id, owner_id, name) VALUES ($1, $2, 'Legacy')",
+            &[&workspace, &user],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO definition_revisions (model_revision, definitions, batch_id) VALUES (1, $1, $2)",
+            &[&definitions, &batch],
+        )
+        .await
+        .unwrap();
+
+    let filter_in = format!(
+        "net_weight:=500 && net_weight=500 && a_{weight_us}:>1 && a_{name_us}__sv:=Ost && a_{name_us}__en_GB:=Cheese && a_{weight_us}__unit:=g && a_{size_us}__min:>=1 && a_{size_us}__max:<=9 && a_{name_us}__sv__unit:=g && size__min:=4 && name__en:=Ada && name__en__sv:=Hej && groups:=food:cheese && type_key:=article && product>brand:=Meadow && articles>link.sort_order:=1 && retired_attr:=x && a_{missing_us}:=z && a_{missing_us}__sv:=q && a_{missing_us}__unit:=g && groups:=food:nope && type_key:=no_such"
+    );
+    let filter_out = format!(
+        "{weight_id}:=500 && {weight_id}:=500 && {weight_id}:>1 && {name_id}@sv:=Ost && {name_id}@en-GB:=Cheese && {weight_id}.unit:=g && {size_id}.min:>=1 && {size_id}.max:<=9 && {name_id}.unit@sv:=g && {size_min_id}:=4 && {name_en_id}:=Ada && {name_en_id}@sv:=Hej && groups:={food_id}:{cheese_id} && type_key:={article_id} && product>brand:=Meadow && articles>link.sort_order:=1 && retired_attr:=x && a_{missing_us}:=z && a_{missing_us}__sv:=q && a_{missing_us}__unit:=g && groups:=food:nope && type_key:=no_such"
+    );
+    let columns = serde_json::json!([
+        "net_weight",
+        format!("a_{weight_us}"),
+        format!("a_{name_us}__sv"),
+        format!("a_{name_us}__en_GB"),
+        format!("a_{weight_us}__unit"),
+        format!("a_{size_us}__min"),
+        format!("a_{size_us}__max"),
+        "name__en",
+        "size__min",
+        "product>brand",
+        "articles>link.sort_order",
+        "retired_attr",
+        format!("a_{missing_us}"),
+        format!("a_{missing_us}__sv"),
+        "key",
+        "name",
+        "type",
+        "status",
+        "version"
+    ]);
+    let order = serde_json::json!([
+        "name__en",
+        "size__min",
+        format!("a_{size_us}__min"),
+        "product>brand",
+        "retired_attr",
+        "key"
+    ]);
+    let sizes = serde_json::json!({"name__en": 120, "size__min": 80, "retired_attr": 40});
+    let hidden = serde_json::json!(["retired_attr", "name__en", "product>brand"]);
+    let column_state = serde_json::json!({
+        "columns": columns,
+        "table": {"order": order, "sizes": sizes, "hidden": hidden}
+    });
+
+    let cases = [
+        (
+            "018f2000-0000-7000-8000-00000000f101",
+            serde_json::json!({"filter": filter_in, "table": {"filter": filter_in}}),
+        ),
+        (
+            "018f2000-0000-7000-8000-00000000f102",
+            serde_json::json!({"sort": "net_weight:asc", "table": {"sort": format!("a_{name_us}__sv:desc")}}),
+        ),
+        (
+            "018f2000-0000-7000-8000-00000000f103",
+            serde_json::json!({"sort": format!("a_{name_us}__en_GB:asc"), "table": {"sort": format!("a_{weight_us}__unit:asc")}}),
+        ),
+        (
+            "018f2000-0000-7000-8000-00000000f104",
+            serde_json::json!({"sort": format!("a_{size_us}__min:desc"), "table": {"sort": format!("a_{size_us}__max:asc")}}),
+        ),
+        (
+            "018f2000-0000-7000-8000-00000000f105",
+            serde_json::json!({"sort": "size__min:asc", "table": {"sort": "name__en:desc", "groupBy": "size__min"}}),
+        ),
+        (
+            "018f2000-0000-7000-8000-00000000f106",
+            serde_json::json!({"sort": "product>brand:asc", "table": {"sort": "retired_attr:desc", "groupBy": format!("a_{missing_us}__sv")}}),
+        ),
+        (
+            "018f2000-0000-7000-8000-00000000f107",
+            serde_json::json!({"sort": "key:asc", "type": "article", "type_key": "product", "table": {"groupBy": "name__en"}}),
+        ),
+        ("018f2000-0000-7000-8000-00000000f108", column_state.clone()),
+    ];
+    for (id, state) in &cases {
+        let id = Uuid::parse_str(id).unwrap();
+        conn.client
+            .execute(
+                "INSERT INTO views (id, workspace_id, type_key, title, state)
+                 VALUES ($1, $2, 'object_table', 'Legacy', $3)",
+                &[&id, &workspace, state],
+            )
+            .await
+            .unwrap();
+    }
+
+    let mapping = serde_json::json!({
+        "type": "article",
+        "columns": [
+            {"col": 0, "target": "type:net_weight"},
+            {"col": 1, "target": "type:net_weight.unit"},
+            {"col": 2, "target": "type:net_weight.value"},
+            {"col": 3, "target": "type:name@sv"},
+            {"col": 4, "target": format!("type:{weight_us}")},
+            {"col": 5, "target": "type:name__en"},
+            {"col": 6, "target": "type:size__min"},
+            {"col": 7, "target": "type:size__min.unit"},
+            {"col": 8, "target": "type:size.min"},
+            {"col": 9, "target": "net_weight"},
+            {"col": 10, "target": "net_weight.unit"},
+            {"col": 11, "target": "name__en"},
+            {"col": 12, "target": "name__en@sv"},
+            {"col": 13, "target": "name@en-GB"},
+            {"col": 14, "target": "product>brand"},
+            {"col": 15, "target": "articles>link.sort_order"},
+            {"col": 16, "target": "type:retired_attr"},
+            {"col": 17, "target": "retired_attr"},
+            {"col": 18, "target": format!("a_{missing_us}")},
+            {"col": 19, "target": format!("a_{missing_us}__unit")},
+            {"col": 20, "target": "link:articles:in"},
+            {"col": 21, "target": "link:articles:out"},
+            {"col": 22, "target": "link:no_such:in"},
+            {"col": 23, "target": "membership:food"},
+            {"col": 24, "target": "membership:no_such"},
+            {"col": 25, "target": "group:food/cheese:brand"},
+            {"col": 26, "target": "group:food/cheese:brand.unit"},
+            {"col": 27, "target": "group:food/cheese:name__en"},
+            {"col": 28, "target": "group:food/cheese:retired_attr"},
+            {"col": 29, "target": "group:nope/missing:brand"},
+            {"col": 30, "target": "group:food/cheese:brand@sv"},
+            {"col": 31, "target": "unmapped"},
+            {"col": 32, "target": "action"},
+            {"col": 33, "target": ""}
+        ]
+    });
+    let diff_mapping = serde_json::json!({
+        "type": "product",
+        "columns": [
+            {"col": 0, "target": "type:size__min"},
+            {"col": 1, "target": "retired_attr"}
+        ]
+    });
+    let import_id = Uuid::parse_str("018f2000-0000-7000-8000-00000000f110").unwrap();
+    conn.client
+        .execute(
+            "INSERT INTO import_sessions (id, owner, file_name, file_kind, status, model_revision, mapping, diff_mapping)
+             VALUES ($1, $2, 'old.csv', 'csv', 'ready', 1, $3, $4)",
+            &[&import_id, &principal, &mapping, &diff_mapping],
+        )
+        .await
+        .unwrap();
+    let assortment = Uuid::parse_str("018f2000-0000-7000-8000-00000000f111").unwrap();
+    let query = serde_json::json!({
+        "type": "article",
+        "group": "food:cheese",
+        "filter": format!("a_{weight_us}__unit:=g && name__en:=Ada && size__min:=1 && groups:=food:cheese && type_key:=article && product>brand:=X && retired_attr:=1 && groups:=nope:missing")
+    });
+    conn.client
+        .execute(
+            "INSERT INTO assortments (id, owner_id, name, query, type_id) VALUES ($1, $2, 'Legacy', $3, $4)",
+            &[
+                &assortment,
+                &user,
+                &query,
+                &Uuid::parse_str(article_id).unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    conn.client
+        .execute(
+            "UPDATE indexer_progress SET reindex_requested = false WHERE id = 1",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    fs::copy(
+        source.join("V24__attribute_paths.sql"),
+        dir.join("V24__attribute_paths.sql"),
+    )
+    .unwrap();
+    migrate(&mut conn.client, &dir).await;
+
+    async fn view_state(client: &tokio_postgres::Client, id: &str) -> serde_json::Value {
+        let id = Uuid::parse_str(id).unwrap();
+        client
+            .query_one("SELECT state FROM views WHERE id = $1", &[&id])
+            .await
+            .unwrap()
+            .get("state")
+    }
+
+    let filters = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f101").await;
+    assert_eq!(filters["filter"], filter_out);
+    assert_eq!(filters["table"]["filter"], filter_out);
+
+    let sorts = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f102").await;
+    assert_eq!(sorts["sort"], format!("{weight_id}:asc"));
+    assert_eq!(sorts["table"]["sort"], format!("{name_id}@sv:desc"));
+
+    let sorts = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f103").await;
+    assert_eq!(sorts["sort"], format!("{name_id}@en-GB:asc"));
+    assert_eq!(sorts["table"]["sort"], format!("{weight_id}.unit:asc"));
+
+    let sorts = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f104").await;
+    assert_eq!(sorts["sort"], format!("{size_id}.min:desc"));
+    assert_eq!(sorts["table"]["sort"], format!("{size_id}.max:asc"));
+
+    let sorts = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f105").await;
+    assert_eq!(sorts["sort"], format!("{size_min_id}:asc"));
+    assert_eq!(sorts["table"]["sort"], format!("{name_en_id}:desc"));
+    assert_eq!(sorts["table"]["groupBy"], size_min_id);
+
+    let sorts = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f106").await;
+    assert_eq!(sorts["sort"], "product>brand:asc");
+    assert_eq!(sorts["table"]["sort"], "retired_attr:desc");
+    assert_eq!(sorts["table"]["groupBy"], format!("a_{missing_us}__sv"));
+
+    let sorts = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f107").await;
+    assert_eq!(sorts["sort"], "key:asc");
+    assert_eq!(sorts["type"], article_id);
+    assert_eq!(sorts["type_key"], product_id);
+    assert_eq!(sorts["table"]["groupBy"], name_en_id);
+
+    let stored_columns = view_state(&conn.client, "018f2000-0000-7000-8000-00000000f108").await;
+    assert_eq!(stored_columns, column_state);
+
+    let stored_mapping: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT mapping FROM import_sessions WHERE id = $1",
+            &[&import_id],
+        )
+        .await
+        .unwrap()
+        .get("mapping");
+    let targets: Vec<&str> = stored_mapping["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| column["target"].as_str().unwrap())
+        .collect();
+    let expected_targets = [
+        weight_id.to_owned(),
+        format!("{weight_id}.unit"),
+        format!("{weight_id}.value"),
+        format!("{name_id}@sv"),
+        weight_id.to_owned(),
+        name_en_id.to_owned(),
+        size_min_id.to_owned(),
+        format!("{size_min_id}.unit"),
+        format!("{size_id}.min"),
+        weight_id.to_owned(),
+        format!("{weight_id}.unit"),
+        name_en_id.to_owned(),
+        format!("{name_en_id}@sv"),
+        format!("{name_id}@en-GB"),
+        "product>brand".to_owned(),
+        "articles>link.sort_order".to_owned(),
+        "type:retired_attr".to_owned(),
+        "retired_attr".to_owned(),
+        format!("a_{missing_us}"),
+        format!("a_{missing_us}__unit"),
+        format!("link:{link_id}:in"),
+        format!("link:{link_id}:out"),
+        "link:no_such:in".to_owned(),
+        format!("membership:{food_id}"),
+        "membership:no_such".to_owned(),
+        format!("group:{food_id}/{cheese_id}:{brand_id}"),
+        format!("group:{food_id}/{cheese_id}:{brand_id}.unit"),
+        format!("group:{food_id}/{cheese_id}:{name_en_id}"),
+        format!("group:{food_id}/{cheese_id}:retired_attr"),
+        format!("group:nope/missing:{brand_id}"),
+        format!("group:{food_id}/{cheese_id}:{brand_id}@sv"),
+        "unmapped".to_owned(),
+        "action".to_owned(),
+        String::new(),
+    ];
+    assert_eq!(
+        targets,
+        expected_targets
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(stored_mapping["type"], article_id);
+    let stored_diff: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT diff_mapping FROM import_sessions WHERE id = $1",
+            &[&import_id],
+        )
+        .await
+        .unwrap()
+        .get("diff_mapping");
+    assert_eq!(stored_diff["type"], product_id);
+    assert_eq!(stored_diff["columns"][0]["target"], size_min_id);
+    assert_eq!(stored_diff["columns"][1]["target"], "retired_attr");
+
+    let stored_query: serde_json::Value = conn
+        .client
+        .query_one(
+            "SELECT query FROM assortments WHERE id = $1",
+            &[&assortment],
+        )
+        .await
+        .unwrap()
+        .get("query");
+    assert!(stored_query.get("type").is_none(), "{stored_query}");
+    assert_eq!(stored_query["group"], format!("{food_id}:{cheese_id}"));
+    assert_eq!(
+        stored_query["filter"],
+        format!(
+            "{weight_id}.unit:=g && {name_en_id}:=Ada && {size_min_id}:=1 && groups:={food_id}:{cheese_id} && type_key:={article_id} && product>brand:=X && retired_attr:=1 && groups:=nope:missing"
+        )
+    );
+
+    let views: i64 = conn
+        .client
+        .query_one("SELECT count(*) FROM views", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(views, cases.len() as i64);
+    let imports: i64 = conn
+        .client
+        .query_one("SELECT count(*) FROM import_sessions", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(imports, 1);
+    let requested: bool = conn
+        .client
+        .query_one(
+            "SELECT reindex_requested FROM indexer_progress WHERE id = 1",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(requested);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 async fn insert_object(client: &tokio_postgres::Client, type_id: Uuid, key: &str, organic: bool) {
     let id = Uuid::now_v7();
     client

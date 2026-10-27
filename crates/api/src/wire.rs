@@ -117,7 +117,82 @@ pub fn patch_from_wire(
     groups: &BTreeMap<String, Option<String>>,
 ) -> Result<ObjectPatch, Problem> {
     let mut attributes = BTreeMap::new();
+    let mut parts: BTreeMap<AttributeId, Map<String, Value>> = BTreeMap::new();
     for (token, value) in values {
+        if token.contains('>') || token.contains('.') {
+            let path = braian_model::parse_path_text(token, defs, None).map_err(|message| {
+                Problem::new(
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_path",
+                    message,
+                )
+            })?;
+            if path.via.is_some() {
+                return Err(Problem::new(
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_path",
+                    "writing through a link comes later",
+                ));
+            }
+            braian_model::part_fits(
+                &model
+                    .attribute(path.attribute)
+                    .ok_or_else(|| unknown("attribute", token))?
+                    .kind,
+                path.part,
+            )
+            .then_some(())
+            .ok_or_else(|| {
+                Problem::new(
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_path",
+                    format!("attribute {token} has no {} part", path.part.word()),
+                )
+            })?;
+            if path.part == braian_model::PathPart::Whole {
+                let id = path.attribute;
+                attributes.insert(
+                    id,
+                    if value.is_null() {
+                        braian_model::AttributePatch::Remove
+                    } else {
+                        braian_model::AttributePatch::Replace {
+                            value: value.clone(),
+                        }
+                    },
+                );
+                continue;
+            }
+            if value.is_null() {
+                attributes.insert(path.attribute, braian_model::AttributePatch::Remove);
+                continue;
+            }
+            let object = parts.entry(path.attribute).or_default();
+            match path.part {
+                braian_model::PathPart::Value => {
+                    object.insert("value".into(), json_text(value));
+                }
+                braian_model::PathPart::Unit => {
+                    object.insert("unit".into(), json_text(value));
+                }
+                braian_model::PathPart::Min => {
+                    object.insert("min".into(), json_text(value));
+                }
+                braian_model::PathPart::Max => {
+                    object.insert("max".into(), json_text(value));
+                }
+                braian_model::PathPart::Code | braian_model::PathPart::Label => {
+                    attributes.insert(
+                        path.attribute,
+                        braian_model::AttributePatch::Replace {
+                            value: json_text(value),
+                        },
+                    );
+                }
+                braian_model::PathPart::Whole => {}
+            }
+            continue;
+        }
         let id = resolve_attribute(model, token)?;
         let attribute = model
             .attribute(id)
@@ -157,6 +232,17 @@ pub fn patch_from_wire(
         };
         attributes.insert(id, patch);
     }
+    for (id, object) in parts {
+        if attributes.contains_key(&id) {
+            continue;
+        }
+        attributes.insert(
+            id,
+            braian_model::AttributePatch::Replace {
+                value: Value::Object(object),
+            },
+        );
+    }
     let mut placed = BTreeMap::new();
     for (structure, group) in groups {
         let structure = resolve_structure(model, defs, structure)?;
@@ -170,6 +256,15 @@ pub fn patch_from_wire(
         values: ValuePatch { attributes },
         groups: placed,
     })
+}
+
+fn json_text(value: &Value) -> Value {
+    match value {
+        Value::String(_) => value.clone(),
+        Value::Number(number) => Value::String(number.to_string()),
+        Value::Bool(flag) => Value::String(flag.to_string()),
+        other => other.clone(),
+    }
 }
 
 pub fn values_to_wire(

@@ -13,3 +13,9 @@ export function objectTableFilter(typeKey: string, group: string | null, defs?: 
   if (group) parts.push(`groups:=${groupKeyOf(group, defs)}`)
   return parts.join(' && ')
 }
+
+/** Append one attribute-path clause. The API turns the path into an index field. */
+export function appendPathFilter(base: string, path: string, value: string): string {
+  const clause = `${path}:=${value}`
+  return [base.trim(), clause].filter(Boolean).join(' && ')
+}

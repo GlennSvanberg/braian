@@ -422,17 +422,13 @@ fn translate_index_field(field: &str, defs: &DefinitionSet) -> String {
     ) {
         return field.to_owned();
     }
-    let (body, language) = field
-        .rsplit_once("__")
-        .map(|(body, language)| (body, Some(language)))
-        .unwrap_or((field, None));
-    let Some(token) = body.strip_prefix("a_") else {
-        return id_of(defs, RefKind::Attribute, field).unwrap_or_else(|| field.to_owned());
-    };
-    if let Some(attribute) = attribute_from_index_token(defs, token) {
-        return attribute_index_field(attribute, language);
+    // Saved sorts and filters keep an attribute path (`<id>` or `<id>.unit`),
+    // not the Typesense column `a_<id>`.
+    let path = crate::path::stored_field_as_path(field, defs);
+    if path != field {
+        return path;
     }
-    field.to_owned()
+    id_of(defs, RefKind::Attribute, field).unwrap_or(path)
 }
 
 fn translate_filter(filter: &str, defs: &DefinitionSet) -> String {
@@ -454,17 +450,18 @@ fn translate_filter_part(part: &str, defs: &DefinitionSet) -> String {
     if field == "groups" {
         return format!("groups:={}", translate_group_token(rest, defs));
     }
-    if field.starts_with("a_") {
-        let (body, language) = field
-            .rsplit_once("__")
-            .map(|(body, language)| (body, Some(language)))
-            .unwrap_or((field, None));
-        let token = body.strip_prefix("a_").unwrap_or(body);
-        if let Some(attribute) = attribute_from_index_token(defs, token) {
-            return format!("{}:={rest}", attribute_index_field(attribute, language));
+    if field.starts_with("a_") || looks_like_attribute(field, defs) {
+        let path = crate::path::stored_field_as_path(field, defs);
+        if path != field || !field.starts_with("a_") {
+            return format!("{path}:={rest}");
         }
     }
     part.to_owned()
+}
+
+fn looks_like_attribute(field: &str, defs: &DefinitionSet) -> bool {
+    crate::path::stored_field_as_path(field, defs) != field
+        || id_of(defs, RefKind::Attribute, field).is_some()
 }
 
 fn translate_group_token(token: &str, defs: &DefinitionSet) -> String {
@@ -494,9 +491,9 @@ fn translate_import_target(target: &str, defs: &DefinitionSet) -> String {
             .map(|id| format!("membership:{id}"))
             .unwrap_or_else(|| body.to_owned())
     } else if let Some(rest) = body.strip_prefix("type:") {
-        id_of(defs, RefKind::Attribute, rest)
-            .map(|id| format!("type:{id}"))
-            .unwrap_or_else(|| body.to_owned())
+        // A type-level target is an attribute path. Group and membership
+        // targets stay, because a path does not name a group.
+        id_of(defs, RefKind::Attribute, rest).unwrap_or_else(|| body.to_owned())
     } else if let Some(rest) = body.strip_prefix("group:") {
         translate_group_target(rest, defs).unwrap_or_else(|| body.to_owned())
     } else {
@@ -522,33 +519,6 @@ fn translate_group_target(rest: &str, defs: &DefinitionSet) -> Option<String> {
 
 fn id_of(defs: &DefinitionSet, kind: RefKind, token: &str) -> Option<String> {
     resolve(defs, kind, token, None).ok().map(|item| item.id)
-}
-
-fn attribute(defs: &DefinitionSet, token: &str) -> Option<AttributeId> {
-    resolve(defs, RefKind::Attribute, token, None)
-        .ok()
-        .and_then(|item| Uuid::parse_str(&item.id).ok())
-        .map(AttributeId::from_uuid)
-}
-
-fn attribute_from_index_token(defs: &DefinitionSet, token: &str) -> Option<AttributeId> {
-    if let Some(id) = uuid_from_index_token(token) {
-        let attribute = AttributeId::from_uuid(id);
-        if defs.attributes.iter().any(|item| item.id == attribute) {
-            return Some(attribute);
-        }
-    }
-    attribute(defs, token)
-}
-
-fn uuid_from_index_token(token: &str) -> Option<Uuid> {
-    if Uuid::parse_str(token).is_ok() {
-        return Uuid::parse_str(token).ok();
-    }
-    if token.len() == 36 && token.as_bytes().get(8) == Some(&b'_') {
-        return Uuid::parse_str(&token.replace('_', "-")).ok();
-    }
-    None
 }
 
 fn same(id: &str, key: &str, token: &str) -> bool {
@@ -729,12 +699,8 @@ mod tests {
         assert_eq!(state["sort"], sku.id);
         let item = resolve(&defs, RefKind::Type, "item", None).unwrap();
         assert_eq!(state["type_key"], item.id);
-        let field = attribute_index_field(
-            AttributeId::from_uuid(Uuid::parse_str(&sku.id).unwrap()),
-            None,
-        );
-        assert_eq!(state["table"]["sort"], format!("{field}:asc"));
-        assert_eq!(state["table"]["filter"], format!("{field}:=SKU-1"));
+        assert_eq!(state["table"]["sort"], format!("{}:asc", sku.id));
+        assert_eq!(state["table"]["filter"], format!("{}:=SKU-1", sku.id));
 
         let mut table = serde_json::json!({
             "table": { "order": ["key", "name", "type", "status", "version"] }
@@ -756,7 +722,7 @@ mod tests {
         translate_import_mapping(&mut mapping, &defs);
         translate_import_mapping(&mut mapping, &defs);
         assert_eq!(mapping["type"], item.id);
-        assert_eq!(mapping["columns"][0]["target"], format!("type:{}", sku.id));
+        assert_eq!(mapping["columns"][0]["target"], sku.id);
         assert!(
             mapping["columns"][1]["target"]
                 .as_str()

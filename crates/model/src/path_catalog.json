@@ -1,0 +1,166 @@
+{
+  "model_revision": 1,
+  "languages": ["en"],
+  "unit_families": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000011",
+      "key": "mass",
+      "base_unit": "g",
+      "units": [
+        { "code": "g", "factor": "1" },
+        { "code": "kg", "factor": "1000" }
+      ]
+    }
+  ],
+  "attributes": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000100",
+      "key": "number",
+      "labels": { "en": "Number" },
+      "language_dependent": false,
+      "multiple": false,
+      "required": true,
+      "kind": { "type": "text", "max_length": 64 },
+      "index": { "searchable": true, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000101",
+      "key": "name",
+      "labels": { "en": "Name" },
+      "language_dependent": true,
+      "multiple": false,
+      "required": true,
+      "kind": { "type": "text", "max_length": 160 },
+      "index": { "searchable": true, "filterable": false, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000a003",
+      "key": "created_at",
+      "labels": { "en": "Created" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 160 },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000a004",
+      "key": "updated_at",
+      "labels": { "en": "Updated" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 160 },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000a005",
+      "key": "updated_by",
+      "labels": { "en": "Updated by" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 160 },
+      "index": { "searchable": false, "filterable": false, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-00000000011c",
+      "key": "net_weight",
+      "labels": { "en": "Net weight" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "number", "unit_family": "018f0000-0000-7000-8000-000000000011", "min": "0" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000140",
+      "key": "size",
+      "labels": { "en": "Size" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "range" },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000141",
+      "key": "allergens",
+      "labels": { "en": "Allergens" },
+      "language_dependent": false,
+      "multiple": true,
+      "kind": {
+        "type": "value_list",
+        "options": [
+          { "code": "milk", "labels": { "en": "Milk" } }
+        ]
+      },
+      "index": { "searchable": true, "filterable": true, "sortable": false }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000142",
+      "key": "brand",
+      "labels": { "en": "Brand" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "text", "max_length": 80 },
+      "index": { "searchable": true, "filterable": true, "sortable": true }
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000133",
+      "key": "sort_order",
+      "labels": { "en": "Sort order" },
+      "language_dependent": false,
+      "multiple": false,
+      "kind": { "type": "number", "integer": true },
+      "index": { "searchable": false, "filterable": true, "sortable": true }
+    }
+  ],
+  "types": [
+    {
+      "id": "018f0000-0000-7000-8000-000000000201",
+      "key": "article",
+      "labels": { "en": "Article" },
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": [
+        "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000101",
+        "018f0000-0000-7000-8000-00000000a003",
+        "018f0000-0000-7000-8000-00000000011c",
+        "018f0000-0000-7000-8000-000000000140",
+        "018f0000-0000-7000-8000-000000000141"
+      ],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000200",
+      "key": "product",
+      "labels": { "en": "Product" },
+      "key_attribute": "018f0000-0000-7000-8000-000000000100",
+      "attributes": [
+        "018f0000-0000-7000-8000-000000000100",
+        "018f0000-0000-7000-8000-000000000101",
+        "018f0000-0000-7000-8000-000000000142"
+      ],
+      "structures": []
+    },
+    {
+      "id": "018f0000-0000-7000-8000-000000000210",
+      "key": "product_articles",
+      "labels": { "en": "Product" },
+      "key_attribute": "018f0000-0000-7000-8000-00000000a003",
+      "attributes": [
+        "018f0000-0000-7000-8000-00000000a003",
+        "018f0000-0000-7000-8000-00000000a004",
+        "018f0000-0000-7000-8000-00000000a005",
+        "018f0000-0000-7000-8000-000000000133"
+      ],
+      "structures": [],
+      "kind": "link",
+      "link": {
+        "from_types": ["018f0000-0000-7000-8000-000000000200"],
+        "to_types": ["018f0000-0000-7000-8000-000000000201"],
+        "from_label": { "key": "product", "labels": { "en": "Product" } },
+        "to_label": { "key": "articles", "labels": { "en": "Articles" } },
+        "from_cardinality": "many",
+        "to_cardinality": "one"
+      }
+    }
+  ],
+  "structures": []
+}

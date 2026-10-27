@@ -670,8 +670,9 @@ fn stores_own_field(attribute: &braian_model::Attribute) -> bool {
 
 fn schema_fields(defs: &DefinitionSet) -> Vec<Value> {
     let mut fields = vec![
-        json!({"name": "key", "type": "string"}),
-        json!({"name": "type_key", "type": "string", "facet": true}),
+        // Typesense 30 does not sort a string unless sort is set. Number paths sort on key.
+        json!({"name": "key", "type": "string", "sort": true}),
+        json!({"name": "type_key", "type": "string", "facet": true, "sort": true}),
         json!({"name": "seq", "type": "int64"}),
         json!({"name": "version", "type": "int64"}),
         json!({"name": "deleted", "type": "bool", "facet": true}),
@@ -700,6 +701,16 @@ fn schema_fields(defs: &DefinitionSet) -> Vec<Value> {
                 "facet": attribute.index.filterable,
                 "sort": attribute.index.sortable && !attribute.multiple,
             }));
+            for (suffix, kind) in part_fields(attribute) {
+                fields.push(json!({
+                    "name": format!("{name}__{suffix}"),
+                    "type": part_field_type(kind, attribute.multiple),
+                    "optional": true,
+                    "index": true,
+                    "facet": attribute.index.filterable,
+                    "sort": kind != PartKind::Unit && attribute.index.sortable && !attribute.multiple,
+                }));
+            }
         }
     }
     fields
@@ -716,6 +727,38 @@ fn field_type(attribute: &braian_model::Attribute) -> &'static str {
         "float"
     } else {
         "string"
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartKind {
+    Unit,
+    Min,
+    Max,
+}
+
+fn part_fields(attribute: &braian_model::Attribute) -> Vec<(&'static str, PartKind)> {
+    match &attribute.kind {
+        AttributeKind::Number { unit_family, .. } if unit_family.is_some() => {
+            vec![("unit", PartKind::Unit)]
+        }
+        AttributeKind::Range { unit_family } => {
+            let mut parts = vec![("min", PartKind::Min), ("max", PartKind::Max)];
+            if unit_family.is_some() {
+                parts.push(("unit", PartKind::Unit));
+            }
+            parts
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn part_field_type(kind: PartKind, multiple: bool) -> &'static str {
+    match (kind, multiple) {
+        (PartKind::Unit, true) => "string[]",
+        (PartKind::Unit, false) => "string",
+        (_, true) => "float[]",
+        (_, false) => "float",
     }
 }
 
@@ -801,27 +844,35 @@ pub fn document(
                     braian_model::attribute_index_field(attribute.id, Some(language.as_str()));
                 if let Some(indexed) = index_value(model, attribute, inner) {
                     if attribute.index.searchable {
-                        push_blob(&mut blobs, field_language(language.as_str()), &indexed);
+                        push_blob(
+                            &mut blobs,
+                            field_language(language.as_str()),
+                            &indexed.primary,
+                        );
                     }
                     if stores_own_field(attribute) {
-                        doc.insert(field, indexed_to_json(indexed));
+                        doc.insert(field.clone(), indexed_to_json(&indexed.primary));
+                        insert_parts(&mut doc, &field, &indexed);
                     }
                 }
             }
         } else if let Some(indexed) = index_value(model, attribute, value) {
             if attribute.index.searchable {
                 for language in &defs.languages {
-                    push_blob(&mut blobs, field_language(language.as_str()), &indexed);
+                    push_blob(
+                        &mut blobs,
+                        field_language(language.as_str()),
+                        &indexed.primary,
+                    );
                 }
                 if defs.languages.is_empty() {
-                    push_blob(&mut blobs, "en".into(), &indexed);
+                    push_blob(&mut blobs, "en".into(), &indexed.primary);
                 }
             }
             if stores_own_field(attribute) {
-                doc.insert(
-                    braian_model::attribute_index_field(attribute.id, None),
-                    indexed_to_json(indexed),
-                );
+                let field = braian_model::attribute_index_field(attribute.id, None);
+                doc.insert(field.clone(), indexed_to_json(&indexed.primary));
+                insert_parts(&mut doc, &field, &indexed);
             }
         }
     }
@@ -831,6 +882,7 @@ pub fn document(
     Value::Object(doc)
 }
 
+#[derive(Clone)]
 enum Indexed {
     Text(String),
     Number(f64),
@@ -838,13 +890,13 @@ enum Indexed {
     Numbers(Vec<f64>),
 }
 
-fn indexed_to_json(value: Indexed) -> Value {
+fn indexed_to_json(value: &Indexed) -> Value {
     match value {
-        Indexed::Text(text) => Value::String(text),
+        Indexed::Text(text) => Value::String(text.clone()),
         Indexed::Number(number) => json!(number),
-        Indexed::Texts(items) => Value::Array(items.into_iter().map(Value::String).collect()),
+        Indexed::Texts(items) => Value::Array(items.iter().cloned().map(Value::String).collect()),
         Indexed::Numbers(items) => {
-            Value::Array(items.into_iter().map(|number| json!(number)).collect())
+            Value::Array(items.iter().copied().map(|number| json!(number)).collect())
         }
     }
 }
@@ -867,11 +919,30 @@ fn push_blob(blobs: &mut BTreeMap<String, String>, language: String, value: &Ind
     entry.push_str(&text);
 }
 
+struct IndexedValue {
+    primary: Indexed,
+    unit: Option<Indexed>,
+    min: Option<Indexed>,
+    max: Option<Indexed>,
+}
+
+fn insert_parts(doc: &mut Map<String, Value>, field: &str, indexed: &IndexedValue) {
+    if let Some(unit) = &indexed.unit {
+        doc.insert(format!("{field}__unit"), indexed_to_json(unit));
+    }
+    if let Some(min) = &indexed.min {
+        doc.insert(format!("{field}__min"), indexed_to_json(min));
+    }
+    if let Some(max) = &indexed.max {
+        doc.insert(format!("{field}__max"), indexed_to_json(max));
+    }
+}
+
 fn index_value(
     model: &CompiledModel,
     attribute: &braian_model::Attribute,
     value: &Value,
-) -> Option<Indexed> {
+) -> Option<IndexedValue> {
     if attribute.multiple {
         let items = value.as_array()?;
         if matches!(
@@ -882,18 +953,110 @@ fn index_value(
                 .iter()
                 .filter_map(|item| scalar_number(model, attribute, item))
                 .collect();
-            return Some(Indexed::Numbers(numbers));
+            return Some(parts_of(model, attribute, value, Indexed::Numbers(numbers)));
         }
         let texts = items.iter().filter_map(scalar_text).collect();
-        return Some(Indexed::Texts(texts));
+        return Some(IndexedValue {
+            primary: Indexed::Texts(texts),
+            unit: None,
+            min: None,
+            max: None,
+        });
     }
     if matches!(
         attribute.kind,
         AttributeKind::Number { .. } | AttributeKind::Range { .. }
     ) {
-        return scalar_number(model, attribute, value).map(Indexed::Number);
+        let number = scalar_number(model, attribute, value)?;
+        return Some(parts_of(model, attribute, value, Indexed::Number(number)));
     }
-    scalar_text(value).map(Indexed::Text)
+    scalar_text(value).map(|text| IndexedValue {
+        primary: Indexed::Text(text),
+        unit: None,
+        min: None,
+        max: None,
+    })
+}
+
+fn parts_of(
+    model: &CompiledModel,
+    attribute: &braian_model::Attribute,
+    value: &Value,
+    primary: Indexed,
+) -> IndexedValue {
+    let items: Vec<&Value> = if attribute.multiple {
+        value
+            .as_array()
+            .map(|items| items.iter().collect())
+            .unwrap_or_default()
+    } else {
+        vec![value]
+    };
+    let units: Vec<String> = items.iter().filter_map(|item| entered_unit(item)).collect();
+    let unit = match (attribute.multiple, units.is_empty()) {
+        (_, true) => None,
+        (true, false) => Some(Indexed::Texts(units)),
+        (false, false) => units.into_iter().next().map(Indexed::Text),
+    };
+    let (min, max) = if matches!(attribute.kind, AttributeKind::Range { .. }) {
+        if attribute.multiple {
+            let mins = items
+                .iter()
+                .filter_map(|item| range_end(model, attribute, item, "min"))
+                .collect::<Vec<_>>();
+            let maxes = items
+                .iter()
+                .filter_map(|item| range_end(model, attribute, item, "max"))
+                .collect::<Vec<_>>();
+            (
+                (!mins.is_empty()).then_some(Indexed::Numbers(mins)),
+                (!maxes.is_empty()).then_some(Indexed::Numbers(maxes)),
+            )
+        } else {
+            (
+                range_end(model, attribute, value, "min").map(Indexed::Number),
+                range_end(model, attribute, value, "max").map(Indexed::Number),
+            )
+        }
+    } else {
+        (None, None)
+    };
+    let unit = if attribute.kind.unit_family_id().is_some() {
+        unit
+    } else {
+        None
+    };
+    IndexedValue {
+        primary,
+        unit,
+        min,
+        max,
+    }
+}
+
+fn entered_unit(value: &Value) -> Option<String> {
+    value
+        .as_object()
+        .and_then(|object| object.get("unit"))
+        .and_then(Value::as_str)
+        .filter(|unit| !unit.is_empty())
+        .map(str::to_owned)
+}
+
+fn range_end(
+    model: &CompiledModel,
+    attribute: &braian_model::Attribute,
+    value: &Value,
+    end: &str,
+) -> Option<f64> {
+    let object = value.as_object()?;
+    let raw = object.get(end)?.as_str()?.parse().ok()?;
+    let unit = object
+        .get("unit")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let entered = braian_model::NumberValue { value: raw, unit };
+    model.normalize(attribute.id, &entered).ok()?.to_f64()
 }
 
 fn scalar_text(value: &Value) -> Option<String> {
@@ -1022,5 +1185,168 @@ mod tests {
         let blob = doc["search_sv"].as_str().expect("blob");
         assert!(blob.contains("Canvas"), "{blob}");
         assert!(blob.contains("SKU-1"), "{blob}");
+    }
+
+    /// 500 g is 500 in a gram base and 0.6 kg is 600, so the base sort puts
+    /// the lighter entered value first. The entered unit stays beside it.
+    #[test]
+    fn five_hundred_grams_sorts_before_zero_point_six_kilograms() {
+        let defs: DefinitionSet = serde_json::from_value(json!({
+            "model_revision": 1,
+            "languages": ["en"],
+            "unit_families": [{
+                "id": "018f0000-0000-7000-8000-000000000011",
+                "key": "mass",
+                "base_unit": "g",
+                "units": [
+                    { "code": "g", "factor": "1" },
+                    { "code": "kg", "factor": "1000" }
+                ]
+            }],
+            "attributes": [{
+                "id": "018f0000-0000-7000-8000-000000000100",
+                "key": "number",
+                "labels": { "en": "Number" },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text" },
+                "index": { "searchable": true, "filterable": true, "sortable": true }
+            }, {
+                "id": "018f0000-0000-7000-8000-00000000011c",
+                "key": "net_weight",
+                "labels": { "en": "Net weight" },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": {
+                    "type": "number",
+                    "unit_family": "018f0000-0000-7000-8000-000000000011"
+                },
+                "index": { "searchable": false, "filterable": true, "sortable": true }
+            }],
+            "types": [{
+                "id": "018f0000-0000-7000-8000-000000000201",
+                "key": "article",
+                "labels": { "en": "Article" },
+                "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                "attributes": ["018f0000-0000-7000-8000-000000000100", "018f0000-0000-7000-8000-00000000011c"]
+            }],
+            "structures": []
+        }))
+        .expect("defs");
+        let model = CompiledModel::compile(&defs).expect("compile");
+        let weight = model.attribute_by_key("net_weight").expect("weight");
+        let field = braian_model::attribute_index_field(weight.id, None);
+        let schema = schema_fields(&defs);
+        let names: Vec<_> = schema
+            .iter()
+            .filter_map(|item| item.get("name").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect();
+        assert!(names.iter().any(|name| name == &format!("{field}__unit")));
+        let key = schema
+            .iter()
+            .find(|item| item["name"] == "key")
+            .expect("key");
+        assert_eq!(key["sort"], true);
+        let unit = schema
+            .iter()
+            .find(|item| item["name"] == format!("{field}__unit"))
+            .expect("unit field");
+        assert_eq!(unit["sort"], false);
+        assert_eq!(unit["facet"], true);
+
+        let grams = doc_with(
+            &model,
+            &defs,
+            weight.id,
+            json!({"value": "500", "unit": "g"}),
+        );
+        let kilos = doc_with(
+            &model,
+            &defs,
+            weight.id,
+            json!({"value": "0.6", "unit": "kg"}),
+        );
+        assert_eq!(grams[&field], json!(500.0));
+        assert_eq!(grams[&format!("{field}__unit")], "g");
+        assert_eq!(kilos[&field], json!(600.0));
+        assert_eq!(kilos[&format!("{field}__unit")], "kg");
+        assert!(grams[&field].as_f64().unwrap() < kilos[&field].as_f64().unwrap());
+    }
+
+    #[test]
+    fn a_range_stores_both_ends_in_the_base_unit() {
+        let defs: DefinitionSet = serde_json::from_value(json!({
+            "model_revision": 1,
+            "languages": ["en"],
+            "unit_families": [{
+                "id": "018f0000-0000-7000-8000-000000000011",
+                "key": "mass",
+                "base_unit": "g",
+                "units": [
+                    { "code": "g", "factor": "1" },
+                    { "code": "kg", "factor": "1000" }
+                ]
+            }],
+            "attributes": [{
+                "id": "018f0000-0000-7000-8000-000000000100",
+                "key": "number",
+                "labels": { "en": "Number" },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": { "type": "text" },
+                "index": { "searchable": true, "filterable": true, "sortable": true }
+            }, {
+                "id": "018f0000-0000-7000-8000-000000000140",
+                "key": "size",
+                "labels": { "en": "Size" },
+                "language_dependent": false,
+                "multiple": false,
+                "kind": {
+                    "type": "range",
+                    "unit_family": "018f0000-0000-7000-8000-000000000011"
+                },
+                "index": { "searchable": false, "filterable": true, "sortable": true }
+            }],
+            "types": [{
+                "id": "018f0000-0000-7000-8000-000000000201",
+                "key": "article",
+                "labels": { "en": "Article" },
+                "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                "attributes": ["018f0000-0000-7000-8000-000000000100", "018f0000-0000-7000-8000-000000000140"]
+            }],
+            "structures": []
+        }))
+        .expect("defs");
+        let model = CompiledModel::compile(&defs).expect("compile");
+        let size = model.attribute_by_key("size").expect("size");
+        let field = braian_model::attribute_index_field(size.id, None);
+        let doc = doc_with(
+            &model,
+            &defs,
+            size.id,
+            json!({"min": "0.5", "max": "1", "unit": "kg"}),
+        );
+        assert_eq!(doc[&format!("{field}__min")], json!(500.0));
+        assert_eq!(doc[&format!("{field}__max")], json!(1000.0));
+        assert_eq!(doc[&format!("{field}__unit")], "kg");
+    }
+
+    fn doc_with(
+        model: &CompiledModel,
+        defs: &DefinitionSet,
+        attribute: braian_model::AttributeId,
+        value: Value,
+    ) -> Value {
+        let mut values = BTreeMap::new();
+        values.insert(attribute, value);
+        let object = Object {
+            id: braian_model::ObjectId::from_uuid(uuid::Uuid::now_v7()),
+            type_id: model.type_id("article").expect("type"),
+            model_revision: defs.model_revision,
+            groups: BTreeMap::new(),
+            values,
+        };
+        document(model, defs, &object, "A-1", "article", 1, 1, false)
     }
 }

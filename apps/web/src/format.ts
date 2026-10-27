@@ -6,6 +6,16 @@ export function formatTimestamp(value: unknown): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/** A number, and its unit when one was entered. Digits follow the `en` locale. */
+export function formatMeasure(value: string, unit?: string): string {
+  const trimmed = value.trim()
+  const numeric = Number(trimmed.replaceAll(',', ''))
+  const shown = trimmed !== '' && Number.isFinite(numeric)
+    ? new Intl.NumberFormat('en', { maximumFractionDigits: 6 }).format(numeric)
+    : trimmed
+  return unit ? `${shown} ${unit}` : shown
+}
+
 /** Grouped the same way in every browser locale. */
 export function formatCount(value: unknown): string {
   const count = typeof value === 'number' ? value : Number(value)

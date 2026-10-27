@@ -231,6 +231,37 @@ export function CommandPalette({
       touch(remembered)
       void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
     }
+    if (id === 'filter:by' || id === 'export:columns') {
+      const type = session.workspaceType || session.listType || ''
+      const mode = id === 'filter:by' ? 'filter' : 'export'
+      void api<{ paths: Array<{ text: string; label: string }> }>(`/v1/types/${encodeURIComponent(type)}/attribute-paths`)
+        .then((body) => {
+          setStack((current) => [...current, {
+            label: item.title,
+            rows: (body.paths ?? []).map((path) => ({
+              id: `path:${mode}:${path.text}`,
+              sourceId: `path:${mode}:${path.text}`,
+              group: 'views' as const,
+              title: path.label,
+              subtitle: path.text,
+            })),
+          }])
+          setQuery('')
+          setActive(0)
+        })
+        .catch(() => undefined)
+      return
+    }
+    if (id.startsWith('path:filter:')) {
+      window.dispatchEvent(new CustomEvent('braian-path-filter', { detail: { text: id.slice('path:filter:'.length), label: item.title } }))
+      onClose()
+      return
+    }
+    if (id.startsWith('path:export:')) {
+      window.dispatchEvent(new CustomEvent('braian-export-column', { detail: { text: id.slice('path:export:'.length), label: item.title } }))
+      onClose()
+      return
+    }
     if (id === 'columns:hide' || id === 'columns:show') {
       const hide = id === 'columns:hide'
       setStack((current) => [...current, { label: item.title, rows: columnRows(tableColumns, hide) }])
@@ -956,7 +987,10 @@ function buildCatalog(
 
 // "Hide column ›" and "Show column ›" open a list of the open table's columns.
 function columnEntries(columns: UiColumn[]): PaletteItem[] {
-  const items: PaletteItem[] = []
+  const items: PaletteItem[] = [
+    { id: 'filter:by', group: 'views', title: `${copy.filterBy} ›`, subtitle: 'Attribute, part or link', keywords: ['filter', 'path', 'unit'] },
+    { id: 'export:columns', group: 'views', title: `${copy.exportColumns} ›`, subtitle: 'Add a column to the next export', keywords: ['export', 'path', 'column'] },
+  ]
   if (columns.some((column) => !column.hidden)) {
     items.push({ id: 'columns:hide', group: 'views', title: `${copy.hideColumn} ›`, subtitle: 'Pick a column in the open table', keywords: ['column'] })
   }
