@@ -215,8 +215,8 @@ impl Store {
             + 1;
         let actor_id: Uuid = tx
             .query_one(
-                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'human', 'System', 'system')
-                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name
+                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'integration', 'System', 'system')
+                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
                  RETURNING id",
                 &[&Uuid::now_v7()],
             )
@@ -322,8 +322,8 @@ impl Store {
             + 1;
         let actor_id: Uuid = tx
             .query_one(
-                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'human', 'System', 'system')
-                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name
+                "INSERT INTO principals (id, kind, name, handle) VALUES ($1, 'integration', 'System', 'system')
+                 ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
                  RETURNING id",
                 &[&Uuid::now_v7()],
             )

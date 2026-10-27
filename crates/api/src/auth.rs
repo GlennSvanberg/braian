@@ -69,6 +69,28 @@ impl Identity {
     pub fn may_commit(&self) -> bool {
         self.kind == PrincipalKind::Human
     }
+
+    /// A caller whose kind is the row in `principals`, not a token spec.
+    ///
+    /// Used to check the migration's System principal. Building the identity
+    /// from a dev token would upsert the kind and hide a `human` row.
+    #[doc(hidden)]
+    pub fn from_principal(record: &braian_store::PrincipalRecord) -> Self {
+        Self {
+            token: String::new(),
+            handle: record.handle.clone().unwrap_or_else(|| record.name.clone()),
+            kind: record.kind,
+            behalf_handle: None,
+            actor: Actor {
+                actor: record.id,
+                on_behalf_of: None,
+                kind: BatchKind::Interactive,
+                source: "principal".into(),
+            },
+            role: Role::Admin,
+            user_id: None,
+        }
+    }
 }
 
 /// `agent` for an agent or for Ctrl+K acting as the person. `import` for an integration.

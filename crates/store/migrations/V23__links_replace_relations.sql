@@ -61,9 +61,11 @@ BEGIN
         RETURN;
     END IF;
 
+    -- `integration` is the service kind. principals.kind only allows human,
+    -- agent and integration, and only a human may approve, discard or delete.
     INSERT INTO principals (id, kind, name, handle)
-    VALUES (braian_md5_uuid('principal:system'), 'human', 'System', 'system')
-    ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name
+    VALUES (braian_md5_uuid('principal:system'), 'integration', 'System', 'system')
+    ON CONFLICT (handle) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
     RETURNING id INTO actor;
 
     SELECT definitions, model_revision

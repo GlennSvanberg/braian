@@ -798,6 +798,16 @@ async fn relations_and_object_refs_become_links() {
     let encoded = document.to_string();
     assert!(!encoded.contains("object_ref"), "{document}");
     assert!(encoded.contains("product_articles"), "{document}");
+    let system_kind: String = conn
+        .client
+        .query_one("SELECT kind FROM principals WHERE handle = 'system'", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        system_kind, "integration",
+        "the migration principal must not be a person"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

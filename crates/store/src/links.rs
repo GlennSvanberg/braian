@@ -230,6 +230,42 @@ impl crate::session::Store {
         count_touching(&**client, id).await
     }
 
+    /// True when a live link of this type already joins the pair, or a `one` side is taken.
+    pub async fn link_blocks(
+        &self,
+        link_type: TypeId,
+        from_id: ObjectId,
+        to_id: ObjectId,
+        from_one: bool,
+        to_one: bool,
+    ) -> Result<bool, Error> {
+        let client = self.pool().get().await?;
+        let blocked: bool = client
+            .query_one(
+                "SELECT EXISTS (
+                    SELECT 1
+                    FROM links l
+                    JOIN objects object ON object.id = l.object_id AND object.deleted_at IS NULL
+                    WHERE l.link_type_id = $1
+                      AND (
+                            (l.from_id = $2 AND l.to_id = $3)
+                         OR ($4 AND l.from_id = $2)
+                         OR ($5 AND l.to_id = $3)
+                      )
+                )",
+                &[
+                    &link_type.as_uuid(),
+                    &from_id.as_uuid(),
+                    &to_id.as_uuid(),
+                    &from_one,
+                    &to_one,
+                ],
+            )
+            .await?
+            .get(0);
+        Ok(blocked)
+    }
+
     /// `(link rows removed, other objects removed)`.
     pub async fn link_delete_counts(&self, id: ObjectId) -> Result<(i64, i64), Error> {
         let client = self.pool().get().await?;

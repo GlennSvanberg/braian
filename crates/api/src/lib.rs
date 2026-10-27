@@ -42,6 +42,8 @@ pub use crate::auth::{
     IdentitySpec, hash_password, parse_dev_tokens, random_token, token_hash, verify_password,
 };
 pub use crate::feedback::check_feedback_config;
+#[doc(hidden)]
+pub use crate::platform::stored_principal_cannot_approve_discard_or_delete;
 pub use crate::state::AppState;
 
 const BODY_LIMIT: usize = 32 * 1024 * 1024;

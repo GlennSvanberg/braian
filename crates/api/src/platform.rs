@@ -4692,6 +4692,52 @@ pub async fn execute(
     run_operation(state, identity, name, args, false).await
 }
 
+/// The stored `system` principal must not accept, discard or delete.
+///
+/// The kind is read from `principals`. A human row would pass `may_commit`.
+#[doc(hidden)]
+pub async fn stored_principal_cannot_approve_discard_or_delete(
+    store: &Store,
+) -> Result<(), String> {
+    let id = store
+        .principal_by_handle("system")
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("system principal is missing")?;
+    let record = store
+        .principal(id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("system principal is missing")?;
+    if record.kind != braian_store::PrincipalKind::Integration {
+        return Err(format!("system principal kind is {}", record.kind.as_str()));
+    }
+    if record.name != "System" {
+        return Err(format!("system principal name is {}", record.name));
+    }
+    let identity = Identity::from_principal(&record);
+    let state = AppState::new(store.clone(), Vec::new(), None);
+    let object_id = Uuid::nil();
+    for (name, code) in [
+        ("accept_proposal", "agent_cannot_accept"),
+        ("discard_proposal", "agent_cannot_discard"),
+        ("delete_object", "agent_cannot_delete"),
+    ] {
+        match run_operation(&state, &identity, name, &json!({ "id": object_id }), false).await {
+            Ok(value) => return Err(format!("{name} was allowed: {value}")),
+            Err(problem) => {
+                if problem.status != StatusCode::FORBIDDEN.as_u16() || problem.code != code {
+                    return Err(format!(
+                        "{name} returned {} {}",
+                        problem.status, problem.code
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn uuid_arg(args: &Value, key: &str) -> Result<Uuid, Problem> {
     args.get(key)
         .and_then(Value::as_str)
