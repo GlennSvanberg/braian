@@ -72,6 +72,17 @@
           "definitions"
         ],
         "operationId": "post_attribute",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Id is optional",
           "content": {
@@ -85,11 +96,21 @@
         },
         "responses": {
           "200": {
-            "description": "Stored attribute",
+            "description": "Stored attribute, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Attribute"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The model step rejected the attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -171,6 +192,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -185,11 +215,21 @@
         },
         "responses": {
           "200": {
-            "description": "Stored attribute",
+            "description": "Stored attribute, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Attribute"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The model step rejected the attribute",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -615,6 +655,17 @@
           "definitions"
         ],
         "operationId": "post_link_type",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -626,6 +677,9 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Consequence analysis"
+          },
           "204": {
             "description": "Link type saved"
           }
@@ -708,6 +762,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -721,6 +784,9 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Consequence analysis"
+          },
           "204": {
             "description": "Link type updated"
           }
@@ -1709,6 +1775,17 @@
           "definitions"
         ],
         "operationId": "post_structure",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Id is optional. Groups and classes belong to the structure.",
           "content": {
@@ -1722,7 +1799,7 @@
         },
         "responses": {
           "200": {
-            "description": "Stored structure",
+            "description": "Stored structure, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
@@ -1788,6 +1865,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -1802,7 +1888,7 @@
         },
         "responses": {
           "200": {
-            "description": "Stored structure",
+            "description": "Stored structure, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
@@ -2423,6 +2509,17 @@
           "definitions"
         ],
         "operationId": "post_type",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Id is optional",
           "content": {
@@ -2436,7 +2533,7 @@
         },
         "responses": {
           "200": {
-            "description": "Stored type",
+            "description": "Stored type, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
@@ -2502,6 +2599,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -2516,7 +2622,7 @@
         },
         "responses": {
           "200": {
-            "description": "Stored type",
+            "description": "Stored type, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
@@ -2704,6 +2810,17 @@
           "definitions"
         ],
         "operationId": "post_unit_family",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Id is optional",
           "content": {
@@ -2717,7 +2834,7 @@
         },
         "responses": {
           "200": {
-            "description": "Stored unit family",
+            "description": "Stored unit family, or a dry run",
             "content": {
               "application/json": {
                 "schema": {
@@ -2783,6 +2900,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "description": "Return the consequence analysis and change nothing",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -2797,7 +2923,7 @@
         },
         "responses": {
           "200": {
-            "description": "Stored unit family",
+            "description": "Stored unit family, or a dry run",
             "content": {
               "application/json": {
                 "schema": {

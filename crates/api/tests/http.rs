@@ -325,7 +325,7 @@ async fn old_errors_warn_and_inapplicable_values_stay_hidden() {
         Some(HUMAN),
         &[("content-type", "application/json")],
         Some(
-            r#"{"type":"item","groups":{"catalog":"root"},"values":{"sku":"SKU-WARN","name":{"sv":"Stol"},"active":true}}"#,
+            r#"{"type":"item","groups":{"catalog":"root"},"values":{"sku":"SKU-WARN","name":{"sv":"Stol"},"active":true,"tags":["abcd"]}}"#,
         ),
     )
     .await;
@@ -333,14 +333,14 @@ async fn old_errors_warn_and_inapplicable_values_stay_hidden() {
     let id = created["id"].as_str().unwrap().to_owned();
 
     let (status, _, attribute) =
-        call(&app, "GET", "/v1/attributes/name", Some(HUMAN), &[], None).await;
+        call(&app, "GET", "/v1/attributes/tags", Some(HUMAN), &[], None).await;
     assert_eq!(status, StatusCode::OK, "{attribute}");
     let mut attribute = attribute;
     attribute["kind"]["max_length"] = json!(3);
     let (status, _, saved) = call(
         &app,
         "PUT",
-        "/v1/attributes/name",
+        "/v1/attributes/tags",
         Some(HUMAN),
         &[("content-type", "application/json")],
         Some(&attribute.to_string()),
@@ -393,7 +393,7 @@ async fn old_errors_warn_and_inapplicable_values_stay_hidden() {
         &format!("/v1/objects/{id}"),
         Some(HUMAN),
         &[("content-type", "application/json"), ("if-match", "2")],
-        Some(r#"{"values":{"name":{"sv":"1234"}}}"#),
+        Some(r#"{"values":{"tags":["1234"]}}"#),
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{blocked}");
@@ -3565,4 +3565,474 @@ async fn links_round_trip_and_an_agent_cannot_delete_them() {
     .await;
     assert_eq!(status, StatusCode::OK, "{after}");
     assert!(after.get("links").is_none() || after["links"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn rest_upserts_match_the_draft_and_land_in_history() {
+    let (db, app) = app().await;
+    let principal = db
+        .store()
+        .principal_by_handle("ada")
+        .await
+        .unwrap()
+        .expect("ada");
+    db.store()
+        .attach_user(principal, "ada@example.com", "x", "admin", "Ada")
+        .await
+        .unwrap();
+
+    let (status, _, before) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    let revision = before["model_revision"].clone();
+
+    let (draft_status, _, draft_body) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"steps":[{"op":"update_attribute","key":"name","kind":"number"}]}"#),
+    )
+    .await;
+    let (status, _, attribute) =
+        call(&app, "GET", "/v1/attributes/name", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{attribute}");
+    let mut attribute = attribute;
+    attribute["kind"] = json!({"type": "number"});
+    let (rest_status, _, rest_body) = call(
+        &app,
+        "PUT",
+        "/v1/attributes/name",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&attribute.to_string()),
+    )
+    .await;
+    assert_eq!(rest_status, draft_status, "{draft_body} {rest_body}");
+    assert_eq!(
+        rest_body["code"], draft_body["code"],
+        "{draft_body} {rest_body}"
+    );
+    assert_eq!(
+        rest_body["detail"], draft_body["detail"],
+        "{draft_body} {rest_body}"
+    );
+    assert_eq!(rest_body["code"], "model");
+
+    let (draft_status, _, draft_body) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"steps":[{"op":"create_type","key":"018f0000-0000-7000-8000-000000000999","label":"Nope"}]}"#,
+        ),
+    )
+    .await;
+    let (rest_status, _, rest_body) = call(
+        &app,
+        "POST",
+        "/v1/types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"018f0000-0000-7000-8000-000000000999","labels":{},"key_attribute":"018f0000-0000-7000-8000-000000000100","attributes":[]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(rest_status, draft_status, "{draft_body} {rest_body}");
+    assert_eq!(rest_body["code"], draft_body["code"]);
+    assert_eq!(rest_body["detail"], draft_body["detail"]);
+
+    let (draft_status, _, draft_body) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"steps":[{"op":"create_structure","key":"bad key","label":"Bad"}]}"#),
+    )
+    .await;
+    let (rest_status, _, rest_body) = call(
+        &app,
+        "POST",
+        "/v1/structures",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"bad key","groups":[],"classes":[]}"#),
+    )
+    .await;
+    assert_eq!(rest_status, draft_status, "{draft_body} {rest_body}");
+    assert_eq!(rest_body["code"], draft_body["code"]);
+    assert_eq!(rest_body["detail"], draft_body["detail"]);
+    assert_eq!(rest_body["code"], "invalid_key");
+
+    let (draft_status, _, draft_body) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"steps":[{"op":"create_unit_family","key":"portion","base_unit":"","units":[]}]}"#,
+        ),
+    )
+    .await;
+    let (rest_status, _, rest_body) = call(
+        &app,
+        "POST",
+        "/v1/unit-families",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"portion","base_unit":"","units":[]}"#),
+    )
+    .await;
+    assert_eq!(rest_status, draft_status, "{draft_body} {rest_body}");
+    assert_eq!(rest_body["code"], draft_body["code"]);
+    assert_eq!(rest_body["detail"], draft_body["detail"]);
+
+    let (draft_status, _, draft_body) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"steps":[{"op":"create_value_list","key":"spice2","label":"Spice","options":[{"code":"","label":"Salt"}]}]}"#,
+        ),
+    )
+    .await;
+    let (rest_status, _, rest_body) = call(
+        &app,
+        "POST",
+        "/v1/value-lists",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"spice2","label":"Spice","options":[{"code":"","label":"Salt"}]}"#),
+    )
+    .await;
+    assert_eq!(rest_status, draft_status, "{draft_body} {rest_body}");
+    assert_eq!(rest_body["code"], draft_body["code"]);
+    assert_eq!(rest_body["detail"], draft_body["detail"]);
+
+    let (draft_status, _, draft_body) = call(
+        &app,
+        "POST",
+        "/v1/model/draft/steps",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"steps":[{"op":"create_link_type","key":"bundled","label":"Bundled","from_types":["item"],"to_types":["item"],"from_key":"same","from_label":"Same","to_key":"same","to_label":"Same"}]}"#,
+        ),
+    )
+    .await;
+    let (rest_status, _, rest_body) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"bundled","label":"Bundled","from_types":["item"],"to_types":["item"],"from_key":"same","from_label":"Same","to_key":"same","to_label":"Same"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(rest_status, draft_status, "{draft_body} {rest_body}");
+    assert_eq!(rest_body["code"], draft_body["code"]);
+    assert_eq!(rest_body["detail"], draft_body["detail"]);
+
+    let (status, _, unchanged) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
+    assert_eq!(unchanged["model_revision"], revision);
+
+    let (status, _, tags) = call(&app, "GET", "/v1/attributes/tags", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{tags}");
+    let mut gloss = tags;
+    gloss.as_object_mut().unwrap().remove("id");
+    gloss["key"] = json!("gloss");
+    let (status, _, saved) = call(
+        &app,
+        "POST",
+        "/v1/attributes",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&gloss.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["key"], "gloss");
+    let gloss_id = saved["id"].as_str().unwrap().to_owned();
+
+    let (status, _, saved_type) = call(
+        &app,
+        "POST",
+        "/v1/types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"fixture","labels":{},"key_attribute":"018f0000-0000-7000-8000-000000000100","attributes":["018f0000-0000-7000-8000-000000000100"]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved_type}");
+    assert_eq!(saved_type["key"], "fixture");
+    let type_id = saved_type["id"].as_str().unwrap().to_owned();
+
+    let (status, _, saved_structure) = call(
+        &app,
+        "POST",
+        "/v1/structures",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"shelf","groups":[],"classes":[]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved_structure}");
+    assert_eq!(saved_structure["key"], "shelf");
+    let structure_id = saved_structure["id"].as_str().unwrap().to_owned();
+
+    let (status, _, saved_family) = call(
+        &app,
+        "POST",
+        "/v1/unit-families",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"count","base_unit":"pc","units":[{"code":"pc","factor":"1"}]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved_family}");
+    assert_eq!(saved_family["key"], "count");
+    let family_id = saved_family["id"].as_str().unwrap().to_owned();
+
+    let (status, _, saved_list) = call(
+        &app,
+        "POST",
+        "/v1/value-lists",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"shade","label":"Shade","options":[{"code":"grey","label":"Grey"}]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved_list}");
+    assert_eq!(saved_list["key"], "shade");
+
+    let (status, _, saved_link) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"bundled_with","label":"Bundled with","from_types":["item"],"to_types":["item"],"from_key":"bundles","from_label":"Bundles","to_key":"bundled_in","to_label":"Bundled in"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{saved_link}");
+
+    let (status, _, history) =
+        call(&app, "GET", "/v1/history?limit=20", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    let changes = history["changes"].as_array().unwrap();
+    let logged = |kind: &str, id: &str| {
+        changes.iter().any(|row| {
+            row["op"] == "definitions"
+                && row["source"] == "api"
+                && row["diff"]["entities"].as_array().is_some_and(|entities| {
+                    entities.iter().any(|entity| {
+                        entity["kind"] == kind && entity["id"] == id && entity["op"] == "create"
+                    })
+                })
+        })
+    };
+    assert!(logged("attribute", &gloss_id), "{history}");
+    assert!(logged("type", &type_id), "{history}");
+    assert!(logged("structure", &structure_id), "{history}");
+    assert!(logged("unit_family", &family_id), "{history}");
+    assert!(
+        changes.iter().any(|row| {
+            row["op"] == "definitions"
+                && row["diff"]["entities"].as_array().is_some_and(|entities| {
+                    entities
+                        .iter()
+                        .any(|entity| entity["kind"] == "value_list" && entity["op"] == "create")
+                })
+        }),
+        "{history}"
+    );
+    assert!(
+        changes.iter().any(|row| {
+            row["op"] == "definitions"
+                && row["diff"]["entities"].as_array().is_some_and(|entities| {
+                    entities
+                        .iter()
+                        .any(|entity| entity["kind"] == "type" && entity["op"] == "create")
+                })
+        }),
+        "{history}"
+    );
+
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        "/v1/attributes",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&gloss.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    assert_eq!(denied["code"], "needs_approval");
+    let (status, _, dry) = call(
+        &app,
+        "PUT",
+        &format!("/v1/attributes/{gloss_id}?dry_run=true"),
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(&saved.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert_eq!(dry["applied"], false, "{dry}");
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"agent_link","label":"Agent","from_types":["item"],"to_types":["item"],"from_key":"out","from_label":"Out","to_key":"in","to_label":"In"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    assert_eq!(denied["code"], "needs_approval");
+    let (status, _, denied) = call(
+        &app,
+        "POST",
+        "/v1/value-lists",
+        Some(AGENT),
+        &[("content-type", "application/json")],
+        Some(r#"{"key":"agent_list","label":"Agent","options":[]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    assert_eq!(denied["code"], "needs_approval");
+    let (status, _, still) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+    assert!(
+        still["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "agent_link"),
+        "{still}"
+    );
+}
+
+#[tokio::test]
+async fn an_import_writes_a_value_list_and_is_refused_on_the_other_upserts() {
+    let (_db, app) = app().await;
+    let refused = [
+        (
+            "POST",
+            "/v1/attributes",
+            r#"{"key":"import_extra","labels":{"sv":"Extra"},"language_dependent":false,"multiple":false,"kind":{"type":"text","max_length":16},"index":{"searchable":false,"filterable":false,"sortable":false}}"#,
+        ),
+        (
+            "POST",
+            "/v1/types",
+            r#"{"key":"import_type","labels":{},"key_attribute":"018f0000-0000-7000-8000-000000000100","attributes":["018f0000-0000-7000-8000-000000000100"]}"#,
+        ),
+        (
+            "POST",
+            "/v1/structures",
+            r#"{"key":"import_shelf","groups":[],"classes":[]}"#,
+        ),
+        (
+            "POST",
+            "/v1/unit-families",
+            r#"{"key":"import_count","base_unit":"pc","units":[{"code":"pc","factor":"1"}]}"#,
+        ),
+        (
+            "POST",
+            "/v1/link-types",
+            r#"{"key":"import_link","label":"Import","from_types":["item"],"to_types":["item"],"from_key":"out","from_label":"Out","to_key":"in","to_label":"In"}"#,
+        ),
+    ];
+    for (method, path, body) in refused {
+        let (status, _, denied) = call(
+            &app,
+            method,
+            path,
+            Some(IMPORT),
+            &[("content-type", "application/json")],
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path} {denied}");
+        assert_eq!(denied["code"], "needs_approval", "{path} {denied}");
+    }
+
+    let (status, _, saved) = call(
+        &app,
+        "POST",
+        "/v1/value-lists",
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"import_shade","label":"Shade","options":[{"code":"grey","label":"Grey"}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["key"], "import_shade");
+
+    let (status, _, updated) = call(
+        &app,
+        "PUT",
+        "/v1/value-lists/import_shade",
+        Some(IMPORT),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"import_shade","label":"Shade updated","options":[{"code":"grey","label":"Grey"}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert!(
+        updated["labels"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|label| label == "Shade updated"),
+        "{updated}"
+    );
+
+    let (status, _, defs) = call(&app, "GET", "/v1/definitions", Some(HUMAN), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{defs}");
+    assert!(
+        defs["value_lists"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["key"] == "import_shade"),
+        "{defs}"
+    );
+    assert!(
+        defs["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "import_extra"),
+        "{defs}"
+    );
+    assert!(
+        defs["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["key"] != "import_link" && item["key"] != "import_type"),
+        "{defs}"
+    );
 }

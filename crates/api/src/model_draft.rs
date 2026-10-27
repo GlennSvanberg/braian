@@ -532,7 +532,6 @@ fn list_change(body: &ValueListBody, update: bool) -> Result<ModelChange, Proble
                 .get("code")
                 .or_else(|| item.get("key"))
                 .cloned()
-                .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
                     Problem::new(
                         StatusCode::BAD_REQUEST,
@@ -596,7 +595,13 @@ pub(crate) async fn post_value_list(
     Json(body): Json<ValueListBody>,
 ) -> Result<Response, Problem> {
     let step = list_change(&body, false)?;
-    let saved = commit_steps(&state, &identity.actor, &[step], query.dry_run, None).await?;
+    let saved = crate::definitions::commit_model_change_allowing_import(
+        &state,
+        &identity,
+        step,
+        query.dry_run,
+    )
+    .await?;
     if query.dry_run {
         return Ok(Json(saved).into_response());
     }
@@ -665,7 +670,13 @@ pub(crate) async fn put_value_list(
         body.key = id.clone();
     }
     let step = list_change(&body, true)?;
-    let saved = commit_steps(&state, &identity.actor, &[step], query.dry_run, None).await?;
+    let saved = crate::definitions::commit_model_change_allowing_import(
+        &state,
+        &identity,
+        step,
+        query.dry_run,
+    )
+    .await?;
     if query.dry_run {
         return Ok(Json(saved).into_response());
     }
