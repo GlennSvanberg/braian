@@ -1835,7 +1835,7 @@ async fn search(
             "TYPESENSE_URL is not configured",
         ));
     };
-    let page = search
+    let mut page = search
         .search(&SearchQuery {
             text: query.q.unwrap_or_default(),
             language: query.lang.unwrap_or_else(|| "en".into()),
@@ -1847,6 +1847,9 @@ async fn search(
         })
         .await
         .map_err(|error| Problem::new(StatusCode::BAD_GATEWAY, "search", error.to_string()))?;
+    if let Ok(cached) = state.models.get(&state.store).await {
+        page = hide_link_hits(page, &cached.defs);
+    }
     Ok(Json(json!({
         "found": page.found,
         "hits": page.hits,
@@ -1929,6 +1932,46 @@ async fn list_objects(
         "objects": objects,
         "next_cursor": next_cursor,
     })))
+}
+
+/// A link document is not a search hit, even when an older index still holds it.
+fn hide_link_hits(
+    mut page: braian_search::SearchPage,
+    defs: &DefinitionSet,
+) -> braian_search::SearchPage {
+    let links: BTreeSet<&str> = defs
+        .types
+        .iter()
+        .filter(|object_type| object_type.is_link())
+        .map(|object_type| object_type.key.as_str())
+        .collect();
+    if links.is_empty() {
+        return page;
+    }
+    let link_hit = |hit: &braian_search::SearchHit| {
+        hit.document
+            .get("type_key")
+            .and_then(Value::as_str)
+            .is_some_and(|key| links.contains(key))
+    };
+    if page.groups.is_empty() {
+        let before = page.hits.len() as u32;
+        page.hits.retain(|hit| !link_hit(hit));
+        let removed = before.saturating_sub(page.hits.len() as u32);
+        page.found = page.found.saturating_sub(removed);
+        return page;
+    }
+    let before_groups = page.groups.len() as u32;
+    for group in &mut page.groups {
+        let before = group.hits.len() as u32;
+        group.hits.retain(|hit| !link_hit(hit));
+        let removed = before.saturating_sub(group.hits.len() as u32);
+        group.found = group.found.saturating_sub(removed);
+    }
+    page.groups.retain(|group| !group.hits.is_empty());
+    let removed_groups = before_groups.saturating_sub(page.groups.len() as u32);
+    page.found = page.found.saturating_sub(removed_groups);
+    page
 }
 
 fn empty_object_list() -> Json<Value> {
@@ -5593,6 +5636,59 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn search_hides_a_link_type_even_when_the_index_returns_it() {
+        let defs: braian_model::DefinitionSet = serde_json::from_value(json!({
+            "model_revision": 1,
+            "languages": ["en"],
+            "unit_families": [],
+            "attributes": [],
+            "types": [
+                {
+                    "id": "018f0000-0000-7000-8000-000000000200",
+                    "key": "item",
+                    "labels": {},
+                    "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                    "attributes": []
+                },
+                {
+                    "id": "018f0000-0000-7000-8000-000000000201",
+                    "key": "pairs_with",
+                    "labels": {},
+                    "key_attribute": "018f0000-0000-7000-8000-000000000100",
+                    "attributes": [],
+                    "kind": "link"
+                }
+            ],
+            "structures": []
+        }))
+        .expect("defs");
+        let hit = |id: &str, type_key: &str| braian_search::SearchHit {
+            id: id.into(),
+            document: json!({ "id": id, "key": id, "type_key": type_key }),
+        };
+        let page = hide_link_hits(
+            braian_search::SearchPage {
+                found: 3,
+                hits: vec![
+                    hit("a", "item"),
+                    hit("link", "pairs_with"),
+                    hit("b", "item"),
+                ],
+                groups: vec![],
+            },
+            &defs,
+        );
+        assert_eq!(page.found, 2);
+        assert_eq!(
+            page.hits
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+    }
 
     #[test]
     fn an_accept_patch_can_only_keep_proposed_values() {
