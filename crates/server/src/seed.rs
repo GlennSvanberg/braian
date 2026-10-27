@@ -2565,10 +2565,19 @@ mod tests {
 
     struct SeedEnv {
         previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn seed_env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        &LOCK
     }
 
     impl SeedEnv {
         fn set(pairs: &[(&'static str, &str)]) -> Self {
+            let _lock = seed_env_lock()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let previous = pairs
                 .iter()
                 .map(|(key, value)| {
@@ -2577,7 +2586,7 @@ mod tests {
                     (*key, old)
                 })
                 .collect();
-            Self { previous }
+            Self { previous, _lock }
         }
     }
 
