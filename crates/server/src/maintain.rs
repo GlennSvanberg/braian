@@ -128,6 +128,73 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(frecency, SYSTEM_PRINCIPAL.as_uuid());
+        assert!(
+            !rows.iter().any(|row| row.id == legacy),
+            "legacy System row must be gone after merge: {rows:?}"
+        );
+        assert_eq!(
+            rows
+                .iter()
+                .filter(|row| row.kind == "integration" && row.name == "System")
+                .count(),
+            1,
+            "{rows:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_named_System_is_left_untouched_while_legacy_system_merges() {
+        let db = TestDb::create().await;
+        let client = connect(&db.database_url()).await;
+        let person = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO principals (id, kind, name, handle)
+                 VALUES ($1, 'human', 'System', 'nina')",
+                &[&person],
+            )
+            .await
+            .unwrap();
+        let legacy = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO principals (id, kind, name, handle)
+                 VALUES ($1, 'integration', 'System', 'system')",
+                &[&legacy],
+            )
+            .await
+            .unwrap();
+        let batch = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO batches (id, actor, kind, source)
+                 VALUES ($1, $2, 'interactive', 'test')",
+                &[&batch, &legacy],
+            )
+            .await
+            .unwrap();
+
+        startup(db.store()).await.unwrap();
+        startup(db.store()).await.unwrap();
+
+        let rows = principal_rows(&client).await;
+        let human = rows.iter().find(|row| row.id == person).expect("human System");
+        assert_eq!(human.kind, "human");
+        assert_eq!(human.name, "System");
+        assert_eq!(human.handle.as_deref(), Some("nina"));
+        assert!(rows.iter().all(|row| row.id != legacy), "{rows:?}");
+        let system = rows
+            .iter()
+            .find(|row| row.id == SYSTEM_PRINCIPAL.as_uuid())
+            .expect("stable system");
+        assert_eq!(system.kind, "integration");
+        assert_eq!(system.name, "System");
+        let batch_actor: Uuid = client
+            .query_one("SELECT actor FROM batches WHERE id = $1", &[&batch])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(batch_actor, SYSTEM_PRINCIPAL.as_uuid());
     }
 
     #[tokio::test]

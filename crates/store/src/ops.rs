@@ -271,8 +271,10 @@ async fn dedupe_legacy_system_principals(tx: &Transaction<'_>) -> Result<(), Err
             .await?
             .get(0);
         if still_owned {
-            // Both rows already have a user. Keep the legacy row rather than
-            // break a login; the stable row stays on its `system-N` handle.
+            // Both rows already have a user. Foreign keys were moved above to
+            // the stable id; the legacy row is left only so that login still
+            // resolves through users.principal_id. The stable System keeps a
+            // free `system-N` handle until the human row releases `system`.
             continue;
         }
         tx.execute("DELETE FROM principals WHERE id = $1", &[&legacy])
