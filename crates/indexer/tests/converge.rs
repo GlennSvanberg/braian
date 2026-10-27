@@ -213,7 +213,7 @@ async fn a_link_is_absent_from_search_and_lists_after_indexing_and_reindex() {
         singular: BTreeMap::new(),
         plural: BTreeMap::new(),
         key_attribute: sku,
-        attributes: vec![],
+        attributes: vec![sku],
         structures: Some(Vec::new()),
         defaults: BTreeMap::new(),
         kind: TypeKind::Link,
