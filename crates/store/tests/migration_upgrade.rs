@@ -200,7 +200,7 @@ async fn view_types_are_english_and_have_no_dashboard() {
     assert_eq!(titles["proposal"], "Proposals");
     assert_eq!(titles["embed"], "Embedded view");
     assert_eq!(titles["assortment_list"], "Selections");
-    assert_eq!(titles["class_attributes"], "Classes");
+    assert_eq!(titles["class_attributes"], "Group attributes");
 }
 
 #[tokio::test]
@@ -260,7 +260,9 @@ async fn selection_type_comes_from_the_query_or_the_most_hits() {
     for entry in fs::read_dir(&source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy().starts_with("V17") {
+        let file = name.to_string_lossy();
+        // V18 rewrites query ids and must run after V17 has filled type_id.
+        if file.starts_with("V17") || file.starts_with("V18") {
             continue;
         }
         fs::copy(entry.path(), dir.join(&name)).unwrap();
@@ -452,6 +454,34 @@ async fn selection_type_comes_from_the_query_or_the_most_hits() {
         .unwrap()
         .get(0);
     assert_eq!(title, "My picks");
+
+    fs::copy(
+        source.join("V18__ids_and_group_attributes.sql"),
+        dir.join("V18__ids_and_group_attributes.sql"),
+    )
+    .unwrap();
+    migrate(&mut conn.client, &dir).await;
+    let query: serde_json::Value = conn
+        .client
+        .query_one("SELECT query FROM assortments WHERE id = $1", &[&cheese])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(query.get("type").is_none(), "{query}");
+    assert_eq!(
+        query["group"],
+        "018f0000-0000-7000-8000-000000000300:018f0000-0000-7000-8000-000000000400"
+    );
+    let reindex: bool = conn
+        .client
+        .query_one(
+            "SELECT reindex_requested FROM indexer_progress WHERE id = 1",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(reindex);
 
     let _ = fs::remove_dir_all(&dir);
 }
