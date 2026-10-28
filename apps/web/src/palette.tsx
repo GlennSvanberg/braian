@@ -16,6 +16,7 @@ import { copy, uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
 import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
+import { addViewRootItem, addViewSubmenuRows, isAddViewRoot, parseAddViewChoice } from './palette-add-view'
 import { publishProposal } from './proposal-bus'
 import { modelFocus, openModelDialog, requestDiscardDraft, requestReview, stageModel } from './model-stage'
 import { isStandardAttribute, queueViewType, requestAttributeAction } from './attribute-actions'
@@ -65,6 +66,9 @@ export function CommandPalette({
   ai,
   feedbackEnabled,
   onSendFeedback,
+  focusViewId,
+  onPrepareAddView,
+  startAddView,
   onClose,
 }: {
   session: SessionLike
@@ -73,6 +77,9 @@ export function CommandPalette({
   ai?: boolean
   feedbackEnabled?: boolean
   onSendFeedback?: () => void
+  focusViewId?: string | null
+  onPrepareAddView?: () => void
+  startAddView?: boolean
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
@@ -212,6 +219,18 @@ export function CommandPalette({
       ],
     }
   })
+  useEffect(() => {
+    if (!startAddView) return
+    onPrepareAddView?.()
+    setStack([{
+      label: `${copy.addView} ›`,
+      rows: addViewSubmenuRows(views, types, selectedKey),
+    }])
+    setActive(0)
+    // Mount-only: right-click Add view opens the submenu immediately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startAddView])
+
   const rootRows = withModelCommand(query, visibleRows(query, catalog, hits, frecency))
   const rows = stack.at(-1)?.rows ?? rootRows
   const activeRow = active == null ? undefined : rows[active]
@@ -231,6 +250,32 @@ export function CommandPalette({
     if (id !== 'ask') {
       touch(remembered)
       void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
+    }
+    if (isAddViewRoot(id)) {
+      onPrepareAddView?.()
+      setStack((current) => [...current, {
+        label: item.title,
+        rows: addViewSubmenuRows(views, types, selectedKey),
+      }])
+      setQuery('')
+      setActive(0)
+      return
+    }
+    const addChoice = parseAddViewChoice(id)
+    if (addChoice) {
+      if (addChoice.kind === 'type') {
+        onPrepareAddView?.()
+        session.openTypeView?.(addChoice.value)
+      } else {
+        const target = focusViewId || undefined
+        dispatchUi('ui.open_view', {
+          id: addChoice.value,
+          zone: 'center',
+          ...(target ? { target } : {}),
+        })
+      }
+      onClose()
+      return
     }
     if (id === 'filter:by' || id === 'export:columns') {
       const type = session.workspaceType || session.listType || ''
@@ -963,6 +1008,7 @@ function buildCatalog(
     { id: 'layout:zoom', group: 'views', title: 'Maximize pane', subtitle: 'Show only the focused pane', kbd: 'Ctrl+Alt+Z', shortcut: 'Ctrl+Alt+Z' },
     { id: 'layout:close_view', group: 'views', title: 'Close view', subtitle: 'Close the focused view', kbd: 'Ctrl+Alt+W', shortcut: 'Ctrl+Alt+W' },
     { id: 'layout:reset_layout', group: 'views', title: 'Reset layout', subtitle: 'Restore the saved workspace layout' },
+    addViewRootItem(),
   ]
   if (feedbackEnabled) {
     items.push({
