@@ -129,6 +129,7 @@ export function Shell() {
   const [liveState, setLiveState] = useState('closed')
   const [statusLine, setStatusLine] = useState<string>(copy.activity)
   const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai'>(null)
+  const [paletteStartAddView, setPaletteStartAddView] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackCapture, setFeedbackCapture] = useState<FeedbackCapture | null>(null)
   const [help, setHelp] = useState(false)
@@ -294,7 +295,12 @@ export function Shell() {
       registerCommandRunner('layout:move_view_down', (target) =>
         applyRef.current('move_view_down', target.viewId ? { view: target.viewId } : {}),
       ),
-      registerCommandRunner('layout:add-view', () => setPaletteMode('list')),
+      registerCommandRunner('layout:add-view', () => {
+        const focus = docRef.current?.focus
+        placeOverride.current = focus ? { target: focus, zone: 'center' } : { zone: 'center' }
+        setPaletteStartAddView(true)
+        setPaletteMode('list')
+      }),
       registerCommandRunner('selection:new', () => requestNewSelection()),
       registerCommandRunner('layout:split-left', (target) => applyRef.current('split', { view: target.viewId, zone: 'left' })),
       registerCommandRunner('layout:split-right', (target) => applyRef.current('split', { view: target.viewId, zone: 'right' })),
@@ -771,6 +777,7 @@ export function Shell() {
             }}
             onAddView={(target) => {
               placeOverride.current = { target, zone: 'center' }
+              setPaletteStartAddView(true)
               setPaletteMode('list')
             }}
           />
@@ -810,15 +817,22 @@ export function Shell() {
       <NewSelectionDialog session={session} />
       {paletteMode ? (
         <CommandPalette
-          key={paletteMode}
+          key={`${paletteMode}:${paletteStartAddView ? 'add-view' : 'root'}`}
           ai={paletteMode === 'ai'}
           session={session}
           workspaces={orderedWorkspaces}
           views={workspace.data?.views ?? []}
           feedbackEnabled={feedbackEnabled}
           onSendFeedback={openFeedback}
+          focusViewId={doc?.focus ?? null}
+          startAddView={paletteStartAddView}
+          onPrepareAddView={() => {
+            const focus = docRef.current?.focus
+            placeOverride.current = focus ? { target: focus, zone: 'center' } : { zone: 'center' }
+          }}
           onClose={() => {
             placeOverride.current = undefined
+            setPaletteStartAddView(false)
             setPaletteMode(null)
           }}
         />

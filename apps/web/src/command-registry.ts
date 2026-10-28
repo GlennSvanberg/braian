@@ -422,7 +422,6 @@ export const registryCommands: RegistryCommand[] = [
     contexts: ['dock-view'],
     group: 'views',
     kbd: 'Ctrl+K',
-    palette: false,
   },
   {
     id: 'workspace:new',
