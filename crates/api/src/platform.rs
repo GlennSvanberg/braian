@@ -1382,7 +1382,29 @@ fn reply_text(payload: &Value) -> String {
             }
         }
     }
-    parts.join("")
+    join_reply_parts(&parts)
+}
+
+fn join_reply_parts(parts: &[&str]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        if part.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            let needs_gap = !out
+                .chars()
+                .next_back()
+                .map(char::is_whitespace)
+                .unwrap_or(true)
+                && !part.chars().next().map(char::is_whitespace).unwrap_or(true);
+            if needs_gap {
+                out.push(' ');
+            }
+        }
+        out.push_str(part);
+    }
+    out
 }
 
 async fn post_openai(
@@ -1504,7 +1526,15 @@ fn compact_selected(value: &Value) -> Option<Value> {
     if id.is_empty() && key.is_empty() && name.is_empty() {
         return None;
     }
-    Some(json!({ "id": id, "key": key, "name": name, "type": kind }))
+    let mut selected = json!({ "id": id, "key": key, "name": name, "type": kind });
+    if let Some(version) = value.get("version").and_then(|item| {
+        item.as_i64()
+            .or_else(|| item.as_u64().map(|n| n as i64))
+            .or_else(|| item.as_str().and_then(|text| text.parse().ok()))
+    }) {
+        selected["version"] = json!(version);
+    }
+    Some(selected)
 }
 
 /// The screen the browser sent, reduced to the fields the agent is allowed to trust.
@@ -1591,7 +1621,7 @@ fn agent_system_prompt(context: &Value, _latest: &str) -> String {
     format!(
         "You are the Braian agent. You always act for the signed-in person. Write changes must become proposals, not direct writes. \
 Answer in English. \
-The UI snapshot is the current screen: workspace, open panes with their types, focused pane, selected objects (id, key, name, type), active filter and sort, the open table's columns (id, header, hidden), and the data language. \
+The UI snapshot is the current screen: workspace, open panes with their types, focused pane, selected objects (id, key, name, type, version), active filter and sort, the open table's columns (id, header, hidden), and the data language. \
 To hide or show a column, call ui_hide_column or ui_show_column with {{\"column\": id}}. \
 Answer questions about the selection, the open views, or the workspace from that snapshot. Do not call search or list_objects for those questions, and do not ask for a screenshot. \
 Call get_object when a field value is missing from the snapshot. Call ui_get_context or ui_get_selection to read the snapshot again. \
@@ -4926,7 +4956,14 @@ async fn run_operation(
             "create_object" | "patch_object" | "move_to_group" | "create_link" | "update_link"
         );
     if op.needs_approval || agent_must_propose(identity, op) || agent_write {
-        return propose_operation(state, identity, name, args).await;
+        // Ask AI calls with from_agent=true and often omits base_version. Fill it
+        // from the object head so the proposal still carries optimistic concurrency.
+        let owned = if from_agent && matches!(op.name, "patch_object" | "move_to_group") {
+            ensure_agent_base_version(state, args).await?
+        } else {
+            args.clone()
+        };
+        return propose_operation(state, identity, name, &owned).await;
     }
     match name {
         "model.list_attribute_definitions" => crate::attribute_catalog::list(state).await,
@@ -5341,6 +5378,33 @@ async fn run_operation(
             other.to_owned(),
         )),
     }
+}
+
+/// When the in-app agent patches an existing object without `base_version`, use
+/// the object's current version at proposal time. Accept still rejects a stale base.
+async fn ensure_agent_base_version(state: &AppState, args: &Value) -> Result<Value, Problem> {
+    if args.get("base_version").and_then(Value::as_i64).is_some() {
+        return Ok(args.clone());
+    }
+    let Some(id) = args
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|text| Uuid::parse_str(text).ok())
+        .map(ObjectId::from_uuid)
+    else {
+        return Ok(args.clone());
+    };
+    let Some(stored) = state.store.get_object(id).await.map_err(store_status)? else {
+        return Ok(args.clone());
+    };
+    let mut filled = args.clone();
+    if let Some(object) = filled.as_object_mut() {
+        object.insert(
+            "base_version".into(),
+            json!(i64::try_from(stored.version).unwrap_or(i64::MAX)),
+        );
+    }
+    Ok(filled)
 }
 
 async fn propose_operation(
@@ -5960,6 +6024,102 @@ mod tests {
         assert_eq!(stored["rows"][0]["id"], json!(row_id));
     }
 
+    #[tokio::test]
+    async fn from_agent_patch_fills_base_version_on_an_existing_object() {
+        if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_none()
+            && let Ok(text) = std::fs::read_to_string(".env")
+        {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                if std::env::var_os(key).is_none() {
+                    unsafe { std::env::set_var(key, value.trim_matches('"')) };
+                }
+            }
+        }
+        let db = braian_store::testing::TestDb::create().await;
+        let identities =
+            crate::identities(db.store(), "ada:human:token-ada;bot:agent@ada:token-bot")
+                .await
+                .expect("identities");
+        let human = identities
+            .iter()
+            .find(|identity| identity.handle == "ada")
+            .expect("human")
+            .clone();
+        let state = AppState::new(db.store().clone(), identities, None);
+        let defs: braian_model::DefinitionSet =
+            serde_json::from_str(include_str!("../../../testdata/rules/definitions.json"))
+                .expect("defs");
+        state
+            .store
+            .put_definitions(&human.actor, &defs)
+            .await
+            .expect("definitions");
+        state.models.invalidate().await;
+        run_operation(
+            &state,
+            &human,
+            "create_object",
+            &json!({
+                "type": "item",
+                "values": { "sku": "SKU-AGENT-VER", "active": true }
+            }),
+            false,
+        )
+        .await
+        .expect("create");
+        let object_id = state
+            .store
+            .list_object_heads(10)
+            .await
+            .expect("heads")
+            .into_iter()
+            .find(|(_, key, _, _)| key == "SKU-AGENT-VER")
+            .map(|(id, _, _, _)| id.to_string())
+            .expect("created object");
+        let stored = state
+            .store
+            .get_object(ObjectId::from_uuid(
+                Uuid::parse_str(&object_id).expect("uuid"),
+            ))
+            .await
+            .expect("load")
+            .expect("object");
+        let version = stored.version;
+        let proposed = run_operation(
+            &state,
+            &human,
+            "patch_object",
+            &json!({
+                "id": object_id,
+                "type": "item",
+                "values": { "active": false }
+            }),
+            true,
+        )
+        .await
+        .expect("agent patch");
+        assert_eq!(proposed["needs_approval"], true, "{proposed}");
+        let proposal_id = proposed["proposal_id"].as_str().expect("proposal_id");
+        let proposal = state
+            .store
+            .proposal(Uuid::parse_str(proposal_id).expect("proposal uuid"))
+            .await
+            .expect("load proposal")
+            .expect("proposal row");
+        assert_eq!(
+            proposal["rows"][0]["base_version"].as_i64(),
+            Some(version as i64),
+            "{proposal}"
+        );
+    }
+
     #[test]
     fn cursor_round_trips_an_object_id() {
         let id = Uuid::now_v7();
@@ -6066,6 +6226,25 @@ mod tests {
             display_name_text(&json!({"value": "2.4", "unit": "kg"})),
             ""
         );
+    }
+
+    #[test]
+    fn reply_text_keeps_a_space_between_output_blocks() {
+        let payload = json!({
+            "output": [{
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": "I need the product's current version to propose this change."},
+                    {"type": "output_text", "text": "I couldn't create the proposal because it requires the product's current version."}
+                ]
+            }]
+        });
+        let text = reply_text(&payload);
+        assert!(
+            text.contains("change. I couldn't") || text.contains("change.\nI couldn't"),
+            "{text}"
+        );
+        assert!(!text.contains("change.I couldn't"), "{text}");
     }
 
     #[test]
@@ -6207,7 +6386,8 @@ mod tests {
                 "id": "018f1000-0000-7000-8000-000000000011",
                 "key": "SYN-000001",
                 "name": "Insulation 2",
-                "type": "article"
+                "type": "article",
+                "version": 3
             }],
             "filter": "",
             "sort": "key:asc",
@@ -6251,6 +6431,7 @@ mod tests {
             context_tool_result("ui_get_selection", &json!({}), Some(&context)).expect("tool");
         assert_eq!(read["selection"][0]["key"], "SYN-000001");
         assert_eq!(read["selection"][0]["name"], "Insulation 2");
+        assert_eq!(read["selection"][0]["version"], 3);
 
         // The agent sees which columns are hidden, so it can show them again.
         assert!(prompt.contains("ui_show_column"), "{prompt}");

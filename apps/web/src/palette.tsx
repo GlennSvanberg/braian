@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { ApiError, api, catalogName, textValue, type Json } from './api'
 import { readIndexed } from './index-fields'
 import { streamAgent, type AgentEvent } from './agent-stream'
+import { renderAgentAnswer } from './agent-answer'
 import { Command, CommandInput, CommandItem, CommandList } from './components/ui/command'
 import { Kbd } from './components/ui/kbd'
 import { emitSavedSelection, requestNewSelection, selectionMatchesType } from './assortment-filter'
@@ -796,7 +797,7 @@ export function CommandPalette({
                 ))}
               </ol>
             ) : null}
-            {answer ? <p className="ai-answer" data-testid="ai-answer">{answer}</p> : null}
+            {answer ? <p className="ai-answer" data-testid="ai-answer">{renderAgentAnswer(answer)}</p> : null}
             {proposal ? (
               <div data-testid="palette-proposal">
                 <strong>{proposal.title}</strong>

@@ -275,7 +275,7 @@ describe('active row', () => {
     expect(screen.getByTestId('detail').textContent).toBe('id-4')
     expect(rows()[0]?.getAttribute('aria-selected')).toBe('false')
     expect(scrollToIndex).toHaveBeenLastCalledWith(4)
-    expect(readUiContext().selection).toEqual([{ id: 'id-4', key: 'ART-4', name: 'Four', type: 'article' }])
+    expect(readUiContext().selection).toEqual([{ id: 'id-4', key: 'ART-4', name: 'Four', type: 'article', version: '1' }])
   })
 
   it('keeps one selected style after a click and three ArrowDowns', async () => {

@@ -1,4 +1,4 @@
-export type SelectedObject = { id: string; key: string; name: string; type: string }
+export type SelectedObject = { id: string; key: string; name: string; type: string; version?: string }
 
 export type UiPane = { id: string; type: string; title: string; focused: boolean }
 
@@ -75,23 +75,29 @@ export function publishSelection(viewId: string, rows: SelectedObject[]) {
 
 export function enrichSelection(object: SelectedObject) {
   const previous = enriched.get(object.id)
-  enriched.set(object.id, {
+  const next: SelectedObject = {
     id: object.id,
     key: object.key || previous?.key || '',
     name: object.name || previous?.name || '',
     type: object.type || previous?.type || '',
-  })
+  }
+  const version = object.version || previous?.version || ''
+  if (version) next.version = version
+  enriched.set(object.id, next)
 }
 
 function mergeObject(object: SelectedObject): SelectedObject {
   const extra = enriched.get(object.id)
   if (!extra) return object
-  return {
+  const merged: SelectedObject = {
     id: object.id,
     key: object.key || extra.key,
     name: object.name || extra.name,
     type: object.type || extra.type,
   }
+  const version = object.version || extra.version || ''
+  if (version) merged.version = version
+  return merged
 }
 
 export function readUiContext(): UiContextSnapshot {

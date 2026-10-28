@@ -24,11 +24,13 @@ describe('copy', () => {
       key: 'SYN-000001',
       name: 'Insulation 2',
       type: 'article',
+      version: '2',
     }])
     const body = agentRequestBody([{ role: 'user', content: 'Which product is selected?' }])
     expect(body.stream).toBe(true)
     expect(body.context.selection[0]?.key).toBe('SYN-000001')
     expect(body.context.selection[0]?.name).toBe('Insulation 2')
+    expect(body.context.selection[0]?.version).toBe('2')
     expect(body.context.language).toBe('en')
   })
 })

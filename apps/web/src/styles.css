@@ -1424,6 +1424,7 @@ kbd {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.ai-answer strong { font-weight: 600; color: var(--text); }
 .mark { background: var(--accent-dim); color: var(--text); border-radius: var(--r-sm); }
 
 .state { display: grid; gap: 4px; justify-items: start; padding: 12px 4px; animation: rise var(--dur) var(--ease); }
