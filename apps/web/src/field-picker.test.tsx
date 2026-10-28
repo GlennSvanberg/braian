@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FieldPicker } from './field-picker'
-import { orderHiddenToDocument, prefsToOrderHidden, type ColumnPrefsResponse } from './column-prefs'
+import { ensureSystemColumns, orderHiddenToDocument, prefsToOrderHidden, type ColumnPrefsResponse, type SystemViewColumn } from './column-prefs'
 import { ObjectTable, type PanesSession } from './panes'
 import { dispatchUi } from './ui-bus'
 
@@ -15,6 +15,11 @@ const paths = [
   { text: 'name', label: 'Name' },
   { text: 'weight', label: 'Weight' },
   { text: 'packaging>name', label: 'Packaging › Name' },
+]
+
+const systemColumns: SystemViewColumn[] = [
+  { key: 'type', label: 'Type', default_index: 2 },
+  { key: 'version', label: 'Version', default_index: 4 },
 ]
 
 function json(body: unknown) {
@@ -88,7 +93,7 @@ beforeEach(() => {
         if ((init?.method ?? 'GET').toUpperCase() === 'PUT') return json({ document: {} })
         return json(prefsDocument)
       }
-      if (url.includes('/attribute-paths')) return json({ paths })
+      if (url.includes('/attribute-paths')) return json({ paths, system_columns: systemColumns })
       if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
       if (url.includes('/v1/definitions')) {
         return json({
@@ -121,6 +126,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+
+
 describe('column prefs helpers', () => {
   it('applies order and hidden while skipping stale paths', () => {
     expect(prefsToOrderHidden(prefsDocument)).toEqual({
@@ -135,14 +142,43 @@ describe('column prefs helpers', () => {
     expect(prefsToOrderHidden(undefined)).toBeNull()
   })
 
-  it('maps built-in ids to attribute paths and leaves synthetic ids out', () => {
-    expect(orderHiddenToDocument(['key', 'name', 'type', 'status', 'version'], ['status'])).toEqual({
+  it('maps built-in ids to attribute paths and keeps system columns from the API allowlist', () => {
+    expect(
+      orderHiddenToDocument(['key', 'name', 'type', 'status', 'version'], ['status'], null, systemColumns),
+    ).toEqual({
       version: 1,
       columns: [
         { path: 'number', visible: true },
         { path: 'name', visible: true },
+        { path: 'type', visible: true },
         { path: 'status', visible: false },
+        { path: 'version', visible: true },
       ],
+    })
+  })
+
+  it('injects missing system columns at their default positions', () => {
+    expect(ensureSystemColumns(['number', 'name', 'status'], [], systemColumns)).toEqual({
+      order: ['number', 'name', 'type', 'status', 'version'],
+      hidden: [],
+    })
+    expect(
+      prefsToOrderHidden(
+        {
+          document: {
+            version: 1,
+            columns: [
+              { path: 'number', visible: true },
+              { path: 'name', visible: true },
+              { path: 'status', visible: false },
+            ],
+          },
+        },
+        systemColumns,
+      ),
+    ).toEqual({
+      order: ['number', 'name', 'type', 'status', 'version'],
+      hidden: ['status'],
     })
   })
 
@@ -202,19 +238,23 @@ describe('FieldPicker', () => {
 describe('ObjectTable column prefs', () => {
   it('applies the stored order and hidden fields and skips stale paths', async () => {
     render(<PrefsTable />)
-    await waitFor(() => expect(headerIds()).toEqual(['col-sku', 'col-packaging>name']))
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
     expect(screen.queryByTestId('col-weight')).toBeNull()
     expect(screen.queryByTestId('col-name')).toBeNull()
   })
 
   it('PUTs the document after hiding a field', async () => {
     render(<PrefsTable />)
-    await waitFor(() => expect(headerIds()).toEqual(['col-sku', 'col-packaging>name']))
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
 
     act(() => {
       dispatchUi('ui.hide_column', { column: 'sku' })
     })
-    await waitFor(() => expect(headerIds()).toEqual(['col-packaging>name']))
+    await waitFor(() => expect(headerIds()).toEqual(['col-type', 'col-version', 'col-packaging>name']))
 
     await waitFor(() => {
       const put = vi.mocked(fetch).mock.calls.find(([input, init]) =>
@@ -228,9 +268,112 @@ describe('ObjectTable column prefs', () => {
         columns: [
           { path: 'sku', visible: false },
           { path: 'name', visible: false },
+          { path: 'type', visible: true },
+          { path: 'version', visible: true },
           { path: 'packaging>name', visible: true },
         ],
       })
     }, { timeout: 2000 })
+  })
+
+  it('keeps type and version after save and reload', async () => {
+    let stored: ColumnPrefsResponse = {
+      document: {
+        version: 1,
+        columns: [
+          { path: 'sku', visible: true },
+          { path: 'type', visible: true },
+          { path: 'version', visible: true },
+        ],
+      },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/column-prefs')) {
+          if ((init?.method ?? 'GET').toUpperCase() === 'PUT') {
+            stored = { document: JSON.parse(String(init?.body)).document }
+            return json(stored)
+          }
+          return json(stored)
+        }
+        if (url.includes('/attribute-paths')) return json({ paths, system_columns: systemColumns })
+        if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
+        if (url.includes('/v1/definitions')) {
+          return json({
+            languages: ['en'],
+            types: [{ id: product, key: 'product', labels: { en: 'Product' }, singular: { en: 'Product' }, plural: { en: 'Products' }, key_attribute: 'sku', attributes: [] }],
+            attributes: [],
+            structures: [],
+          })
+        }
+        if (url.includes('/v1/assortments')) return json({ assortments: [] })
+        if (url.includes('/v1/proposals')) return json({ pending: { total: 0 } })
+        if (url.includes('/v1/views')) return json({})
+        return json({})
+      }),
+    )
+    const { unmount } = render(<PrefsTable />)
+    await waitFor(() => expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version']))
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'sku' })
+    })
+    await waitFor(() => {
+      expect(stored.document?.columns.some((column) => column.path === 'sku' && column.visible === false)).toBe(true)
+      expect(stored.document?.columns.some((column) => column.path === 'type' && column.visible === true)).toBe(true)
+      expect(stored.document?.columns.some((column) => column.path === 'version' && column.visible === true)).toBe(true)
+    }, { timeout: 2000 })
+    unmount()
+    render(<PrefsTable />)
+    await waitFor(() => expect(headerIds()).toEqual(['col-type', 'col-version']))
+  })
+
+  it('shows system columns from an old document that omitted them', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/column-prefs')) {
+          return json({
+            document: {
+              version: 1,
+              columns: [
+                { path: 'number', visible: true },
+                { path: 'name', visible: true },
+                { path: 'status', visible: true },
+              ],
+            },
+          })
+        }
+        if (url.includes('/attribute-paths')) {
+          return json({
+            paths: [
+              { text: 'number', label: 'Number' },
+              { text: 'name', label: 'Name' },
+              { text: 'status', label: 'Status' },
+            ],
+            system_columns: systemColumns,
+          })
+        }
+        if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
+        if (url.includes('/v1/definitions')) {
+          return json({
+            languages: ['en'],
+            types: [{ id: product, key: 'product', labels: { en: 'Product' }, singular: { en: 'Product' }, plural: { en: 'Products' }, key_attribute: 'number', attributes: [] }],
+            attributes: [],
+            structures: [],
+          })
+        }
+        if (url.includes('/v1/assortments')) return json({ assortments: [] })
+        if (url.includes('/v1/proposals')) return json({ pending: { total: 0 } })
+        if (url.includes('/v1/views')) return json({})
+        return json({})
+      }),
+    )
+    render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-number', 'col-name', 'col-type', 'col-status', 'col-version']),
+    )
   })
 })

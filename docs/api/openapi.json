@@ -3602,7 +3602,8 @@
       "AttributePathList": {
         "type": "object",
         "required": [
-          "paths"
+          "paths",
+          "system_columns"
         ],
         "properties": {
           "paths": {
@@ -3610,6 +3611,13 @@
             "items": {
               "$ref": "#/components/schemas/AttributePathRow"
             }
+          },
+          "system_columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemViewColumnRow"
+            },
+            "description": "Pathless columns the object table may show. Sole allowlist from the model crate."
           }
         }
       },
@@ -5095,6 +5103,27 @@
             "format": "uuid"
           },
           "source": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemViewColumnRow": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "default_index"
+        ],
+        "properties": {
+          "default_index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
             "type": "string"
           }
         }

@@ -5,6 +5,12 @@ export type ColumnPref = { path: string; visible?: boolean; stale?: boolean }
 
 export type ColumnPrefsDocument = { version: 1; columns: ColumnPref[] }
 
+export type SystemViewColumn = {
+  key: string
+  label: string
+  default_index: number
+}
+
 export type ColumnPrefsResponse = {
   environment?: string
   document?: ColumnPrefsDocument | null
@@ -12,21 +18,54 @@ export type ColumnPrefsResponse = {
   stale_paths?: string[]
 }
 
-/** Built-in ids that map to an attribute path when prefs are saved. */
+/** Built-in UI ids that map onto an attribute path when prefs are saved. */
 const BUILTIN_PATH: Record<string, string> = { key: 'number' }
-
-/** Built-in ids without an attribute path that prefs cannot store. */
-const NOT_A_PATH = new Set(['type', 'version'])
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }
 
+function defaultRank(key: string, systemColumns: SystemViewColumn[]): number | undefined {
+  if (key === 'number' || key === 'key') return 0
+  if (key === 'name') return 1
+  if (key === 'status') return 3
+  const system = systemColumns.find((column) => column.key === key)
+  return system?.default_index
+}
+
+/**
+ * Insert missing system columns as visible at their default ranks.
+ * The allowlist comes from `/v1/types/{id}/attribute-paths` (`system_columns`).
+ */
+export function ensureSystemColumns(
+  order: string[],
+  hidden: string[],
+  systemColumns: SystemViewColumn[],
+): { order: string[]; hidden: string[] } {
+  const next = [...order]
+  for (const system of systemColumns) {
+    if (next.includes(system.key)) continue
+    const ranked = next
+      .map((path, index) => {
+        const rank = defaultRank(path, systemColumns)
+        return rank != null && rank < system.default_index ? index + 1 : -1
+      })
+      .filter((index) => index >= 0)
+    const insertAt =
+      ranked.length > 0 ? Math.max(...ranked) : Math.min(system.default_index, next.length)
+    next.splice(Math.min(insertAt, next.length), 0, system.key)
+  }
+  return { order: next, hidden }
+}
+
 /**
  * Turn a stored prefs document into table order and hidden ids.
- * Stale paths are skipped, never thrown. Returns null when there is nothing to apply.
+ * Stale paths are skipped. Missing system columns are injected visible.
  */
-export function prefsToOrderHidden(response: ColumnPrefsResponse | null | undefined) {
+export function prefsToOrderHidden(
+  response: ColumnPrefsResponse | null | undefined,
+  systemColumns: SystemViewColumn[] = [],
+) {
   const document = record(response?.document)
   const columns = Array.isArray(document?.columns) ? document.columns : []
   if (columns.length === 0) return null
@@ -41,28 +80,31 @@ export function prefsToOrderHidden(response: ColumnPrefsResponse | null | undefi
     order.push(path)
     if (column.visible === false) hidden.push(path)
   }
-  if (order.length === 0) return null
-  return { order, hidden }
+  const ensured = ensureSystemColumns(order, hidden, systemColumns)
+  if (ensured.order.length === 0) return null
+  return ensured
 }
 
 /**
  * Build the document we PUT. Built-in ids that have an attribute path are
- * renamed (`key` becomes `number`); ids without a path are left out so the
- * API never rejects the document.
+ * renamed (`key` becomes `number`). System columns from the API allowlist are
+ * kept. Unknown paths outside `allowedPaths` are dropped.
  */
 export function orderHiddenToDocument(
   order: string[],
   hidden: string[],
   allowedPaths?: Iterable<string> | null,
+  systemColumns: SystemViewColumn[] = [],
 ): ColumnPrefsDocument {
   const allowed = allowedPaths ? new Set(allowedPaths) : null
+  const systemKeys = new Set(systemColumns.map((column) => column.key))
   const seen = new Set<string>()
   const columns: ColumnPref[] = []
   for (const id of order) {
-    if (NOT_A_PATH.has(id)) continue
     const path = BUILTIN_PATH[id] ?? id
     if (!path || seen.has(path)) continue
-    if (allowed && !allowed.has(path)) continue
+    const isSystem = systemKeys.has(path)
+    if (!isSystem && allowed && !allowed.has(path)) continue
     seen.add(path)
     columns.push({ path, visible: !hidden.includes(id) && !hidden.includes(path) })
   }

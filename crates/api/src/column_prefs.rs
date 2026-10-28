@@ -11,7 +11,10 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use braian_model::{DefinitionSet, TypeId, list_attribute_paths, parse_path};
+use braian_model::{
+    DefinitionSet, TypeId, ensure_system_view_columns, is_system_view_column, list_attribute_paths,
+    parse_path,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -180,15 +183,19 @@ fn validate_document(
     let mut normalized = Vec::with_capacity(columns.len());
     for column in columns {
         let input = column_path_input(column)?;
-        let text = path_known(defs, type_id, &input).map_err(|message| {
-            // parse_path rejects more than one via-step with this wording.
-            let code = if message.contains("one link step") {
-                "via"
-            } else {
-                "path"
-            };
-            Problem::new(StatusCode::BAD_REQUEST, code, message)
-        })?;
+        let text = if let Some(path) = input.as_str().filter(|value| is_system_view_column(value)) {
+            path.to_owned()
+        } else {
+            path_known(defs, type_id, &input).map_err(|message| {
+                // parse_path rejects more than one via-step with this wording.
+                let code = if message.contains("one link step") {
+                    "via"
+                } else {
+                    "path"
+                };
+                Problem::new(StatusCode::BAD_REQUEST, code, message)
+            })?
+        };
         if !seen.insert(text.clone()) {
             return Err(Problem::new(
                 StatusCode::BAD_REQUEST,
@@ -243,6 +250,12 @@ fn annotate_stale(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned();
+        // System view columns are pathless by design and are never stale.
+        if is_system_view_column(&label) {
+            entry.remove("stale");
+            next_columns.push(Value::Object(entry));
+            continue;
+        }
         match (input, type_id) {
             (Some(input), Some(type_id)) => match path_known(defs, type_id, &input) {
                 Ok(_) => {}
@@ -330,7 +343,9 @@ pub async fn get_column_prefs(
     let (document, updated_at, stale_paths) = match stored {
         Some((document, updated_at)) => {
             let (annotated, stale) = annotate_stale(&document, &cached.defs, type_id);
-            (Some(annotated), Some(updated_at.to_rfc3339()), stale)
+            // Prefs saved before the system-column allowlist still show type/version.
+            let ensured = ensure_system_view_columns(&annotated);
+            (Some(ensured), Some(updated_at.to_rfc3339()), stale)
         }
         None => (None, None, Vec::new()),
     };

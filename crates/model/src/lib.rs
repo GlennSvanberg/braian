@@ -19,6 +19,7 @@ pub mod path;
 pub mod refs;
 pub mod standard;
 pub mod structure;
+pub mod system_view_columns;
 
 pub use consequence::{
     ConsequenceCounts, DataPurge, UsageFixture, ValueMatch, consequence_lines,
@@ -63,4 +64,8 @@ pub use standard::{
     standard_ids, structures_from_usage,
 };
 pub use structure::{GroupRemoval, StructureError, StructureErrorCode};
+pub use system_view_columns::{
+    SYSTEM_VIEW_COLUMNS, SystemViewColumn, ensure_system_view_columns, is_system_view_column,
+    system_view_columns_json,
+};
 pub use uuid::Uuid;

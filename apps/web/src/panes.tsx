@@ -17,7 +17,7 @@ import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, source
 import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
 import { FieldPicker } from './field-picker'
-import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, pathHead, prefsToOrderHidden, saveColumnPrefs } from './column-prefs'
+import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, pathHead, prefsToOrderHidden, saveColumnPrefs, type SystemViewColumn } from './column-prefs'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
@@ -233,19 +233,25 @@ export function ObjectTable({
     .join(' && ')
   const attributePaths = useQuery({
     queryKey: ['attribute-paths', typeKey],
-    queryFn: () => api<{ paths: ListedPath[] }>(`/v1/types/${encodeURIComponent(typeKey)}/attribute-paths`),
+    queryFn: () =>
+      api<{ paths: ListedPath[]; system_columns?: SystemViewColumn[] }>(
+        `/v1/types/${encodeURIComponent(typeKey)}/attribute-paths`,
+      ),
     enabled: Boolean(typeKey),
   })
+  const systemColumns = attributePaths.data?.system_columns ?? []
   useEffect(() => {
     if (prefsApplied.current || prefs.isPending) return
+    // Wait for system_columns when the type is known so injection uses the API allowlist.
+    if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
-    const applied = prefs.isSuccess ? prefsToOrderHidden(prefs.data) : null
+    const applied = prefs.isSuccess ? prefsToOrderHidden(prefs.data, systemColumns) : null
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
     }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isSuccess, prefs.data])
+  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns])
   useEffect(() => {
     if (!prefsReady) return
     const snapshot = JSON.stringify([order, hidden])
@@ -256,7 +262,12 @@ export function ObjectTable({
     }
     if (prefsSnapshot.current === snapshot) return
     const timer = setTimeout(() => {
-      const document = orderHiddenToDocument(order, hidden, attributePaths.data?.paths.map((path) => path.text))
+      const document = orderHiddenToDocument(
+        order,
+        hidden,
+        attributePaths.data?.paths.map((path) => path.text),
+        systemColumns,
+      )
       if (document.columns.length === 0) return
       void saveColumnPrefs(view.id, document)
         .then(() => {
@@ -265,7 +276,7 @@ export function ObjectTable({
         .catch(() => undefined)
     }, 400)
     return () => clearTimeout(timer)
-  }, [order, hidden, prefsReady, attributePaths.data, view.id])
+  }, [order, hidden, prefsReady, attributePaths.data, systemColumns, view.id])
   const sortBy = indexSort(sort, defs.data)
   const groupField = groupBy ? indexSort(groupBy, defs.data) : groupBy
   const probe = useQuery({
@@ -343,7 +354,10 @@ export function ObjectTable({
   const columnFor = (id: string) =>
     columns.find((column) => column.id === id) ?? {
       id,
-      header: pathList.find((path) => path.text === id)?.label ?? id,
+      header:
+        systemColumns.find((column) => column.key === id)?.label
+        ?? pathList.find((path) => path.text === id)?.label
+        ?? id,
       size: 160,
       sort: '',
     }
@@ -948,7 +962,10 @@ export function ObjectTable({
       </div>
       {picker === 'fields' ? (
         <FieldPicker
-          paths={pathList}
+          paths={[
+            ...systemColumns.map((column) => ({ text: column.key, label: column.label })),
+            ...pathList,
+          ]}
           order={all}
           hidden={hidden}
           onToggle={toggleField}
