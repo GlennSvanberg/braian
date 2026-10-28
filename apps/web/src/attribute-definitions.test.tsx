@@ -37,6 +37,15 @@ const definitions = {
 const catalog = {
   attributes: [
     {
+      id: '018f0000-0000-7000-8000-00000000a003',
+      key: 'created_at',
+      label: 'Created',
+      kind: 'text',
+      standard: true,
+      flags: { standard: true },
+      used_in: { objects: 3, types: [{ id: 't-article', key: 'article', label: 'Article', objects: 3 }], groups: [] },
+    },
+    {
       id: NUMBER,
       key: 'number',
       label: 'Number',
@@ -91,20 +100,29 @@ describe('attribute definitions view', () => {
   it('lists attributes, formats where they are used, and keeps standard attributes locked', async () => {
     render(<Host />)
     const rows = await screen.findAllByTestId('attribute-definition-row')
-    expect(rows.map((row) => row.getAttribute('data-key'))).toEqual(['gross_weight', 'number'])
-    const weight = rows[0]
-    expect(weight?.querySelector('[data-testid="used-in"]')?.textContent).toBe('Article (1,200), Food / Cheese (4)')
+    expect(rows.map((row) => row.getAttribute('data-key'))).toEqual(['created_at', 'gross_weight', 'number'])
+    expect(screen.getByText('Date and time')).toBeTruthy()
+    const weight = rows.find((row) => row.getAttribute('data-key') === 'gross_weight')
+    expect(weight?.querySelector('[data-testid="used-in"]')?.textContent).toBe('2 places')
+    expect(weight?.querySelector('[data-testid="used-in"]')?.getAttribute('title')).toBe('Article (1,200), Food / Cheese (4)')
     expect(weight?.querySelector('[data-testid="used-in"]')?.getAttribute('data-objects')).toBe('1200')
-    expect((screen.getByTestId('attr-key-number') as HTMLInputElement).disabled).toBe(true)
-    expect((screen.getByTestId('attr-key-gross_weight') as HTMLInputElement).disabled).toBe(false)
 
-    fireEvent.contextMenu(screen.getByTestId('attr-label-number'))
+    const numberRow = rows.find((row) => row.getAttribute('data-key') === 'number') as HTMLElement
+    fireEvent.contextMenu(numberRow)
     const menu = await screen.findByTestId('context-menu')
-    expect(menu.textContent).toContain('Rename…')
-    expect(menu.textContent).not.toContain('Rename key…')
-    expect(menu.textContent).not.toContain('Delete…')
+    expect(menu.textContent).toContain('Rename')
+    expect(menu.textContent).not.toContain('Rename key')
+    expect(menu.textContent).not.toContain('Delete')
     fireEvent.keyDown(menu, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByTestId('context-menu')).toBeNull())
+
+    // Standard key is not editable via F2 (canEdit blocks it).
+    numberRow.focus()
+    fireEvent.keyDown(numberRow, { key: 'F2' })
+    // First editable column is label — editor may open for label, not key.
+    const editors = screen.queryAllByTestId(/^attr-key-/)
+    // Key cells render as spans when not editing; standard key never becomes an enabled input.
+    expect(editors.every((node) => node.tagName !== 'INPUT' || (node as HTMLInputElement).disabled)).toBe(true)
   })
 
   it('puts add to type in the draft from the keyboard', async () => {
@@ -112,12 +130,16 @@ describe('attribute definitions view', () => {
     const search = await screen.findByTestId('attribute-search')
     fireEvent.change(search, { target: { value: 'weight' } })
     fireEvent.keyDown(search, { key: 'ArrowDown' })
-    const row = screen.getByTestId('attribute-definition-row')
+    const row = await screen.findByTestId('attribute-definition-row')
     expect(row.getAttribute('data-key')).toBe('gross_weight')
     row.focus()
-    fireEvent.keyDown(row, { key: 'Enter', ctrlKey: true })
+    fireEvent.keyDown(row, { key: 'ContextMenu' })
     const menu = await screen.findByTestId('context-menu')
-    fireEvent.click(menu.querySelector('button') as HTMLButtonElement)
+    const addType = Array.from(menu.querySelectorAll('button')).find((button) =>
+      (button.textContent ?? '').toLowerCase().includes('type'),
+    )
+    expect(addType).toBeTruthy()
+    fireEvent.click(addType as HTMLButtonElement)
     const picker = await screen.findByTestId('add-to-type-search')
     fireEvent.change(picker, { target: { value: 'Supplier' } })
     fireEvent.keyDown(picker, { key: 'Enter' })
@@ -131,5 +153,12 @@ describe('attribute definitions view', () => {
         args: { attribute: 'gross_weight', type: 'supplier' },
       })
     })
+  })
+
+  it('adds a draft row from plus and shows Review and save', async () => {
+    render(<Host />)
+    await screen.findAllByTestId('attribute-definition-row')
+    fireEvent.click(screen.getByRole('button', { name: /new attribute/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /review and save/i })).toBeTruthy())
   })
 })

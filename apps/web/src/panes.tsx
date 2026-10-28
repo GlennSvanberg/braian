@@ -1206,20 +1206,29 @@ export function ClassAttributes({ session }: { session: PanesSession }) {
       </div>
     )
   }
+  const rowCount = sections.reduce((sum, section) => sum + section.attributes.length, 0)
   return (
     <div className="class-attributes" data-testid="class-attributes">
-      {sections.map((section) => (
-        <section key={section.id} className="class-section" data-testid="class-section">
-          <h3>{section.title}</h3>
-          {section.attributes.length === 0 ? <p className="hint">{copy.noClassAttributes}</p> : null}
-          {section.attributes.map((attribute) => (
-            <div key={attribute.id} className="class-attr" data-testid="class-attribute">
-              <span>{attribute.label}</span>
-              <span>{attribute.kind}</span>
+      <StandardTableChrome testId="group-attributes-chrome" rowCount={rowCount}>
+        {sections.map((section) => (
+          <section key={section.id} className="class-section" data-testid="class-section">
+            <h3>{section.title}</h3>
+            <div className="standard-grid" role="grid">
+              <div className="standard-grid-head" role="row">
+                <div className="standard-grid-cell head" role="columnheader">{copy.attributeName}</div>
+                <div className="standard-grid-cell head" role="columnheader">{copy.attributeType}</div>
+              </div>
+              {section.attributes.length === 0 ? <p className="hint">{copy.noClassAttributes}</p> : null}
+              {section.attributes.map((attribute) => (
+                <div key={attribute.id} className="standard-grid-row" role="row" data-testid="class-attribute">
+                  <div className="standard-grid-cell" role="gridcell">{attribute.label}</div>
+                  <div className="standard-grid-cell" role="gridcell">{attribute.kind}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </section>
-      ))}
+          </section>
+        ))}
+      </StandardTableChrome>
     </div>
   )
 }
