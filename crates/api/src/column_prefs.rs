@@ -184,8 +184,6 @@ fn validate_document(
             // parse_path rejects more than one via-step with this wording.
             let code = if message.contains("one link step") {
                 "via"
-            } else if message.contains("unknown") {
-                "path"
             } else {
                 "path"
             };

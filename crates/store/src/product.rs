@@ -498,8 +498,6 @@ impl Store {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-
     /// View type key and state document, when the view exists.
     pub async fn view_row(&self, id: Uuid) -> Result<Option<(String, Value)>, Error> {
         let client = self.pool().get().await?;
@@ -564,6 +562,7 @@ impl Store {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_view(
         &self,
         id: Uuid,
