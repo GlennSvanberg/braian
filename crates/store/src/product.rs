@@ -499,15 +499,12 @@ impl Store {
     }
 
     #[allow(clippy::too_many_arguments)]
-    
+
     /// View type key and state document, when the view exists.
     pub async fn view_row(&self, id: Uuid) -> Result<Option<(String, Value)>, Error> {
         let client = self.pool().get().await?;
         let row = client
-            .query_opt(
-                "SELECT type_key, state FROM views WHERE id = $1",
-                &[&id],
-            )
+            .query_opt("SELECT type_key, state FROM views WHERE id = $1", &[&id])
             .await?;
         Ok(row.map(|row| (row.get(0), row.get(1))))
     }
@@ -567,7 +564,7 @@ impl Store {
         Ok(())
     }
 
-pub async fn save_view(
+    pub async fn save_view(
         &self,
         id: Uuid,
         workspace_id: Uuid,

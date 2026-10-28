@@ -106,9 +106,7 @@ async fn login_cookie(app: &axum::Router, email: &str, password: &str) -> String
         "/v1/login",
         None,
         &[("content-type", "application/json")],
-        Some(&format!(
-            r#"{{"email":"{email}","password":"{password}"}}"#
-        )),
+        Some(&format!(r#"{{"email":"{email}","password":"{password}"}}"#)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -185,7 +183,10 @@ async fn column_prefs_round_trip_for_a_viewer() {
         &format!("/v1/views/{view}/column-prefs"),
         None,
         &[("cookie", &cookie), ("content-type", "application/json")],
-        Some(&serde_json::to_string(&json!({ "environment": "default", "document": document })).unwrap()),
+        Some(
+            &serde_json::to_string(&json!({ "environment": "default", "document": document }))
+                .unwrap(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
@@ -240,7 +241,12 @@ async fn column_prefs_are_private_to_the_owner() {
         .unwrap();
     let bob = db
         .store()
-        .create_user("bob-prefs@braian.local", &hash_password("secret-b").unwrap(), "editor", "Bob")
+        .create_user(
+            "bob-prefs@braian.local",
+            &hash_password("secret-b").unwrap(),
+            "editor",
+            "Bob",
+        )
         .await
         .unwrap();
     let view = seed_object_table_view(&db, alice.id).await;
@@ -256,7 +262,10 @@ async fn column_prefs_are_private_to_the_owner() {
         "PUT",
         &format!("/v1/views/{view}/column-prefs"),
         None,
-        &[("cookie", &alice_cookie), ("content-type", "application/json")],
+        &[
+            ("cookie", &alice_cookie),
+            ("content-type", "application/json"),
+        ],
         Some(&serde_json::to_string(&json!({ "document": document })).unwrap()),
     )
     .await;
@@ -283,7 +292,10 @@ async fn column_prefs_are_private_to_the_owner() {
         "PUT",
         &format!("/v1/views/{view}/column-prefs"),
         None,
-        &[("cookie", &bob_cookie), ("content-type", "application/json")],
+        &[
+            ("cookie", &bob_cookie),
+            ("content-type", "application/json"),
+        ],
         Some(&serde_json::to_string(&json!({ "document": other })).unwrap()),
     )
     .await;
@@ -339,10 +351,7 @@ async fn column_prefs_put_rejects_invalid_documents() {
     let cookie = login_cookie(&app, "bad-prefs@braian.local", "secret-bad").await;
 
     let cases = [
-        (
-            json!({ "version": 2, "columns": [] }),
-            "version",
-        ),
+        (json!({ "version": 2, "columns": [] }), "version"),
         (
             json!({ "version": 1, "columns": [{ "path": "no_such_attr", "visible": true }] }),
             "path",
@@ -594,9 +603,10 @@ async fn column_prefs_rows_cascade_when_view_or_user_is_removed() {
         .unwrap();
     // Delete the prefs owner; rows must go with ON DELETE CASCADE on users.
     {
-        let (client, connection) = tokio_postgres::connect(&db.database_url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
+        let (client, connection) =
+            tokio_postgres::connect(&db.database_url(), tokio_postgres::NoTls)
+                .await
+                .unwrap();
         tokio::spawn(async move {
             let _ = connection.await;
         });

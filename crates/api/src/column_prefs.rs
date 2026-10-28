@@ -71,10 +71,7 @@ async fn prefs_owner(state: &AppState, identity: &Identity) -> Result<Uuid, Prob
         })
 }
 
-async fn require_view(
-    state: &AppState,
-    view_id: Uuid,
-) -> Result<(String, Value), Problem> {
+async fn require_view(state: &AppState, view_id: Uuid) -> Result<(String, Value), Problem> {
     state
         .store
         .view_row(view_id)
@@ -145,13 +142,16 @@ fn validate_document(
             "the column preferences document must be an object",
         )
     })?;
-    let version = object.get("version").and_then(Value::as_u64).ok_or_else(|| {
-        Problem::new(
-            StatusCode::BAD_REQUEST,
-            "version",
-            "document.version must be 1",
-        )
-    })?;
+    let version = object
+        .get("version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            Problem::new(
+                StatusCode::BAD_REQUEST,
+                "version",
+                "document.version must be 1",
+            )
+        })?;
     if version != 1 {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
@@ -217,7 +217,11 @@ fn validate_document(
 }
 
 /// Annotate unknown paths for GET. Never errors on stale data.
-fn annotate_stale(document: &Value, defs: &DefinitionSet, type_id: Option<TypeId>) -> (Value, Vec<String>) {
+fn annotate_stale(
+    document: &Value,
+    defs: &DefinitionSet,
+    type_id: Option<TypeId>,
+) -> (Value, Vec<String>) {
     let Some(columns) = document.get("columns").and_then(Value::as_array) else {
         return (document.clone(), Vec::new());
     };
@@ -247,10 +251,7 @@ fn annotate_stale(document: &Value, defs: &DefinitionSet, type_id: Option<TypeId
                 Err(_) => {
                     stale = true;
                     let text = if label.is_empty() {
-                        input
-                            .as_str()
-                            .unwrap_or("unknown")
-                            .to_owned()
+                        input.as_str().unwrap_or("unknown").to_owned()
                     } else {
                         label.clone()
                     };
@@ -287,10 +288,7 @@ fn annotate_stale(document: &Value, defs: &DefinitionSet, type_id: Option<TypeId
     (Value::Object(out), stale_paths)
 }
 
-async fn resolve_type_id(
-    state: &AppState,
-    view_state: &Value,
-) -> Result<Option<TypeId>, Problem> {
+async fn resolve_type_id(state: &AppState, view_state: &Value) -> Result<Option<TypeId>, Problem> {
     let Some(token) = bound_type_token(view_state) else {
         return Ok(None);
     };
@@ -428,13 +426,7 @@ pub async fn get_view_column_prefs_op(
         .or_else(|| args.get("view_id"))
         .and_then(Value::as_str)
         .and_then(|id| Uuid::parse_str(id).ok())
-        .ok_or_else(|| {
-            Problem::new(
-                StatusCode::BAD_REQUEST,
-                "view",
-                "view id is required",
-            )
-        })?;
+        .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "view", "view id is required"))?;
     let query = PrefsQuery {
         environment: args
             .get("environment")
@@ -462,20 +454,11 @@ pub async fn put_view_column_prefs_op(
         .or_else(|| args.get("view_id"))
         .and_then(Value::as_str)
         .and_then(|id| Uuid::parse_str(id).ok())
-        .ok_or_else(|| {
-            Problem::new(
-                StatusCode::BAD_REQUEST,
-                "view",
-                "view id is required",
-            )
-        })?;
-    let document = args.get("document").cloned().ok_or_else(|| {
-        Problem::new(
-            StatusCode::BAD_REQUEST,
-            "document",
-            "document is required",
-        )
-    })?;
+        .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "view", "view id is required"))?;
+    let document = args
+        .get("document")
+        .cloned()
+        .ok_or_else(|| Problem::new(StatusCode::BAD_REQUEST, "document", "document is required"))?;
     let body = PrefsBody {
         environment: args
             .get("environment")
