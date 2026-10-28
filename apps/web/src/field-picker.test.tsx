@@ -329,6 +329,75 @@ describe('ObjectTable column prefs', () => {
     await waitFor(() => expect(headerIds()).toEqual(['col-type', 'col-version']))
   })
 
+
+  it('flushes a pending PUT when unmounted before the debounce', async () => {
+    const { unmount } = render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
+    const putsBefore = vi.mocked(fetch).mock.calls.filter(
+      ([input, init]) => String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+    ).length
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'sku' })
+    })
+    unmount()
+    await waitFor(() => {
+      const puts = vi.mocked(fetch).mock.calls.filter(
+        ([input, init]) => String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+      )
+      expect(puts.length).toBeGreaterThan(putsBefore)
+      const body = JSON.parse(String(puts.at(-1)?.[1]?.body))
+      expect(body.document).toEqual({
+        version: 1,
+        columns: [
+          { path: 'sku', visible: false },
+          { path: 'name', visible: false },
+          { path: 'type', visible: true },
+          { path: 'version', visible: true },
+          { path: 'packaging>name', visible: true },
+        ],
+      })
+      expect(puts.at(-1)?.[1]?.keepalive).not.toBe(true)
+    })
+  })
+
+  it('flushes with keepalive when the tab becomes hidden', async () => {
+    render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'sku' })
+    })
+    const previous = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    })
+    try {
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      await waitFor(() => {
+        const put = vi.mocked(fetch).mock.calls.find(
+          ([input, init]) =>
+            String(input).includes('/column-prefs') &&
+            (init?.method ?? 'GET').toUpperCase() === 'PUT' &&
+            init?.keepalive === true,
+        )
+        expect(put).toBeTruthy()
+        const body = JSON.parse(String(put?.[1]?.body))
+        expect(body.document.columns.some((column: { path: string; visible: boolean }) => column.path === 'sku' && column.visible === false)).toBe(true)
+        expect(body.document.columns.some((column: { path: string }) => column.path === 'type')).toBe(true)
+        expect(body.document.columns.some((column: { path: string }) => column.path === 'version')).toBe(true)
+      })
+    } finally {
+      if (previous) Object.defineProperty(document, 'visibilityState', previous)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    }
+  })
+
   it('shows system columns from an old document that omitted them', async () => {
     vi.stubGlobal(
       'fetch',

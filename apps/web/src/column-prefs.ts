@@ -1,4 +1,4 @@
-import { api } from './api'
+import { api, keepaliveJsonPut } from './api'
 import { LAYOUT_ENVIRONMENT } from './workspace-doc'
 
 export type ColumnPref = { path: string; visible?: boolean; stale?: boolean }
@@ -124,6 +124,11 @@ export function saveColumnPrefs(viewId: string, document: ColumnPrefsDocument) {
     method: 'PUT',
     body: JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document }),
   })
+}
+
+/** Tab-close / hide flush — same keepalive PUT as the workspace layout save. */
+export function saveColumnPrefsKeepalive(viewId: string, document: ColumnPrefsDocument) {
+  keepaliveJsonPut(columnPrefsUrl(viewId), { environment: LAYOUT_ENVIRONMENT, document })
 }
 
 export function isHopPath(path: string) {

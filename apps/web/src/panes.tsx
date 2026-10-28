@@ -17,7 +17,7 @@ import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, source
 import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
 import { FieldPicker } from './field-picker'
-import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, pathHead, prefsToOrderHidden, saveColumnPrefs, type SystemViewColumn } from './column-prefs'
+import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, pathHead, prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
@@ -140,6 +140,30 @@ export function ObjectTable({
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
   const prefsSnapshot = useRef<string | null>(null)
+  const pendingPrefs = useRef<{ snapshot: string; viewId: string; document: ColumnPrefsDocument } | null>(null)
+  const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
+  flushPendingPrefsRef.current = (opts) => {
+    const pending = pendingPrefs.current
+    if (!pending) return
+    pendingPrefs.current = null
+    if (prefsSaveTimer.current != null) {
+      clearTimeout(prefsSaveTimer.current)
+      prefsSaveTimer.current = null
+    }
+    if (pending.document.columns.length === 0) return
+    if (opts?.keepalive) {
+      saveColumnPrefsKeepalive(pending.viewId, pending.document)
+      prefsSnapshot.current = pending.snapshot
+      return
+    }
+    void saveColumnPrefs(pending.viewId, pending.document)
+      .then(() => {
+        prefsSnapshot.current = pending.snapshot
+      })
+      .catch(() => undefined)
+  }
+
   const virtualizerRef = useRef<{ scrollToIndex: (index: number) => void }>({ scrollToIndex: () => {} })
   const locateRef = useRef<(id: string) => number>(() => -1)
   const selectMode = useRef<{ extend: boolean; anchor: number } | null>(null)
@@ -261,22 +285,40 @@ export function ObjectTable({
       return
     }
     if (prefsSnapshot.current === snapshot) return
-    const timer = setTimeout(() => {
-      const document = orderHiddenToDocument(
-        order,
-        hidden,
-        attributePaths.data?.paths.map((path) => path.text),
-        systemColumns,
-      )
-      if (document.columns.length === 0) return
-      void saveColumnPrefs(view.id, document)
-        .then(() => {
-          prefsSnapshot.current = snapshot
-        })
-        .catch(() => undefined)
+    const document = orderHiddenToDocument(
+      order,
+      hidden,
+      attributePaths.data?.paths.map((path) => path.text),
+      systemColumns,
+    )
+    if (document.columns.length === 0) return
+    pendingPrefs.current = { snapshot, viewId: view.id, document }
+    if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
+    prefsSaveTimer.current = setTimeout(() => {
+      prefsSaveTimer.current = null
+      flushPendingPrefsRef.current()
     }, 400)
-    return () => clearTimeout(timer)
+    return () => {
+      if (prefsSaveTimer.current != null) {
+        clearTimeout(prefsSaveTimer.current)
+        prefsSaveTimer.current = null
+      }
+      // Leaving the effect (nav away / unmount / superseded edit): do not drop a pending PUT.
+      flushPendingPrefsRef.current()
+    }
   }, [order, hidden, prefsReady, attributePaths.data, systemColumns, view.id])
+  useEffect(() => {
+    const flush = () => flushPendingPrefsRef.current({ keepalive: true })
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('beforeunload', flush)
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [])
   const sortBy = indexSort(sort, defs.data)
   const groupField = groupBy ? indexSort(groupBy, defs.data) : groupBy
   const probe = useQuery({
@@ -595,9 +637,6 @@ export function ObjectTable({
     const box = event.currentTarget.getBoundingClientRect()
     // A pointer right-click carries button 2; the ContextMenu key opens this event without one.
     const byPointer = event.button === 2
-    const hiddenColumns = all
-      .filter((id) => hidden.includes(id))
-      .map((id) => ({ id, header: columnHeader(id) }))
     openSharedContextMenu({
       context: 'table-header',
       x: byPointer ? event.clientX : box.left,
@@ -606,7 +645,6 @@ export function ObjectTable({
         objectId: row?.id,
         column,
         columnHeader: columnHeader(column),
-        hiddenColumns,
         typeKey: session.listType ?? undefined,
         singular: session.listType ? singularOf(defs.data, session.listType, uiLanguage) || undefined : undefined,
       },
@@ -622,9 +660,6 @@ export function ObjectTable({
       const row = active < 0 ? undefined : rowAt(active)
       const box = header.getBoundingClientRect()
       setActiveColumn(headerColumn)
-      const hiddenColumns = all
-        .filter((id) => hidden.includes(id))
-        .map((id) => ({ id, header: columnHeader(id) }))
       openSharedContextMenu({
         context: 'table-header',
         x: box.left,
@@ -633,9 +668,8 @@ export function ObjectTable({
           objectId: row?.id,
           column: headerColumn,
           columnHeader: columnHeader(headerColumn),
-          hiddenColumns,
           typeKey: session.listType ?? undefined,
-        singular: session.listType ? singularOf(defs.data, session.listType, uiLanguage) || undefined : undefined,
+          singular: session.listType ? singularOf(defs.data, session.listType, uiLanguage) || undefined : undefined,
         },
       })
       return

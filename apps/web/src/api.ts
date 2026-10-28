@@ -9,6 +9,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Fire-and-forget JSON PUT that survives tab close (same pattern as workspace flush). */
+export function keepaliveJsonPut(path: string, body: unknown): void {
+  void fetch(path, {
+    method: 'PUT',
+    credentials: 'include',
+    keepalive: true,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !headers.has('content-type')) {
