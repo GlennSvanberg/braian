@@ -62,6 +62,7 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
     name: 'Data model',
     summary: 'Object types, links, value lists, units and attribute definitions',
     views: [
+      { type: 'data_model', title: 'Structures', state: { mode: 'tree' } },
       { type: 'object_types', title: 'Object types', state: {} },
       { type: 'link_types', title: 'Link types', state: {} },
       { type: 'value_lists', title: 'Value lists', state: {} },
@@ -74,8 +75,8 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
       splitPair(
         'horizontal',
         0.22,
-        tabGroup([ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[4] ?? ''].filter(Boolean)),
-        splitPair('horizontal', 0.55, tabGroup([ids[6] ?? '', ids[5] ?? ''].filter(Boolean)), tabGroup([ids[3] ?? ''].filter(Boolean))),
+        tabGroup([ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[3] ?? '', ids[5] ?? ''].filter(Boolean)),
+        splitPair('horizontal', 0.55, tabGroup([ids[7] ?? '', ids[6] ?? ''].filter(Boolean)), tabGroup([ids[4] ?? ''].filter(Boolean))),
       ),
   },
   {

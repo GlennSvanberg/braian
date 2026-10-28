@@ -60,11 +60,21 @@ export function DataModel({ view }: { view: View }) {
   if (stored.isError) return <div data-testid="data-model"><StateNote tone="error" title={copy.errorModel} detail={copy.validation} /></div>
   const preview = draft.data?.conflict === true ? undefined : (draft.data?.definitions as Json | undefined)
   const defs = preview ?? stored.data
-  // Model (tree) and Preview (card) views were removed in standard-table step 2.
-  // Attribute bindings for a selected type/group remain available as mode=classes.
+  // Preview (card) removed. Structures stay as a tree (not ModelNav type/list chrome).
+  // Object/link/value list/unit tables cover those entities. Type attributes use mode=classes.
   if (mode === 'classes' || mode === 'attributes') return <AttributeTable defs={defs} />
   if (mode === 'impact') return <ImpactNote />
-  return <AttributeTable defs={defs} />
+  if (mode === 'card' || mode === 'editor') return <StateNote tone="empty" title={copy.pickModel} />
+  return <StructuresPane defs={defs} />
+}
+
+function StructuresPane({ defs }: { defs: Json | undefined }) {
+  const { selection, choose } = useModelSelection()
+  return (
+    <div data-testid="data-model" className="model-nav">
+      <StructureSection defs={defs} selection={selection} onPick={choose} />
+    </div>
+  )
 }
 
 type NavMenu =
