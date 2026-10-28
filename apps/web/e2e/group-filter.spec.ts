@@ -33,13 +33,8 @@ async function resetEnrich(page: Page) {
 }
 
 async function choose(table: Locator, name: string) {
-  const inline = table.locator('.toolbar-actions').getByRole('button', { name, exact: true })
-  if (await inline.count()) {
-    await inline.click()
-    return
-  }
-  await table.getByTestId('toolbar-more').click()
-  await table.page().getByRole('menuitem', { name, exact: true }).click()
+  const inline = table.locator('.toolbar-actions, [data-testid="standard-table-filters"]').getByRole('button', { name, exact: true })
+  await inline.click()
 }
 
 test('selecting a structure group lists the same products as its selection', async ({ page }) => {

@@ -1,15 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { MoreHorizontal, Search } from 'lucide-react'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
 import { indexSort, readIndexed } from './index-fields'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
 import { Slider } from './components/ui/slider'
-import { Kbd } from './components/ui/kbd'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
 import { Switch } from './components/ui/switch'
 import { assortmentDisplayName, jobTypeDisplayTitle } from './demo-labels'
@@ -23,6 +20,7 @@ import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
 import { openSharedContextMenu } from './shared-context-menu'
+import { StandardTableChrome } from './standard-table'
 import { registerCommandRunner } from './command-registry'
 import {
   emptyDetail,
@@ -167,9 +165,6 @@ export function ObjectTable({
   }, [filter, sort, groupBy, order, sizes, view, workspace])
 
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const barRef = useRef<HTMLDivElement>(null)
-  const filtersRef = useRef<HTMLDivElement>(null)
-  const [overflow, setOverflow] = useState(false)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
@@ -184,7 +179,6 @@ export function ObjectTable({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-
   const names = typeNames(defs.data, uiLanguage)
   const bound = typeOfView(view, names) ?? (isGenericObjectTitle(view.title) ? names[0] : undefined)
   const typeKey = bound?.key ?? ''
@@ -196,19 +190,6 @@ export function ObjectTable({
   const selectionRows = (assortments.data?.assortments ?? []).filter((item) =>
     selectionMatchesType(item, typeKey, bound?.id ?? ''),
   )
-  useLayoutEffect(() => {
-    const bar = barRef.current
-    const filters = filtersRef.current
-    if (!bar || !filters) return
-    const update = () => {
-      const reserved = 140 + 124 + 88 + 36 + 32
-      setOverflow(filters.scrollWidth > bar.clientWidth - reserved)
-    }
-    const observer = new ResizeObserver(update)
-    observer.observe(bar)
-    update()
-    return () => observer.disconnect()
-  }, [selectionRows.length, groupBy, selected.length])
   useEffect(() => {
     session.setListType?.(typeKey || null)
   }, [session, typeKey])
@@ -704,87 +685,41 @@ export function ObjectTable({
     return ''
   }
 
+  const newRowLabel = newObjectLabel(bound?.singular)
   return (
-    <div className="table-wrap" data-testid="object-table">
-      <div className="toolbar object-bar" ref={barRef}>
-        <label className="search-field">
-          <Search size={14} aria-hidden="true" />
-          <input
-            data-testid="quick-filter"
-            placeholder={copy.search}
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-          />
-          <Kbd>/</Kbd>
-        </label>
-        <div className="toolbar-measure" ref={filtersRef} aria-hidden="true" inert>
-          <TableFilters
-            groupBy={groupBy}
-            setGroupBy={setGroupBy}
-            setFilter={setFilter}
-            setGroup={session.setGroup}
-            setLabelFilter={setLabelFilter}
-            assortments={selectionRows}
-            defs={defs.data}
-            massDisabled={selected.length === 0}
-            onMass={() => mass.mutate()}
-            onExport={exportVisible}
-          />
-        </div>
-        {overflow ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button type="button" className="icon-btn" aria-label={copy.moreActions} data-testid="toolbar-more">
-                <MoreHorizontal size={14} aria-hidden="true" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <TableFilters
-                groupBy={groupBy}
-                setGroupBy={setGroupBy}
-                setFilter={setFilter}
-                setGroup={session.setGroup}
-                setLabelFilter={setLabelFilter}
-                assortments={selectionRows}
-                defs={defs.data}
-                massDisabled={selected.length === 0}
-                onMass={() => mass.mutate()}
-                onExport={exportVisible}
-                menu
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : (
-          <div className="toolbar-actions">
-            <TableFilters
-              groupBy={groupBy}
-              setGroupBy={setGroupBy}
-              setFilter={setFilter}
-              setGroup={session.setGroup}
-              setLabelFilter={setLabelFilter}
-              assortments={selectionRows}
-              defs={defs.data}
-              massDisabled={selected.length === 0}
-              onMass={() => mass.mutate()}
-              onExport={exportVisible}
-            />
-          </div>
-        )}
-        <button type="button" onClick={() => setPicker('filter')}>{copy.filterBy}</button>
-        <button type="button" onClick={() => setPicker('export')}>{copy.exportColumns}</button>
-        {pathFilters.map((clause) => {
-          const [path, value = ''] = clause.split(':=')
-          const unit = path?.endsWith('.unit') ? value : undefined
-          const shown = path?.endsWith('.unit') ? value : formatMeasure(value, path?.endsWith('.value') ? undefined : undefined)
-          return (
-            <button key={clause} type="button" className="filter-chip on" onClick={() => setPathFilters((current) => current.filter((item) => item !== clause))}>
-              {path} {shown}{unit && path?.endsWith('.unit') ? '' : ''}
-            </button>
-          )
-        })}
-        <NewObject session={session} typeKey={typeKey} singular={bound?.singular} />
-        <span className="row-count" data-testid="row-count">{formatCount(found)} {copy.rows}</span>
+    <StandardTableChrome
+      testId="object-table"
+      newRowLabel={newRowLabel}
+      onNewRow={() => window.dispatchEvent(new Event('braian-new-object'))}
+      rowCount={found}
+      filterValue={filter}
+      onFilterChange={setFilter}
+    >
+      <NewObject session={session} typeKey={typeKey} singular={bound?.singular} trigger="event" />
+      <div className="toolbar-actions standard-table-filters" data-testid="standard-table-filters">
+        <TableFilters
+          groupBy={groupBy}
+          setGroupBy={setGroupBy}
+          setFilter={setFilter}
+          setGroup={session.setGroup}
+          setLabelFilter={setLabelFilter}
+          assortments={selectionRows}
+          defs={defs.data}
+        />
       </div>
+      {pathFilters.length > 0 ? (
+        <div className="toolbar path-filter-chips" data-testid="path-filter-chips">
+          {pathFilters.map((clause) => {
+            const [path, value = ''] = clause.split(':=')
+            const shown = path?.endsWith('.unit') ? value : formatMeasure(value, path?.endsWith('.value') ? undefined : undefined)
+            return (
+              <button key={clause} type="button" className="filter-chip on" onClick={() => setPathFilters((current) => current.filter((item) => item !== clause))}>
+                {path} {shown}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
       <div
         className="grid"
         ref={parent}
@@ -898,7 +833,8 @@ export function ObjectTable({
             {visible.map((item) => {
               const row = byIndex.get(item.index)
               if (!row) {
-                return <div key={item.index} className="row" style={{ position: 'absolute', transform: `translateY(${item.start}px)`, height: 28, width: '100%' }} />
+                // No blank trailing row while a page is still loading.
+                return null
               }
               return (
                 <Row
@@ -975,7 +911,7 @@ export function ObjectTable({
           }}
         />
       ) : null}
-    </div>
+    </StandardTableChrome>
   )
 }
 
@@ -1143,10 +1079,6 @@ function TableFilters({
   setLabelFilter,
   assortments,
   defs,
-  massDisabled,
-  onMass,
-  onExport,
-  menu = false,
 }: {
   groupBy: string
   setGroupBy: (value: string) => void
@@ -1155,10 +1087,6 @@ function TableFilters({
   setLabelFilter: (value: string) => void
   assortments: Json[]
   defs?: Json
-  massDisabled: boolean
-  onMass: () => void
-  onExport: () => void
-  menu?: boolean
 }) {
   const clear = () => {
     setGroupBy('')
@@ -1172,22 +1100,6 @@ function TableFilters({
     setGroup(query.group ? String(query.group) : null)
     setLabelFilter(labelSearchFilter(query, defs))
   }
-  if (menu) {
-    return (
-      <>
-        <DropdownMenuItem onSelect={clear}>{copy.all}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setGroupBy(groupBy === 'type_key' ? '' : 'type_key')}>{copy.type}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setGroupBy(groupBy === 'a_status' ? '' : 'a_status')}>{copy.status}</DropdownMenuItem>
-        {assortments.map((item) => (
-          <DropdownMenuItem key={String(item.id)} onSelect={() => applyAssortment(item)}>
-            {assortmentDisplayName(String(item.name))}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuItem disabled={massDisabled} onSelect={onMass}>{copy.massEdit}</DropdownMenuItem>
-        <DropdownMenuItem onSelect={onExport}>{copy.export}</DropdownMenuItem>
-      </>
-    )
-  }
   return (
     <>
       <button type="button" className={groupBy === '' ? 'filter-chip on' : 'filter-chip'} onClick={clear}>{copy.all}</button>
@@ -1198,13 +1110,22 @@ function TableFilters({
           {assortmentDisplayName(String(item.name))}
         </button>
       ))}
-      <button type="button" onClick={onMass} disabled={massDisabled}>{copy.massEdit}</button>
-      <button type="button" onClick={onExport}>{copy.export}</button>
     </>
   )
 }
 
-function NewObject({ session, typeKey, singular }: { session: PanesSession; typeKey?: string; singular?: string }) {
+function NewObject({
+  session,
+  typeKey,
+  singular,
+  trigger = 'button',
+}: {
+  session: PanesSession
+  typeKey?: string
+  singular?: string
+  /** `event` = only the shared plus / command opens the form (no inline button). */
+  trigger?: 'button' | 'event'
+}) {
   const [open, setOpen] = useState(false)
   const [number, setNumber] = useState('')
   const [name, setName] = useState('')
@@ -1217,7 +1138,10 @@ function NewObject({ session, typeKey, singular }: { session: PanesSession; type
     return () => window.removeEventListener('braian-new-object', openForm)
   }, [])
   const named = typeNames(defs.data, uiLanguage).find((item) => item.key === (typeKey || 'product'))
-  if (!open) return <button onClick={() => setOpen(true)}>{newObjectLabel(singular)}</button>
+  if (!open) {
+    if (trigger === 'event') return null
+    return <button type="button" onClick={() => setOpen(true)}>{newObjectLabel(singular)}</button>
+  }
   return (
     <form
       className="create-row"
@@ -1411,6 +1335,11 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         save()
       }}
       onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+          event.preventDefault()
+          save()
+          return
+        }
         if (event.ctrlKey || event.altKey || event.metaKey) return
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return
         const target = event.target as HTMLElement
@@ -1468,7 +1397,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       {dirty ? (
         <div className="save-bar">
           <button type="button" onClick={() => setDraft({})}>{copy.discard}</button>
-          <button className="primary" type="submit" data-testid="save-object">{copy.save}</button>
+          <button className="primary" type="submit" data-testid="review-and-save">{copy.reviewAndSave}</button>
         </div>
       ) : null}
     </form>
