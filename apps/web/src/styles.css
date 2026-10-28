@@ -1856,6 +1856,51 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 .class-attr { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .class-attr span:last-child { color: var(--muted); }
 
+button,
+a,
+[role="button"],
+.icon-btn,
+.pane-tab,
+.tab,
+.tree-row,
+.model-node,
+.row {
+  cursor: pointer;
+}
+a:hover { color: var(--text); }
+.tab:hover:not(.active),
+.pane-tab:hover:not(.active),
+.model-node:hover:not(.on) {
+  background: var(--hover);
+  color: var(--text);
+}
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""],
+[contenteditable="plaintext-only"] {
+  cursor: text;
+}
+[data-testid^="resize-"] { cursor: col-resize; }
+.head [draggable="true"] { cursor: grab; }
+.head [draggable="true"]:active { cursor: grabbing; }
+button:disabled,
+button[aria-disabled="true"],
+[aria-disabled="true"],
+.disabled {
+  cursor: not-allowed;
+}
+button:disabled:hover,
+button[aria-disabled="true"]:hover,
+[aria-disabled="true"]:hover,
+.disabled:hover {
+  background: transparent;
+}
+.pane-body,
+.detail-empty {
+  cursor: default;
+}
+
 @media (max-width: 720px) {
   .import-top { grid-template-columns: minmax(0, 1fr) auto; }
   .import-steps { grid-column: 1 / -1; order: 3; flex-wrap: wrap; }

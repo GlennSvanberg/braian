@@ -20,6 +20,8 @@ import { structureCaption } from './graph-scene'
 import { StructureSection } from './structure-tree'
 import { StateNote } from './states'
 import { onDraftChange, openModelDialog, setModelFocus, stageModel } from './model-stage'
+import { openSharedContextMenu } from './shared-context-menu'
+import { registerCommandRunner } from './command-registry'
 
 type View = { state: Json }
 
@@ -101,31 +103,79 @@ type NavMenu =
 
 function ModelNav({ defs }: { defs: Json | undefined }) {
   const { selection, choose: pick } = useModelSelection()
-  const [menu, setMenu] = useState<NavMenu | null>(null)
   const rawTypes = (defs?.types as Json[]) ?? []
   const types = objectTypes({ ...defs, types: rawTypes.filter((item) => item.kind !== 'link') }, uiLanguage)
   const linkRows = objectTypes({ ...defs, types: rawTypes.filter((item) => item.kind === 'link') }, uiLanguage)
   const lists = ((defs?.value_lists as Json[]) ?? [])
   const families = ((defs?.unit_families as Json[]) ?? [])
   useEffect(() => {
+    const stops = [
+      registerCommandRunner('model:new-type', () => openModelDialog('type')),
+      registerCommandRunner('model:new-link-type', () => openModelDialog('link')),
+      registerCommandRunner('model:new-list', () => openModelDialog('list')),
+      registerCommandRunner('model:new-family', () => openModelDialog('family')),
+      registerCommandRunner('model:delete-type', (target) => {
+        if (target.typeKey) void propose('model.delete_type', { type: String(target.typeKey) })
+      }),
+      registerCommandRunner('model:delete-link-type', (target) => {
+        if (target.typeKey) void propose('model.delete_link_type', { key: String(target.typeKey) })
+      }),
+      registerCommandRunner('model:delete-list', (target) => {
+        if (target.listKey) void propose('model.delete_value_list', { value_list: String(target.listKey) })
+      }),
+      registerCommandRunner('model:delete-option', (target) => {
+        if (target.listKey && target.optionCode) {
+          void propose('model.delete_value_option', { value_list: String(target.listKey), option: String(target.optionCode) })
+        }
+      }),
+      registerCommandRunner('model:delete-family', (target) => {
+        if (target.familyKey) void propose('model.delete_unit_family', { unit_family: String(target.familyKey) })
+      }),
+      registerCommandRunner('model:delete-unit', (target) => {
+        if (target.familyKey && target.unitCode) {
+          void propose('model.delete_unit', { unit_family: String(target.familyKey), unit: String(target.unitCode) })
+        }
+      }),
+    ]
+    return () => stops.forEach((stop) => stop())
+  }, [])
+  const openNavMenu = (event: { clientX: number; clientY: number; preventDefault(): void }, menu: NavMenu) => {
+    event.preventDefault()
+    const context =
+      menu.kind === 'type'
+        ? 'model-type'
+        : menu.kind === 'link'
+          ? 'model-link'
+          : menu.kind === 'list'
+            ? 'model-list'
+            : menu.kind === 'option'
+              ? 'model-option'
+              : menu.kind === 'family'
+                ? 'model-family'
+                : 'model-unit'
+    openSharedContextMenu({
+      context,
+      x: event.clientX,
+      y: event.clientY,
+      target: {
+        typeKey: menu.kind === 'type' || menu.kind === 'link' ? menu.key || undefined : undefined,
+        listKey: menu.kind === 'list' ? menu.key : menu.kind === 'option' ? menu.list : undefined,
+        optionCode: menu.kind === 'option' ? menu.code : undefined,
+        familyKey: menu.kind === 'family' ? menu.key : menu.kind === 'unit' ? menu.family : undefined,
+        unitCode: menu.kind === 'unit' ? menu.code : undefined,
+      },
+    })
+  }
+  useEffect(() => {
     if (selection || types.length === 0) return
     const first = types[0]
     if (first) pick({ kind: 'type', typeKey: first.key })
   }, [selection, types, pick])
-  useEffect(() => {
-    if (!menu) return
-    const close = () => setMenu(null)
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [menu])
   return (
     <div data-testid="data-model" className="model-nav">
       <section>
         <h2
-          onContextMenu={(event) => {
-            event.preventDefault()
-            setMenu({ x: event.clientX, y: event.clientY, kind: 'type', key: '' })
-          }}
+          onContextMenu={(event) => openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'type', key: '' })}
         >
           {copy.objectTypes}
         </h2>
@@ -137,9 +187,8 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
             data-testid={`type-${item.key}`}
             onClick={() => pick({ kind: 'type', typeKey: item.key })}
             onContextMenu={(event) => {
-              event.preventDefault()
               pick({ kind: 'type', typeKey: item.key })
-              setMenu({ x: event.clientX, y: event.clientY, kind: 'type', key: item.key })
+              openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'type', key: item.key })
             }}
           >
             {item.label}
@@ -148,10 +197,7 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
       </section>
       <section>
         <h2
-          onContextMenu={(event) => {
-            event.preventDefault()
-            setMenu({ x: event.clientX, y: event.clientY, kind: 'link', key: '' })
-          }}
+          onContextMenu={(event) => openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'link', key: '' })}
         >
           {copy.linkTypes}
         </h2>
@@ -166,10 +212,9 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
               pick({ kind: 'type', typeKey: item.key })
             }}
             onContextMenu={(event) => {
-              event.preventDefault()
               setModelFocus({ kind: 'type', key: item.key })
               pick({ kind: 'type', typeKey: item.key })
-              setMenu({ x: event.clientX, y: event.clientY, kind: 'link', key: item.key })
+              openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'link', key: item.key })
             }}
           >
             {item.label}
@@ -190,9 +235,8 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
                 data-testid={`list-${key}`}
                 onClick={() => setModelFocus({ kind: 'value_list', key })}
                 onContextMenu={(event) => {
-                  event.preventDefault()
                   setModelFocus({ kind: 'value_list', key })
-                  setMenu({ x: event.clientX, y: event.clientY, kind: 'list', key })
+                  openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'list', key })
                 }}
               >
                 {label}
@@ -207,9 +251,8 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
                     data-testid={`option-${key}-${code}`}
                     onClick={() => setModelFocus({ kind: 'option', list: key, code })}
                     onContextMenu={(event) => {
-                      event.preventDefault()
                       setModelFocus({ kind: 'option', list: key, code })
-                      setMenu({ x: event.clientX, y: event.clientY, kind: 'option', list: key, code })
+                      openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'option', list: key, code })
                     }}
                   >
                     {textValue(option.labels as Json, uiLanguage) || code}
@@ -233,9 +276,8 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
                 data-testid={`family-${key}`}
                 onClick={() => setModelFocus({ kind: 'unit_family', key })}
                 onContextMenu={(event) => {
-                  event.preventDefault()
                   setModelFocus({ kind: 'unit_family', key })
-                  setMenu({ x: event.clientX, y: event.clientY, kind: 'family', key })
+                  openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'family', key })
                 }}
               >
                 {key}
@@ -250,9 +292,8 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
                     data-testid={`unit-${key}-${code}`}
                     onClick={() => setModelFocus({ kind: 'unit', family: key, code })}
                     onContextMenu={(event) => {
-                      event.preventDefault()
                       setModelFocus({ kind: 'unit', family: key, code })
-                      setMenu({ x: event.clientX, y: event.clientY, kind: 'unit', family: key, code })
+                      openNavMenu(event, { x: event.clientX, y: event.clientY, kind: 'unit', family: key, code })
                     }}
                   >
                     {code}
@@ -264,40 +305,6 @@ function ModelNav({ defs }: { defs: Json | undefined }) {
         })}
       </section>
       <StructureSection defs={defs} selection={selection} onPick={pick} />
-      {menu ? (
-        <div className="menu" role="menu" data-testid="type-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          {menu.kind === 'link' ? (
-            <>
-              <button type="button" onClick={() => { setMenu(null); openModelDialog('link') }}>{copy.newLinkType}</button>
-              {menu.key ? <button type="button" onClick={() => { setMenu(null); void propose('model.delete_link_type', { key: menu.key }) }}>{copy.deleteMenu}</button> : null}
-            </>
-          ) : null}
-          {menu.kind === 'type' ? (
-            <>
-              <button type="button" onClick={() => { setMenu(null); openModelDialog('type') }}>{copy.newType}</button>
-              {menu.key ? <button type="button" onClick={() => { setMenu(null); void propose('model.delete_type', { type: menu.key }) }}>{copy.deleteMenu}</button> : null}
-            </>
-          ) : null}
-          {menu.kind === 'list' ? (
-            <>
-              <button type="button" onClick={() => { setMenu(null); openModelDialog('list') }}>{copy.newValueList}</button>
-              <button type="button" onClick={() => { setMenu(null); void propose('model.delete_value_list', { value_list: menu.key }) }}>{copy.deleteValueList}</button>
-            </>
-          ) : null}
-          {menu.kind === 'option' ? (
-            <button type="button" onClick={() => { setMenu(null); void propose('model.delete_value_option', { value_list: menu.list, option: menu.code }) }}>{copy.deleteOption}</button>
-          ) : null}
-          {menu.kind === 'family' ? (
-            <>
-              <button type="button" onClick={() => { setMenu(null); openModelDialog('family') }}>{copy.newUnitFamily}</button>
-              <button type="button" onClick={() => { setMenu(null); void propose('model.delete_unit_family', { unit_family: menu.key }) }}>{copy.deleteUnitFamily}</button>
-            </>
-          ) : null}
-          {menu.kind === 'unit' ? (
-            <button type="button" onClick={() => { setMenu(null); void propose('model.delete_unit', { unit_family: menu.family, unit: menu.code }) }}>{copy.deleteUnit}</button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -307,7 +314,6 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
   const rows = attributeRows(defs, selection, uiLanguage)
   const families = ((defs?.unit_families as Json[]) ?? []).map((item) => String(item.key ?? '')).filter(Boolean)
   const [message, setMessage] = useState('')
-  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; key: string } | null>(null)
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<'listed' | 'name' | 'kind'>('listed')
   const selectionKey = selection ? (selection.kind === 'type' ? selection.typeKey : `${selection.structure}/${selection.group}`) : ''
@@ -427,14 +433,26 @@ function AttributeTable({ defs }: { defs: Json | undefined }) {
               })
             }
             onDelete={row.id === keyAttribute ? undefined : () => run('model.delete_attribute', { attribute: row.key })}
-            onMenu={(event) => setRowMenu({ x: event.clientX, y: event.clientY, key: row.key })}
+            onMenu={(event) => {
+              openSharedContextMenu({
+                context: 'attribute',
+                x: event.clientX,
+                y: event.clientY,
+                target: { attributeKey: row.key },
+                extraOnly: true,
+                extra: [
+                  {
+                    id: 'model:delete-attribute',
+                    title: copy.deleteMenu,
+                    contexts: ['attribute'],
+                    group: 'object',
+                    danger: true,
+                  },
+                ],
+              })
+            }}
           />
         )) : null}
-        {rowMenu ? (
-          <div className="menu" role="menu" data-testid="attribute-menu" style={{ left: rowMenu.x, top: rowMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-            <button type="button" onClick={() => { setRowMenu(null); void propose('model.delete_attribute', { attribute: rowMenu.key }) }}>{copy.deleteMenu}</button>
-          </div>
-        ) : null}
         <AddRow
           key={selectionKey}
           families={families}

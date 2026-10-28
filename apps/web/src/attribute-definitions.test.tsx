@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AttributeDefinitions } from './attribute-definitions'
+import { SharedContextMenuHost } from './shared-context-menu'
 
 const api = vi.hoisted(() => vi.fn())
 
@@ -65,6 +66,7 @@ function Host() {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }))
   return (
     <QueryClientProvider client={client}>
+      <SharedContextMenuHost />
       <AttributeDefinitions />
     </QueryClientProvider>
   )
@@ -97,12 +99,12 @@ describe('attribute definitions view', () => {
     expect((screen.getByTestId('attr-key-gross_weight') as HTMLInputElement).disabled).toBe(false)
 
     fireEvent.contextMenu(screen.getByTestId('attr-label-number'))
-    const menu = await screen.findByTestId('attribute-menu')
+    const menu = await screen.findByTestId('context-menu')
     expect(menu.textContent).toContain('Rename…')
     expect(menu.textContent).not.toContain('Rename key…')
     expect(menu.textContent).not.toContain('Delete…')
     fireEvent.keyDown(menu, { key: 'Escape' })
-    await waitFor(() => expect(screen.queryByTestId('attribute-menu')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('context-menu')).toBeNull())
   })
 
   it('puts add to type in the draft from the keyboard', async () => {
@@ -114,7 +116,7 @@ describe('attribute definitions view', () => {
     expect(row.getAttribute('data-key')).toBe('gross_weight')
     row.focus()
     fireEvent.keyDown(row, { key: 'Enter', ctrlKey: true })
-    const menu = await screen.findByTestId('attribute-menu')
+    const menu = await screen.findByTestId('context-menu')
     fireEvent.click(menu.querySelector('button') as HTMLButtonElement)
     const picker = await screen.findByTestId('add-to-type-search')
     fireEvent.change(picker, { target: { value: 'Supplier' } })

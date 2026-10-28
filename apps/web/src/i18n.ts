@@ -11,6 +11,7 @@ export const copy = {
   loginFailed: 'Wrong email or password.',
   loginHint: 'The demo account comes from BRAIAN_DEMO_EMAIL and BRAIAN_DEMO_PASSWORD in .env.',
   search: 'Search',
+  sendFeedback: 'Send feedback',
   searchPlaceholder: 'search (= exact, Enter)',
   commandPlaceholder: 'Search, open views, or ask AI',
   shortcuts: 'Shortcuts',

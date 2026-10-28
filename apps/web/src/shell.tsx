@@ -30,6 +30,10 @@ import { FeedbackDialog } from './feedback-dialog'
 import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
 import { CommandPalette } from './palette'
+import { SharedContextMenuHost } from './shared-context-menu'
+import { requestNewSelection } from './assortment-filter'
+import { dispatchUi } from './ui-bus'
+import { registerCommandRunner, runCommand } from './command-registry'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
@@ -266,6 +270,53 @@ export function Shell() {
     enabled: Boolean(objectId),
   })
   const feedbackEnabled = me.data?.feedback === true
+
+  useEffect(() => {
+    const stops = [
+      registerCommandRunner('palette:search', () => setPaletteMode('list')),
+      registerCommandRunner('feedback:send', () => openFeedback()),
+      registerCommandRunner('layout:reset_layout', () => applyRef.current('reset_layout', {})),
+      registerCommandRunner('layout:close_view', (target) =>
+        applyRef.current('close_view', target.viewId ? { view: target.viewId } : {}),
+      ),
+      registerCommandRunner('layout:zoom', (target) =>
+        applyRef.current('zoom', target.viewId ? { view: target.viewId } : {}),
+      ),
+      registerCommandRunner('layout:move_view_left', (target) =>
+        applyRef.current('move_view_left', target.viewId ? { view: target.viewId } : {}),
+      ),
+      registerCommandRunner('layout:move_view_right', (target) =>
+        applyRef.current('move_view_right', target.viewId ? { view: target.viewId } : {}),
+      ),
+      registerCommandRunner('layout:move_view_up', (target) =>
+        applyRef.current('move_view_up', target.viewId ? { view: target.viewId } : {}),
+      ),
+      registerCommandRunner('layout:move_view_down', (target) =>
+        applyRef.current('move_view_down', target.viewId ? { view: target.viewId } : {}),
+      ),
+      registerCommandRunner('layout:add-view', () => setPaletteMode('list')),
+      registerCommandRunner('selection:new', () => requestNewSelection()),
+      registerCommandRunner('layout:split-left', (target) => applyRef.current('split', { view: target.viewId, zone: 'left' })),
+      registerCommandRunner('layout:split-right', (target) => applyRef.current('split', { view: target.viewId, zone: 'right' })),
+      registerCommandRunner('layout:split-top', (target) => applyRef.current('split', { view: target.viewId, zone: 'top' })),
+      registerCommandRunner('layout:split-bottom', (target) => applyRef.current('split', { view: target.viewId, zone: 'bottom' })),
+      registerCommandRunner('columns:hide', (target) => {
+        if (target.column) dispatchUi('ui.hide_column', { column: String(target.column) })
+      }),
+    ]
+    const onCommand = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: string; target: Record<string, unknown> }>).detail
+      if (!detail?.id?.startsWith('columns:show:')) return
+      const column = detail.id.slice('columns:show:'.length)
+      dispatchUi('ui.show_column', { column })
+    }
+    window.addEventListener('braian:command', onCommand)
+    return () => {
+      stops.forEach((stop) => stop())
+      window.removeEventListener('braian:command', onCommand)
+    }
+  }, [])
+
 
   useEffect(() => {
     if (!booted || !me.isSuccess) return
@@ -738,6 +789,7 @@ export function Shell() {
       </footer>
       <ModelDraftHost />
       <ConsequenceHost session={session} />
+      <SharedContextMenuHost feedbackEnabled={feedbackEnabled} />
       {feedbackEnabled ? (
         <FeedbackDialog
           open={feedbackOpen}

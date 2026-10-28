@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, textValue, type Json } from './api'
 import { formatCount } from './format'
 import { copy, uiLanguage } from './i18n'
+import { openSharedContextMenu } from './shared-context-menu'
+import { registerCommandRunner } from './command-registry'
 
 type LinkItem = {
   id: string
@@ -38,10 +40,14 @@ export function LinkSections({
 }) {
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState<LinkSide | null>(null)
-  const [menu, setMenu] = useState<Menu | null>(null)
   const [confirm, setConfirm] = useState<{ id: string; peer: string } | null>(null)
   const [typed, setTyped] = useState('')
   const sections = useMemo(() => sectionsFor(defs, typeKey, links), [defs, typeKey, links])
+  const onOpenRef = useRef(onOpen)
+  onOpenRef.current = onOpen
+  const sectionsRef = useRef(sections)
+  sectionsRef.current = sections
+  const removeRef = useRef<(id: string, peer: string, hasValues: boolean) => void>(() => undefined)
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['object', objectId] })
     void queryClient.invalidateQueries({ queryKey: ['objects'] })
@@ -54,6 +60,38 @@ export function LinkSections({
     }
     void api(`/v1/links/${id}`, { method: 'DELETE' }).then(refresh).catch(() => undefined)
   }
+  removeRef.current = remove
+  const openLinkMenu = (link: LinkItem, x: number, y: number) => {
+    focused = { id: link.id, peer: link.peer_key, hasValues: link.has_values }
+    openSharedContextMenu({
+      context: 'link',
+      x,
+      y,
+      target: {
+        linkId: link.id,
+        peerId: link.peer_id,
+        objectId: link.peer_id,
+        hasValues: link.has_values,
+      },
+    })
+  }
+  useEffect(() => {
+    const stops = [
+      registerCommandRunner('link:open-peer', (target) => {
+        if (target.peerId) onOpenRef.current(String(target.peerId))
+      }),
+      registerCommandRunner('link:edit', (target) => {
+        if (target.linkId) onOpenRef.current(String(target.linkId))
+      }),
+      registerCommandRunner('link:remove', (target) => {
+        if (!target.linkId) return
+        const id = String(target.linkId)
+        const peer = peerKey(sectionsRef.current, id)
+        removeRef.current(id, peer, Boolean(target.hasValues))
+      }),
+    ]
+    return () => stops.forEach((stop) => stop())
+  }, [])
   useEffect(() => {
     const add = (event: Event) => {
       const detail = (event as CustomEvent<{ linkType?: string }>).detail ?? {}
@@ -92,11 +130,15 @@ export function LinkSections({
               onFocus={() => {
                 focused = { id: link.id, peer: link.peer_key, hasValues: link.has_values }
               }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                openLinkMenu(link, event.clientX, event.clientY)
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                   event.preventDefault()
                   const rect = event.currentTarget.getBoundingClientRect()
-                  setMenu({ id: link.id, peer: link.peer_id, hasValues: link.has_values, x: rect.left, y: rect.bottom })
+                  openLinkMenu(link, rect.left, rect.bottom)
                 }
                 if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
                   event.preventDefault()
@@ -126,13 +168,6 @@ export function LinkSections({
             refresh()
           }}
         />
-      ) : null}
-      {menu ? (
-        <div className="menu" role="menu" data-testid="link-menu" style={{ left: menu.x, top: menu.y }}>
-          <button type="button" role="menuitem" onClick={() => { onOpen(menu.peer); setMenu(null) }}>{copy.open}</button>
-          <button type="button" role="menuitem" onClick={() => { onOpen(menu.id); setMenu(null) }}>{copy.editLink}</button>
-          <button type="button" role="menuitem" onClick={() => { remove(menu.id, peerKey(sections, menu.id), menu.hasValues); setMenu(null) }}>{copy.removeLink}</button>
-        </div>
       ) : null}
       {confirm ? (
         <div className="overlay" data-testid="link-confirm">

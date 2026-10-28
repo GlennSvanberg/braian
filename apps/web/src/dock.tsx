@@ -4,9 +4,9 @@ import { Maximize2, Minimize2, MoreHorizontal, Plus, X } from 'lucide-react'
 import { ViewGlyph } from './chips'
 import { Kbd } from './components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
-import { requestNewSelection } from './assortment-filter'
 import { viewDisplayTitle } from './demo-labels'
 import { copy } from './i18n'
+import { openSharedContextMenu } from './shared-context-menu'
 import {
   activate,
   applyLayoutCommand,
@@ -64,7 +64,7 @@ export function WorkspaceDock({
   viewsRef.current = viewList
   const [drag, setDrag] = useState<Drag | null>(null)
   const dragRef = useRef<Drag | null>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; view: string } | null>(null)
+  // View chrome menus open through the shared command registry.
 
   const commit = (next: LayoutDoc) => {
     docRef.current = next
@@ -101,7 +101,15 @@ export function WorkspaceDock({
     commit,
     run,
     onAddView,
-    onMenu: setMenu,
+    onMenu: ({ x, y, view }) => {
+      const viewType = viewList.find((item) => item.id === view)?.type ?? ''
+      openSharedContextMenu({
+        context: 'dock-view',
+        x,
+        y,
+        target: { viewId: view, viewType },
+      })
+    },
     onDrag: setDrag,
     renderView,
   }
@@ -151,23 +159,7 @@ export function WorkspaceDock({
             document.body,
           )
         : null}
-      {menu ? (
-        <ViewMenu
-          menu={menu}
-          viewType={viewList.find((view) => view.id === menu.view)?.type ?? ''}
-          zoomed={doc.zoom === menu.view}
-          onClose={() => setMenu(null)}
-          onRun={(name, args) => {
-            setMenu(null)
-            run(name, args)
-          }}
-          onAdd={() => {
-            const view = menu.view
-            setMenu(null)
-            onAddView(view)
-          }}
-        />
-      ) : null}
+      {null}
     </div>
     </TooltipProvider>
   )
@@ -183,7 +175,7 @@ type Frame = {
   commit: (doc: LayoutDoc) => void
   run: (name: string, args?: Record<string, unknown>) => void
   onAddView: (target: string) => void
-  onMenu: (menu: { x: number; y: number; view: string } | null) => void
+  onMenu: (menu: { x: number; y: number; view: string }) => void
   onDrag: (drag: Drag | null) => void
   renderView: (view: DockView) => ReactNode
 }
@@ -452,73 +444,6 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
   )
 }
 
-function ViewMenu({
-  menu,
-  viewType,
-  zoomed,
-  onClose,
-  onRun,
-  onAdd,
-}: {
-  menu: { x: number; y: number; view: string }
-  viewType: string
-  zoomed: boolean
-  onClose: () => void
-  onRun: (name: string, args?: Record<string, unknown>) => void
-  onAdd: () => void
-}) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('mousedown', onClose)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('mousedown', onClose)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [onClose])
-  const item = (name: string, label: string, keys: string[], args?: Record<string, unknown>) => (
-    <button
-      type="button"
-      onMouseDown={(event) => event.stopPropagation()}
-      onClick={() => onRun(name, { view: menu.view, ...args })}
-    >
-      <span>{label}</span>
-      <span>{keys.map((key) => <Kbd key={key}>{key}</Kbd>)}</span>
-    </button>
-  )
-  return (
-    <div className="menu" style={{ left: menu.x, top: menu.y }} data-testid="view-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
-      <button type="button" onMouseDown={(event) => event.stopPropagation()} onClick={onAdd}>
-        <span>{copy.addView}</span>
-        <span><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
-      </button>
-      {viewType === 'assortment_list' ? (
-        <button
-          type="button"
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={() => {
-            onClose()
-            requestNewSelection()
-          }}
-        >
-          <span>{copy.newSelection}</span>
-        </button>
-      ) : null}
-      {item('split', copy.splitLeft, [], { zone: 'left' })}
-      {item('split', copy.splitRight, [], { zone: 'right' })}
-      {item('split', copy.splitTop, [], { zone: 'top' })}
-      {item('split', copy.splitBottom, [], { zone: 'bottom' })}
-      {item('move_view_left', copy.moveLeft, ['Ctrl', 'Alt', '←'])}
-      {item('move_view_right', copy.moveRight, ['Ctrl', 'Alt', '→'])}
-      {item('move_view_up', copy.moveUp, ['Ctrl', 'Alt', '↑'])}
-      {item('move_view_down', copy.moveDown, ['Ctrl', 'Alt', '↓'])}
-      {item('zoom', zoomed ? copy.restore : copy.maximize, ['Ctrl', 'Alt', 'Z'])}
-      {item('close_view', copy.closeView, ['Ctrl', 'Alt', 'W'])}
-    </div>
-  )
-}
 
 function dropView(doc: LayoutDoc, drag: Drag): LayoutDoc {
   const hover = drag.hover
