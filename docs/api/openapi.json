@@ -1586,6 +1586,51 @@
         ]
       }
     },
+    "/v1/objects:pathValues": {
+      "post": {
+        "tags": [
+          "objects"
+        ],
+        "operationId": "path_values",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PathValuesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Path values keyed by object id and path text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PathValuesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Too many ids or paths, or invalid path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "tags": [
@@ -4778,6 +4823,71 @@
           },
           "values": {
             "type": "object"
+          }
+        }
+      },
+      "PathValuesRequest": {
+        "type": "object",
+        "required": [
+          "ids",
+          "paths"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Object ids to read. Missing or deleted ids are omitted from the response."
+          },
+          "lang": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Language for value-list labels. Defaults to `en`."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Path texts such as `product>brand` or `weight.unit`."
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional type key or id used to validate paths."
+          }
+        }
+      },
+      "PathValuesResponse": {
+        "type": "object",
+        "required": [
+          "values"
+        ],
+        "properties": {
+          "values": {
+            "type": "object",
+            "description": "`object_id → path_text → display values` (one entry per linked peer when a hop has many).",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         }
       },
