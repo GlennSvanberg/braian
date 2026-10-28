@@ -33,6 +33,7 @@ import {
 } from './type-labels'
 import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
 import { readUiContext, type UiColumn } from './ui-context'
+import { runCommand } from './command-registry'
 
 type SessionLike = {
   objectId: string | null
@@ -308,11 +309,15 @@ export function CommandPalette({
       onClose()
       return
     }
-    if (id === 'columns:hide' || id === 'columns:show') {
-      const hide = id === 'columns:hide'
-      setStack((current) => [...current, { label: item.title, rows: columnRows(tableColumns, hide) }])
+    if (id === 'columns:hide') {
+      setStack((current) => [...current, { label: item.title, rows: columnRows(tableColumns, true) }])
       setQuery('')
       setActive(0)
+      return
+    }
+    if (id === 'fields:select') {
+      void runCommand('fields:select', { typeKey: session.listType ?? session.workspaceType ?? undefined })
+      onClose()
       return
     }
     if (id.startsWith('column:hide:') || id.startsWith('column:show:')) {
@@ -1032,17 +1037,15 @@ function buildCatalog(
   return items
 }
 
-// "Hide column ›" and "Show column ›" open a list of the open table's columns.
+// Field and column commands for the open table.
 function columnEntries(columns: UiColumn[]): PaletteItem[] {
   const items: PaletteItem[] = [
+    { id: 'fields:select', group: 'views', title: `${copy.selectFields} ›`, subtitle: 'Choose and reorder columns', keywords: ['field', 'column', 'select', 'show', 'hide', 'reorder'] },
     { id: 'filter:by', group: 'views', title: `${copy.filterBy} ›`, subtitle: 'Attribute, part or link', keywords: ['filter', 'path', 'unit'] },
     { id: 'export:columns', group: 'views', title: `${copy.exportColumns} ›`, subtitle: 'Add a column to the next export', keywords: ['export', 'path', 'column'] },
   ]
   if (columns.some((column) => !column.hidden)) {
     items.push({ id: 'columns:hide', group: 'views', title: `${copy.hideColumn} ›`, subtitle: 'Pick a column in the open table', keywords: ['column'] })
-  }
-  if (columns.some((column) => column.hidden)) {
-    items.push({ id: 'columns:show', group: 'views', title: `${copy.showColumn} ›`, subtitle: 'Pick a hidden column', keywords: ['column'] })
   }
   return items
 }

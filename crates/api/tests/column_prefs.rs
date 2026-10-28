@@ -203,7 +203,13 @@ async fn column_prefs_round_trip_for_a_viewer() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{loaded}");
-    assert_eq!(loaded["document"]["columns"].as_array().unwrap().len(), 2);
+    let loaded_paths: Vec<&str> = loaded["document"]["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| column["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(loaded_paths, ["sku", "weight.unit", "type", "version"]);
     assert!(loaded["stale_paths"].as_array().unwrap().is_empty());
 
     let (status, _, _) = call(
@@ -479,10 +485,17 @@ async fn column_prefs_get_flags_stale_paths_without_500() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let columns = body["document"]["columns"].as_array().unwrap();
-    assert_eq!(columns[0]["path"], "sku");
+    let stale_paths_order: Vec<&str> = columns
+        .iter()
+        .map(|column| column["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        stale_paths_order,
+        ["sku", "removed_attr", "type", "version"]
+    );
     assert!(columns[0].get("stale").is_none() || columns[0]["stale"] == false);
-    assert_eq!(columns[1]["path"], "removed_attr");
     assert_eq!(columns[1]["stale"], true);
+    assert!(columns[2].get("stale").is_none() || columns[2]["stale"] == false);
     assert!(
         body["stale_paths"]
             .as_array()
@@ -543,7 +556,13 @@ async fn column_prefs_agent_ops_use_owner_and_skip_approval() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{loaded}");
-    assert_eq!(loaded["document"]["columns"][0]["path"], "sku");
+    let agent_paths: Vec<&str> = loaded["document"]["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| column["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(agent_paths, ["sku", "type", "version"]);
 }
 
 #[tokio::test]
@@ -650,4 +669,110 @@ async fn column_prefs_migration_sql_is_idempotent() {
         .unwrap()
         .get(0);
     assert!(exists);
+}
+
+#[tokio::test]
+async fn column_prefs_accept_system_view_columns() {
+    let (db, app) = app().await;
+    let hash = hash_password("secret-sys").unwrap();
+    let user = db
+        .store()
+        .create_user("sys-prefs@braian.local", &hash, "viewer", "Sys")
+        .await
+        .unwrap();
+    let view = seed_object_table_view(&db, user.id).await;
+    let cookie = login_cookie(&app, "sys-prefs@braian.local", "secret-sys").await;
+    let document = json!({
+        "version": 1,
+        "columns": [
+            { "path": "sku", "visible": true },
+            { "path": "type", "visible": true },
+            { "path": "version", "visible": false }
+        ]
+    });
+    let (status, _, saved) = call(
+        &app,
+        "PUT",
+        &format!("/v1/views/{view}/column-prefs"),
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(
+            &serde_json::to_string(&json!({ "environment": "default", "document": document }))
+                .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["document"]["columns"][1]["path"], "type");
+    assert_eq!(saved["document"]["columns"][2]["visible"], false);
+
+    let (status, _, body) = call(
+        &app,
+        "PUT",
+        &format!("/v1/views/{view}/column-prefs"),
+        None,
+        &[("cookie", &cookie), ("content-type", "application/json")],
+        Some(
+            &serde_json::to_string(&json!({
+                "environment": "default",
+                "document": {
+                    "version": 1,
+                    "columns": [
+                        { "path": "type", "visible": true },
+                        { "path": "type", "visible": false }
+                    ]
+                }
+            }))
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn column_prefs_get_injects_missing_system_columns() {
+    let (db, app) = app().await;
+    let hash = hash_password("secret-inject").unwrap();
+    let user = db
+        .store()
+        .create_user("inject-prefs@braian.local", &hash, "viewer", "Inject")
+        .await
+        .unwrap();
+    let view = seed_object_table_view(&db, user.id).await;
+    db.store()
+        .put_view_column_prefs(
+            user.id,
+            "default",
+            view,
+            &json!({
+                "version": 1,
+                "columns": [
+                    { "path": "number", "visible": true },
+                    { "path": "name", "visible": true },
+                    { "path": "status", "visible": true }
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+    let cookie = login_cookie(&app, "inject-prefs@braian.local", "secret-inject").await;
+    let (status, _, body) = call(
+        &app,
+        "GET",
+        &format!("/v1/views/{view}/column-prefs?environment=default"),
+        None,
+        &[("cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let columns = body["document"]["columns"].as_array().unwrap();
+    let paths: Vec<&str> = columns
+        .iter()
+        .map(|column| column["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["number", "name", "type", "status", "version"]);
+    assert_eq!(columns[2]["visible"], true);
+    assert_eq!(columns[4]["visible"], true);
 }

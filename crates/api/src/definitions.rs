@@ -1050,7 +1050,10 @@ pub fn attribute_path_list(defs: &DefinitionSet, type_id: TypeId) -> Value {
             })
         })
         .collect::<Vec<_>>();
-    serde_json::json!({ "paths": paths })
+    serde_json::json!({
+        "paths": paths,
+        "system_columns": braian_model::system_view_columns_json(),
+    })
 }
 
 #[derive(Serialize, ToSchema)]
@@ -1062,8 +1065,17 @@ pub struct AttributePathRow {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct SystemViewColumnRow {
+    pub key: String,
+    pub label: String,
+    pub default_index: u32,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct AttributePathList {
     pub paths: Vec<AttributePathRow>,
+    /// Pathless columns the object table may show. Sole allowlist from the model crate.
+    pub system_columns: Vec<SystemViewColumnRow>,
 }
 
 #[utoipa::path(

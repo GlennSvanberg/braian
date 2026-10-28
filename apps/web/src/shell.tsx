@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
-import { api, recordTitle, textValue, type Json } from './api'
+import { api, keepaliveJsonPut, recordTitle, textValue, type Json } from './api'
 import { AssortmentList, NewSelectionDialog } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { ImportScreen } from './import/view'
@@ -443,12 +443,9 @@ export function Shell() {
       if (sessionStorage.getItem('braian.layout.suppressFlush') === '1') return
       const current = docRef.current
       if (!dirtyRef.current || !current || !workspaceId) return
-      void fetch(`/v1/workspaces/${workspaceId}/state`, {
-        method: 'PUT',
-        credentials: 'include',
-        keepalive: true,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document: current }),
+      keepaliveJsonPut(`/v1/workspaces/${workspaceId}/state`, {
+        environment: LAYOUT_ENVIRONMENT,
+        document: current,
       })
     }
     const onHide = () => {
