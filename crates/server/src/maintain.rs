@@ -40,6 +40,166 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_system_principal_is_merged_onto_the_stable_id() {
+        let db = TestDb::create().await;
+        let client = connect(&db.database_url()).await;
+        let legacy = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO principals (id, kind, name, handle)
+                 VALUES ($1, 'integration', 'System', 'system')",
+                &[&legacy],
+            )
+            .await
+            .unwrap();
+        let batch = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO batches (id, actor, kind, source)
+                 VALUES ($1, $2, 'interactive', 'test')",
+                &[&batch, &legacy],
+            )
+            .await
+            .unwrap();
+        let object = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO objects (id, type_id, key, version, model_revision, updated_by)
+                 VALUES ($1, $2, 'legacy', 1, 0, $3)",
+                &[&object, &Uuid::now_v7(), &legacy],
+            )
+            .await
+            .unwrap();
+        client
+            .execute(
+                "INSERT INTO changes (batch_id, object_id, version, op, actor)
+                 VALUES ($1, $2, 1, 'create', $3)",
+                &[&batch, &object, &legacy],
+            )
+            .await
+            .unwrap();
+        client
+            .execute(
+                "INSERT INTO command_frecency (principal_id, command_id, uses, last_at)
+                 VALUES ($1, 'open-object', 3, now())",
+                &[&legacy],
+            )
+            .await
+            .unwrap();
+
+        startup(db.store()).await.unwrap();
+        startup(db.store()).await.unwrap();
+
+        let rows = principal_rows(&client).await;
+        let systems: Vec<_> = rows
+            .iter()
+            .filter(|row| row.kind == "integration" && row.name == "System")
+            .collect();
+        assert_eq!(systems.len(), 1, "{rows:?}");
+        let system = systems[0];
+        assert_eq!(system.id, SYSTEM_PRINCIPAL.as_uuid());
+        assert_eq!(system.handle.as_deref(), Some("system"));
+        assert!(rows.iter().all(|row| row.id != legacy), "{rows:?}");
+
+        let batch_actor: Uuid = client
+            .query_one("SELECT actor FROM batches WHERE id = $1", &[&batch])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(batch_actor, SYSTEM_PRINCIPAL.as_uuid());
+        let change_actor: Uuid = client
+            .query_one("SELECT actor FROM changes WHERE batch_id = $1", &[&batch])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(change_actor, SYSTEM_PRINCIPAL.as_uuid());
+        let updated_by: Uuid = client
+            .query_one("SELECT updated_by FROM objects WHERE id = $1", &[&object])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(updated_by, SYSTEM_PRINCIPAL.as_uuid());
+        let frecency: Uuid = client
+            .query_one(
+                "SELECT principal_id FROM command_frecency WHERE command_id = 'open-object'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(frecency, SYSTEM_PRINCIPAL.as_uuid());
+        assert!(
+            !rows.iter().any(|row| row.id == legacy),
+            "legacy System row must be gone after merge: {rows:?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == "integration" && row.name == "System")
+                .count(),
+            1,
+            "{rows:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_named_system_is_untouched() {
+        let db = TestDb::create().await;
+        let client = connect(&db.database_url()).await;
+        let person = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO principals (id, kind, name, handle)
+                 VALUES ($1, 'human', 'System', 'nina')",
+                &[&person],
+            )
+            .await
+            .unwrap();
+        let legacy = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO principals (id, kind, name, handle)
+                 VALUES ($1, 'integration', 'System', 'system')",
+                &[&legacy],
+            )
+            .await
+            .unwrap();
+        let batch = Uuid::now_v7();
+        client
+            .execute(
+                "INSERT INTO batches (id, actor, kind, source)
+                 VALUES ($1, $2, 'interactive', 'test')",
+                &[&batch, &legacy],
+            )
+            .await
+            .unwrap();
+
+        startup(db.store()).await.unwrap();
+        startup(db.store()).await.unwrap();
+
+        let rows = principal_rows(&client).await;
+        let human = rows
+            .iter()
+            .find(|row| row.id == person)
+            .expect("human System");
+        assert_eq!(human.kind, "human");
+        assert_eq!(human.name, "System");
+        assert_eq!(human.handle.as_deref(), Some("nina"));
+        assert!(rows.iter().all(|row| row.id != legacy), "{rows:?}");
+        let system = rows
+            .iter()
+            .find(|row| row.id == SYSTEM_PRINCIPAL.as_uuid())
+            .expect("stable system");
+        assert_eq!(system.kind, "integration");
+        assert_eq!(system.name, "System");
+        let batch_actor: Uuid = client
+            .query_one("SELECT actor FROM batches WHERE id = $1", &[&batch])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(batch_actor, SYSTEM_PRINCIPAL.as_uuid());
+    }
+
+    #[tokio::test]
     async fn a_person_named_system_keeps_their_row() {
         let db = TestDb::create().await;
         let client = connect(&db.database_url()).await;
