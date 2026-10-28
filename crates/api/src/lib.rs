@@ -9,6 +9,7 @@
 mod attribute_catalog;
 mod auth;
 mod bulk_gate;
+mod column_prefs;
 mod definitions;
 mod deletes;
 mod export;

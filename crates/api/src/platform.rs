@@ -57,6 +57,12 @@ pub fn routes() -> axum::Router<AppState> {
                 .put(put_workspace_state)
                 .delete(delete_workspace_state),
         )
+        .route(
+            "/v1/views/{view_id}/column-prefs",
+            get(crate::column_prefs::get_column_prefs)
+                .put(crate::column_prefs::put_column_prefs)
+                .delete(crate::column_prefs::delete_column_prefs),
+        )
         .route("/v1/workspaces/{id}/assign", post(assign_workspace))
         .route("/v1/share/{token}", post(open_share))
         .route("/v1/views", post(save_view))
@@ -554,6 +560,18 @@ fn registry() -> &'static [Operation] {
         Operation {
             name: "list_attribute_paths",
             title: "List attribute paths",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "get_view_column_prefs",
+            title: "Get view column preferences",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "put_view_column_prefs",
+            title: "Save view column preferences",
             permission: Role::Viewer,
             needs_approval: false,
         },
@@ -4979,6 +4997,12 @@ async fn run_operation(
                 &cached.defs,
                 type_id,
             ))
+        }
+        "get_view_column_prefs" => {
+            crate::column_prefs::get_view_column_prefs_op(state, identity, args).await
+        }
+        "put_view_column_prefs" => {
+            crate::column_prefs::put_view_column_prefs_op(state, identity, args).await
         }
         "model.attribute_usage" => crate::attribute_catalog::usage(state, args).await,
         "model.undo" => crate::model_draft::undo_model(state, identity).await,
