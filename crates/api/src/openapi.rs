@@ -208,6 +208,21 @@ impl utoipa::Modify for PlatformPaths {
                 "/v1/views",
                 "Create or update a view, including table state",
             ),
+            (
+                HttpMethod::Get,
+                "/v1/views/{view_id}/column-prefs",
+                "Read own column preferences for a view. Stale paths are flagged, never a 500.",
+            ),
+            (
+                HttpMethod::Put,
+                "/v1/views/{view_id}/column-prefs",
+                "Save own column preferences for a view",
+            ),
+            (
+                HttpMethod::Delete,
+                "/v1/views/{view_id}/column-prefs",
+                "Clear own column preferences for a view",
+            ),
             (HttpMethod::Get, "/v1/view-types", "List view types"),
             (HttpMethod::Post, "/v1/view-types", "Register a view type"),
             (

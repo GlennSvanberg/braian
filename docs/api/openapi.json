@@ -3257,6 +3257,29 @@
         "responses": {}
       }
     },
+    "/v1/views/{view_id}/column-prefs": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read own column preferences for a view. Stale paths are flagged, never a 500.",
+        "responses": {}
+      },
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save own column preferences for a view",
+        "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Clear own column preferences for a view",
+        "responses": {}
+      }
+    },
     "/v1/webhooks": {
       "get": {
         "tags": [

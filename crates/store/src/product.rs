@@ -498,6 +498,70 @@ impl Store {
         Ok(())
     }
 
+    /// View type key and state document, when the view exists.
+    pub async fn view_row(&self, id: Uuid) -> Result<Option<(String, Value)>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt("SELECT type_key, state FROM views WHERE id = $1", &[&id])
+            .await?;
+        Ok(row.map(|row| (row.get(0), row.get(1))))
+    }
+
+    pub async fn view_column_prefs(
+        &self,
+        user_id: Uuid,
+        environment: &str,
+        view_id: Uuid,
+    ) -> Result<Option<(Value, DateTime<Utc>)>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT document, updated_at FROM view_column_prefs
+                 WHERE user_id = $1 AND environment = $2 AND view_id = $3",
+                &[&user_id, &environment, &view_id],
+            )
+            .await?;
+        Ok(row.map(|row| (row.get(0), row.get(1))))
+    }
+
+    pub async fn put_view_column_prefs(
+        &self,
+        user_id: Uuid,
+        environment: &str,
+        view_id: Uuid,
+        document: &Value,
+    ) -> Result<DateTime<Utc>, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "INSERT INTO view_column_prefs (user_id, environment, view_id, document, updated_at)
+                 VALUES ($1, $2, $3, $4, now())
+                 ON CONFLICT (user_id, environment, view_id)
+                 DO UPDATE SET document = EXCLUDED.document, updated_at = now()
+                 RETURNING updated_at",
+                &[&user_id, &environment, &view_id, document],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    pub async fn delete_view_column_prefs(
+        &self,
+        user_id: Uuid,
+        environment: &str,
+        view_id: Uuid,
+    ) -> Result<(), Error> {
+        let client = self.pool().get().await?;
+        client
+            .execute(
+                "DELETE FROM view_column_prefs
+                 WHERE user_id = $1 AND environment = $2 AND view_id = $3",
+                &[&user_id, &environment, &view_id],
+            )
+            .await?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn save_view(
         &self,

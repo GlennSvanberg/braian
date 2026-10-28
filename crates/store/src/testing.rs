@@ -176,6 +176,7 @@ fn template_name() -> String {
         include_str!("../migrations/V23__links_replace_relations.sql"),
         include_str!("../migrations/V24__attribute_paths.sql"),
         include_str!("../migrations/V25__proposal_claim.sql"),
+        include_str!("../migrations/V26__view_column_prefs.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {

@@ -41,6 +41,7 @@ unicode-normalization = "0.1.24"
 
 [dev-dependencies]
 braian-store.workspace = true
+tokio-postgres.workspace = true
 
 axum.workspace = true
 http-body-util = "0.1"
