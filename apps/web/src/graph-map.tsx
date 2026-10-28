@@ -54,6 +54,8 @@ import {
 import { openObjectLabel } from './type-labels'
 import { copy, uiLanguage } from './i18n'
 import { linkChoices } from './link-section'
+import { openSharedContextMenu } from './shared-context-menu'
+import type { RegistryCommand } from './command-registry'
 
 type SimNode = SimulationNodeDatum & SceneNode & { degree: number }
 type SimLink = SimulationLinkDatum<SimNode> & { id: string; label: string }
@@ -91,7 +93,6 @@ export function GraphMap({
   const [pinTick, setPinTick] = useState(0)
   const [busy, setBusy] = useState('')
   const [sheet, setSheet] = useState<SheetMode>('compact')
-  const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; typeKey: string } | null>(null)
   const [pane, setPane] = useState<{ width: number; height: number } | null>(null)
   const expandedRef = useRef(new Set<string>([focusKey]))
   const inflightRef = useRef(new Set<string>())
@@ -1029,13 +1030,41 @@ export function GraphMap({
             onContextMenu={(event) => {
               if (node.kind !== 'object' || !node.typeKey) return
               event.preventDefault()
-              setLinkMenu({ x: event.clientX, y: event.clientY, typeKey: node.typeKey })
+              const extras: RegistryCommand[] = linkChoices(defs, node.typeKey).map((choice) => ({
+                id: `graph:add-link:${choice.key}`,
+                title: choice.label,
+                contexts: ['graph-node'],
+                group: 'object',
+                palette: false,
+              }))
+              openSharedContextMenu({
+                context: 'graph-node',
+                x: event.clientX,
+                y: event.clientY,
+                target: { objectId: node.id, typeKey: node.typeKey },
+                extraOnly: true,
+                extra: [...extras],
+              })
             }}
             onKeyDown={(event) => {
               if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && node.kind === 'object' && node.typeKey) {
                 event.preventDefault()
                 const rect = event.currentTarget.getBoundingClientRect()
-                setLinkMenu({ x: rect.left, y: rect.bottom, typeKey: node.typeKey })
+                const extras: RegistryCommand[] = linkChoices(defs, node.typeKey).map((choice) => ({
+                  id: `graph:add-link:${choice.key}`,
+                  title: choice.label,
+                  contexts: ['graph-node'],
+                  group: 'object',
+                  palette: false,
+                }))
+                openSharedContextMenu({
+                  context: 'graph-node',
+                  x: rect.left,
+                  y: rect.bottom,
+                  target: { objectId: node.id, typeKey: node.typeKey },
+                  extraOnly: true,
+                  extra: [...extras],
+                })
               }
             }}
           >
@@ -1043,31 +1072,6 @@ export function GraphMap({
           </button>
         ))}
       </div>
-      {linkMenu ? (
-        <div
-          className="menu"
-          role="menu"
-          data-testid="graph-link-menu"
-          style={{ position: 'fixed', left: linkMenu.x, top: linkMenu.y, zIndex: 30 }}
-        >
-          {linkChoices(defs, linkMenu.typeKey).map((choice) => (
-            <button
-              key={choice.key}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: choice.key } }))
-                setLinkMenu(null)
-              }}
-            >
-              {choice.label}
-            </button>
-          ))}
-          <button type="button" role="menuitem" onClick={() => setLinkMenu(null)}>
-            {copy.cancel}
-          </button>
-        </div>
-      ) : null}
       <div className="graph-a11y" data-testid="attribute-provenance">
         <p>{copy.attributeProvenance}</p>
         {scene.nodes

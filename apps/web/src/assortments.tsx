@@ -11,7 +11,7 @@ import {
   selectionMatchesType,
 } from './assortment-filter'
 import { Button } from './components/ui/button'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './components/ui/context-menu'
+import { openSharedContextMenu } from './shared-context-menu'
 import { Dialog, DialogContent, DialogTitle } from './components/ui/dialog'
 import { Input } from './components/ui/input'
 import { assortmentDisplayName } from './demo-labels'
@@ -159,34 +159,34 @@ export function AssortmentList({ session }: { session: SelectionSession }) {
         </Button>
       </div>
       {items.length === 0 ? <p className="hint">{copy.noAssortments}</p> : null}
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div className="assortment-picks" tabIndex={0}>
-            {items.map((item) => {
-              const id = String(item.id)
-              const selected = id === openId
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  data-testid="assortment-row"
-                  className={selected ? 'on' : ''}
-                  onClick={() => {
-                    setOpenId(id)
-                    const next = (item.query as Json) ?? {}
-                    session.setGroup(next.group ? String(next.group) : null)
-                  }}
-                >
-                  {assortmentDisplayName(String(item.name ?? ''))}
-                </button>
-              )
-            })}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => requestNewSelection()}>{copy.newSelection}</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+      <div
+        className="assortment-picks"
+        tabIndex={0}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          openSharedContextMenu({ context: 'assortment', x: event.clientX, y: event.clientY, target: {} })
+        }}
+      >
+        {items.map((item) => {
+          const id = String(item.id)
+          const selected = id === openId
+          return (
+            <button
+              key={id}
+              type="button"
+              data-testid="assortment-row"
+              className={selected ? 'on' : ''}
+              onClick={() => {
+                setOpenId(id)
+                const next = (item.query as Json) ?? {}
+                session.setGroup(next.group ? String(next.group) : null)
+              }}
+            >
+              {assortmentDisplayName(String(item.name ?? ''))}
+            </button>
+          )
+        })}
+      </div>
       {open ? (
         <div data-testid="assortment-open">
           <div className="assortment-query">

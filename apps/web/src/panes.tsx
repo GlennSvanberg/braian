@@ -21,6 +21,9 @@ import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
+import { handleAppContextMenu } from './app-context-menu'
+import { openSharedContextMenu } from './shared-context-menu'
+import { registerCommandRunner } from './command-registry'
 import {
   emptyDetail,
   emptyGraph,
@@ -129,10 +132,7 @@ export function ObjectTable({
   const [active, setActive] = useState(-1)
   // The active cell's column, by key. Left and Right move it; the keyboard menu acts on it.
   const [activeColumn, setActiveColumn] = useState('')
-  const [menu, setMenu] = useState<{ x: number; y: number; id: string; column: string } | null>(null)
   const [moving, setMoving] = useState<string | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const menuOpen = useRef(false)
   const [flashId, setFlashId] = useState('')
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
@@ -495,14 +495,45 @@ export function ObjectTable({
   }
 
   const onRowMenu = (index: number, x: number, y: number, column: string) => {
-    focusGrid()
-    selectMode.current = null
     setActive(index)
     if (column) setActiveColumn(column)
     const row = rowAt(index)
     if (!row) return
     session.setObjectId(row.id)
-    setMenu({ x, y, id: row.id, column })
+    const context = column ? 'cell' : 'row'
+    const hiddenColumns = all
+      .filter((id) => hidden.includes(id))
+      .map((id) => ({ id, header: columnHeader(id) }))
+    const singular = session.listType ? singularOf(defs.data, session.listType, uiLanguage) : undefined
+    const linkExtras = ((defs.data?.types as Json[]) ?? [])
+      .filter((item) => item.kind === 'link')
+      .map((item) => {
+        const key = String(item.key ?? '')
+        const label =
+          textValue((item.link as Json | undefined)?.to_label && ((item.link as Json).to_label as Json).labels, uiLanguage) ||
+          key
+        return {
+          id: `link:add:${key}`,
+          title: `${copy.linkTo} ${label}`,
+          contexts: [context] as import('./command-registry').MenuContext[],
+          group: 'object' as const,
+          palette: false as const,
+        }
+      })
+    openSharedContextMenu({
+      context,
+      x,
+      y,
+      target: {
+        objectId: row.id,
+        column: column || undefined,
+        columnHeader: column ? columnHeader(column) : undefined,
+        hiddenColumns,
+        typeKey: session.listType ?? undefined,
+        singular: singular || undefined,
+      },
+      extra: linkExtras,
+    })
   }
 
   const onHeaderMenu = (column: string, event: ReactMouseEvent<HTMLDivElement>) => {
@@ -513,11 +544,21 @@ export function ObjectTable({
     const box = event.currentTarget.getBoundingClientRect()
     // A pointer right-click carries button 2; the ContextMenu key opens this event without one.
     const byPointer = event.button === 2
-    setMenu({
+    const hiddenColumns = all
+      .filter((id) => hidden.includes(id))
+      .map((id) => ({ id, header: columnHeader(id) }))
+    openSharedContextMenu({
+      context: 'table-header',
       x: byPointer ? event.clientX : box.left,
       y: byPointer ? event.clientY : box.bottom,
-      id: row?.id ?? '',
-      column,
+      target: {
+        objectId: row?.id,
+        column,
+        columnHeader: columnHeader(column),
+        hiddenColumns,
+        typeKey: session.listType ?? undefined,
+        singular: session.listType ? singularOf(defs.data, session.listType, uiLanguage) || undefined : undefined,
+      },
     })
   }
 
@@ -530,7 +571,22 @@ export function ObjectTable({
       const row = active < 0 ? undefined : rowAt(active)
       const box = header.getBoundingClientRect()
       setActiveColumn(headerColumn)
-      setMenu({ x: box.left, y: box.bottom, id: row?.id ?? '', column: headerColumn })
+      const hiddenColumns = all
+        .filter((id) => hidden.includes(id))
+        .map((id) => ({ id, header: columnHeader(id) }))
+      openSharedContextMenu({
+        context: 'table-header',
+        x: box.left,
+        y: box.bottom,
+        target: {
+          objectId: row?.id,
+          column: headerColumn,
+          columnHeader: columnHeader(headerColumn),
+          hiddenColumns,
+          typeKey: session.listType ?? undefined,
+        singular: session.listType ? singularOf(defs.data, session.listType, uiLanguage) || undefined : undefined,
+        },
+      })
       return
     }
     const index = active < 0 ? 0 : active
@@ -541,48 +597,54 @@ export function ObjectTable({
     onRowMenu(index, box ? box.left : 0, box ? box.bottom : 0, cellColumn)
   }
 
-  const closeMenu = () => {
-    setMenu(null)
-    focusGrid()
-  }
 
   useEffect(() => {
-    if (menu && !menuOpen.current) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-    // An item that closed the menu took focus with it; give it back to the grid.
-    if (!menu && menuOpen.current && (document.activeElement === document.body || !document.activeElement)) focusGrid()
-    menuOpen.current = Boolean(menu)
-  }, [menu])
+    const stops = [
+      registerCommandRunner('object:open', (target) => {
+        if (!target.objectId) return
+        const index = locateRef.current(String(target.objectId))
+        if (index >= 0) setActive(index)
+        session.setObjectId(String(target.objectId))
+      }),
+      registerCommandRunner('object:right', () => {
+        dispatchUi('ui.place', { title: 'Detail', zone: 'right' })
+      }),
+      registerCommandRunner('object:history', () => {
+        dispatchUi('ui.open_view', { title: 'History' })
+      }),
+      registerCommandRunner('object:move-group', (target) => {
+        if (target.objectId) setMoving(String(target.objectId))
+      }),
+      registerCommandRunner('table:select', (target) => {
+        if (!target.objectId) return
+        setSelected((current) => current.includes(String(target.objectId)) ? current : [...current, String(target.objectId)])
+      }),
+      registerCommandRunner('table:mass-edit', () => { mass.mutate() }),
+      registerCommandRunner('table:filter-by', () => setPicker('filter')),
+      registerCommandRunner('table:export-columns', () => setPicker('export')),
+      registerCommandRunner('table:export', () => { exportVisible() }),
+      registerCommandRunner('object:new', () => {
+        window.dispatchEvent(new Event('braian-new-object'))
+      }),
+    ]
+    return () => stops.forEach((stop) => stop())
+  })
 
-  const onMenuKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
-    const at = items.findIndex((item) => item === document.activeElement)
-    if (event.key === 'Escape' || event.key === 'Tab') {
-      event.preventDefault()
-      event.stopPropagation()
-      closeMenu()
-      return
+
+  useEffect(() => {
+    const onCommand = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: string; target?: { objectId?: string } }>).detail
+      if (!detail?.id?.startsWith('link:add:')) return
+      const linkType = detail.id.slice('link:add:'.length)
+      if (detail.target?.objectId) session.setObjectId(String(detail.target.objectId))
+      window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType } }))
     }
-    if (event.key === 'Enter') {
-      // Space stays native: a focused button clicks itself on keyup.
-      event.preventDefault()
-      items[at]?.click()
-      return
-    }
-    const next = event.key === 'ArrowDown'
-      ? (at + 1) % items.length
-      : event.key === 'ArrowUp'
-        ? (at <= 0 ? items.length - 1 : at - 1)
-        : event.key === 'Home'
-          ? 0
-          : event.key === 'End'
-            ? items.length - 1
-            : -1
-    if (next < 0 || items.length === 0) return
-    event.preventDefault()
-    items[next]?.focus()
-  }
+    window.addEventListener('braian:command', onCommand)
+    return () => window.removeEventListener('braian:command', onCommand)
+  }, [session])
 
   const onTableKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+
     if (event.ctrlKey || event.altKey || event.metaKey) return
     if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
       event.preventDefault()
@@ -598,7 +660,6 @@ export function ObjectTable({
     }
     if (!['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', 'Enter', 'Escape'].includes(event.key)) return
     if (event.key === 'Escape') {
-      setMenu(null)
       return
     }
     event.preventDefault()
@@ -735,7 +796,7 @@ export function ObjectTable({
           // The ContextMenu key fires this on the grid itself; a row handles a pointer right-click.
           if (event.target !== event.currentTarget) return
           event.preventDefault()
-          if (!menu) openMenuFromKeyboard(event.target)
+          openMenuFromKeyboard(event.target)
         }}
       >
         <div className="head">
@@ -868,53 +929,6 @@ export function ObjectTable({
           </div>
         ) : null}
       </div>
-      {menu ? (
-        <div
-          className="menu"
-          ref={menuRef}
-          style={{ left: menu.x, top: menu.y }}
-          data-testid="context-menu"
-          role="menu"
-          aria-label={menu.column ? columnHeader(menu.column) : undefined}
-          onKeyDown={onMenuKey}
-        >
-          {menu.id ? (
-            <>
-              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { const index = locateRef.current(menu.id); if (index >= 0) setActive(index); session.setObjectId(menu.id); setMenu(null) }}>{copy.open} <Kbd>Enter</Kbd></button>
-              {((defs.data?.types as Json[]) ?? []).filter((item) => item.kind === 'link').map((item) => (
-                <button
-                  key={String(item.key)}
-                  type="button"
-                  role="menuitem"
-                  tabIndex={-1}
-                  onClick={() => {
-                    session.setObjectId(menu.id)
-                    window.dispatchEvent(new CustomEvent('braian-add-link', { detail: { linkType: String(item.key) } }))
-                    setMenu(null)
-                  }}
-                >
-                  {copy.linkTo} {textValue((item.link as Json | undefined)?.to_label && ((item.link as Json).to_label as Json).labels, uiLanguage) || String(item.key)}
-                </button>
-              ))}
-              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.place', { title: 'Detail', zone: 'right' }); setMenu(null) }}>{copy.placeRight}</button>
-              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.open_view', { title: 'History' }); setMenu(null) }}>{copy.history}</button>
-              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setMoving(menu.id); setMenu(null) }}>{copy.moveToGroup}</button>
-              <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setSelected((current) => current.includes(menu.id) ? current : [...current, menu.id]); setMenu(null) }}>{copy.selectAll}</button>
-            </>
-          ) : null}
-          {menu.column ? (
-            <button type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.hide_column', { column: menu.column }); setMenu(null) }}>{copy.hideColumn}</button>
-          ) : null}
-          {hiddenShown.map((id) => (
-            <button key={id} type="button" role="menuitem" tabIndex={-1} onClick={() => { dispatchUi('ui.show_column', { column: id }); setMenu(null) }}>{copy.show} {columnHeader(id)}</button>
-          ))}
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { mass.mutate(); setMenu(null) }}>{copy.massEdit}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setPicker('filter'); setMenu(null) }}>{copy.filterBy}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { setPicker('export'); setMenu(null) }}>{copy.exportColumns}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => { exportVisible(); setMenu(null) }}>{copy.export}</button>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={closeMenu}>{copy.close} <Kbd>Esc</Kbd></button>
-        </div>
-      ) : null}
       {picker === 'filter' || picker === 'export' ? (
         <PathMenu
           paths={attributePaths.data?.paths ?? []}
@@ -1197,6 +1211,11 @@ function NewObject({ session, typeKey, singular }: { session: PanesSession; type
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  useEffect(() => {
+    const openForm = () => setOpen(true)
+    window.addEventListener('braian-new-object', openForm)
+    return () => window.removeEventListener('braian-new-object', openForm)
+  }, [])
   const named = typeNames(defs.data, uiLanguage).find((item) => item.key === (typeKey || 'product'))
   if (!open) return <button onClick={() => setOpen(true)}>{newObjectLabel(singular)}</button>
   return (
@@ -1314,7 +1333,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   }, [session.objectId, session.language, object.data])
   if (!session.objectId) {
     return (
-      <div className="detail-empty" data-testid="detail-empty">
+      <div className="detail-empty" data-testid="detail-empty" onContextMenu={handleAppContextMenu}>
         <p>{emptyDetail(typeNames(defs.data, uiLanguage), session.listType)}</p>
         <ul>
           <li><kbd>↑</kbd><kbd>↓</kbd> {copy.detailKeysMove}</li>
@@ -1385,6 +1404,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     <form
       className={flashId === session.objectId ? 'detail-form form flash' : 'detail-form form'}
       data-testid="object-detail"
+      onContextMenu={handleAppContextMenu}
       onSubmit={(event) => {
         event.preventDefault()
         save()
@@ -1999,10 +2019,8 @@ export function ProposalView({ session }: { session: PanesSession }) {
   })
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   const [dropped, setDropped] = useState<string[]>([])
-  const [error, setError] = useState('')
   useEffect(() => {
     setDropped([])
-    setError('')
   }, [session.proposalId])
   useEffect(() => {
     if (session.proposalId) return
@@ -2030,34 +2048,18 @@ export function ProposalView({ session }: { session: PanesSession }) {
       const failed = (result.failed as Json[] | undefined) ?? []
       session.push(failed.length > 0 ? String(failed[0]?.detail ?? copy.validation) : copy.saved)
       setDropped([])
-      setError('')
       void queryClient.invalidateQueries({ queryKey: ['proposals'] })
       void queryClient.invalidateQueries({ queryKey: ['proposal'] })
       void queryClient.invalidateQueries({ queryKey: ['object'] })
       void queryClient.invalidateQueries({ queryKey: ['objects'] })
-    },
-    onError: (reason: unknown) => {
-      const message = reason instanceof Error ? reason.message : copy.validation
-      setError(message)
-      session.push(message)
-      void queryClient.invalidateQueries({ queryKey: ['proposals'] })
-      void queryClient.invalidateQueries({ queryKey: ['proposal'] })
     },
   })
   const discard = useMutation({
     mutationFn: () => api(`/v1/proposals/${session.proposalId}/discard`, { method: 'POST' }),
     onSuccess: () => {
       session.push(copy.discard)
-      setError('')
       session.setProposalId(null)
       void queryClient.invalidateQueries({ queryKey: ['proposals'] })
-    },
-    onError: (reason: unknown) => {
-      const message = reason instanceof Error ? reason.message : copy.validation
-      setError(message)
-      session.push(message)
-      void queryClient.invalidateQueries({ queryKey: ['proposals'] })
-      void queryClient.invalidateQueries({ queryKey: ['proposal'] })
     },
   })
   const proposals = (list.data?.proposals as Json[] | undefined) ?? []
@@ -2091,9 +2093,8 @@ export function ProposalView({ session }: { session: PanesSession }) {
         <strong>{String(proposal.data?.title ?? '')}</strong>
         {proposal.data ? <span className="chip" data-testid="source-badge">{sourceLabel(proposal.data)}</span> : null}
         {proposal.data?.status ? <MetaChip tone={statusTone(String(proposal.data.status))}>{String(proposal.data.status)}</MetaChip> : null}
-        <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending || discard.isPending} onClick={saveAll}>{copy.saveAll}</button>
-        <button type="button" data-testid="discard-all" disabled={accept.isPending || discard.isPending} onClick={() => discard.mutate()}>{copy.discardAll}</button>
-        {error ? <p className="error" data-testid="proposal-error">{error}</p> : null}
+        <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending} onClick={saveAll}>{copy.saveAll}</button>
+        <button type="button" data-testid="discard-all" onClick={() => discard.mutate()}>{copy.discardAll}</button>
         {consequence.length > 0 && session.proposalId ? (
           <button type="button" onClick={() => publishProposal(session.proposalId ?? '')}>{copy.reviewChange}</button>
         ) : null}

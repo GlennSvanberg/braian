@@ -67,7 +67,7 @@ test('a type is built in a draft, saved, and deleted from the keyboard', async (
   expect(proposal.needs_approval).toBe(true)
 
   await page.getByTestId('type-recipe').click({ button: 'right' })
-  await page.getByTestId('type-menu').getByRole('button', { name: 'Delete…' }).click()
+  await page.getByTestId('context-menu').getByRole('button', { name: 'Delete…' }).click()
   const dialog = page.getByTestId('consequence')
   await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape')

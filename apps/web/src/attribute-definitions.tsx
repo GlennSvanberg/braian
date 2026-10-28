@@ -7,6 +7,8 @@ import { formatCount } from './format'
 import { copy } from './i18n'
 import { attributeKey } from './model-view'
 import { onDraftChange, setModelFocus, stageModel } from './model-stage'
+import { openSharedContextMenu } from './shared-context-menu'
+import { registerCommandRunner } from './command-registry'
 
 type SortKey = 'label' | 'key' | 'kind' | 'unit' | 'list'
 type Dialog =
@@ -36,7 +38,6 @@ export function AttributeDefinitions() {
   const [kind, setKind] = useState('')
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'label', dir: 'asc' })
   const [active, setActive] = useState(0)
-  const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
   const [message, setMessage] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -80,31 +81,26 @@ export function AttributeDefinitions() {
   const run = (action: AttributeAction) => {
     const row = rowsRef.current[activeRef.current]
     if (action === 'new') {
-      setMenu(null)
       setDialog({ kind: 'new' })
       return
     }
     if (!row) return
     setModelFocus({ kind: 'attribute', key: row.key })
     if (action === 'add-type' || action === 'add-group') {
-      setMenu(null)
       setDialog({ kind: action === 'add-type' ? 'type' : 'group', attribute: row.key })
       return
     }
     if (action === 'rename') {
-      setMenu(null)
       focusField(row.key, 'label')
       return
     }
     if (action === 'rename-key') {
       if (row.standard) return
-      setMenu(null)
       focusField(row.key, 'key')
       return
     }
     if (action === 'delete') {
       if (row.standard) return
-      setMenu(null)
       void stage('model.delete_attribute', { attribute: row.key })
     }
   }
@@ -112,11 +108,27 @@ export function AttributeDefinitions() {
   const runRef = useRef(run)
   runRef.current = run
   useEffect(() => onAttributeAction((action) => runRef.current(action)), [])
+  useEffect(() => {
+    const stops = [
+      registerCommandRunner('attr:new', () => runRef.current('new')),
+      registerCommandRunner('attr:add-type', () => runRef.current('add-type')),
+      registerCommandRunner('attr:add-group', () => runRef.current('add-group')),
+      registerCommandRunner('attr:rename', () => runRef.current('rename')),
+      registerCommandRunner('attr:rename-key', () => runRef.current('rename-key')),
+      registerCommandRunner('attr:delete', () => runRef.current('delete')),
+    ]
+    return () => stops.forEach((stop) => stop())
+  }, [])
 
   const openMenu = (row: AttributeDefinitionRow, index: number, point: { x: number; y: number }) => {
     setActive(index)
     setModelFocus({ kind: 'attribute', key: row.key })
-    setMenu({ key: row.key, x: point.x, y: point.y })
+    openSharedContextMenu({
+      context: 'attribute',
+      x: point.x,
+      y: point.y,
+      target: { attributeKey: row.key, standard: row.standard },
+    })
   }
 
   const onRowKey = (event: ReactKeyboardEvent<HTMLElement>, row: AttributeDefinitionRow, index: number) => {
@@ -142,8 +154,6 @@ export function AttributeDefinitions() {
   if (listed.isError && !listed.data) {
     return <div data-testid="attribute-definitions"><p className="error">{copy.validation}</p></div>
   }
-
-  const menuRow = visible.find((row) => row.key === menu?.key)
 
   return (
     <div className="definition-view" data-testid="attribute-definitions">
@@ -253,15 +263,6 @@ export function AttributeDefinitions() {
         </div>
       </div>
       {message ? <p className="error">{message}</p> : null}
-      {menu && menuRow ? (
-        <AttributeMenu
-          row={menuRow}
-          x={menu.x}
-          y={menu.y}
-          onClose={() => setMenu(null)}
-          onRun={run}
-        />
-      ) : null}
       {dialog?.kind === 'type' || dialog?.kind === 'group' ? (
         <PlacePicker
           mode={dialog.kind}
@@ -288,70 +289,6 @@ export function AttributeDefinitions() {
   )
 }
 
-function AttributeMenu({
-  row,
-  x,
-  y,
-  onClose,
-  onRun,
-}: {
-  row: AttributeDefinitionRow
-  x: number
-  y: number
-  onClose: () => void
-  onRun: (action: AttributeAction) => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    ref.current?.querySelector<HTMLButtonElement>('button')?.focus()
-    const close = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Element && target.closest('[data-testid="attribute-menu"]')) return
-      onClose()
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [onClose])
-  const items: Array<{ action: AttributeAction; label: string }> = [
-    { action: 'add-type', label: copy.addToType },
-    { action: 'add-group', label: copy.addToGroup },
-    { action: 'rename', label: copy.renameAttribute },
-    ...(row.standard ? [] : [{ action: 'rename-key' as const, label: copy.renameKey }]),
-    ...(row.standard ? [] : [{ action: 'delete' as const, label: copy.deleteMenu }]),
-    { action: 'new', label: copy.newAttribute },
-  ]
-  return (
-    <div
-      ref={ref}
-      className="menu definition-menu"
-      role="menu"
-      data-testid="attribute-menu"
-      style={{ left: x, top: y }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => {
-        const buttons = [...(ref.current?.querySelectorAll('button') ?? [])]
-        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          onClose()
-          document.querySelector<HTMLElement>(`[data-testid="attribute-definition-row"][data-key="${CSS.escape(row.key)}"]`)?.focus()
-          return
-        }
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-          event.preventDefault()
-          const next = event.key === 'ArrowDown' ? index + 1 : index - 1
-          buttons[(next + buttons.length) % buttons.length]?.focus()
-        }
-      }}
-    >
-      {items.map((item) => (
-        <button key={item.action} type="button" role="menuitem" onClick={() => onRun(item.action)}>
-          {item.label}
-        </button>
-      ))}
-    </div>
-  )
-}
 
 function PlacePicker({
   mode,

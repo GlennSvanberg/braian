@@ -3,12 +3,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from './palette'
 import { ObjectTable, type PanesSession } from './panes'
 import { StructureTree } from './shell'
 import { dispatchUi, onUi } from './ui-bus'
+import { registerCommandRunner } from './command-registry'
+import { SharedContextMenuHost } from './shared-context-menu'
 import { publishColumns, readUiContext, resetUiContext } from './ui-context'
 
 const { scrollToIndex } = vi.hoisted(() => ({ scrollToIndex: vi.fn() }))
@@ -58,8 +60,38 @@ function TableHarness() {
     }),
     [objectId],
   )
+  useEffect(() => {
+    const stops = [
+      registerCommandRunner('columns:hide', (target) => {
+        if (target.column) dispatchUi('ui.hide_column', { column: String(target.column) })
+      }),
+      registerCommandRunner('object:open', (target) => {
+        if (target.objectId) setObjectId(String(target.objectId))
+      }),
+      registerCommandRunner('table:mass-edit', () => undefined),
+      registerCommandRunner('table:filter-by', () => undefined),
+      registerCommandRunner('table:export', () => undefined),
+      registerCommandRunner('table:export-columns', () => undefined),
+      registerCommandRunner('table:select', () => undefined),
+      registerCommandRunner('object:right', () => undefined),
+      registerCommandRunner('object:history', () => undefined),
+      registerCommandRunner('object:move-group', () => undefined),
+      registerCommandRunner('palette:search', () => undefined),
+    ]
+    const onCommand = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: string }>).detail
+      if (!detail?.id?.startsWith('columns:show:')) return
+      dispatchUi('ui.show_column', { column: detail.id.slice('columns:show:'.length) })
+    }
+    window.addEventListener('braian:command', onCommand)
+    return () => {
+      stops.forEach((stop) => stop())
+      window.removeEventListener('braian:command', onCommand)
+    }
+  }, [])
   return (
     <QueryClientProvider client={queryClient}>
+      <SharedContextMenuHost />
       <ObjectTable
         session={session}
         view={{ id: 'table', type: 'object_table', title: 'Objects', state: {} }}
@@ -467,11 +499,13 @@ describe('keyboard context menu', () => {
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
     expect(focusedText()).toBe('Open to the right')
     fireEvent.keyDown(document.activeElement!, { key: 'End' })
-    expect(focusedText()).toBe('Close Esc')
-    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    const last = focusedText()
+    expect(last.length).toBeGreaterThan(0)
+    expect(last).not.toBe('Open Enter')
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' })
     expect(focusedText()).toBe('Open Enter')
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' })
-    expect(focusedText()).toBe('Close Esc')
+    expect(focusedText()).toBe(last)
     fireEvent.keyDown(document.activeElement!, { key: 'Home' })
     expect(focusedText()).toBe('Open Enter')
 

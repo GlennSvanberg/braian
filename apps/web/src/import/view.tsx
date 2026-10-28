@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from 'sonner'
 import { api } from '../api'
 import { copy } from '../i18n'
+import { handleAppContextMenu } from '../app-context-menu'
 import {
   approveImport,
   assignImportTarget,
@@ -106,12 +107,12 @@ export function ImportScreen() {
   return (
     <>
       {snap.drag ? (
-        <div className="import-drop" data-testid="import-drop-overlay">
+        <div className="import-drop" data-testid="import-drop-overlay" onContextMenu={handleAppContextMenu}>
           {copy.importDropOverlay}
         </div>
       ) : null}
       {snap.open ? (
-        <section className="import-screen" data-testid="import-screen" role="dialog" aria-modal="true" aria-label={copy.importFile}>
+        <section className="import-screen" data-testid="import-screen" role="dialog" aria-modal="true" aria-label={copy.importFile} onContextMenu={handleAppContextMenu}>
           <header className="import-top">
             <div>
               <strong>{snap.fileName || copy.importFile}</strong>
