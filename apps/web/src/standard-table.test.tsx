@@ -47,4 +47,17 @@ describe('standard table chrome', () => {
     expect(onReview).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('review-and-save').textContent).toBe(copy.reviewAndSave)
   })
+
+  it('opens the field picker from the columns button next to plus', () => {
+    const onSelectFields = vi.fn()
+    render(
+      <StandardTableChrome newRowLabel="New row" onNewRow={() => undefined} onSelectFields={onSelectFields}>
+        <div />
+      </StandardTableChrome>,
+    )
+    const button = screen.getByTestId('table-select-fields')
+    expect(button.getAttribute('aria-label')).toBe(copy.selectFields)
+    fireEvent.click(button)
+    expect(onSelectFields).toHaveBeenCalledTimes(1)
+  })
 })

@@ -16,6 +16,8 @@ import { exportPayload, runExport, saveWorkbook } from './export'
 import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, sourceLabel, suggestionLines, valuesFromKept } from './field-diff'
 import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
+import { FieldPicker } from './field-picker'
+import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, pathHead, prefsToOrderHidden, saveColumnPrefs } from './column-prefs'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
@@ -65,7 +67,7 @@ export type PanesView = {
 
 export type PanesWorkspace = { id: string; locked?: boolean }
 
-type ObjRow = { id: string; key: string; type: string; version: string; name: string; status: string }
+type ObjRow = { id: string; key: string; type: string; version: string; name: string; status: string; doc: Json }
 
 const columns = [
   { id: 'key', header: 'Number', size: 160, sort: 'a_number' },
@@ -100,6 +102,7 @@ function toRow(doc: Json, defs?: Json): ObjRow {
     version: String(doc.version ?? ''),
     name: catalogName(doc, defs),
     status: readIndexed(doc, defs, 'status'),
+    doc,
   }
 }
 
@@ -117,7 +120,7 @@ export function ObjectTable({
   const [labelFilter, setLabelFilter] = useState('')
   const [pathFilters, setPathFilters] = useState<string[]>([])
   const [exportPaths, setExportPaths] = useState<Array<{ id: string; header: string }>>([])
-  const [picker, setPicker] = useState<null | 'filter' | 'export' | { text: string; label: string }>(null)
+  const [picker, setPicker] = useState<null | 'filter' | 'export' | 'fields' | { text: string; label: string }>(null)
   const [pathValue, setPathValue] = useState('')
   const [queryText, setQueryText] = useState(initial.filter)
   const [sort, setSort] = useState(initial.sort)
@@ -126,6 +129,7 @@ export function ObjectTable({
   const [sizes, setSizes] = useState<Record<string, number>>(initial.sizes)
   const [selected, setSelected] = useState<string[]>([])
   const [hidden, setHidden] = useState<string[]>([])
+  const [prefsReady, setPrefsReady] = useState(false)
   // Single current row. Click and arrows both write this; the detail object follows it.
   const [active, setActive] = useState(-1)
   // The active cell's column, by key. Left and Right move it; the keyboard menu acts on it.
@@ -134,6 +138,8 @@ export function ObjectTable({
   const [flashId, setFlashId] = useState('')
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
+  const prefsApplied = useRef(false)
+  const prefsSnapshot = useRef<string | null>(null)
   const virtualizerRef = useRef<{ scrollToIndex: (index: number) => void }>({ scrollToIndex: () => {} })
   const locateRef = useRef<(id: string) => number>(() => -1)
   const selectMode = useRef<{ extend: boolean; anchor: number } | null>(null)
@@ -147,7 +153,7 @@ export function ObjectTable({
   useEffect(() => {
     if (workspace.locked) return
     const timer = setTimeout(() => {
-      const state = { ...view.state, table: { filter, sort, groupBy, order, sizes } }
+      const state = { ...view.state, table: { filter, sort, groupBy, sizes } }
       void api('/v1/views', {
         method: 'POST',
         body: JSON.stringify({
@@ -162,7 +168,14 @@ export function ObjectTable({
       })
     }, 400)
     return () => clearTimeout(timer)
-  }, [filter, sort, groupBy, order, sizes, view, workspace])
+  }, [filter, sort, groupBy, sizes, view, workspace])
+
+  const prefs = useQuery({
+    queryKey: ['column-prefs', view.id],
+    queryFn: () => fetchColumnPrefs(view.id),
+    enabled: Boolean(view.id),
+    retry: false,
+  })
 
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   useEffect(() => {
@@ -221,8 +234,38 @@ export function ObjectTable({
   const attributePaths = useQuery({
     queryKey: ['attribute-paths', typeKey],
     queryFn: () => api<{ paths: ListedPath[] }>(`/v1/types/${encodeURIComponent(typeKey)}/attribute-paths`),
-    enabled: Boolean(typeKey) && (picker === 'filter' || picker === 'export'),
+    enabled: Boolean(typeKey),
   })
+  useEffect(() => {
+    if (prefsApplied.current || prefs.isPending) return
+    prefsApplied.current = true
+    const applied = prefs.isSuccess ? prefsToOrderHidden(prefs.data) : null
+    if (applied) {
+      setOrder(applied.order)
+      setHidden(applied.hidden)
+    }
+    setPrefsReady(true)
+  }, [prefs.isPending, prefs.isSuccess, prefs.data])
+  useEffect(() => {
+    if (!prefsReady) return
+    const snapshot = JSON.stringify([order, hidden])
+    // The first run after the GET is the baseline: never PUT the load itself.
+    if (prefsSnapshot.current === null) {
+      prefsSnapshot.current = snapshot
+      return
+    }
+    if (prefsSnapshot.current === snapshot) return
+    const timer = setTimeout(() => {
+      const document = orderHiddenToDocument(order, hidden, attributePaths.data?.paths.map((path) => path.text))
+      if (document.columns.length === 0) return
+      void saveColumnPrefs(view.id, document)
+        .then(() => {
+          prefsSnapshot.current = snapshot
+        })
+        .catch(() => undefined)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [order, hidden, prefsReady, attributePaths.data, view.id])
   const sortBy = indexSort(sort, defs.data)
   const groupField = groupBy ? indexSort(groupBy, defs.data) : groupBy
   const probe = useQuery({
@@ -296,19 +339,32 @@ export function ObjectTable({
     publishSelection(view.id, marked)
   }, [activeStamp, selected, session.objectId, queryText, filterBy, sort, view.id, knownStamp])
 
-  const ordered = order.filter((id) => columns.some((column) => column.id === id))
+  const pathList = attributePaths.data?.paths ?? []
+  const columnFor = (id: string) =>
+    columns.find((column) => column.id === id) ?? {
+      id,
+      header: pathList.find((path) => path.text === id)?.label ?? id,
+      size: 160,
+      sort: '',
+    }
+  const columnDefs = [
+    ...columns,
+    ...pathList
+      .filter((path) => !columns.some((column) => column.id === path.text))
+      .map((path) => ({ id: path.text, header: path.label, size: 160, sort: '' })),
+  ]
+  const ordered = order.filter(Boolean)
   const all = ordered.length > 0 ? ordered : columns.map((column) => column.id)
   const shown = all.filter((id) => !hidden.includes(id))
-  const hiddenShown = all.filter((id) => hidden.includes(id))
   const cellColumn = shown.includes(activeColumn) ? activeColumn : shown[0] ?? ''
-  const columnHeader = (id: string) => columns.find((column) => column.id === id)?.header ?? id
+  const columnHeader = (id: string) => columnFor(id).header
   const columnStamp = all.map((id) => `${id}:${hidden.includes(id) ? 1 : 0}`).join('|')
   useEffect(() => {
     publishColumns(view.id, all.map((id) => ({ id, header: columnHeader(id), hidden: hidden.includes(id) })))
   }, [columnStamp, view.id])
   const exportVisible = () => {
     const body = exportPayload({
-      columns,
+      columns: columnDefs,
       hidden,
       order,
       q: queryText,
@@ -604,6 +660,7 @@ export function ObjectTable({
       registerCommandRunner('table:filter-by', () => setPicker('filter')),
       registerCommandRunner('table:export-columns', () => setPicker('export')),
       registerCommandRunner('table:export', () => { exportVisible() }),
+      registerCommandRunner('fields:select', () => setPicker('fields')),
       registerCommandRunner('object:new', () => {
         window.dispatchEvent(new Event('braian-new-object'))
       }),
@@ -669,7 +726,7 @@ export function ObjectTable({
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
   const cell = (row: ObjRow, id: string) => {
-    if (id === 'key') return row.key
+    if (id === 'key' || id === 'number') return row.key
     if (id === 'name') {
       const count = suggestionCounts.get(row.id) ?? 0
       return count > 0 ? (
@@ -682,7 +739,29 @@ export function ObjectTable({
     if (id === 'type') return <MetaChip>{typeLabel(defs.data, row.type, uiLanguage)}</MetaChip>
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
-    return ''
+    // Hop values need linked objects; step 3D loads them. Keep the column without fetching.
+    if (isHopPath(id)) return <span className="muted" data-testid={`hop-cell-${id}`}>—</span>
+    return readIndexed(row.doc, defs.data, pathHead(id))
+  }
+  const toggleField = (path: string) => {
+    const shownNow = order.includes(path) && !hidden.includes(path)
+    if (shownNow) {
+      setHidden((current) => [...new Set([...current, path])])
+      return
+    }
+    setOrder((current) => (current.includes(path) ? current : [...current, path]))
+    setHidden((current) => current.filter((id) => id !== path))
+  }
+  const moveField = (path: string, delta: number) => {
+    setOrder((current) => {
+      const next = current.includes(path) ? [...current] : [...current, path]
+      const at = next.indexOf(path)
+      const to = Math.min(next.length - 1, Math.max(0, at + delta))
+      if (at === to) return next
+      next.splice(at, 1)
+      next.splice(to, 0, path)
+      return next
+    })
   }
 
   const newRowLabel = newObjectLabel(bound?.singular)
@@ -691,6 +770,8 @@ export function ObjectTable({
       testId="object-table"
       newRowLabel={newRowLabel}
       onNewRow={() => window.dispatchEvent(new Event('braian-new-object'))}
+      onSelectFields={() => setPicker('fields')}
+      selectFieldsLabel={copy.selectFields}
       rowCount={found}
       filterValue={filter}
       onFilterChange={setFilter}
@@ -736,8 +817,7 @@ export function ObjectTable({
       >
         <div className="head">
           {shown.map((id) => {
-            const column = columns.find((item) => item.id === id)
-            if (!column) return null
+            const column = columnFor(id)
             const width = sizes[id] ?? column.size
             return (
               <div
@@ -765,6 +845,7 @@ export function ObjectTable({
                     })
                   }}
                   onClick={() => {
+                    if (!column.sort) return
                     const desc = sort === `${column.sort}:asc` ? 'desc' : 'asc'
                     setSort(`${column.sort}:${desc}`)
                   }}
@@ -865,6 +946,16 @@ export function ObjectTable({
           </div>
         ) : null}
       </div>
+      {picker === 'fields' ? (
+        <FieldPicker
+          paths={pathList}
+          order={all}
+          hidden={hidden}
+          onToggle={toggleField}
+          onMove={moveField}
+          onClose={() => setPicker(null)}
+        />
+      ) : null}
       {picker === 'filter' || picker === 'export' ? (
         <PathMenu
           paths={attributePaths.data?.paths ?? []}
@@ -1048,7 +1139,7 @@ function Row({
       {shown.map((id) => {
         const column = columns.find((item) => item.id === id)
         return (
-          <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width: sizes[id] ?? column?.size ?? 120 }}>
+          <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width: sizes[id] ?? column?.size ?? 160 }}>
             {cell(row, id)}
           </div>
         )

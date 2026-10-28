@@ -1,0 +1,236 @@
+// @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useMemo, useState } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FieldPicker } from './field-picker'
+import { orderHiddenToDocument, prefsToOrderHidden, type ColumnPrefsResponse } from './column-prefs'
+import { ObjectTable, type PanesSession } from './panes'
+import { dispatchUi } from './ui-bus'
+
+const product = '018f0000-0000-7000-8000-000000000200'
+
+const paths = [
+  { text: 'sku', label: 'SKU' },
+  { text: 'name', label: 'Name' },
+  { text: 'weight', label: 'Weight' },
+  { text: 'packaging>name', label: 'Packaging › Name' },
+]
+
+function json(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+function client() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } })
+}
+
+function PrefsTable() {
+  const [queryClient] = useState(client)
+  const session = useMemo<PanesSession>(
+    () => ({
+      group: null,
+      objectId: null,
+      proposalId: null,
+      language: 'en',
+      setGroup: () => undefined,
+      setObjectId: () => undefined,
+      setProposalId: () => undefined,
+      push: () => undefined,
+    }),
+    [],
+  )
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ObjectTable
+        session={session}
+        view={{ id: '018f0000-0000-7000-8000-000000000999', type: 'object_table', title: 'Products', state: { object_type: product, type_key: 'product' } }}
+        workspace={{ id: 'ws' }}
+      />
+    </QueryClientProvider>
+  )
+}
+
+function headerIds() {
+  return Array.from(document.querySelectorAll('.head [data-testid^="col-"]')).map((node) => node.getAttribute('data-testid'))
+}
+
+const prefsDocument: ColumnPrefsResponse = {
+  document: {
+    version: 1,
+    columns: [
+      { path: 'sku', visible: true },
+      { path: 'name', visible: false },
+      { path: 'weight', visible: true, stale: true },
+      { path: 'packaging>name', visible: true },
+    ],
+  },
+  stale_paths: ['weight'],
+}
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/column-prefs')) {
+        if ((init?.method ?? 'GET').toUpperCase() === 'PUT') return json({ document: {} })
+        return json(prefsDocument)
+      }
+      if (url.includes('/attribute-paths')) return json({ paths })
+      if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
+      if (url.includes('/v1/definitions')) {
+        return json({
+          languages: ['en'],
+          types: [
+            {
+              id: product,
+              key: 'product',
+              labels: { en: 'Product' },
+              singular: { en: 'Product' },
+              plural: { en: 'Products' },
+              key_attribute: 'sku',
+              attributes: [],
+            },
+          ],
+          attributes: [],
+          structures: [],
+        })
+      }
+      if (url.includes('/v1/assortments')) return json({ assortments: [] })
+      if (url.includes('/v1/proposals')) return json({ pending: { total: 0 } })
+      if (url.includes('/v1/views')) return json({})
+      return json({})
+    }),
+  )
+})
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+describe('column prefs helpers', () => {
+  it('applies order and hidden while skipping stale paths', () => {
+    expect(prefsToOrderHidden(prefsDocument)).toEqual({
+      order: ['sku', 'name', 'packaging>name'],
+      hidden: ['name'],
+    })
+  })
+
+  it('returns null for an empty document', () => {
+    expect(prefsToOrderHidden({ document: null })).toBeNull()
+    expect(prefsToOrderHidden({ document: { version: 1, columns: [] } })).toBeNull()
+    expect(prefsToOrderHidden(undefined)).toBeNull()
+  })
+
+  it('maps built-in ids to attribute paths and leaves synthetic ids out', () => {
+    expect(orderHiddenToDocument(['key', 'name', 'type', 'status', 'version'], ['status'])).toEqual({
+      version: 1,
+      columns: [
+        { path: 'number', visible: true },
+        { path: 'name', visible: true },
+        { path: 'status', visible: false },
+      ],
+    })
+  })
+
+  it('drops paths that the type does not list', () => {
+    expect(orderHiddenToDocument(['sku', 'gone', 'packaging>name'], [], ['sku', 'packaging>name'])).toEqual({
+      version: 1,
+      columns: [
+        { path: 'sku', visible: true },
+        { path: 'packaging>name', visible: true },
+      ],
+    })
+  })
+})
+
+describe('FieldPicker', () => {
+  it('toggles with Space and Enter and reorders with Alt+Arrow', () => {
+    const onToggle = vi.fn()
+    const onMove = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <FieldPicker
+        paths={paths}
+        order={['sku', 'name']}
+        hidden={['name']}
+        onToggle={onToggle}
+        onMove={onMove}
+        onClose={onClose}
+      />,
+    )
+    const input = screen.getByTestId('field-picker-search')
+    expect(screen.getByTestId('field-picker-name').getAttribute('aria-selected')).toBe('false')
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: ' ' })
+    expect(onToggle).toHaveBeenCalledWith('name')
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onToggle).toHaveBeenCalledTimes(2)
+
+    fireEvent.keyDown(input, { key: 'ArrowUp', altKey: true })
+    expect(onMove).toHaveBeenCalledWith('name', -1)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('filters by label', () => {
+    render(
+      <FieldPicker paths={paths} order={[]} hidden={[]} onToggle={() => undefined} onMove={() => undefined} onClose={() => undefined} />,
+    )
+    fireEvent.change(screen.getByTestId('field-picker-search'), { target: { value: 'pack' } })
+    expect(screen.getByTestId('field-picker-packaging>name')).toBeTruthy()
+    expect(screen.queryByTestId('field-picker-sku')).toBeNull()
+  })
+})
+
+describe('ObjectTable column prefs', () => {
+  it('applies the stored order and hidden fields and skips stale paths', async () => {
+    render(<PrefsTable />)
+    await waitFor(() => expect(headerIds()).toEqual(['col-sku', 'col-packaging>name']))
+    expect(screen.queryByTestId('col-weight')).toBeNull()
+    expect(screen.queryByTestId('col-name')).toBeNull()
+  })
+
+  it('PUTs the document after hiding a field', async () => {
+    render(<PrefsTable />)
+    await waitFor(() => expect(headerIds()).toEqual(['col-sku', 'col-packaging>name']))
+
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'sku' })
+    })
+    await waitFor(() => expect(headerIds()).toEqual(['col-packaging>name']))
+
+    await waitFor(() => {
+      const put = vi.mocked(fetch).mock.calls.find(([input, init]) =>
+        String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+      )
+      expect(put).toBeTruthy()
+      const body = JSON.parse(String(put?.[1]?.body))
+      expect(body.environment).toBe('default')
+      expect(body.document).toEqual({
+        version: 1,
+        columns: [
+          { path: 'sku', visible: false },
+          { path: 'name', visible: false },
+          { path: 'packaging>name', visible: true },
+        ],
+      })
+    }, { timeout: 2000 })
+  })
+})

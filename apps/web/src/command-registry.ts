@@ -155,6 +155,13 @@ export const registryCommands: RegistryCommand[] = [
     when: (target) => Boolean(target.column),
   },
   {
+    id: 'fields:select',
+    title: `${copy.selectFields}…`,
+    contexts: ['table-header', 'cell', 'row', 'empty'],
+    group: 'views',
+    keywords: ['field', 'column', 'select', 'show', 'hide', 'reorder'],
+  },
+  {
     id: 'selection:new',
     title: copy.newSelection,
     contexts: ['assortment', 'dock-view', 'empty'],
@@ -499,14 +506,4 @@ export function paletteCommandsFromRegistry(target: CommandTarget = {}): Registr
     if (command.when && !command.when(target)) return false
     return true
   })
-}
-
-export function showColumnCommands(hidden: Array<{ id: string; header: string }>): RegistryCommand[] {
-  return hidden.map((column) => ({
-    id: `columns:show:${column.id}`,
-    title: `${copy.show} ${column.header}`,
-    contexts: ['table-header', 'cell', 'row'] as MenuContext[],
-    group: 'views' as const,
-    palette: false,
-  }))
 }

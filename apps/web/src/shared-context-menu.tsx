@@ -4,7 +4,6 @@ import {
   commandTitle,
   commandsForContext,
   runCommand,
-  showColumnCommands,
   type CommandTarget,
   type MenuContext,
   type RegistryCommand,
@@ -53,12 +52,7 @@ function itemsFor(request: OpenMenuRequest): RegistryCommand[] {
   if (request.extraOnly) return [...(request.extra ?? [])]
   const target = request.target ?? {}
   const base = commandsForContext(request.context, target)
-  const hidden = (target.hiddenColumns as Array<{ id: string; header: string }> | undefined) ?? []
-  const show =
-    request.context === 'table-header' || request.context === 'cell' || request.context === 'row'
-      ? showColumnCommands(hidden)
-      : []
-  return [...base, ...show, ...(request.extra ?? [])]
+  return [...base, ...(request.extra ?? [])]
 }
 
 export function SharedContextMenuHost({

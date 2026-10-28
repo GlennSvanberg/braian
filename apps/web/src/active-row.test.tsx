@@ -442,7 +442,7 @@ function headerIds() {
 }
 
 describe('show column', () => {
-  it('shows a hidden column again from the cell menu', async () => {
+  it('replaces Show column with Select fields in the cell menu', async () => {
     render(<TableHarness />)
     await waitFor(() => expect(screen.getAllByTestId('object-row')).toHaveLength(tableRows.length))
 
@@ -452,11 +452,10 @@ describe('show column', () => {
 
     fireEvent.contextMenu(screen.getByText('ART-1'))
     const menu = await screen.findByTestId('context-menu')
-    expect(within(menu).queryByRole('menuitem', { name: 'Show Number' })).toBeNull()
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Show Name' }))
+    expect(within(menu).queryByRole('menuitem', { name: 'Show Name' })).toBeNull()
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Select fields…' }))
 
-    await waitFor(() => expect(headerIds()).toEqual(allColumns))
-    expect(screen.queryByTestId('context-menu')).toBeNull()
+    await waitFor(() => expect(screen.getByTestId('field-picker')).toBeTruthy())
   })
 
   it('hides and shows through ui.hide_column and ui.show_column, and publishes the columns', async () => {
@@ -595,18 +594,17 @@ describe('palette column entries', () => {
     stop()
   })
 
-  it('runs Show column › for a hidden column', async () => {
-    const { events, stop } = captured()
+  it('opens Select fields from the palette instead of Show column', async () => {
+    const open = vi.fn()
+    const stop = registerCommandRunner('fields:select', open)
     render(<PaletteHarness />)
     const input = await screen.findByTestId('palette-input')
-    fireEvent.change(input, { target: { value: 'show column' } })
-    await waitFor(() => expect(screen.getByRole('option', { name: /Show column ›/ })).toBeTruthy())
+    fireEvent.change(input, { target: { value: 'select fields' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: /Select fields ›/ })).toBeTruthy())
+    expect(screen.queryByRole('option', { name: /Show column ›/ })).toBeNull()
 
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['StatusShow column']))
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    expect(events).toEqual([{ name: 'ui.show_column', args: { column: 'status' } }])
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1))
     stop()
   })
 })

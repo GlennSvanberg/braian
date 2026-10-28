@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Columns3, Plus, Search } from 'lucide-react'
 import { copy } from './i18n'
 import { formatCount } from './format'
 import { Kbd } from './components/ui/kbd'
@@ -8,6 +8,9 @@ export type StandardTableChromeProps = {
   /** Accessible name for the plus control that creates a new row. */
   newRowLabel?: string
   onNewRow?: () => void
+  /** Opens the field picker for this table. */
+  onSelectFields?: () => void
+  selectFieldsLabel?: string
   rowCount?: number
   /** Generic text filter shared by every table that opts in. */
   filterValue?: string
@@ -27,6 +30,8 @@ export type StandardTableChromeProps = {
 export function StandardTableChrome({
   newRowLabel,
   onNewRow,
+  onSelectFields,
+  selectFieldsLabel,
   rowCount,
   filterValue,
   onFilterChange,
@@ -60,6 +65,17 @@ export function StandardTableChrome({
             onClick={onNewRow}
           >
             <Plus size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+        {onSelectFields ? (
+          <button
+            type="button"
+            className="icon-btn"
+            data-testid="table-select-fields"
+            aria-label={selectFieldsLabel ?? copy.selectFields}
+            onClick={onSelectFields}
+          >
+            <Columns3 size={14} aria-hidden="true" />
           </button>
         ) : null}
         {reviewVisible && onReview ? (

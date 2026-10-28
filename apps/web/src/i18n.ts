@@ -135,6 +135,7 @@ export const copy = {
   dataModel: 'Data model',
   graph: 'Graph',
   columns: 'Columns',
+  selectFields: 'Select fields',
   groupBy: 'Group',
   filter: 'Filter',
   filterBy: 'Filter by',
