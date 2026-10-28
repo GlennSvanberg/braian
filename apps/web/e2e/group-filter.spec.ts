@@ -51,16 +51,17 @@ test('selecting a structure group lists the same products as its selection', asy
   await filter.fill('PROD-CHEDDAR')
   await expect(table.getByTestId('object-row').first()).toContainText('PROD-CHEDDAR')
   await expect(table).not.toContainText('no rows')
+  await expect.poll(async () => (await count.textContent()) ?? '').toMatch(/^[1-9]/d* rows$/)
   const grouped = (await count.textContent()) ?? ''
-  expect(grouped.startsWith('0 ')).toBeFalsy()
   await page.screenshot({ path: `${shots}/group-dark.png` })
 
   await choose(table, 'All')
+  await filter.fill('')
   await expect(table.getByTestId('object-row').first()).toBeVisible()
   await choose(table, 'Cheese')
   await filter.fill('PROD-CHEDDAR')
   await expect(table.getByTestId('object-row').first()).toContainText('PROD-CHEDDAR')
-  await expect(count).toHaveText(grouped)
+  await expect.poll(async () => (await count.textContent()) ?? '').toBe(grouped)
 
   await page.getByRole('button', { name: 'Light' }).click()
   await page.screenshot({ path: `${shots}/group-light.png` })

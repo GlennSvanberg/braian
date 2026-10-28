@@ -56,7 +56,7 @@ async function tour(page: Page, theme: 'dark' | 'light') {
   await expect(page.getByTestId('attribute-table')).toContainText('from Dairy')
   await page.screenshot({ path: `${shots}/data-model-${theme}.png` })
 
-  await page.getByRole('button', { name: 'Review' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: /^Review/ }).click()
   await expect(page.getByTestId('save-all')).toBeVisible()
   await expect(page.getByTestId('proposal')).toContainText('ART-CHED-400')
   await page.screenshot({ path: `${shots}/proposal-${theme}.png` })

@@ -84,7 +84,7 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await entry.click()
   await page.getByTestId('rollback').click()
 
-  await page.getByRole('button', { name: 'Review' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: /^Review/ }).click()
   await expect(page.getByTestId('proposal')).toBeVisible()
   await expect(page.getByTestId('save-all')).toBeVisible()
   await page.screenshot({ path: `${shots}/proposal.png` })

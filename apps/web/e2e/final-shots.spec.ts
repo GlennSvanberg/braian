@@ -39,7 +39,7 @@ test('final data-model and polish shots', async ({ page }) => {
   })
   expect(drafted.ok()).toBeTruthy()
 
-  await page.getByRole('button', { name: 'Review' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: /^Review/ }).click()
   await page.getByRole('button', { name: 'add attribute voltage to Drill', exact: true }).first().click()
   await expect(page.getByTestId('proposal-tree')).toContainText('Drill')
   await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
@@ -73,7 +73,7 @@ test('agent tree shot', async ({ page }) => {
     data: { text: 'add attribute voltage to Drill' },
   })
   expect(drafted.ok()).toBeTruthy()
-  await page.getByRole('button', { name: 'Review' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: /^Review/ }).click()
   await page.getByRole('button', { name: 'add attribute voltage to Drill', exact: true }).first().click()
   await expect(page.getByTestId('proposal-tree')).toContainText('Add group Drill')
   await page.screenshot({ path: `${shots}/agent-proposal-tree.png` })
