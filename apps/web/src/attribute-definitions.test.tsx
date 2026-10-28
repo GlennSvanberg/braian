@@ -37,6 +37,15 @@ const definitions = {
 const catalog = {
   attributes: [
     {
+      id: '018f0000-0000-7000-8000-00000000a003',
+      key: 'created_at',
+      label: 'Created',
+      kind: 'text',
+      standard: true,
+      flags: { standard: true },
+      used_in: { objects: 3, types: [{ id: 't-article', key: 'article', label: 'Article', objects: 3 }], groups: [] },
+    },
+    {
       id: NUMBER,
       key: 'number',
       label: 'Number',
@@ -91,9 +100,11 @@ describe('attribute definitions view', () => {
   it('lists attributes, formats where they are used, and keeps standard attributes locked', async () => {
     render(<Host />)
     const rows = await screen.findAllByTestId('attribute-definition-row')
-    expect(rows.map((row) => row.getAttribute('data-key'))).toEqual(['gross_weight', 'number'])
-    const weight = rows[0]
-    expect(weight?.querySelector('[data-testid="used-in"]')?.textContent).toBe('Article (1,200), Food / Cheese (4)')
+    expect(rows.map((row) => row.getAttribute('data-key'))).toEqual(['created_at', 'gross_weight', 'number'])
+    expect(screen.getByText('Date and time')).toBeTruthy()
+    const weight = rows.find((row) => row.getAttribute('data-key') === 'gross_weight')
+    expect(weight?.querySelector('[data-testid="used-in"]')?.textContent).toBe('2 places')
+    expect(weight?.querySelector('[data-testid="used-in"]')?.getAttribute('title')).toBe('Article (1,200), Food / Cheese (4)')
     expect(weight?.querySelector('[data-testid="used-in"]')?.getAttribute('data-objects')).toBe('1200')
     expect((screen.getByTestId('attr-key-number') as HTMLInputElement).disabled).toBe(true)
     expect((screen.getByTestId('attr-key-gross_weight') as HTMLInputElement).disabled).toBe(false)

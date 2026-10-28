@@ -85,12 +85,15 @@ describe('type workspaces', () => {
     const templates = workspaceTemplates(typeNames(defs, 'en'))
     expect(templates.map((item) => item.name)).toEqual(['Products', 'Articles', 'Suppliers', 'Data model', 'Review'])
     expect(templates.find((item) => item.id === 'model')?.views.map((view) => view.type)).toEqual([
-      'data_model',
-      'data_model',
+      'object_types',
+      'link_types',
+      'value_lists',
+      'value_list_values',
+      'units',
       'data_model',
       'attribute_definitions',
     ])
-    expect(templates.find((item) => item.id === 'model')?.views[3]?.title).toBe('Attribute definitions')
+    expect(templates.find((item) => item.id === 'model')?.views.at(-1)?.title).toBe('Attribute definitions')
     expect(templates.some((item) => item.id === 'enrich' || /enrich/i.test(item.name))).toBe(false)
     const articles = templates[1]
     expect(articles?.views.map((view) => view.type)).toEqual([

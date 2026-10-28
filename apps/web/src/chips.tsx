@@ -7,7 +7,10 @@ import {
   Layers,
   Library,
   ListChecks,
+  ListOrdered,
   ListTree,
+  Link2,
+  Ruler,
   ScrollText,
   Table2,
   Waypoints,
@@ -52,6 +55,11 @@ export function ViewGlyph({ type }: { type: string }) {
   if (type === 'class_attributes') return <Layers {...props} />
   if (type === 'attribute_definitions') return <Library {...props} />
   if (type === 'data_model') return <Boxes {...props} />
+  if (type === 'object_types') return <Boxes {...props} />
+  if (type === 'link_types') return <Link2 {...props} />
+  if (type === 'value_lists') return <ListOrdered {...props} />
+  if (type === 'value_list_values') return <ListOrdered {...props} />
+  if (type === 'units') return <Ruler {...props} />
   if (type === 'proposal') return <ScrollText {...props} />
   if (type === 'batch_log') return <ScrollText {...props} />
   if (type === 'job_history') return <ListChecks {...props} />

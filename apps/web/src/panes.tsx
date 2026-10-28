@@ -1206,20 +1206,36 @@ export function ClassAttributes({ session }: { session: PanesSession }) {
       </div>
     )
   }
+  const rows = sections.flatMap((section) =>
+    section.attributes.map((attribute) => ({
+      id: `${section.id}:${attribute.id}`,
+      section: section.title,
+      label: attribute.label,
+      kind: attribute.kind,
+    })),
+  )
   return (
     <div className="class-attributes" data-testid="class-attributes">
-      {sections.map((section) => (
-        <section key={section.id} className="class-section" data-testid="class-section">
-          <h3>{section.title}</h3>
-          {section.attributes.length === 0 ? <p className="hint">{copy.noClassAttributes}</p> : null}
-          {section.attributes.map((attribute) => (
-            <div key={attribute.id} className="class-attr" data-testid="class-attribute">
-              <span>{attribute.label}</span>
-              <span>{attribute.kind}</span>
+      <StandardTableChrome
+        testId="group-attributes-chrome"
+        rowCount={rows.length}
+      >
+        <div className="standard-grid" role="grid">
+          <div className="standard-grid-head" role="row">
+            <div className="standard-grid-cell head" role="columnheader">{copy.group}</div>
+            <div className="standard-grid-cell head" role="columnheader">{copy.attributeName}</div>
+            <div className="standard-grid-cell head" role="columnheader">{copy.attributeType}</div>
+          </div>
+          {rows.length === 0 ? <p className="standard-grid-empty">{copy.noClassAttributes}</p> : null}
+          {rows.map((row) => (
+            <div key={row.id} className="standard-grid-row" role="row" data-testid="class-attribute">
+              <div className="standard-grid-cell" role="gridcell">{row.section}</div>
+              <div className="standard-grid-cell" role="gridcell">{row.label}</div>
+              <div className="standard-grid-cell" role="gridcell">{row.kind}</div>
             </div>
           ))}
-        </section>
-      ))}
+        </div>
+      </StandardTableChrome>
     </div>
   )
 }

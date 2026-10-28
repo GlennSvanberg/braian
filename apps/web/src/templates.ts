@@ -60,14 +60,23 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
   {
     id: 'model',
     name: 'Data model',
-    summary: 'Structure, groups and the group card',
+    summary: 'Object types, links, value lists, units and attribute definitions',
     views: [
-      { type: 'data_model', title: 'Model', state: { mode: 'tree' } },
-      { type: 'data_model', title: 'Attributes', state: { mode: 'classes' } },
-      { type: 'data_model', title: 'Preview', state: { mode: 'card' } },
+      { type: 'object_types', title: 'Object types', state: {} },
+      { type: 'link_types', title: 'Link types', state: {} },
+      { type: 'value_lists', title: 'Value lists', state: {} },
+      { type: 'value_list_values', title: 'List values', state: {} },
+      { type: 'units', title: 'Units', state: {} },
+      { type: 'data_model', title: 'Type attributes', state: { mode: 'classes' } },
       { type: 'attribute_definitions', title: 'Attribute definitions', state: {} },
     ],
-    layout: (ids) => splitPair('horizontal', 0.22, tabGroup([ids[0]]), splitPair('horizontal', 0.58, tabGroup([ids[1], ids[3]]), tabGroup([ids[2]]))),
+    layout: (ids) =>
+      splitPair(
+        'horizontal',
+        0.22,
+        tabGroup([ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[4] ?? ''].filter(Boolean)),
+        splitPair('horizontal', 0.55, tabGroup([ids[6] ?? '', ids[5] ?? ''].filter(Boolean)), tabGroup([ids[3] ?? ''].filter(Boolean))),
+      ),
   },
   {
     id: 'review',

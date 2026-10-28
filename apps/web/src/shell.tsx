@@ -25,6 +25,7 @@ import { ConsequenceHost } from './consequence'
 import { ModelDraftHost } from './model-draft-ui'
 import { stageModel } from './model-stage'
 import { AttributeDefinitions } from './attribute-definitions'
+import { ModelTableView } from './model-tables'
 import { clearQueuedViewType, peekQueuedViewType } from './attribute-actions'
 import { FeedbackDialog } from './feedback-dialog'
 import { installClientLog } from './feedback-log'
@@ -570,6 +571,63 @@ export function Shell() {
   }, [workspace.data])
 
   useEffect(() => {
+    const openList = (event: Event) => {
+      const key = String((event as CustomEvent<{ key?: string }>).detail?.key ?? '')
+      const surfaceNow = workspaceRef.current
+      const docNow = docRef.current
+      if (!key || !surfaceNow || !docNow) return
+      void (async () => {
+        let views = surfaceNow.views
+        let found = views.find((view) => view.type === 'value_list_values')
+        const title = copy.valueListValues
+        if (!found) {
+          const id = crypto.randomUUID()
+          const created: View = {
+            id,
+            type: 'value_list_values',
+            title,
+            pane: 'right',
+            position: views.length,
+            state: { list_key: key },
+          }
+          await api('/v1/views', {
+            method: 'POST',
+            body: JSON.stringify({ ...created, workspace_id: surfaceNow.id }),
+          })
+          views = [...views, created]
+          found = created
+        } else {
+          const updated = { ...found, state: { ...found.state, list_key: key }, title }
+          await api('/v1/views', {
+            method: 'POST',
+            body: JSON.stringify({ ...updated, workspace_id: surfaceNow.id }),
+          })
+          views = views.map((view) => (view.id === found!.id ? updated : view))
+          found = updated
+        }
+        const nextSurface = { ...surfaceNow, views }
+        workspaceRef.current = nextSurface
+        queryClient.setQueryData(['workspace', surfaceNow.id], nextSurface)
+        const current = docRef.current
+        if (!current || !found) return
+        const lists = views.find((view) => view.type === 'value_lists')
+        placeOverride.current = lists
+          ? { target: lists.id, zone: 'right' }
+          : { zone: 'right' }
+        const result = applyLayoutCommand(current, 'ui.open_view', { id: found.id, zone: 'right' }, {
+          views: views.map((view) => ({ id: view.id, title: view.title, type: view.type })),
+          canonical: canonicalRef.current,
+          place: placeOverride.current,
+        })
+        placeOverride.current = undefined
+        if (result.handled && result.doc !== current) commitDoc(result.doc)
+      })()
+    }
+    window.addEventListener('braian-open-value-list', openList)
+    return () => window.removeEventListener('braian-open-value-list', openList)
+  }, [queryClient])
+
+  useEffect(() => {
     return onUi((event) => {
       if (event.name === 'ui.set_theme') setTheme(event.args.theme === 'light' ? 'light' : 'dark')
       if (event.name === 'ui.open_workspace' && typeof event.args.id === 'string') setWorkspaceId(event.args.id)
@@ -931,6 +989,9 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'graph') return <GraphView session={session} />
   if (view.type === 'history') return <HistoryView session={session} />
   if (view.type === 'class_attributes') return <ClassAttributes session={session} />
+  if (view.type === 'object_types' || view.type === 'link_types' || view.type === 'value_lists' || view.type === 'value_list_values' || view.type === 'units') {
+    return <ModelTableView view={view} />
+  }
   if (view.type === 'data_model') return <DataModel view={view} />
   if (view.type === 'attribute_definitions') return <AttributeDefinitions />
   if (view.type === 'proposal') return <ProposalView session={session} />
