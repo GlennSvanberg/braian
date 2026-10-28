@@ -5382,29 +5382,77 @@ async fn run_operation(
 
 /// When the in-app agent patches an existing object without `base_version`, use
 /// the object's current version at proposal time. Accept still rejects a stale base.
+///
+/// A numeric string (`"3"`) is kept as that version. An invalid type or string is
+/// rejected instead of being overwritten with the head.
 async fn ensure_agent_base_version(state: &AppState, args: &Value) -> Result<Value, Problem> {
-    if args.get("base_version").and_then(Value::as_i64).is_some() {
-        return Ok(args.clone());
+    match parse_provided_base_version(args)? {
+        Some(version) => Ok(with_base_version(args, version)),
+        None => {
+            let Some(id) = args
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|text| Uuid::parse_str(text).ok())
+                .map(ObjectId::from_uuid)
+            else {
+                return Ok(args.clone());
+            };
+            let Some(stored) = state.store.get_object(id).await.map_err(store_status)? else {
+                return Ok(args.clone());
+            };
+            Ok(with_base_version(
+                args,
+                i64::try_from(stored.version).unwrap_or(i64::MAX),
+            ))
+        }
     }
-    let Some(id) = args
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|text| Uuid::parse_str(text).ok())
-        .map(ObjectId::from_uuid)
-    else {
-        return Ok(args.clone());
-    };
-    let Some(stored) = state.store.get_object(id).await.map_err(store_status)? else {
-        return Ok(args.clone());
-    };
+}
+
+fn with_base_version(args: &Value, version: i64) -> Value {
     let mut filled = args.clone();
     if let Some(object) = filled.as_object_mut() {
-        object.insert(
-            "base_version".into(),
-            json!(i64::try_from(stored.version).unwrap_or(i64::MAX)),
-        );
+        object.insert("base_version".into(), json!(version));
     }
-    Ok(filled)
+    filled
+}
+
+/// `Ok(None)` when the field is missing or null (fill from the object head).
+/// `Ok(Some(v))` when the caller already named a version (number or numeric string).
+/// `Err` when the value is present but not an integer.
+fn parse_provided_base_version(args: &Value) -> Result<Option<i64>, Problem> {
+    match args.get("base_version") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => {
+            if let Some(version) = number.as_i64() {
+                return Ok(Some(version));
+            }
+            if let Some(version) = number.as_u64() {
+                return i64::try_from(version)
+                    .map(Some)
+                    .map_err(|_| invalid_base_version());
+            }
+            Err(invalid_base_version())
+        }
+        Some(Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Err(invalid_base_version());
+            }
+            trimmed
+                .parse::<i64>()
+                .map(Some)
+                .map_err(|_| invalid_base_version())
+        }
+        Some(_) => Err(invalid_base_version()),
+    }
+}
+
+fn invalid_base_version() -> Problem {
+    Problem::new(
+        StatusCode::BAD_REQUEST,
+        "invalid_base_version",
+        "base_version must be an integer or a numeric string",
+    )
 }
 
 async fn propose_operation(
@@ -6120,6 +6168,137 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn from_agent_keeps_a_string_base_version_and_rejects_a_bad_one() {
+        if std::env::var_os("BRAIAN_TEST_DATABASE_URL").is_none()
+            && let Ok(text) = std::fs::read_to_string(".env")
+        {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                if std::env::var_os(key).is_none() {
+                    unsafe { std::env::set_var(key, value.trim_matches('"')) };
+                }
+            }
+        }
+        let db = braian_store::testing::TestDb::create().await;
+        let identities =
+            crate::identities(db.store(), "ada:human:token-ada;bot:agent@ada:token-bot")
+                .await
+                .expect("identities");
+        let human = identities
+            .iter()
+            .find(|identity| identity.handle == "ada")
+            .expect("human")
+            .clone();
+        let state = AppState::new(db.store().clone(), identities, None);
+        let defs: braian_model::DefinitionSet =
+            serde_json::from_str(include_str!("../../../testdata/rules/definitions.json"))
+                .expect("defs");
+        state
+            .store
+            .put_definitions(&human.actor, &defs)
+            .await
+            .expect("definitions");
+        state.models.invalidate().await;
+        run_operation(
+            &state,
+            &human,
+            "create_object",
+            &json!({
+                "type": "item",
+                "values": { "sku": "SKU-AGENT-STR", "active": true }
+            }),
+            false,
+        )
+        .await
+        .expect("create");
+        let object_id = state
+            .store
+            .list_object_heads(10)
+            .await
+            .expect("heads")
+            .into_iter()
+            .find(|(_, key, _, _)| key == "SKU-AGENT-STR")
+            .map(|(id, _, _, _)| id.to_string())
+            .expect("created object");
+        let stored = state
+            .store
+            .get_object(ObjectId::from_uuid(
+                Uuid::parse_str(&object_id).expect("uuid"),
+            ))
+            .await
+            .expect("load")
+            .expect("object");
+        let version = stored.version;
+        // A second write bumps the head so a stale string base_version is not the head.
+        run_operation(
+            &state,
+            &human,
+            "patch_object",
+            &json!({
+                "id": object_id,
+                "type": "item",
+                "base_version": version,
+                "values": { "active": false }
+            }),
+            false,
+        )
+        .await
+        .expect("human patch");
+        let stale = version.to_string();
+        let proposed = run_operation(
+            &state,
+            &human,
+            "patch_object",
+            &json!({
+                "id": object_id,
+                "type": "item",
+                "base_version": stale,
+                "values": { "active": true }
+            }),
+            true,
+        )
+        .await
+        .expect("agent patch with string base_version");
+        let proposal_id = proposed["proposal_id"].as_str().expect("proposal_id");
+        let proposal = state
+            .store
+            .proposal(Uuid::parse_str(proposal_id).expect("proposal uuid"))
+            .await
+            .expect("load proposal")
+            .expect("proposal row");
+        assert_eq!(
+            proposal["rows"][0]["base_version"].as_i64(),
+            Some(version as i64),
+            "string base_version must be kept, not replaced with the head: {proposal}"
+        );
+        let refused = run_operation(
+            &state,
+            &human,
+            "patch_object",
+            &json!({
+                "id": object_id,
+                "type": "item",
+                "base_version": "not-a-version",
+                "values": { "active": true }
+            }),
+            true,
+        )
+        .await
+        .expect_err("bad string");
+        assert_eq!(refused.code, "invalid_base_version");
+        assert!(
+            refused.detail.contains("integer") || refused.detail.contains("numeric"),
+            "{refused:?}"
+        );
+    }
+
     #[test]
     fn cursor_round_trips_an_object_id() {
         let id = Uuid::now_v7();
@@ -6226,6 +6405,49 @@ mod tests {
             display_name_text(&json!({"value": "2.4", "unit": "kg"})),
             ""
         );
+    }
+
+    #[test]
+    fn parse_provided_base_version_keeps_numbers_and_numeric_strings() {
+        assert_eq!(
+            parse_provided_base_version(&json!({})).expect("missing"),
+            None
+        );
+        assert_eq!(
+            parse_provided_base_version(&json!({ "base_version": null })).expect("null"),
+            None
+        );
+        assert_eq!(
+            parse_provided_base_version(&json!({ "base_version": 3 })).expect("i64"),
+            Some(3)
+        );
+        assert_eq!(
+            parse_provided_base_version(&json!({ "base_version": "7" })).expect("string"),
+            Some(7)
+        );
+        assert_eq!(
+            parse_provided_base_version(&json!({ "base_version": " 12 " })).expect("trim"),
+            Some(12)
+        );
+        let bad_string = parse_provided_base_version(&json!({ "base_version": "latest" }))
+            .expect_err("non-numeric string");
+        assert_eq!(bad_string.code, "invalid_base_version");
+        let empty = parse_provided_base_version(&json!({ "base_version": "" })).expect_err("empty");
+        assert_eq!(empty.code, "invalid_base_version");
+        let bad_type =
+            parse_provided_base_version(&json!({ "base_version": true })).expect_err("bool");
+        assert_eq!(bad_type.code, "invalid_base_version");
+        let array =
+            parse_provided_base_version(&json!({ "base_version": [1] })).expect_err("array");
+        assert_eq!(array.code, "invalid_base_version");
+    }
+
+    #[test]
+    fn with_base_version_normalizes_a_string_field_to_a_number() {
+        let args = json!({ "id": "x", "base_version": "4", "values": { "active": false } });
+        let filled = with_base_version(&args, 4);
+        assert_eq!(filled["base_version"], json!(4));
+        assert_eq!(filled["values"]["active"], false);
     }
 
     #[test]
