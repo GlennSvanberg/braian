@@ -64,8 +64,7 @@ test('follow-up screenshots', async ({ page }) => {
   await page.getByRole('button', { name: 'Discard' }).click()
 
   await page.setViewportSize({ width: 980, height: 800 })
-  await expect(page.getByTestId('toolbar-more')).toBeVisible()
-  const search = await page.getByTestId('quick-filter').boundingBox()
+    const search = await page.getByTestId('quick-filter').boundingBox()
   const count = await page.getByTestId('row-count').boundingBox()
   if (!search || !count) throw new Error('missing toolbar')
   expect(Math.abs(search.y - count.y)).toBeLessThan(8)

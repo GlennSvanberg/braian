@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { Maximize2, Minimize2, MoreHorizontal, Plus, X } from 'lucide-react'
+import { Maximize2, Minimize2, MoreHorizontal, X } from 'lucide-react'
 import { ViewGlyph } from './chips'
 import { Kbd } from './components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
@@ -399,9 +399,6 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
           </Tooltip>
         ))}
         <div className="pane-chrome">
-          <button type="button" className="icon-btn" aria-label={copy.addView} onClick={() => activeId && frame.onAddView(activeId)}>
-            <Plus size={14} aria-hidden="true" />
-          </button>
           <button
             type="button"
             className="icon-btn"

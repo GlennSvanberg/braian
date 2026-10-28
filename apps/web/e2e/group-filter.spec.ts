@@ -33,13 +33,8 @@ async function resetEnrich(page: Page) {
 }
 
 async function choose(table: Locator, name: string) {
-  const inline = table.locator('.toolbar-actions').getByRole('button', { name, exact: true })
-  if (await inline.count()) {
-    await inline.click()
-    return
-  }
-  await table.getByTestId('toolbar-more').click()
-  await table.page().getByRole('menuitem', { name, exact: true }).click()
+  const inline = table.locator('.toolbar-actions, [data-testid="standard-table-filters"]').getByRole('button', { name, exact: true })
+  await inline.click()
 }
 
 test('selecting a structure group lists the same products as its selection', async ({ page }) => {
@@ -56,15 +51,20 @@ test('selecting a structure group lists the same products as its selection', asy
   await filter.fill('PROD-CHEDDAR')
   await expect(table.getByTestId('object-row').first()).toContainText('PROD-CHEDDAR')
   await expect(table).not.toContainText('no rows')
+  await expect.poll(async () => (await count.textContent()) ?? '').not.toMatch(/^0 /)
+  // Let the 120ms filter debounce settle, then capture a stable count.
+  await page.waitForTimeout(250)
   const grouped = (await count.textContent()) ?? ''
   expect(grouped.startsWith('0 ')).toBeFalsy()
   await page.screenshot({ path: `${shots}/group-dark.png` })
 
   await choose(table, 'All')
+  await filter.fill('')
   await expect(table.getByTestId('object-row').first()).toBeVisible()
   await choose(table, 'Cheese')
   await filter.fill('PROD-CHEDDAR')
   await expect(table.getByTestId('object-row').first()).toContainText('PROD-CHEDDAR')
+  await page.waitForTimeout(250)
   await expect(count).toHaveText(grouped)
 
   await page.getByRole('button', { name: 'Light' }).click()

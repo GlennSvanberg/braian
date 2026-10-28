@@ -119,7 +119,7 @@ test('polish screenshots', async ({ page }) => {
   await expect(page.getByTestId('attribute-table')).toContainText('from Dairy')
   await page.screenshot({ path: `${shots}/class-card-dark.png` })
 
-  await page.getByRole('button', { name: 'Review' }).click()
+  await page.locator('nav.tabs').getByRole('button', { name: /^Review/ }).click()
   await expect(page.getByTestId('proposal')).toBeVisible()
   await page.screenshot({ path: `${shots}/review-dark.png` })
 

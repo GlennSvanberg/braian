@@ -466,6 +466,13 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   vertical-align: 1px;
 }
 
+.standard-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.standard-table-bar .row-count { margin-left: auto; color: var(--muted); font-size: 12px; }
 .table-wrap {
   flex: 1 1 auto;
   min-height: 0;

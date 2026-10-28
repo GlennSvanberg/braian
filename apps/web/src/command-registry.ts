@@ -453,27 +453,27 @@ export const registryCommands: RegistryCommand[] = [
   {
     id: 'table:mass-edit',
     title: copy.massEdit,
-    contexts: ['row', 'cell', 'table-header'],
+    contexts: ['row', 'cell', 'table-header', 'empty'],
     group: 'views',
-    palette: false,
+    keywords: ['status', 'ok', 'mass'],
   },
   {
     id: 'table:filter-by',
     title: copy.filterBy,
-    contexts: ['row', 'cell', 'table-header'],
+    contexts: ['row', 'cell', 'table-header', 'empty'],
     group: 'views',
     keywords: ['filter'],
   },
   {
     id: 'table:export',
     title: copy.export,
-    contexts: ['row', 'cell', 'table-header'],
+    contexts: ['row', 'cell', 'table-header', 'empty'],
     group: 'views',
   },
   {
     id: 'table:export-columns',
     title: copy.exportColumns,
-    contexts: ['row', 'cell', 'table-header'],
+    contexts: ['row', 'cell', 'table-header', 'empty'],
     group: 'views',
   },
   {
