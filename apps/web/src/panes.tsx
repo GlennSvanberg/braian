@@ -300,12 +300,12 @@ export function ObjectTable({
     const described = (id: string) => {
       const row = known.find((item) => item.id === id)
       return row
-        ? { id: row.id, key: row.key, name: row.name, type: row.type }
-        : { id, key: '', name: '', type: '' }
+        ? { id: row.id, key: row.key, name: row.name, type: row.type, version: row.version }
+        : { id, key: '', name: '', type: '', version: '' }
     }
     // One active row (arrow or click). Checkbox ranges stay local; the agent sees the active row.
     const marked = activeRow
-      ? [{ id: activeRow.id, key: activeRow.key, name: activeRow.name, type: activeRow.type }]
+      ? [{ id: activeRow.id, key: activeRow.key, name: activeRow.name, type: activeRow.type, version: activeRow.version }]
       : selected.length > 0
         ? selected.map(described)
         : session.objectId
@@ -1329,6 +1329,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
       key: recordNumber(stored) || String(object.data.key ?? ''),
       name: recordTitle(stored, language),
       type: String(object.data.type ?? ''),
+      version: String(object.data.version ?? ''),
     })
   }, [session.objectId, session.language, object.data])
   if (!session.objectId) {

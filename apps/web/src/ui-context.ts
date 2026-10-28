@@ -1,4 +1,4 @@
-export type SelectedObject = { id: string; key: string; name: string; type: string }
+export type SelectedObject = { id: string; key: string; name: string; type: string; version?: string }
 
 export type UiPane = { id: string; type: string; title: string; focused: boolean }
 
@@ -80,6 +80,7 @@ export function enrichSelection(object: SelectedObject) {
     key: object.key || previous?.key || '',
     name: object.name || previous?.name || '',
     type: object.type || previous?.type || '',
+    version: object.version || previous?.version || '',
   })
 }
 
@@ -91,6 +92,7 @@ function mergeObject(object: SelectedObject): SelectedObject {
     key: object.key || extra.key,
     name: object.name || extra.name,
     type: object.type || extra.type,
+    version: object.version || extra.version || '',
   }
 }
 
