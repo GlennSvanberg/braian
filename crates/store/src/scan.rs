@@ -181,6 +181,24 @@ impl Store {
         tx.commit().await?;
         Ok(total)
     }
+
+    /// Attribute values one link away for the given object ids.
+    ///
+    /// Keys match export hop slots: `{link_type_id}:{out|in|link}:{attribute_id}`.
+    /// Used by the object-table path-values batch so the grid does not N+1.
+    pub async fn hop_values_for(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<BTreeMap<Uuid, BTreeMap<String, Vec<Value>>>, Error> {
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut client = self.pool().get().await?;
+        let tx = client.build_transaction().read_only(true).start().await?;
+        let hops = link_hop_values(&tx, self.form(), ids).await?;
+        tx.commit().await?;
+        Ok(hops)
+    }
 }
 
 /// Exact key, or the list-filter contains pattern. `None` leaves the predicate off.
@@ -248,7 +266,7 @@ async fn link_peer_keys(
     Ok(peers)
 }
 
-async fn link_hop_values(
+pub(crate) async fn link_hop_values(
     tx: &tokio_postgres::Transaction<'_>,
     form: StorageForm,
     ids: &[Uuid],

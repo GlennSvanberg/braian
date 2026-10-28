@@ -21,6 +21,7 @@ mod links;
 mod model_draft;
 mod model_proposal;
 mod objects;
+mod path_values;
 mod platform;
 mod problem;
 mod state;
@@ -138,6 +139,7 @@ pub fn into_router(state: AppState) -> axum::Router {
         )
         .route("/v1/objects", post(objects::create_object))
         .route("/v1/objects:batchGet", post(objects::batch_get))
+        .route("/v1/objects:pathValues", post(path_values::path_values))
         .route(
             "/v1/objects/{id}",
             get(objects::get_object)

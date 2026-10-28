@@ -17,7 +17,9 @@ import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, source
 import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
 import { FieldPicker } from './field-picker'
-import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, pathHead, prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+import { readPathFromDoc, summarizePathValues } from './path-cell'
+import { fetchPathValues } from './path-values'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
@@ -773,6 +775,13 @@ export function ObjectTable({
     queryFn: () => api<Json>('/v1/proposals'),
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
+  const hopPaths = shown.filter((id) => isHopPath(id))
+  const pageRowIds = Array.from(byIndex.values()).map((row) => row.id)
+  const pathValues = useQuery({
+    queryKey: ['path-values', typeKey, hopPaths, pageRowIds],
+    queryFn: () => fetchPathValues({ ids: pageRowIds, paths: hopPaths, typeKey }),
+    enabled: hopPaths.length > 0 && pageRowIds.length > 0,
+  })
   const cell = (row: ObjRow, id: string) => {
     if (id === 'key' || id === 'number') return row.key
     if (id === 'name') {
@@ -787,9 +796,19 @@ export function ObjectTable({
     if (id === 'type') return <MetaChip>{typeLabel(defs.data, row.type, uiLanguage)}</MetaChip>
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
-    // Hop values need linked objects; step 3D loads them. Keep the column without fetching.
-    if (isHopPath(id)) return <span className="muted" data-testid={`hop-cell-${id}`}>—</span>
-    return readIndexed(row.doc, defs.data, pathHead(id))
+    if (isHopPath(id)) {
+      const values = pathValues.data?.values?.[row.id]?.[id]
+      const summary = summarizePathValues(values)
+      if (!summary.text) {
+        return <span className="muted" data-testid={`hop-cell-${id}`} />
+      }
+      return (
+        <span data-testid={`hop-cell-${id}`} title={summary.title}>
+          {summary.text}
+        </span>
+      )
+    }
+    return readPathFromDoc(row.doc, defs.data, id)
   }
   const toggleField = (path: string) => {
     const shownNow = order.includes(path) && !hidden.includes(path)
@@ -1050,6 +1069,7 @@ export function ObjectTable({
             setMoving(null)
             session.push(copy.saved)
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
+            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
           }}
         />
       ) : null}
@@ -1309,6 +1329,7 @@ function NewObject({
             session.setObjectId(String(created.id))
             session.push(`${copy.saved} ${number}`)
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
+            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
           })
           .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
       }}
@@ -1440,6 +1461,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         session.push(`${copy.saved} ${label}`)
         void queryClient.invalidateQueries({ queryKey: ['object', session.objectId] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
+            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
       })
       .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
   }
@@ -2138,6 +2160,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
       void queryClient.invalidateQueries({ queryKey: ['proposal'] })
       void queryClient.invalidateQueries({ queryKey: ['object'] })
       void queryClient.invalidateQueries({ queryKey: ['objects'] })
+            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
     },
     onError: (reason: unknown) => {
       const message = reason instanceof Error ? reason.message : copy.validation
