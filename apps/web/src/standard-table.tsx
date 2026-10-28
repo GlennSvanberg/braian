@@ -6,8 +6,8 @@ import { Kbd } from './components/ui/kbd'
 
 export type StandardTableChromeProps = {
   /** Accessible name for the plus control that creates a new row. */
-  newRowLabel: string
-  onNewRow: () => void
+  newRowLabel?: string
+  onNewRow?: () => void
   rowCount?: number
   /** Generic text filter shared by every table that opts in. */
   filterValue?: string
@@ -51,15 +51,17 @@ export function StandardTableChrome({
             <Kbd>/</Kbd>
           </label>
         ) : null}
-        <button
-          type="button"
-          className="icon-btn"
-          data-testid="table-add-row"
-          aria-label={newRowLabel}
-          onClick={onNewRow}
-        >
-          <Plus size={14} aria-hidden="true" />
-        </button>
+        {onNewRow ? (
+          <button
+            type="button"
+            className="icon-btn"
+            data-testid="table-add-row"
+            aria-label={newRowLabel ?? copy.newRow}
+            onClick={onNewRow}
+          >
+            <Plus size={14} aria-hidden="true" />
+          </button>
+        ) : null}
         {reviewVisible && onReview ? (
           <button type="button" className="primary" data-testid="review-and-save" onClick={onReview}>
             {copy.reviewAndSave}
