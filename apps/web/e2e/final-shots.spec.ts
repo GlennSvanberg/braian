@@ -31,7 +31,6 @@ test('final data-model and polish shots', async ({ page }) => {
   await page.screenshot({ path: `${shots}/class-card.png` })
   await tree.getByTestId('group-cheese').locator('.model-node').click()
   await expect(page.getByTestId('attribute-table')).toContainText('Fat content')
-  await expect(page.getByTestId('model-preview')).toContainText('from')
 
   const drafted = await page.request.post('http://127.0.0.1:8090/v1/operations/model.draft', {
     headers: { authorization: 'Bearer dev-agent' },

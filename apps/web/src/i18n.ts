@@ -203,7 +203,6 @@ export const copy = {
   collapse: 'Collapse',
   group: 'Group',
   send: 'Send',
-  model: 'Model',
   before: 'Before',
   after: 'After',
   assortment: 'Selection',

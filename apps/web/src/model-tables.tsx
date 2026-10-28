@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, api, textValue, type Json } from './api'
+import { api, textValue, type Json } from './api'
 import { copy, uiLanguage } from './i18n'
 import { objectTypes } from './model-view'
 import { onDraftChange, setModelFocus, stageModel } from './model-stage'
@@ -111,6 +111,8 @@ export function ObjectTypesTable() {
       newRowLabel={copy.objectTypes}
       filterValue={filter}
       onFilterChange={setFilter}
+      menuContext={(row) => (row?.key ? 'model-type' : 'model')}
+      getMenuTarget={(row) => ({ typeKey: row?.key || undefined })}
       onActivateRow={(row) => {
         if (!row.key) return
         chooseModelSelection({ kind: 'type', typeKey: row.key })
@@ -204,6 +206,8 @@ export function LinkTypesTable() {
       newRowLabel={copy.linkTypes}
       filterValue={filter}
       onFilterChange={setFilter}
+      menuContext={(row) => (row?.key ? 'model-link' : 'model')}
+      getMenuTarget={(row) => ({ typeKey: row?.key || undefined })}
       onActivateRow={(row) => {
         if (!row.key) return
         setModelFocus({ kind: 'type', key: row.key })
@@ -290,6 +294,8 @@ export function ValueListsTable({ onOpenList }: { onOpenList?: (key: string) => 
       newRowLabel={copy.valueLists}
       filterValue={filter}
       onFilterChange={setFilter}
+      menuContext={(row) => (row?.key ? 'model-list' : 'model')}
+      getMenuTarget={(row) => ({ listKey: row?.key || undefined })}
       onActivateRow={(row) => {
         if (!row.key) return
         setModelFocus({ kind: 'value_list', key: row.key })
@@ -362,6 +368,11 @@ export function ValueListValuesTable({ listKey }: { listKey: string }) {
       newRowLabel={copy.valueListValues}
       filterValue={filter}
       onFilterChange={setFilter}
+      menuContext={(row) => (row?.code ? 'model-option' : 'model-list')}
+      getMenuTarget={(row) => ({
+        listKey: row?.listKey || listKey,
+        optionCode: row?.code || undefined,
+      })}
       onReviewAndSave={async () => {
         for (const row of Object.values(draftRows)) {
           const existing = rows.some((item) => item.id === row.id)
@@ -457,6 +468,15 @@ export function UnitsTable() {
       newRowLabel={copy.unitsView}
       filterValue={filter}
       onFilterChange={setFilter}
+      menuContext={(row) => {
+        if (row?.code) return 'model-unit'
+        if (row?.family) return 'model-family'
+        return 'model'
+      }}
+      getMenuTarget={(row) => ({
+        familyKey: row?.family || undefined,
+        unitCode: row?.code || undefined,
+      })}
       onReviewAndSave={async () => {
         for (const row of Object.values(draftRows)) {
           const existing = rows.some((item) => item.id === row.id)

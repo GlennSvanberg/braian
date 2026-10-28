@@ -35,6 +35,7 @@ import { SharedContextMenuHost } from './shared-context-menu'
 import { requestNewSelection } from './assortment-filter'
 import { dispatchUi } from './ui-bus'
 import { registerCommandRunner, runCommand } from './command-registry'
+import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
@@ -310,6 +311,7 @@ export function Shell() {
       registerCommandRunner('columns:hide', (target) => {
         if (target.column) dispatchUi('ui.hide_column', { column: String(target.column) })
       }),
+      registerModelCommandRunners(),
     ]
     const onCommand = (event: Event) => {
       const detail = (event as CustomEvent<{ id: string; target: Record<string, unknown> }>).detail

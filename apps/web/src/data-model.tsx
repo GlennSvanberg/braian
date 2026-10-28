@@ -19,10 +19,9 @@ import {
 import { structureCaption } from './graph-scene'
 import { StructureSection } from './structure-tree'
 import { StateNote } from './states'
-import { onDraftChange, openModelDialog, setModelFocus, stageModel } from './model-stage'
+import { onDraftChange, setModelFocus, stageModel } from './model-stage'
 import { chooseModelSelection, getModelSelection, getPreviewType, setPreviewType, subscribeModelSelection } from './model-selection'
 import { openSharedContextMenu } from './shared-context-menu'
-import { registerCommandRunner } from './command-registry'
 
 type View = { state: Json }
 
@@ -77,13 +76,6 @@ function StructuresPane({ defs }: { defs: Json | undefined }) {
   )
 }
 
-type NavMenu =
-  | { x: number; y: number; kind: 'type'; key: string }
-  | { x: number; y: number; kind: 'link'; key: string }
-  | { x: number; y: number; kind: 'list'; key: string }
-  | { x: number; y: number; kind: 'option'; list: string; code: string }
-  | { x: number; y: number; kind: 'family'; key: string }
-  | { x: number; y: number; kind: 'unit'; family: string; code: string }
 
 function AttributeTable({ defs }: { defs: Json | undefined }) {
   const { selection } = useModelSelection()

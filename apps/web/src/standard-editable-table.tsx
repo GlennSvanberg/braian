@@ -5,8 +5,11 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react'
+import type { CommandTarget, MenuContext } from './command-registry'
+import { openSharedContextMenu } from './shared-context-menu'
 import { StandardTableChrome } from './standard-table'
 import { copy } from './i18n'
 
@@ -25,7 +28,11 @@ export type StandardColumn<T> = {
   /** Render display cell; defaults to String(read(row)). */
   display?: (row: T) => ReactNode
   truncate?: boolean
+  /** Optional test id for the cell content, used by attribute definitions. */
+  cellTestId?: (row: T) => string | undefined
 }
+
+export type EditRequest = { rowId: string; columnId: string }
 
 export type StandardEditableTableProps<T extends { id: string }> = {
   columns: Array<StandardColumn<T>>
@@ -48,8 +55,17 @@ export type StandardEditableTableProps<T extends { id: string }> = {
   editable?: boolean
   emptyLabel?: string
   getRowTestId?: (row: T) => string
+  getRowKeyAttr?: (row: T) => string | undefined
   /** Extra toolbar content under the chrome bar. */
   belowBar?: ReactNode
+  /** Per-row edit gate (e.g. lock standard attribute keys). */
+  canEdit?: (row: T, column: StandardColumn<T>) => boolean
+  /** Shared context menu: context for a row, or empty surface when row is null. */
+  menuContext?: MenuContext | ((row: T | null) => MenuContext)
+  getMenuTarget?: (row: T | null) => CommandTarget
+  /** Imperative edit request (rename commands). */
+  editRequest?: EditRequest | null
+  onEditRequestHandled?: () => void
 }
 
 type EditCell = { rowId: string; columnId: string }
@@ -58,6 +74,7 @@ type EditCell = { rowId: string; columnId: string }
  * Generic editable grid on top of StandardTableChrome.
  * Plus adds an inline draft row; dirty drafts show Review and save.
  * Keyboard: Enter/F2 edit, Esc cancel, Tab next cell.
+ * Right-click / Shift+F10 / ContextMenu open the shared command menu when configured.
  */
 export function StandardEditableTable<T extends { id: string }>({
   columns,
@@ -75,7 +92,13 @@ export function StandardEditableTable<T extends { id: string }>({
   editable = true,
   emptyLabel = copy.noRows,
   getRowTestId,
+  getRowKeyAttr,
   belowBar,
+  canEdit,
+  menuContext,
+  getMenuTarget,
+  editRequest,
+  onEditRequestHandled,
 }: StandardEditableTableProps<T>) {
   const [editing, setEditing] = useState<EditCell | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -108,12 +131,28 @@ export function StandardEditableTable<T extends { id: string }>({
     [draftRows, onDraftRowsChange],
   )
 
+  const columnEditable = (row: T, column: StandardColumn<T>) => {
+    if (!editable || column.editable === false || column.type === 'readonly' || !column.write) return false
+    if (canEdit && !canEdit(row, column)) return false
+    return true
+  }
+
   const beginEdit = (row: T, column: StandardColumn<T>) => {
-    if (!editable || column.editable === false || column.type === 'readonly' || !column.write) return
+    if (!columnEditable(row, column)) return
     setEditing({ rowId: row.id, columnId: column.id })
     const raw = column.read(row)
     setEditValue(raw === null || raw === undefined ? '' : String(raw))
   }
+
+  useEffect(() => {
+    if (!editRequest) return
+    const row = merged.find((item) => item.id === editRequest.rowId)
+    const column = columns.find((item) => item.id === editRequest.columnId)
+    if (row && column) beginEdit(row, column)
+    onEditRequestHandled?.()
+    // intentionally only when editRequest identity changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequest])
 
   const commitEdit = () => {
     if (!editing) return
@@ -127,10 +166,11 @@ export function StandardEditableTable<T extends { id: string }>({
 
   const cancelEdit = () => setEditing(null)
 
-  const editableColumns = columns.filter((column) => column.editable !== false && column.type !== 'readonly' && column.write)
+  const editableColumnsFor = (row: T) => columns.filter((column) => columnEditable(row, column))
 
   const moveEdit = (row: T, column: StandardColumn<T>, delta: number) => {
     commitEdit()
+    const editableColumns = editableColumnsFor(row)
     const index = editableColumns.findIndex((item) => item.id === column.id)
     const nextCol = editableColumns[index + delta]
     if (nextCol) {
@@ -139,15 +179,17 @@ export function StandardEditableTable<T extends { id: string }>({
     }
     const rowIndex = filtered.findIndex((item) => item.id === row.id)
     const nextRow = filtered[rowIndex + (delta > 0 ? 1 : -1)]
-    const wrapCol = delta > 0 ? editableColumns[0] : editableColumns.at(-1)
-    if (nextRow && wrapCol) queueMicrotask(() => beginEdit(nextRow, wrapCol))
+    if (!nextRow) return
+    const wrapCols = editableColumnsFor(nextRow)
+    const wrapCol = delta > 0 ? wrapCols[0] : wrapCols.at(-1)
+    if (wrapCol) queueMicrotask(() => beginEdit(nextRow, wrapCol))
   }
 
   const onNewRow = () => {
     if (!createDraftRow || !onDraftRowsChange) return
     const row = createDraftRow()
     onDraftRowsChange({ ...draftRows, [row.id]: row })
-    const first = editableColumns[0]
+    const first = editableColumnsFor(row)[0]
     queueMicrotask(() => {
       onActivateRow?.(row)
       if (first) beginEdit(row, first)
@@ -170,23 +212,62 @@ export function StandardEditableTable<T extends { id: string }>({
     return () => window.removeEventListener('keydown', onKey)
   }, [editable, dirty, onReviewAndSave])
 
+  const resolveContext = (row: T | null): MenuContext | null => {
+    if (!menuContext) return null
+    return typeof menuContext === 'function' ? menuContext(row) : menuContext
+  }
+
+  const openMenu = (row: T | null, x: number, y: number) => {
+    const context = resolveContext(row)
+    if (!context) return
+    if (row) onActivateRow?.(row)
+    openSharedContextMenu({
+      context,
+      x,
+      y,
+      target: getMenuTarget?.(row) ?? {},
+    })
+  }
+
+  const onRowContextMenu = (event: ReactMouseEvent<HTMLElement>, row: T) => {
+    if (!menuContext) return
+    event.preventDefault()
+    event.stopPropagation()
+    openMenu(row, event.clientX, event.clientY)
+  }
+
+  const onSurfaceContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    if (!menuContext) return
+    if ((event.target as HTMLElement).closest('[role="row"]')) return
+    event.preventDefault()
+    openMenu(null, event.clientX, event.clientY)
+  }
+
   const onRowKey = (event: ReactKeyboardEvent<HTMLElement>, row: T) => {
-    if (editing) return
-    if (event.key === 'Enter' || event.key === 'F2') {
-      const column = editableColumns[0]
-      if (!column) return
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      if (!menuContext) return
       event.preventDefault()
-      beginEdit(row, column)
+      const box = event.currentTarget.getBoundingClientRect()
+      openMenu(row, box.left, box.bottom)
       return
     }
-    if (event.key === 'Enter') onActivateRow?.(row)
+    if (editing) return
+    if (event.key === 'Enter' || event.key === 'F2') {
+      const column = editableColumnsFor(row)[0]
+      if (!column) {
+        if (event.key === 'Enter') onActivateRow?.(row)
+        return
+      }
+      event.preventDefault()
+      beginEdit(row, column)
+    }
   }
 
   return (
     <StandardTableChrome
       testId={testId}
       newRowLabel={newRowLabel}
-      onNewRow={onNewRow}
+      onNewRow={createDraftRow && onDraftRowsChange ? onNewRow : undefined}
       rowCount={filtered.length}
       filterValue={filterValue}
       onFilterChange={onFilterChange}
@@ -194,7 +275,12 @@ export function StandardEditableTable<T extends { id: string }>({
       onReview={onReview}
     >
       {belowBar}
-      <div className="standard-grid" role="grid" aria-rowcount={filtered.length}>
+      <div
+        className="standard-grid"
+        role="grid"
+        aria-rowcount={filtered.length}
+        onContextMenu={onSurfaceContextMenu}
+      >
         <div className="standard-grid-head" role="row">
           {columns.map((column) => (
             <div
@@ -220,19 +306,23 @@ export function StandardEditableTable<T extends { id: string }>({
               tabIndex={0}
               data-testid={getRowTestId?.(row) ?? 'standard-grid-row'}
               data-row-id={row.id}
+              data-key={getRowKeyAttr?.(row)}
               data-draft={isDraft ? 'true' : undefined}
               onClick={() => onActivateRow?.(row)}
+              onContextMenu={(event) => onRowContextMenu(event, row)}
               onKeyDown={(event) => onRowKey(event, row)}
             >
               {columns.map((column) => {
                 const isEditing = editing?.rowId === row.id && editing.columnId === column.id
                 const raw = column.read(row)
                 const title = raw === null || raw === undefined ? '' : String(raw)
+                const cellTestId = column.cellTestId?.(row)
                 return (
                   <div
                     key={column.id}
                     className={column.truncate ? 'standard-grid-cell truncate' : 'standard-grid-cell'}
                     role="gridcell"
+                    data-column={column.id}
                     style={column.width ? { width: column.width, flex: 'none' } : undefined}
                     title={column.truncate ? title : undefined}
                     onDoubleClick={() => beginEdit(row, column)}
@@ -243,7 +333,7 @@ export function StandardEditableTable<T extends { id: string }>({
                           ref={(node) => {
                             inputRef.current = node
                           }}
-                          data-testid="standard-cell-editor"
+                          data-testid={cellTestId ?? 'standard-cell-editor'}
                           value={editValue}
                           onChange={(event) => setEditValue(event.target.value)}
                           onBlur={commitEdit}
@@ -272,7 +362,7 @@ export function StandardEditableTable<T extends { id: string }>({
                             inputRef.current = node
                           }}
                           type="checkbox"
-                          data-testid="standard-cell-editor"
+                          data-testid={cellTestId ?? 'standard-cell-editor'}
                           checked={editValue === 'true'}
                           onChange={(event) => {
                             const next = event.target.checked ? 'true' : 'false'
@@ -296,7 +386,7 @@ export function StandardEditableTable<T extends { id: string }>({
                           ref={(node) => {
                             inputRef.current = node
                           }}
-                          data-testid="standard-cell-editor"
+                          data-testid={cellTestId ?? 'standard-cell-editor'}
                           type={column.type === 'number' ? 'number' : column.type === 'date' ? 'date' : column.type === 'datetime' ? 'datetime-local' : 'text'}
                           value={editValue}
                           onChange={(event) => setEditValue(event.target.value)}
@@ -316,11 +406,11 @@ export function StandardEditableTable<T extends { id: string }>({
                         />
                       )
                     ) : column.display ? (
-                      column.display(row)
+                      <span data-testid={cellTestId}>{column.display(row)}</span>
                     ) : column.type === 'boolean' ? (
-                      raw === true ? copy.yes : raw === false ? '—' : '—'
+                      <span data-testid={cellTestId}>{raw === true ? copy.yes : '—'}</span>
                     ) : (
-                      title || '—'
+                      <span data-testid={cellTestId}>{title || '—'}</span>
                     )}
                   </div>
                 )
