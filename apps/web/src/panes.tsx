@@ -301,7 +301,7 @@ export function ObjectTable({
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
-    // sessionStorage bridges reload races; vitest shares one jsdom store across cases.
+    // sessionStorage bridges reload races; cleared on Sign in. Skip under vitest.
     let cachedDoc: ColumnPrefsDocument | null = null
     if (import.meta.env.MODE !== "test") {
       try {
@@ -311,21 +311,14 @@ export function ObjectTable({
         cachedDoc = null
       }
     }
+    const fromCache = cachedDoc
+      ? prefsToOrderHidden({ document: cachedDoc }, systemColumns, typeKey, defs.data)
+      : null
     const serverApplied = prefs.isSuccess
       ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
       : null
-    const serverHasColumns = Boolean(
-      prefs.isSuccess &&
-        prefs.data &&
-        typeof prefs.data === "object" &&
-        Array.isArray((prefs.data as { document?: { columns?: unknown[] } }).document?.columns) &&
-        ((prefs.data as { document?: { columns?: unknown[] } }).document?.columns?.length ?? 0) > 0,
-    )
-    const fromCache =
-      !serverHasColumns && cachedDoc
-        ? prefsToOrderHidden({ document: cachedDoc }, systemColumns, typeKey, defs.data)
-        : null
-    const applied = (serverHasColumns ? serverApplied : null) ?? fromCache ?? serverApplied
+    // Prefer the tab-local cache after a reload; fall back to the server document.
+    const applied = fromCache ?? serverApplied
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
@@ -360,6 +353,11 @@ export function ObjectTable({
     // Queue immediately so beforeunload/keepalive can flush even if reload wins the race
     // against a debounced timer (Brand disappearing after a column change).
     pendingPrefs.current = { snapshot, viewId: view.id, document }
+    try {
+      sessionStorage.setItem(prefsCacheKey(view.id), JSON.stringify(document))
+    } catch {
+      /* private mode */
+    }
     if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
     prefsSaveTimer.current = setTimeout(() => {
       prefsSaveTimer.current = null
