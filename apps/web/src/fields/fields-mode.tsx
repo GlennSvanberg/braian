@@ -85,8 +85,10 @@ type Props = {
   onClose: () => void
   onToggleColumn: (column: ViewColumn) => void
   onReplaceColumn: (previousId: string, next: ViewColumn) => void
-  /** Specific… options for a leaf after a many-link (search by id/number/name/gtin). */
+  /** Linked peers currently visible in the table (preferred in Specific…). */
   peerOptionsForField: (leafId: string, query: string) => PeerPickOption[]
+  /** Server search for Specific… (debounced). */
+  searchPeersForField?: (leafId: string, query: string) => Promise<PeerPickOption[]>
 }
 
 function rootFrame(fields: FieldDef[]): FieldsFrame {
@@ -214,10 +216,13 @@ function activeChoiceSubtitle(
  * Fields › mode for the Ctrl+K palette (prototype).
  * Enter toggles/applies and keeps the palette on the same level; Esc closes.
  */
-export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleColumn, onReplaceColumn, peerOptionsForField }: Props) {
+export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleColumn, onReplaceColumn, peerOptionsForField, searchPeersForField }: Props) {
   const initial = open.kind === 'edit' ? framesForEdit(open.column, catalog) : [rootFrame(catalog)]
   const [stack, setStack] = useState<StackFrame[]>(initial)
   const [query, setQuery] = useState('')
+  // Survives Backspace/pop so Edit field cannot accidentally onToggle a duplicate.
+  const [editingColumn, setEditingColumn] = useState<ViewColumn | null>(open.kind === 'edit' ? open.column : null)
+  const [remotePeers, setRemotePeers] = useState<PeerPickOption[]>([])
   const columnsRef = useRef(columns)
   columnsRef.current = columns
   /** Arm outside-dismiss after mount so the opening click cannot close us (Playwright retry / sync paint). */
@@ -232,6 +237,9 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       dismissArmed.current = false
     }
   }, [])
+  useEffect(() => {
+    setEditingColumn(open.kind === 'edit' ? open.column : null)
+  }, [open])
 
   /** Index of the option/field that already has a column — used when drilling so focus lands on the check. */
   function focusIndexForQualify(
@@ -351,9 +359,10 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         .map((option) => {
           const drill = cardinalityDrills || Boolean(option.drill)
           let checked = false
-          if (top.editing) {
+          const editingHit = editingColumn ?? top.editing
+          if (editingHit) {
             // Edit field…: check must reflect THIS column only, not sibling hop columns.
-            const current = top.editing.qualifiers.find((q) => q.kind === top.step.kind)
+            const current = editingHit.qualifiers.find((q) => q.kind === top.step.kind)
             checked = current?.optionId === option.id
           } else {
             checked =
@@ -377,10 +386,16 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         })
     }
 
-    // Re-query peers on every keystroke so Specific… is not stuck on a snapshot
-    // taken before search finished (or while the field filter still held "net").
-    const live = peerOptionsForField(top.pendingLeaf.id, query)
-    return live.map((option) => ({
+    // Linked peers from the current view first, then debounced server hits.
+    const linked = peerOptionsForField(top.pendingLeaf.id, query)
+    const seen = new Set(linked.map((option) => option.id))
+    const merged = [...linked]
+    for (const option of remotePeers) {
+      if (seen.has(option.id)) continue
+      seen.add(option.id)
+      merged.push(option)
+    }
+    return merged.map((option) => ({
       id: option.id,
       title: option.label,
       subtitle: option.subtitle,
@@ -396,7 +411,28 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         ]).length > 0,
       run: () => activateSpecific(option.pickValue, option.shortLabel, top),
     }))
-  }, [top, query, columns, peerOptionsForField])
+  }, [top, query, columns, peerOptionsForField, remotePeers, editingColumn])
+
+  useEffect(() => {
+    if (top.kind !== 'specific' || !searchPeersForField) {
+      setRemotePeers([])
+      return
+    }
+    let cancelled = false
+    const handle = window.setTimeout(() => {
+      void searchPeersForField(top.pendingLeaf.id, query)
+        .then((options) => {
+          if (!cancelled) setRemotePeers(options)
+        })
+        .catch(() => {
+          if (!cancelled) setRemotePeers([])
+        })
+    }, 200)
+    return () => {
+      cancelled = true
+      window.clearTimeout(handle)
+    }
+  }, [top, query, searchPeersForField])
 
 
   function restoreIndexAfterPop(parent: StackFrame, leaving: StackFrame): number {
@@ -564,7 +600,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
             applied: frame.editing!.qualifiers,
             pendingLeaf: leaf,
             crumbs: [...frame.crumbs, 'Specific'],
-            editing: frame.editing,
+            editing: editingColumn ?? frame.editing,
           },
         ])
         setQuery('')
@@ -611,21 +647,16 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
     ]
 
     // Edit-in-place: swap this qualifier on the existing column and stay here
-    if (frame.editing) {
-      const updated = withReplacedQualifier(frame.editing, {
+    const editing = editingColumn ?? frame.editing
+    if (editing) {
+      const updated = withReplacedQualifier(editing, {
         kind: frame.step.kind,
         optionId: option.id,
         label: option.label,
       }, catalog)
-      const previousId =
-        columns.find((col) => col.id === frame.editing!.id)?.id
-        ?? columns.find(
-          (col) =>
-            col.path === frame.editing!.path
-            && col.fieldPath.join('>') === frame.editing!.fieldPath.join('>'),
-        )?.id
-        ?? frame.editing.id
+      const previousId = columns.find((col) => col.id === editing.id)?.id ?? editing.id
       onReplaceColumn(previousId, updated)
+      setEditingColumn(updated)
       setQuery('')
       setStack((prev) => {
         const copy = [...prev]
@@ -716,8 +747,11 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
     const nextApplied: AppliedQualifier[] = [...frame.applied.filter((item) => item.kind !== 'cardinality'), chosen]
     const optionIndex = frame.options.findIndex((item) => item.pickValue === value || item.id === value)
 
-    if (frame.editing) {
-      onReplaceColumn(frame.editing.id, withReplacedQualifier(frame.editing, chosen, catalog))
+    const editingSpecific = editingColumn ?? frame.editing
+    if (editingSpecific) {
+      const updated = withReplacedQualifier(editingSpecific, chosen, catalog)
+      onReplaceColumn(editingSpecific.id, updated)
+      setEditingColumn(updated)
       setQuery('')
       setActive(optionIndex >= 0 ? optionIndex : 0)
       return

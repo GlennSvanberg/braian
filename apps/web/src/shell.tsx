@@ -482,7 +482,12 @@ export function Shell() {
         && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName))
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
+        event.stopPropagation()
         setPaletteMode('list')
+        // Steal focus from Detail / other inputs so the next keystroke hits the palette.
+        queueMicrotask(() => {
+          document.querySelector<HTMLInputElement>('[data-testid="palette-input"], [data-testid="fields-mode-input"]')?.focus()
+        })
         return
       }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
@@ -548,8 +553,8 @@ export function Shell() {
         applyRef.current('zoom', {})
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [workspaces.data, defs.data, feedbackEnabled])
 
   useEffect(() => {

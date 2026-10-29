@@ -39,6 +39,9 @@ pub enum PathInput {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PathSpec {
     pub path: String,
+    /// Optional client column id used as the response map key (cardinality/unit/lang).
+    #[serde(default)]
+    pub key: Option<String>,
     #[serde(default)]
     pub cardinality: Option<String>,
     #[serde(default)]
@@ -74,7 +77,7 @@ pub struct PathValueEntry {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PathValuesResponse {
-    /// `object_id → path_text → display values` (one entry per linked peer when a hop has many).
+    /// `object_id → path key (column id or path text) → display values`.
     pub values: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Richer entries with peer ids and conversion markers.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -130,10 +133,11 @@ pub async fn path_values(
     let type_id = wire::resolve_type(&cached.model, type_token)?;
     let mut resolved = Vec::with_capacity(body.paths.len());
     for input in &body.paths {
-        let (text, cardinality, peer_id, unit) = match input {
-            PathInput::Text(text) => (text.as_str(), None, None, None),
+        let (text, response_key, cardinality, peer_id, unit) = match input {
+            PathInput::Text(text) => (text.as_str(), None, None, None, None),
             PathInput::Spec(spec) => (
                 spec.path.as_str(),
+                spec.key.as_deref(),
                 spec.cardinality.as_deref(),
                 spec.peer_id,
                 spec.unit.as_deref(),
@@ -157,6 +161,7 @@ pub async fn path_values(
         let labels = option_labels(&cached.defs, path.attribute, lang);
         resolved.push(ResolvedPath {
             text: text.to_owned(),
+            key: response_key.map(str::to_owned),
             path,
             labels,
             language_dependent,
@@ -309,12 +314,16 @@ pub async fn path_values(
 }
 
 fn response_path_key(item: &ResolvedPath) -> String {
-    // Clients key cells by the path text they sent (without cardinality encoding).
-    item.text.clone()
+    // Prefer the client column id so all/first/specific/unit do not collide on path text.
+    item.key
+        .clone()
+        .filter(|key| !key.is_empty())
+        .unwrap_or_else(|| item.text.clone())
 }
 
 struct ResolvedPath {
     text: String,
+    key: Option<String>,
     path: AttributePath,
     labels: BTreeMap<String, String>,
     language_dependent: bool,

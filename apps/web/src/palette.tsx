@@ -849,6 +849,7 @@ export function CommandPalette({
           onToggleColumn={host.onToggleColumn}
           onReplaceColumn={host.onReplaceColumn}
           peerOptionsForField={host.peerOptionsForField}
+          searchPeersForField={host.searchPeersForField}
         />
       </div>
     )

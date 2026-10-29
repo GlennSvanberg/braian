@@ -24,7 +24,8 @@ import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
   prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
-import { fetchPathValues } from './path-values'
+import { cellPathValues, fetchPathValues } from './path-values'
+import { searchPeerArticles, type PeerPickOption } from './peer-search'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
@@ -276,26 +277,7 @@ export function ObjectTable({
     enabled: Boolean(typeKey),
   })
   const systemColumns = attributePaths.data?.system_columns ?? []
-  const peerArticles = useQuery({
-    queryKey: ['field-peer-articles', uiLanguage, Boolean(defs.data)],
-    queryFn: async () => {
-      const filter = encodeURIComponent('type_key:=article')
-      const result = await api<{ hits?: Array<Record<string, unknown>> }>(
-        `/v1/search?q=*&filter=${filter}&per_page=100&lang=${encodeURIComponent(uiLanguage)}`,
-      )
-      return (result.hits ?? []).map((hit) => {
-        const doc = ((hit.document as Json | undefined) ?? (hit as Json)) as Json
-        const id = String(hit.id ?? doc.id ?? '')
-        const key = String(doc.key ?? '')
-        const name = catalogName(doc, defs.data) || String(doc.name ?? '')
-        // gtin is stored as a_<uuid> on the search document — resolve via defs.
-        const gtin = readIndexed(doc, defs.data, 'gtin') || String(doc.gtin ?? '')
-        return { id, key, number: key, name, gtin, document: doc }
-      })
-    },
-    enabled: Boolean(typeKey === 'product'),
-    staleTime: 60_000,
-  })
+
 
   useEffect(() => {
     if (prefsApplied.current || prefs.isPending) return
@@ -869,7 +851,7 @@ export function ObjectTable({
   const cellDisplayText = (row: ObjRow, id: string) => {
     const apiPath = parseColumnId(id).path
     if (columnNeedsPathValues(id)) {
-      const values = pathValues.data?.values?.[row.id]?.[apiPath]
+      const values = cellPathValues(pathValues.data?.values?.[row.id], id)
       return summarizePathValues(values).text
     }
     return readPathFromDoc(row.doc, defs.data, apiPath)
@@ -957,11 +939,11 @@ export function ObjectTable({
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
     if (columnNeedsPathValues(id)) {
-      const apiPath = parseColumnId(id).path
-      const values = pathValues.data?.values?.[row.id]?.[apiPath]
+      const values = cellPathValues(pathValues.data?.values?.[row.id], id)
       const summary = summarizePathValues(values)
       const testId = isHopPath(id) ? `hop-cell-${id}` : `path-cell-${id}`
-      if (summary.text && pathValues.data?.entries?.[row.id]?.[apiPath]?.some((e: { raw?: boolean }) => e.raw)) {
+      const entries = cellPathValues(pathValues.data?.entries?.[row.id], id)
+      if (summary.text && entries?.some((e: { raw?: boolean }) => e.raw)) {
         return (
           <span data-testid={testId} title={`${summary.title} (unit not converted)`}>
             {summary.text}<span className="muted"> ·</span>
@@ -1046,30 +1028,24 @@ export function ObjectTable({
           if (current.includes(previousId)) {
             return current.map((id) => (id === previousId ? next.id : id))
           }
-          // Id drift: replace the hop/own column that shares the same API path.
-          const prevPath = parseColumnId(previousId).path
-          let replaced = false
-          return current.map((id) => {
-            if (replaced) return id
-            if (parseColumnId(id).path === prevPath) {
-              replaced = true
-              return next.id
-            }
-            return id
-          })
+          // Exact id only — never collapse all/first/specific by bare path.
+          if (current.includes(next.id)) {
+            return current.filter((id) => id !== previousId)
+          }
+          return current
         })
         setHidden((current) => current.filter((id) => id !== previousId && id !== next.id))
       },
       peerOptionsForField: (leafId, query) => {
         const needle = query.trim().toLowerCase()
-        const options: Array<{ id: string; label: string; subtitle: string; pickValue: string; shortLabel: string }> = []
+        const options: PeerPickOption[] = []
         const seen = new Set<string>()
         const visibleRows = groupBy ? groupedRows : Array.from(byIndex.values())
-        // Prefer live hop entries when present (identity = object id).
+        // Prefer articles already linked to rows in the current view.
         for (const row of visibleRows) {
-          const entries = pathValues.data?.entries?.[row.id] ?? {}
-          for (const [path, list] of Object.entries(entries)) {
-            if (!path.includes(leafId)) continue
+          const byPath = pathValues.data?.entries?.[row.id] ?? {}
+          for (const [pathKey, list] of Object.entries(byPath)) {
+            if (!pathKey.includes(leafId) && !parseColumnId(pathKey).path.includes(leafId)) continue
             for (const entry of list as Array<{ text?: string; peer_id?: string }>) {
               const peerId = entry.peer_id
               if (!peerId || seen.has(peerId)) continue
@@ -1086,30 +1062,12 @@ export function ObjectTable({
             }
           }
         }
-        // Fallback: search-index articles (number / name / gtin).
-        for (const hit of peerArticles.data ?? []) {
-          const id = String(hit.id ?? '')
-          if (!id || seen.has(id)) continue
-          const key = String(hit.key ?? hit.number ?? '')
-          const name = String(hit.name ?? '')
-          const gtin = String(hit.gtin ?? '')
-          const hay = `${key} ${name} ${gtin} ${id}`.toLowerCase()
-          if (needle && !hay.includes(needle)) continue
-          seen.add(id)
-          const shortLabel = gtin || key || name || id
-          options.push({
-            id,
-            label: gtin ? `${gtin} · ${key || name}` : key || name || id,
-            subtitle: name || key,
-            pickValue: id,
-            shortLabel,
-          })
-        }
         return options
       },
+      searchPeersForField: async (_leafId, query) => searchPeerArticles(query, defs.data),
     })
     return () => publishFieldsHost(null)
-  }, [typeKey, catalog, viewColumns, byIndex, groupedRows, groupBy, pathValues.data, peerArticles.data])
+  }, [typeKey, catalog, viewColumns, byIndex, groupedRows, groupBy, pathValues.data, defs.data])
 
   const newRowLabel = newObjectLabel(bound?.singular)
   return (
@@ -1119,12 +1077,25 @@ export function ObjectTable({
       onNewRow={() => window.dispatchEvent(new Event('braian-new-object'))}
       onSelectFields={() => window.dispatchEvent(new CustomEvent('braian-fields-palette', { detail: {} }))}
       selectFieldsLabel={copy.selectFields}
-      rowCount={found}
+      rowCount={groupBy ? groups.reduce((sum, group) => sum + group.found, 0) : found}
       filterValue={filter}
       onFilterChange={setFilter}
     >
       <NewObject session={session} typeKey={typeKey} singular={bound?.singular} trigger="event" />
-      <div className="toolbar-actions standard-table-filters" data-testid="standard-table-filters">
+      <div
+        className="toolbar-actions standard-table-filters"
+        data-testid="standard-table-filters"
+        onMouseDown={() => {
+          if (!editingCell) return
+          // Same rules as #107: blur/commit only when the draft changed.
+          const row = (groupBy ? groupedRows : Array.from(byIndex.values())).find((item) => item.id === editingCell.rowId)
+          if (!row) {
+            cancelCellEdit()
+            return
+          }
+          commitCellEdit(row, editingCell.columnId, editingDraft)
+        }}
+      >
         <TableFilters
           groupBy={groupBy}
           setGroupBy={setGroupBy}
@@ -1504,9 +1475,9 @@ function Row({
       }}
     >
       {shown.map((id) => {
-        const column = columns.find((item) => item.id === id)
+        const width = sizes[id] ?? (id.includes('>') || id.includes('#') ? 260 : 160)
         return (
-          <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width: sizes[id] ?? column?.size ?? 160 }}>
+          <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width }}>
             {cell(row, id)}
           </div>
         )
