@@ -297,3 +297,68 @@ async fn path_values_invalid_path_is_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["code"], "path");
 }
+
+#[tokio::test]
+async fn path_values_convert_hop_measure_units() {
+    let (_db, app) = app().await;
+    let (status, _, host) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"HOST-W","name":{"sv":"Host"}}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{host}");
+    let (status, _, peer) = call(
+        &app,
+        "POST",
+        "/v1/objects",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(r#"{"type":"item","values":{"sku":"PEER-W","name":{"sv":"Peer"},"weight":{"value":"200","unit":"g"}}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{peer}");
+    let (status, _, link_type) = call(
+        &app,
+        "POST",
+        "/v1/link-types",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(
+            r#"{"key":"has_peer","label":"Has peer","from_types":["item"],"to_types":["item"],"from_key":"hosts","from_label":"Hosts","to_key":"peers","to_label":"Peers","from_cardinality":"many","to_cardinality":"many"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{link_type}");
+    let host_id = host["id"].as_str().unwrap();
+    let peer_id = peer["id"].as_str().unwrap();
+    let (status, _, linked) = call(
+        &app,
+        "POST",
+        "/v1/links",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"type":"has_peer","from_id":"{host_id}","to_id":"{peer_id}"}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, _, body) = call(
+        &app,
+        "POST",
+        "/v1/objects:pathValues",
+        Some(HUMAN),
+        &[("content-type", "application/json")],
+        Some(&format!(
+            r#"{{"ids":["{host_id}"],"paths":[{{"path":"peers>weight","cardinality":"all","unit":"kg"}}],"type":"item","lang":"en"}}"#
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let cells = &body["values"][host_id]["peers>weight"];
+    assert_eq!(cells, &json!(["0.2 kg"]), "{body}");
+}
