@@ -41,6 +41,7 @@ import {
   typeOfView,
 } from './type-labels'
 import { publishProposal } from './proposal-bus'
+import { rollbackTargetSeq } from './history-rollback'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
 import { LinkSections } from './link-section'
@@ -2240,7 +2241,16 @@ export function HistoryView({ session }: { session: PanesSession }) {
         method: 'POST',
         body: JSON.stringify({ seq: at }),
       }),
-    onSuccess: (proposal) => session.setProposalId(String(proposal.id)),
+    onSuccess: (proposal) => {
+      const id = String(proposal.id)
+      // Same as assortment / model proposes: open the review dialog so Confirm applies it.
+      publishProposal(id)
+      session.setProposalId(id)
+      session.push(copy.proposed)
+    },
+    onError: (reason: unknown) => {
+      session.push(reason instanceof Error ? reason.message : copy.validation)
+    },
   })
   const seqs = rows.map((row) => Number(row.seq)).sort((left, right) => left - right)
   const minSeq = seqs[0] ?? 0
@@ -2309,7 +2319,14 @@ export function HistoryView({ session }: { session: PanesSession }) {
                   >
                     {copy.viewAsItWas}
                   </button>
-                  <button type="button" className="btn-ghost" data-testid="rollback" onClick={() => rollback.mutate(at)}>{copy.rollback}</button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    data-testid="rollback"
+                    onClick={() => rollback.mutate(rollbackTargetSeq(seqs, at))}
+                  >
+                    {copy.rollback}
+                  </button>
                 </div>
               ) : null}
             </article>
