@@ -155,8 +155,8 @@ async fn path_values_keys_all_and_first_separately() {
         .await;
         assert_eq!(status, StatusCode::OK, "{linked}");
     }
-    let all_key = "articles>weight#cardinality:all|unit:kg";
-    let first_key = "articles>weight#cardinality:first|unit:kg";
+    let all_key = "products>weight#cardinality:all|unit:kg";
+    let first_key = "products>weight#cardinality:first|unit:kg";
     let (status, _, body) = call(
         &app,
         "POST",
@@ -165,8 +165,8 @@ async fn path_values_keys_all_and_first_separately() {
         &[("content-type", "application/json")],
         Some(&format!(
             r#"{{"ids":["{host_id}"],"paths":[
-              {{"path":"articles>weight","key":"{all_key}","cardinality":"all","unit":"kg"}},
-              {{"path":"articles>weight","key":"{first_key}","cardinality":"first","unit":"kg"}}
+              {{"path":"products>weight","key":"{all_key}","cardinality":"all","unit":"kg"}},
+              {{"path":"products>weight","key":"{first_key}","cardinality":"first","unit":"kg"}}
             ],"type":"item","lang":"en"}}"#
         )),
     )
