@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ColumnPrefsDocument } from './column-prefs'
 import {
+  columnPrefsMutationKey,
   columnPrefsMutationOptions,
   columnPrefsMutationScopeId,
   columnPrefsQueryKey,
@@ -65,6 +66,25 @@ describe('columnPrefsMutationOptions', () => {
     opts.onError?.(new Error('boom'), { document: doc('sku', false) }, ctx, {} as never)
     expect(client.getQueryData(key)).toEqual(previous)
   })
+
+  it('invalidates on settle only when this is the last in-flight mutation', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    const key = columnPrefsQueryKey(viewId)
+    const mutationKey = columnPrefsMutationKey(viewId)
+    const opts = columnPrefsMutationOptions(client, viewId, userId)
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+
+    vi.spyOn(client, 'isMutating').mockReturnValue(2)
+    await opts.onSettled?.(null, null, { document: doc('sku', false) }, undefined, {} as never)
+    expect(invalidate).not.toHaveBeenCalled()
+
+    vi.spyOn(client, 'isMutating').mockImplementation((filters) => {
+      expect(filters).toEqual({ mutationKey })
+      return 1
+    })
+    await opts.onSettled?.(null, null, { document: doc('sku', false) }, undefined, {} as never)
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key })
+  })
 })
 
 describe('useSaveColumnPrefs scope', () => {
@@ -113,5 +133,92 @@ describe('useSaveColumnPrefs scope', () => {
     release1()
     await waitFor(() => expect(finished).toEqual([1, 2]))
     expect(started).toEqual([1, 2])
+  })
+
+  it('shows a later server document after the last mutation settles and refetches', async () => {
+    // Optimistic hide only brand; a concurrent server edit also hides status.
+    const initialDoc: ColumnPrefsDocument = {
+      version: 2,
+      columns: [
+        { path: 'brand', visible: true },
+        { path: 'status', visible: true },
+      ],
+    }
+    const optimisticDoc: ColumnPrefsDocument = {
+      version: 2,
+      columns: [
+        { path: 'brand', visible: false },
+        { path: 'status', visible: true },
+      ],
+    }
+    const serverDoc: ColumnPrefsDocument = {
+      version: 2,
+      columns: [
+        { path: 'brand', visible: false },
+        { path: 'status', visible: false },
+      ],
+    }
+    let getCount = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/column-prefs') && method === 'PUT') {
+          return new Response(JSON.stringify({ document: optimisticDoc, updated_at: 't-put' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (url.includes('/column-prefs') && method === 'GET') {
+          getCount += 1
+          const document = getCount === 1 ? initialDoc : serverDoc
+          return new Response(JSON.stringify({ document, updated_at: `t-get-${getCount}` }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+
+    const client = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false, staleTime: 30_000 },
+      },
+    })
+    const key = columnPrefsQueryKey(viewId)
+
+    const { result } = renderHook(
+      () => {
+        const prefs = useQuery({
+          queryKey: key,
+          queryFn: async () => {
+            const res = await fetch(`/v1/views/${viewId}/column-prefs`)
+            return res.json()
+          },
+          staleTime: 30_000,
+        })
+        const save = useSaveColumnPrefs(viewId, userId)
+        return { prefs, save }
+      },
+      { wrapper: wrapperFor(client) },
+    )
+
+    await waitFor(() => expect(result.current.prefs.isSuccess).toBe(true))
+    expect(result.current.prefs.data).toMatchObject({ document: initialDoc })
+
+    await act(async () => {
+      await result.current.save.mutateAsync({ document: optimisticDoc })
+    })
+
+    await waitFor(() => {
+      expect(result.current.prefs.data?.document.columns.find((c: { path: string }) => c.path === 'status')?.visible).toBe(
+        false,
+      )
+    })
+    expect(getCount).toBeGreaterThanOrEqual(2)
+    expect(client.getQueryData(key)).toMatchObject({ document: serverDoc })
   })
 })

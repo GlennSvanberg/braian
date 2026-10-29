@@ -1,6 +1,7 @@
 /**
  * Column-prefs saves via TanStack Query useMutation.
- * Optimistic cache update + rollback; scope.id serializes PUTs per user/env/view.
+ * Concurrent optimistic updates (TkDodo): onMutate + rollback, invalidate in
+ * onSettled only when this is the last in-flight mutation for the key.
  */
 import {
   useMutation,
@@ -18,6 +19,10 @@ import { LAYOUT_ENVIRONMENT } from './workspace-doc'
 
 export function columnPrefsQueryKey(viewId: string) {
   return ['column-prefs', viewId] as const
+}
+
+export function columnPrefsMutationKey(viewId: string) {
+  return ['save-column-prefs', viewId] as const
 }
 
 /** Serial mutation scope: one in-flight PUT chain per user + environment + view. */
@@ -41,8 +46,9 @@ export function columnPrefsMutationOptions(
   userId: string,
 ): UseMutationOptions<ColumnPrefsResponse | null, Error, SaveColumnPrefsVars, SaveColumnPrefsContext> {
   const queryKey = columnPrefsQueryKey(viewId)
+  const mutationKey = columnPrefsMutationKey(viewId)
   return {
-    mutationKey: ['save-column-prefs', viewId],
+    mutationKey,
     scope: { id: columnPrefsMutationScopeId(userId, viewId) },
     mutationFn: async (vars) => {
       if (vars.keepalive) {
@@ -67,9 +73,10 @@ export function columnPrefsMutationOptions(
         queryClient.setQueryData(queryKey, context.previous)
       }
     },
-    onSuccess: (data) => {
-      if (data?.document && (data.document as { version?: number }).version === 2) {
-        queryClient.setQueryData(queryKey, data)
+    onSettled: () => {
+      // Only refetch when no other save for this view is still in flight.
+      if (queryClient.isMutating({ mutationKey }) === 1) {
+        void queryClient.invalidateQueries({ queryKey })
       }
     },
   }
