@@ -196,7 +196,7 @@ async fn path_values_reject_over_limit_and_require_auth() {
         "/v1/objects:pathValues",
         Some(HUMAN),
         &[("content-type", "application/json")],
-        Some(&json!({ "ids": ids, "paths": ["weight.unit"] }).to_string()),
+        Some(&json!({ "type": "item", "ids": ids, "paths": ["weight.unit"] }).to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -210,7 +210,10 @@ async fn path_values_reject_over_limit_and_require_auth() {
         "/v1/objects:pathValues",
         Some(HUMAN),
         &[("content-type", "application/json")],
-        Some(&json!({ "ids": [uuid::Uuid::now_v7()], "paths": paths }).to_string()),
+        Some(
+            &json!({ "type": "product", "ids": [uuid::Uuid::now_v7()], "paths": paths })
+                .to_string(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -222,7 +225,7 @@ async fn path_values_reject_over_limit_and_require_auth() {
         "/v1/objects:pathValues",
         None,
         &[("content-type", "application/json")],
-        Some(r#"{"ids":[],"paths":[]}"#),
+        Some(r#"{"type":"item","ids":[],"paths":[]}"#),
     )
     .await;
     assert!(

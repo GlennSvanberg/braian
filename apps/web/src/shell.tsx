@@ -130,7 +130,23 @@ export function Shell() {
   const [logText, setLogText] = useState('')
   const [liveState, setLiveState] = useState('closed')
   const [statusLine, setStatusLine] = useState<string>(copy.activity)
-  const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai'>(null)
+  const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai' | 'fields'>(null)
+  const [fieldsEditColumnId, setFieldsEditColumnId] = useState<string | null>(null)
+  useEffect(() => {
+    const close = () => setPaletteMode(null)
+    window.addEventListener('braian-close-palette', close)
+    return () => window.removeEventListener('braian-close-palette', close)
+  }, [])
+  useEffect(() => {
+    const onFields = (event: Event) => {
+      const detail = (event as CustomEvent<{ editColumnId?: string | null }>).detail
+      setFieldsEditColumnId(detail?.editColumnId ?? null)
+      setPaletteMode('fields')
+    }
+    window.addEventListener('braian-fields-palette', onFields)
+    return () => window.removeEventListener('braian-fields-palette', onFields)
+  }, [])
+
   const [paletteStartAddView, setPaletteStartAddView] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackCapture, setFeedbackCapture] = useState<FeedbackCapture | null>(null)
@@ -277,6 +293,7 @@ export function Shell() {
   useEffect(() => {
     const stops = [
       registerCommandRunner('palette:search', () => setPaletteMode('list')),
+
       registerCommandRunner('feedback:send', () => openFeedback()),
       registerCommandRunner('layout:reset_layout', () => applyRef.current('reset_layout', {})),
       registerCommandRunner('layout:close_view', (target) =>
@@ -874,6 +891,9 @@ export function Shell() {
       <NewSelectionDialog session={session} />
       {paletteMode ? (
         <CommandPalette
+              fieldsMode={paletteMode === 'fields'}
+              fieldsEditColumnId={fieldsEditColumnId}
+              onFieldsConsumed={() => setFieldsEditColumnId(null)}
           key={`${paletteMode}:${paletteStartAddView ? 'add-view' : 'root'}`}
           ai={paletteMode === 'ai'}
           session={session}

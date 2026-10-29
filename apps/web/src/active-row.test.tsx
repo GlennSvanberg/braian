@@ -453,9 +453,15 @@ describe('show column', () => {
     fireEvent.contextMenu(screen.getByText('ART-1'))
     const menu = await screen.findByTestId('context-menu')
     expect(within(menu).queryByRole('menuitem', { name: 'Show Name' })).toBeNull()
+    const opened = new Promise<void>((resolve) => {
+      const onOpen = () => {
+        window.removeEventListener('braian-fields-palette', onOpen)
+        resolve()
+      }
+      window.addEventListener('braian-fields-palette', onOpen)
+    })
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Select fields…' }))
-
-    await waitFor(() => expect(screen.getByTestId('field-picker')).toBeTruthy())
+    await opened
   })
 
   it('hides and shows through ui.hide_column and ui.show_column, and publishes the columns', async () => {
@@ -595,8 +601,6 @@ describe('palette column entries', () => {
   })
 
   it('opens Select fields from the palette instead of Show column', async () => {
-    const open = vi.fn()
-    const stop = registerCommandRunner('fields:select', open)
     render(<PaletteHarness />)
     const input = await screen.findByTestId('palette-input')
     fireEvent.change(input, { target: { value: 'select fields' } })
@@ -604,7 +608,8 @@ describe('palette column entries', () => {
     expect(screen.queryByRole('option', { name: /Show column ›/ })).toBeNull()
 
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(open).toHaveBeenCalledTimes(1))
-    stop()
+    // Fields › is a palette mode (not the old inline field-picker).
+    await waitFor(() => expect(screen.getByTestId('command-palette')).toBeTruthy())
+    expect(screen.getByText(/Open an object table to select fields/i)).toBeTruthy()
   })
 })

@@ -162,6 +162,14 @@ export const registryCommands: RegistryCommand[] = [
     keywords: ['field', 'column', 'select', 'show', 'hide', 'reorder'],
   },
   {
+    id: 'fields:edit',
+    title: 'Edit field…',
+    contexts: ['table-header', 'cell'],
+    group: 'views',
+    keywords: ['field', 'column', 'edit', 'qualifier'],
+    when: (target) => Boolean(target.column),
+  },
+  {
     id: 'selection:new',
     title: copy.newSelection,
     contexts: ['assortment', 'dock-view', 'empty'],

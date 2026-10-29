@@ -171,7 +171,7 @@ async fn column_prefs_round_trip_for_a_viewer() {
     assert!(empty["document"].is_null(), "{empty}");
 
     let document = json!({
-        "version": 1,
+        "version": 2,
         "columns": [
             { "path": "sku", "visible": true },
             { "path": "weight.unit", "visible": false }
@@ -260,7 +260,7 @@ async fn column_prefs_are_private_to_the_owner() {
     let bob_cookie = login_cookie(&app, "bob-prefs@braian.local", "secret-b").await;
 
     let document = json!({
-        "version": 1,
+        "version": 2,
         "columns": [{ "path": "sku", "visible": true }]
     });
     let (status, _, _) = call(
@@ -290,7 +290,7 @@ async fn column_prefs_are_private_to_the_owner() {
     assert!(bob_get["document"].is_null(), "{bob_get}");
 
     let other = json!({
-        "version": 1,
+        "version": 2,
         "columns": [{ "path": "name", "visible": true }]
     });
     let (status, _, _) = call(
@@ -359,12 +359,12 @@ async fn column_prefs_put_rejects_invalid_documents() {
     let cases = [
         (json!({ "version": 2, "columns": [] }), "version"),
         (
-            json!({ "version": 1, "columns": [{ "path": "no_such_attr", "visible": true }] }),
+            json!({ "version": 2, "columns": [{ "path": "no_such_attr", "visible": true }] }),
             "path",
         ),
         (
             json!({
-                "version": 1,
+                "version": 2,
                 "columns": [
                     { "path": "sku", "visible": true },
                     { "path": "sku", "visible": false }
@@ -374,7 +374,7 @@ async fn column_prefs_put_rejects_invalid_documents() {
         ),
         (
             json!({
-                "version": 1,
+                "version": 2,
                 "columns": [{ "path": "a>b>c", "visible": true }]
             }),
             "via",
@@ -407,7 +407,7 @@ async fn column_prefs_put_rejects_invalid_documents() {
         &[("cookie", &cookie), ("content-type", "application/json")],
         Some(
             &serde_json::to_string(&json!({
-                "document": { "version": 1, "columns": huge_columns }
+                "document": { "version": 2, "columns": huge_columns }
             }))
             .unwrap(),
         ),
@@ -434,7 +434,7 @@ async fn column_prefs_put_rejects_invalid_documents() {
         &[("cookie", &cookie), ("content-type", "application/json")],
         Some(
             &serde_json::to_string(&json!({
-                "document": { "version": 1, "columns": fat }
+                "document": { "version": 2, "columns": fat }
             }))
             .unwrap(),
         ),
@@ -464,7 +464,7 @@ async fn column_prefs_get_flags_stale_paths_without_500() {
             "default",
             view,
             &json!({
-                "version": 1,
+                "version": 2,
                 "columns": [
                     { "path": "sku", "visible": true },
                     { "path": "removed_attr", "visible": true }
@@ -523,7 +523,7 @@ async fn column_prefs_agent_ops_use_owner_and_skip_approval() {
         .unwrap();
 
     let document = json!({
-        "version": 1,
+        "version": 2,
         "columns": [{ "path": "sku", "visible": true }]
     });
     let (status, _, saved) = call(
@@ -590,7 +590,7 @@ async fn column_prefs_rows_cascade_when_view_or_user_is_removed() {
             other.id,
             "default",
             view,
-            &json!({ "version": 1, "columns": [{ "path": "sku", "visible": true }] }),
+            &json!({ "version": 2, "columns": [{ "path": "sku", "visible": true }] }),
         )
         .await
         .unwrap();
@@ -616,7 +616,7 @@ async fn column_prefs_rows_cascade_when_view_or_user_is_removed() {
             other.id,
             "default",
             view2,
-            &json!({ "version": 1, "columns": [{ "path": "sku", "visible": true }] }),
+            &json!({ "version": 2, "columns": [{ "path": "sku", "visible": true }] }),
         )
         .await
         .unwrap();
@@ -683,7 +683,7 @@ async fn column_prefs_accept_system_view_columns() {
     let view = seed_object_table_view(&db, user.id).await;
     let cookie = login_cookie(&app, "sys-prefs@braian.local", "secret-sys").await;
     let document = json!({
-        "version": 1,
+        "version": 2,
         "columns": [
             { "path": "sku", "visible": true },
             { "path": "type", "visible": true },
@@ -716,7 +716,7 @@ async fn column_prefs_accept_system_view_columns() {
             &serde_json::to_string(&json!({
                 "environment": "default",
                 "document": {
-                    "version": 1,
+                    "version": 2,
                     "columns": [
                         { "path": "type", "visible": true },
                         { "path": "type", "visible": false }
@@ -746,7 +746,7 @@ async fn column_prefs_get_injects_missing_system_columns() {
             "default",
             view,
             &json!({
-                "version": 1,
+                "version": 2,
                 "columns": [
                     { "path": "number", "visible": true },
                     { "path": "name", "visible": true },

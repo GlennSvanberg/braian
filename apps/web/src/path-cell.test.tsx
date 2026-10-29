@@ -110,7 +110,11 @@ describe('ObjectTable hop and part columns', () => {
           pathValueCalls += 1
           ;(globalThis as { __pathValueCalls?: number }).__pathValueCalls = pathValueCalls
           const body = JSON.parse(String(init?.body ?? '{}'))
-          expect(body.paths).toEqual(['product>brand'])
+          expect(body.type).toBeTruthy()
+          const paths = (body.paths as Array<string | { path: string }>).map((item) =>
+            typeof item === 'string' ? item : item.path,
+          )
+          expect(paths).toEqual(['product>brand'])
           expect(body.ids).toEqual(['row-1'])
           return json({
             values: {
@@ -144,7 +148,7 @@ describe('ObjectTable hop and part columns', () => {
                   id: 'row-1',
                   key: 'SKU-1',
                   type_key: 'product',
-                  version: 1,
+                  version: 2,
                   a_018f0000_0000_7000_8000_000000000102: 500,
                   a_018f0000_0000_7000_8000_000000000102__unit: 'g',
                 },

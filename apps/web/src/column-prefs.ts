@@ -1,9 +1,19 @@
 import { api, keepaliveJsonPut } from './api'
 import { LAYOUT_ENVIRONMENT } from './workspace-doc'
+import type { AppliedQualifier } from './fields/qualifiers'
+import { columnIdOf, defaultColumnIdsForType, parseColumnId } from './fields/columns'
+import type { DefsJson } from './fields/catalog'
 
-export type ColumnPref = { path: string; visible?: boolean; stale?: boolean }
+export type ColumnPref = {
+  path: string
+  visible?: boolean
+  stale?: boolean
+  /** Cardinality, Specific peer id, display unit, etc. */
+  qualifiers?: AppliedQualifier[]
+}
 
-export type ColumnPrefsDocument = { version: 1; columns: ColumnPref[] }
+/** v2 document — v1 rows are ignored (not migrated). */
+export type ColumnPrefsDocument = { version: 2; columns: ColumnPref[] }
 
 export type SystemViewColumn = {
   key: string
@@ -13,12 +23,11 @@ export type SystemViewColumn = {
 
 export type ColumnPrefsResponse = {
   environment?: string
-  document?: ColumnPrefsDocument | null
+  document?: { version?: number; columns?: ColumnPref[] } | null
   updated_at?: string | null
   stale_paths?: string[]
 }
 
-/** Built-in UI ids that map onto an attribute path when prefs are saved. */
 const BUILTIN_PATH: Record<string, string> = { key: 'number' }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -33,10 +42,6 @@ function defaultRank(key: string, systemColumns: SystemViewColumn[]): number | u
   return system?.default_index
 }
 
-/**
- * Insert missing system columns as visible at their default ranks.
- * The allowlist comes from `/v1/types/{id}/attribute-paths` (`system_columns`).
- */
 export function ensureSystemColumns(
   order: string[],
   hidden: string[],
@@ -45,9 +50,11 @@ export function ensureSystemColumns(
   const next = [...order]
   for (const system of systemColumns) {
     if (next.includes(system.key)) continue
+    // Also skip if a qualified id already covers this system key
+    if (next.some((id) => parseColumnId(id).path === system.key || id === system.key)) continue
     const ranked = next
       .map((path, index) => {
-        const rank = defaultRank(path, systemColumns)
+        const rank = defaultRank(parseColumnId(path).path, systemColumns)
         return rank != null && rank < system.default_index ? index + 1 : -1
       })
       .filter((index) => index >= 0)
@@ -59,37 +66,45 @@ export function ensureSystemColumns(
 }
 
 /**
- * Turn a stored prefs document into table order and hidden ids.
- * Stale paths are skipped. Missing system columns are injected visible.
+ * Turn stored prefs into table order/hidden ids.
+ * Only version 2 is accepted — older documents are treated as missing (defaults).
  */
 export function prefsToOrderHidden(
   response: ColumnPrefsResponse | null | undefined,
   systemColumns: SystemViewColumn[] = [],
-) {
+  typeKey = '',
+  defs?: DefsJson,
+): { order: string[]; hidden: string[] } | null {
   const document = record(response?.document)
-  const columns = Array.isArray(document?.columns) ? document.columns : []
+  if (!document) return null
+  const version = Number(document.version ?? 0)
+  if (version !== 2) {
+    // Discard v1 / unknown — return defaults so nothing crashes on old rows.
+    if (!typeKey && systemColumns.length === 0) return null
+    const defaults = defaultColumnIdsForType(typeKey || 'product', defs)
+    return ensureSystemColumns(defaults, [], systemColumns)
+  }
+  const columns = Array.isArray(document.columns) ? (document.columns as ColumnPref[]) : []
   if (columns.length === 0) return null
   const stale = new Set((response?.stale_paths ?? []).map(String))
   const order: string[] = []
   const hidden: string[] = []
   for (const value of columns) {
-    const column = record(value)
+    const column = record(value) as ColumnPref | null
     if (!column) continue
     const path = String(column.path ?? '')
-    if (!path || column.stale === true || stale.has(path) || order.includes(path)) continue
-    order.push(path)
-    if (column.visible === false) hidden.push(path)
+    if (!path || column.stale === true || stale.has(path)) continue
+    const quals = Array.isArray(column.qualifiers) ? column.qualifiers : []
+    const id = columnIdOf(path, quals)
+    if (order.includes(id)) continue
+    order.push(id)
+    if (column.visible === false) hidden.push(id)
   }
   const ensured = ensureSystemColumns(order, hidden, systemColumns)
   if (ensured.order.length === 0) return null
   return ensured
 }
 
-/**
- * Build the document we PUT. Built-in ids that have an attribute path are
- * renamed (`key` becomes `number`). System columns from the API allowlist are
- * kept. Unknown paths outside `allowedPaths` are dropped.
- */
 export function orderHiddenToDocument(
   order: string[],
   hidden: string[],
@@ -101,14 +116,44 @@ export function orderHiddenToDocument(
   const seen = new Set<string>()
   const columns: ColumnPref[] = []
   for (const id of order) {
-    const path = BUILTIN_PATH[id] ?? id
-    if (!path || seen.has(path)) continue
-    const isSystem = systemKeys.has(path)
-    if (!isSystem && allowed && !allowed.has(path)) continue
-    seen.add(path)
-    columns.push({ path, visible: !hidden.includes(id) && !hidden.includes(path) })
+    const { path: rawPath, qualifiers } = parseColumnId(id)
+    const path = BUILTIN_PATH[rawPath] ?? rawPath
+    // Strip language/part from allowlist check — compare base attribute path heads
+    const allowKey = path
+    if (!path || seen.has(id)) continue
+    const isSystem = systemKeys.has(path) || systemKeys.has(rawPath)
+    if (!isSystem && allowed) {
+      // Allow if exact path or base path (without qualifier encoding) is listed
+      const base = path.split('@')[0] ?? path
+      const ok =
+        allowed.has(path) ||
+        allowed.has(base) ||
+        [...allowed].some((item) => item === path || item.startsWith(`${base}.`) || item.startsWith(`${base}@`))
+      // Hop paths: articles>net_weight
+      const hopOk = path.includes('>') && [...allowed].some((item) => item === path || item.startsWith(path.split('.')[0] ?? ''))
+      if (!ok && !hopOk && !path.includes('>')) {
+        // still allow hops loosely
+        if (!allowed.has(path) && !allowed.has(base)) {
+          // Try leaf without part
+          const leaf = base.includes('>') ? base : base
+          if (![...allowed].some((a) => a === leaf || a.startsWith(leaf))) {
+            // Keep system-like number/name always
+            if (path !== 'number' && path !== 'name' && path !== 'key') {
+              // drop unknown
+              continue
+            }
+          }
+        }
+      }
+    }
+    seen.add(id)
+    columns.push({
+      path,
+      visible: !hidden.includes(id) && !hidden.includes(path),
+      ...(qualifiers.length > 0 ? { qualifiers } : {}),
+    })
   }
-  return { version: 1, columns }
+  return { version: 2, columns }
 }
 
 export function columnPrefsUrl(viewId: string) {
@@ -126,17 +171,21 @@ export function saveColumnPrefs(viewId: string, document: ColumnPrefsDocument) {
   })
 }
 
-/** Tab-close / hide flush — same keepalive PUT as the workspace layout save. */
 export function saveColumnPrefsKeepalive(viewId: string, document: ColumnPrefsDocument) {
   keepaliveJsonPut(columnPrefsUrl(viewId), { environment: LAYOUT_ENVIRONMENT, document })
 }
 
-export function isHopPath(path: string) {
+export function isHopPath(pathOrId: string) {
+  const path = parseColumnId(pathOrId).path
   return path.includes('>')
 }
 
-/** The attribute head of a path (`weight.unit` and `link>weight` both become `weight`). */
 export function pathHead(path: string) {
   const first = path.split('>')[0] ?? path
   return first.split('.')[0]?.split('@')[0] ?? first
+}
+
+/** API path for pathValues (strip column-id qualifier suffix). */
+export function apiPathOf(columnId: string): string {
+  return parseColumnId(columnId).path
 }
