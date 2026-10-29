@@ -91,7 +91,7 @@ test.describe('field picker on Products', () => {
 
     await login(page)
     await openProducts(page)
-    await expect(page.getByText('Mature cheddar').or(page.getByText('PROD-CHEDDAR'))).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
     await openFieldsPalette(page)
 

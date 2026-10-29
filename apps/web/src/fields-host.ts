@@ -11,6 +11,8 @@ export type FieldsHost = {
   fields: FieldDef[]
   columns: ViewColumn[]
   onToggleColumn: (column: ViewColumn) => void
+  /** Ensure column is visible (append last). Used when completing a qualify/specific path — never hides. */
+  onShowColumn: (column: ViewColumn) => void
   onReplaceColumn: (previousId: string, next: ViewColumn) => void
   peerOptionsForField: (leafId: string, query: string) => PeerPickOption[]
   /** Server search for Specific… (debounced in FieldsMode). */

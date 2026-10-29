@@ -84,6 +84,8 @@ type Props = {
   fields: FieldDef[]
   onClose: () => void
   onToggleColumn: (column: ViewColumn) => void
+  /** Completing a qualify/specific path: show only, never hide if already present. */
+  onShowColumn: (column: ViewColumn) => void
   onReplaceColumn: (previousId: string, next: ViewColumn) => void
   /** Linked peers currently visible in the table (preferred in Specific…). */
   peerOptionsForField: (leafId: string, query: string) => PeerPickOption[]
@@ -216,7 +218,7 @@ function activeChoiceSubtitle(
  * Fields › mode for the Ctrl+K palette (prototype).
  * Enter toggles/applies and keeps the palette on the same level; Esc closes.
  */
-export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleColumn, onReplaceColumn, peerOptionsForField, searchPeersForField }: Props) {
+export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleColumn, onShowColumn, onReplaceColumn, peerOptionsForField, searchPeersForField }: Props) {
   const initial = open.kind === 'edit' ? framesForEdit(open.column, catalog) : [rootFrame(catalog)]
   const [stack, setStack] = useState<StackFrame[]>(initial)
   const [query, setQuery] = useState('')
@@ -704,17 +706,41 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       return
     }
 
-    // Completing a column — stay on this qualifier level
+    // Completing a column.
     const col = makeViewColumn(frame.pathIds, nextApplied, catalog)
     if (!col) return
     const editing = editingColumn ?? frame.editing
     if (editing) {
       onReplaceColumn(editing.id, col)
       setEditingColumn(col)
-    } else {
-      onToggleColumn(col)
+      setQuery('')
+      const optionIndex = frame.step.options.findIndex((item) => item.id === option.id)
+      setActive(optionIndex >= 0 ? optionIndex : 0)
+      return
     }
+    onShowColumn(col)
     setQuery('')
+    // After a language pick, return to the fields list so fields-check-${fieldId} shows.
+    // Unit/cardinality finals stay put — hop add/Edit field flows rely on that.
+    if (frame.step.kind === 'language') {
+      const fieldId = frame.pendingLeaf.id
+      let fieldsFrame: Extract<(typeof stack)[number], { kind: 'fields' }> | null = null
+      let cut = -1
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        const frameAt = stack[i]!
+        if (frameAt.kind === 'fields' && frameAt.fields.some((item) => item.id === fieldId)) {
+          fieldsFrame = frameAt
+          cut = i
+          break
+        }
+      }
+      if (cut >= 0) setStack((prev) => prev.slice(0, cut + 1))
+      if (fieldsFrame) {
+        const at = fieldsFrame.fields.findIndex((item) => item.id === fieldId)
+        setActive(at >= 0 ? at : 0)
+      }
+      return
+    }
     const optionIndex = frame.step.options.findIndex((item) => item.id === option.id)
     setActive(optionIndex >= 0 ? optionIndex : 0)
   }
@@ -762,7 +788,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       onReplaceColumn(editingColumn.id, col)
       setEditingColumn(col)
     } else {
-      onToggleColumn(col)
+      onShowColumn(col)
     }
     setQuery('')
     setActive(optionIndex >= 0 ? optionIndex : 0)

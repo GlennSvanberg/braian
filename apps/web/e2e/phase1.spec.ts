@@ -40,6 +40,6 @@ test('phase 1 surfaces', async ({ page }) => {
   await page.getByRole('button', { name: 'Dark' }).click()
 
   await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('palette')).toBeVisible()
+  await expect(page.getByTestId('command-palette')).toBeVisible()
   await page.screenshot({ path: `${shots}/command-palette.png` })
 })

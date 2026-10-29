@@ -159,19 +159,26 @@ export function ObjectTable({
   flushPendingPrefsRef.current = (opts) => {
     const pending = pendingPrefs.current
     if (!pending) return
-    pendingPrefs.current = null
     if (prefsSaveTimer.current != null) {
       clearTimeout(prefsSaveTimer.current)
       prefsSaveTimer.current = null
     }
-    if (pending.document.columns.length === 0) return
+    if (pending.document.columns.length === 0) {
+      pendingPrefs.current = null
+      return
+    }
     if (opts?.keepalive) {
+      // Keepalive must leave nothing pending — the tab may die immediately after.
+      pendingPrefs.current = null
       saveColumnPrefsKeepalive(pending.viewId, pending.document)
       prefsSnapshot.current = pending.snapshot
       return
     }
+    // Do NOT clear pending until the PUT finishes. A reload that aborts an in-flight
+    // fetch must still find the doc here so beforeunload can keepalive it.
     void saveColumnPrefs(pending.viewId, pending.document)
       .then(() => {
+        if (pendingPrefs.current === pending) pendingPrefs.current = null
         prefsSnapshot.current = pending.snapshot
       })
       .catch(() => undefined)
@@ -341,9 +348,11 @@ export function ObjectTable({
       if (document.visibilityState === 'hidden') flush()
     }
     window.addEventListener('beforeunload', flush)
+    window.addEventListener('pagehide', flush)
     document.addEventListener('visibilitychange', onHide)
     return () => {
       window.removeEventListener('beforeunload', flush)
+      window.removeEventListener('pagehide', flush)
       document.removeEventListener('visibilitychange', onHide)
     }
   }, [])
@@ -967,6 +976,11 @@ export function ObjectTable({
     }
     return readPathFromDoc(row.doc, defs.data, parseColumnId(id).path)
   }
+  const showField = (path: string) => {
+    // Completing a Fields qualify/specific path must never hide — only ensure visible + last.
+    setOrder((current) => [...current.filter((id) => id !== path), path])
+    setHidden((current) => current.filter((id) => id !== path))
+  }
   const toggleField = (path: string) => {
     const shownNow = order.includes(path) && !hidden.includes(path)
     if (shownNow) {
@@ -974,8 +988,7 @@ export function ObjectTable({
       return
     }
     // Re-showing a hidden column (or adding fresh) always appends last — never revive at the old index.
-    setOrder((current) => [...current.filter((id) => id !== path), path])
-    setHidden((current) => current.filter((id) => id !== path))
+    showField(path)
   }
   const moveField = (path: string, delta: number) => {
     setOrder((current) => {
@@ -1025,6 +1038,9 @@ export function ObjectTable({
       columns: viewColumns,
       onToggleColumn: (column) => {
         toggleField(column.id)
+      },
+      onShowColumn: (column) => {
+        showField(column.id)
       },
       onReplaceColumn: (previousId, next) => {
         setOrder((current) => {

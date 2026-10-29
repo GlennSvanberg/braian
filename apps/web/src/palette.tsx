@@ -847,6 +847,7 @@ export function CommandPalette({
           fields={host.fields}
           onClose={onClose}
           onToggleColumn={host.onToggleColumn}
+          onShowColumn={host.onShowColumn}
           onReplaceColumn={host.onReplaceColumn}
           peerOptionsForField={host.peerOptionsForField}
           searchPeersForField={host.searchPeersForField}
@@ -856,7 +857,7 @@ export function CommandPalette({
   }
 
   return (
-    <div className="palette" data-testid="palette" onMouseDown={onClose}>
+    <div className="palette" role="dialog" data-testid="command-palette" onMouseDown={onClose}>
       <Command
         className={mode === 'ai' ? 'ai-panel' : undefined}
         shouldFilter={false}

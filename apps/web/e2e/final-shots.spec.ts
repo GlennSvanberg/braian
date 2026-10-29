@@ -86,7 +86,7 @@ test('ctrl+k shot', async ({ page }) => {
   test.skip(!process.env.BRAIAN_FINAL, 'set BRAIAN_FINAL=1 against the demo server')
   await login(page)
   await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('palette')).toBeVisible()
+  await expect(page.getByTestId('command-palette')).toBeVisible()
   await page.getByTestId('palette-input').fill('add attribute weight (kg) to Drill')
   await expect(page.locator('.hit', { hasText: 'Proposal · review before it is saved' })).toBeVisible()
   await page.screenshot({ path: `${shots}/ctrl-k.png` })

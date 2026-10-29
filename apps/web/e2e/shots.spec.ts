@@ -17,18 +17,18 @@ async function login(page: Page) {
 async function tour(page: Page, theme: 'dark' | 'light') {
   await page.keyboard.press('Control+k')
   await page.getByTestId('palette-input').fill('Articles view')
-  await page.getByTestId('palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' }).first().click()
-  await expect(page.getByTestId('palette')).toHaveCount(0)
+  await page.getByTestId('command-palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' }).first().click()
+  await expect(page.getByTestId('command-palette')).toHaveCount(0)
   await page.getByRole('button', { name: 'All', exact: true }).click()
   await expect(page.getByTestId('row-count')).toBeVisible()
   await page.screenshot({ path: `${shots}/workspace-${theme}.png` })
 
   await page.keyboard.press('Control+k')
   await page.getByTestId('palette-input').fill('cheese')
-  await expect(page.getByTestId('palette').locator('.hit').first()).toBeVisible()
+  await expect(page.getByTestId('command-palette').locator('.hit').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/command-palette-${theme}.png` })
   await page.keyboard.press('Escape')
-  await expect(page.getByTestId('palette')).toHaveCount(0)
+  await expect(page.getByTestId('command-palette')).toHaveCount(0)
 
   await page.getByTestId('assortment').filter({ hasText: 'Cheese' }).click()
   await expect(page.getByTestId('object-row').first()).toContainText('ART-CHED')
