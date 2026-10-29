@@ -477,9 +477,10 @@ describe('show column', () => {
     act(() => {
       dispatchUi('ui.show_column', { column: 'type' })
     })
-    await waitFor(() => expect(headerIds()).toEqual(allColumns))
+    // Re-shown columns append last (same rule as Fields toggleField).
+    await waitFor(() => expect(headerIds()).toEqual(['col-key', 'col-name', 'col-status', 'col-version', 'col-type']))
     await waitFor(() => expect(readUiContext().columns.every((column) => !column.hidden)).toBe(true))
-    expect(readUiContext().columns.map((column) => column.header)).toEqual(['Number', 'Name', 'Type', 'Status', 'Version'])
+    expect(readUiContext().columns.map((column) => column.header)).toEqual(['Number', 'Name', 'Status', 'Version', 'Type'])
   })
 })
 
