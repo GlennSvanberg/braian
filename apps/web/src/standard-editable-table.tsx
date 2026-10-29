@@ -27,6 +27,8 @@ export type StandardColumn<T> = {
   write?: (row: T, value: string) => T
   /** Render display cell; defaults to String(read(row)). */
   display?: (row: T) => ReactNode
+  /** Native title tooltip for the cell (e.g. full list behind +N). */
+  title?: (row: T) => string
   truncate?: boolean
   /** Optional test id for the cell content, used by attribute definitions. */
   cellTestId?: (row: T) => string | undefined
@@ -58,6 +60,9 @@ export type StandardEditableTableProps<T extends { id: string }> = {
   getRowKeyAttr?: (row: T) => string | undefined
   /** Extra toolbar content under the chrome bar. */
   belowBar?: ReactNode
+  /** Opens the field picker (Columns control in chrome). */
+  onSelectFields?: () => void
+  selectFieldsLabel?: string
   /** Per-row edit gate (e.g. lock standard attribute keys). */
   canEdit?: (row: T, column: StandardColumn<T>) => boolean
   /** Shared context menu: context for a row, or empty surface when row is null. */
@@ -94,6 +99,8 @@ export function StandardEditableTable<T extends { id: string }>({
   getRowTestId,
   getRowKeyAttr,
   belowBar,
+  onSelectFields,
+  selectFieldsLabel,
   canEdit,
   menuContext,
   getMenuTarget,
@@ -268,6 +275,8 @@ export function StandardEditableTable<T extends { id: string }>({
       testId={testId}
       newRowLabel={newRowLabel}
       onNewRow={createDraftRow && onDraftRowsChange ? onNewRow : undefined}
+      onSelectFields={onSelectFields}
+      selectFieldsLabel={selectFieldsLabel}
       rowCount={filtered.length}
       filterValue={filterValue}
       onFilterChange={onFilterChange}
@@ -285,9 +294,11 @@ export function StandardEditableTable<T extends { id: string }>({
           {columns.map((column) => (
             <div
               key={column.id}
-              className="standard-grid-cell head"
+              className={column.truncate ? 'standard-grid-cell head truncate' : 'standard-grid-cell head'}
               role="columnheader"
-              style={column.width ? { width: column.width, flex: 'none' } : undefined}
+              data-column={column.id}
+              title={column.header}
+              style={column.width ? { width: column.width, flex: 'none', minWidth: column.width } : undefined}
             >
               {column.header}
             </div>
@@ -323,8 +334,8 @@ export function StandardEditableTable<T extends { id: string }>({
                     className={column.truncate ? 'standard-grid-cell truncate' : 'standard-grid-cell'}
                     role="gridcell"
                     data-column={column.id}
-                    style={column.width ? { width: column.width, flex: 'none' } : undefined}
-                    title={column.truncate ? title : undefined}
+                    style={column.width ? { width: column.width, flex: 'none', minWidth: column.width } : undefined}
+                    title={column.title?.(row) || (column.truncate ? title : undefined)}
                     onDoubleClick={() => beginEdit(row, column)}
                   >
                     {isEditing ? (
