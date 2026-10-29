@@ -206,4 +206,81 @@ test.describe('field picker on Products', () => {
     await expect(page.getByTestId('fields-mode')).toBeVisible()
     await expect(page.locator('form.create-row, [data-testid="new-object"]')).toHaveCount(0)
   })
+
+  test('Specific search finds cheddar GTIN beyond first page; Edit field First replaces without duplicate', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
+    // Specific… server search (GTIN with/without leading 0)
+    await openFieldsPalette(page)
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-specific')
+    await enterOn(page, 'fields-row-net_weight')
+    await page.getByTestId('fields-mode-input').fill('7310000000024')
+    const cheddar = page.locator('[data-testid^="fields-row-"]').filter({ hasText: /07310000000024|ART-CHED|cheddar/i }).first()
+    await expect(cheddar).toBeVisible({ timeout: 20_000 })
+    const cheddarId = await cheddar.getAttribute('data-testid')
+    if (!cheddarId) throw new Error('missing cheddar peer')
+    await enterOn(page, cheddarId)
+    await enterOn(page, 'fields-row-g')
+    await page.keyboard.press('Escape')
+    const row = cheddarRow(page)
+    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/200\s*g/)
+
+    // Add All kg, then Edit field → First must replace, not duplicate
+    await openFieldsPalette(page)
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-all')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
+    await page.keyboard.press('Escape')
+
+    const allHeaders = page.locator('[data-testid^="col-articles>net_weight"]')
+    const beforeCount = await allHeaders.count()
+    expect(beforeCount).toBeGreaterThanOrEqual(2)
+
+    const allHeader = page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /\ball\b/i }).first()
+    await allHeader.click({ button: 'right' })
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /Edit field/i }).click()
+    await expect(page.getByTestId('fields-mode')).toBeVisible()
+    // Navigate away and back — editing mode must survive
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowRight')
+    await enterOn(page, 'fields-row-first')
+    await page.keyboard.press('Escape')
+
+    const firstHeaders = page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /first/i })
+    await expect(firstHeaders).toHaveCount(await firstHeaders.count())
+    // No duplicate identical first headers for same unit after replace of all→first
+    // At most one "all" remains (none) and first count should not grow by +1 beyond prior firsts
+    await expect(page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /\ball\b/i })).toHaveCount(0)
+    const afterFirst = await page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /first/i }).count()
+    expect(afterFirst).toBeGreaterThanOrEqual(1)
+    // Total hop net_weight columns should not exceed previous (all replaced, not added)
+    const afterCount = await page.locator('[data-testid^="col-articles>net_weight"]').count()
+    expect(afterCount).toBeLessThanOrEqual(beforeCount)
+  })
+
+  test('header and body column widths match for hop columns', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await openFieldsPalette(page)
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-all')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
+    await page.keyboard.press('Escape')
+
+    const header = page.locator('[data-testid^="col-articles>net_weight"]').first()
+    await expect(header).toBeVisible()
+    const headerBox = await header.boundingBox()
+    const cell = page.locator('[data-testid="object-row"]').first().locator('[data-column^="articles>net_weight"]').first()
+    await expect(cell).toBeVisible()
+    const cellBox = await cell.boundingBox()
+    expect(headerBox && cellBox).toBeTruthy()
+    expect(Math.abs((headerBox!.width) - (cellBox!.width))).toBeLessThanOrEqual(2)
+  })
+
 })

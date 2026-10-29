@@ -13,6 +13,8 @@ export type FieldsHost = {
   onToggleColumn: (column: ViewColumn) => void
   onReplaceColumn: (previousId: string, next: ViewColumn) => void
   peerOptionsForField: (leafId: string, query: string) => PeerPickOption[]
+  /** Server search for Specific… (debounced in FieldsMode). */
+  searchPeersForField?: (leafId: string, query: string) => Promise<PeerPickOption[]>
 }
 
 let host: FieldsHost | null = null
