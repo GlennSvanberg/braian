@@ -377,25 +377,26 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         })
     }
 
-    return top.options
-      .filter((option) => !needle || option.label.toLowerCase().includes(needle))
-      .map((option) => ({
-        id: option.id,
-        title: option.label,
-        subtitle: option.subtitle,
-        checked:
-          columnsUnder(cols, top.pathIds, [
-            ...top.applied.filter((q) => q.kind !== 'cardinality'),
-            {
-              kind: 'cardinality',
-              optionId: 'specific',
-              label: option.shortLabel,
-              value: option.pickValue,
-            },
-          ]).length > 0,
-        run: () => activateSpecific(option.pickValue, option.shortLabel, top),
-      }))
-  }, [top, query, columns])
+    // Re-query peers on every keystroke so Specific… is not stuck on a snapshot
+    // taken before search finished (or while the field filter still held "net").
+    const live = peerOptionsForField(top.pendingLeaf.id, query)
+    return live.map((option) => ({
+      id: option.id,
+      title: option.label,
+      subtitle: option.subtitle,
+      checked:
+        columnsUnder(cols, top.pathIds, [
+          ...top.applied.filter((q) => q.kind !== 'cardinality'),
+          {
+            kind: 'cardinality',
+            optionId: 'specific',
+            label: option.shortLabel,
+            value: option.pickValue,
+          },
+        ]).length > 0,
+      run: () => activateSpecific(option.pickValue, option.shortLabel, top),
+    }))
+  }, [top, query, columns, peerOptionsForField])
 
 
   function restoreIndexAfterPop(parent: StackFrame, leaving: StackFrame): number {
@@ -500,7 +501,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         ...prev,
         {
           kind: 'specific',
-          options: peerOptionsForField(field.id, query),
+          options: peerOptionsForField(field.id, ''),
           field,
           pathIds,
           pathNames,
@@ -512,7 +513,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       ])
       setQuery('')
       setActive(
-        focusIndexForSpecific(peerOptionsForField(field.id, query), pathIds, frame.linkQualifiers),
+        focusIndexForSpecific(peerOptionsForField(field.id, ''), pathIds, frame.linkQualifiers),
       )
       return
     }
@@ -555,7 +556,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
           ...prev,
           {
             kind: 'specific',
-            options: peerOptionsForField(leaf.id, query),
+            options: peerOptionsForField(leaf.id, ''),
             field: leaf,
             pathIds: frame.editing!.fieldPath,
             pathNames: frame.editing!.pathNames,
@@ -569,7 +570,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         setQuery('')
         setActive(
           focusIndexForSpecific(
-            peerOptionsForField(leaf.id, query),
+            peerOptionsForField(leaf.id, ''),
             frame.editing!.fieldPath,
             frame.editing!.qualifiers,
           ),

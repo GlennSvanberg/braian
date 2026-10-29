@@ -770,13 +770,31 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
   font-size: 12px;
 }
 .choice-chip.on { background: var(--accent-dim); color: var(--accent); }
-.chip, [data-testid='assortment'] {
+.chip {
   border-radius: 999px;
   background: var(--accent-dim);
   color: var(--accent);
   box-shadow: none;
   font-size: 12px;
   height: 30px;
+}
+/* Assortment chips use .filter-chip / .filter-chip.on — do not force accent. */
+[data-testid='assortment'] {
+  border-radius: 999px;
+  box-shadow: none;
+  font-size: 12px;
+  height: 30px;
+}
+.cell-editor {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
 }
 .meta-chip {
   display: inline-flex;

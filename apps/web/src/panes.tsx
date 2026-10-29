@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useMemo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
@@ -44,7 +44,7 @@ import { StateNote } from './states'
 import { classSections } from './class-sections'
 import { LinkSections } from './link-section'
 import { RecordSection } from './record-section'
-import { labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
+import { groupKeyOf, labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
 import { appendPathFilter, objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
 import { enrichSelection, publishColumns, publishSelection, publishTable } from './ui-context'
@@ -142,6 +142,8 @@ export function ObjectTable({
   const [activeColumn, setActiveColumn] = useState('')
   const [moving, setMoving] = useState<string | null>(null)
   const [flashId, setFlashId] = useState('')
+  const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null)
+  const [editingDraft, setEditingDraft] = useState('')
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
@@ -271,12 +273,21 @@ export function ObjectTable({
   })
   const systemColumns = attributePaths.data?.system_columns ?? []
   const peerArticles = useQuery({
-    queryKey: ['field-peer-articles'],
+    queryKey: ['field-peer-articles', uiLanguage, Boolean(defs.data)],
     queryFn: async () => {
+      const filter = encodeURIComponent('type_key:=article')
       const result = await api<{ hits?: Array<Record<string, unknown>> }>(
-        `/v1/search?q=&type=article&per_page=100&lang=${encodeURIComponent(uiLanguage)}`,
+        `/v1/search?q=*&filter=${filter}&per_page=100&lang=${encodeURIComponent(uiLanguage)}`,
       )
-      return result.hits ?? []
+      return (result.hits ?? []).map((hit) => {
+        const doc = ((hit.document as Json | undefined) ?? (hit as Json)) as Json
+        const id = String(hit.id ?? doc.id ?? '')
+        const key = String(doc.key ?? '')
+        const name = catalogName(doc, defs.data) || String(doc.name ?? '')
+        // gtin is stored as a_<uuid> on the search document — resolve via defs.
+        const gtin = readIndexed(doc, defs.data, 'gtin') || String(doc.gtin ?? '')
+        return { id, key, number: key, name, gtin, document: doc }
+      })
     },
     enabled: Boolean(typeKey === 'product'),
     staleTime: 60_000,
@@ -305,7 +316,7 @@ export function ObjectTable({
     }
     setPrefsReady(true)
   }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state])
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!prefsReady) return
     const snapshot = JSON.stringify([order, hidden])
     // The first run after the GET is the baseline: never PUT the load itself.
@@ -321,12 +332,14 @@ export function ObjectTable({
       systemColumns,
     )
     if (document.columns.length === 0) return
+    // Queue immediately so beforeunload/keepalive can flush even if reload wins the race
+    // against a debounced timer (Brand disappearing after a column change).
     pendingPrefs.current = { snapshot, viewId: view.id, document }
     if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
     prefsSaveTimer.current = setTimeout(() => {
       prefsSaveTimer.current = null
       flushPendingPrefsRef.current()
-    }, 400)
+    }, 0)
     return () => {
       if (prefsSaveTimer.current != null) {
         clearTimeout(prefsSaveTimer.current)
@@ -815,13 +828,71 @@ export function ObjectTable({
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
   const hopPaths = shown.filter((id) => isHopPath(id) || parseColumnId(id).qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality'))
-  const pageRowIds = Array.from(byIndex.values()).map((row) => row.id)
+  // When Status/Type grouping is on, rows live in groupedRows — byIndex stays empty.
+  // pathValues must still load hop cells for every visible row.
+  const pageRowIds = (groupBy ? groupedRows : Array.from(byIndex.values())).map((row) => row.id)
   const pathValues = useQuery({
     queryKey: ['path-values', typeKey, hopPaths, pageRowIds],
     queryFn: () => fetchPathValues({ ids: pageRowIds, paths: hopPaths, typeKey }),
     enabled: hopPaths.length > 0 && pageRowIds.length > 0 && Boolean(typeKey),
   })
+  const isEditableColumn = (id: string) => {
+    if (isHopPath(id)) return false
+    const path = parseColumnId(id).path
+    const base = (path.split('@')[0] ?? path).split('.')[0] ?? path
+    if (base === 'type' || base === 'version' || base === 'key') return false
+    return true
+  }
+
+  const commitCellEdit = (row: ObjRow, columnId: string, nextText: string) => {
+    setEditingCell(null)
+    const path = parseColumnId(columnId).path
+    const langMatch = path.includes('@') ? path.split('@') : null
+    const attrKey = (langMatch ? langMatch[0]! : path).split('.')[0] ?? path
+    const language = langMatch?.[1]
+    const bodyValues: Json = language
+      ? { [attrKey]: { [language]: nextText } }
+      : { [attrKey]: nextText }
+    void api<Json>(`/v1/objects/${row.id}`, {
+      method: 'PATCH',
+      headers: { 'If-Match': String(row.version ?? 0) },
+      body: JSON.stringify({ values: bodyValues }),
+    })
+      .then(() => {
+        session.push(copy.saved)
+        void queryClient.invalidateQueries({ queryKey: ['objects'] })
+        void queryClient.invalidateQueries({ queryKey: ['object', row.id] })
+        void queryClient.invalidateQueries({ queryKey: ['path-values'] })
+      })
+      .catch(() => undefined)
+  }
+
   const cell = (row: ObjRow, id: string) => {
+    if (editingCell && editingCell.rowId === row.id && editingCell.columnId === id) {
+      return (
+        <input
+          data-testid={`cell-editor-${id}`}
+          className="cell-editor"
+          autoFocus
+          value={editingDraft}
+          onChange={(event) => setEditingDraft(event.target.value)}
+          onBlur={() => commitCellEdit(row, id, editingDraft)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              event.stopPropagation()
+              commitCellEdit(row, id, editingDraft)
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              setEditingCell(null)
+            }
+          }}
+          onClick={(event) => event.stopPropagation()}
+        />
+      )
+    }
     if (id === 'key' || id === 'number') return row.key
     if (id === 'name') {
       const count = suggestionCounts.get(row.id) ?? 0
@@ -859,7 +930,8 @@ export function ObjectTable({
         </span>
       )
     }
-    return readPathFromDoc(row.doc, defs.data, id)
+    // Column ids may carry `#language:en` etc.; Typesense fields use the path text only.
+    return readPathFromDoc(row.doc, defs.data, parseColumnId(id).path)
   }
   const toggleField = (path: string) => {
     const shownNow = order.includes(path) && !hidden.includes(path)
@@ -923,8 +995,9 @@ export function ObjectTable({
         const needle = query.trim().toLowerCase()
         const options: Array<{ id: string; label: string; subtitle: string; pickValue: string; shortLabel: string }> = []
         const seen = new Set<string>()
+        const visibleRows = groupBy ? groupedRows : Array.from(byIndex.values())
         // Prefer live hop entries when present (identity = object id).
-        for (const row of Array.from(byIndex.values())) {
+        for (const row of visibleRows) {
           const entries = pathValues.data?.entries?.[row.id] ?? {}
           for (const [path, list] of Object.entries(entries)) {
             if (!path.includes(leafId)) continue
@@ -946,11 +1019,11 @@ export function ObjectTable({
         }
         // Fallback: search-index articles (number / name / gtin).
         for (const hit of peerArticles.data ?? []) {
-          const id = String(hit.id ?? hit.object_id ?? '')
+          const id = String(hit.id ?? '')
           if (!id || seen.has(id)) continue
           const key = String(hit.key ?? hit.number ?? '')
           const name = String(hit.name ?? '')
-          const gtin = String((hit as { gtin?: unknown }).gtin ?? hit['a_gtin'] ?? '')
+          const gtin = String(hit.gtin ?? '')
           const hay = `${key} ${name} ${gtin} ${id}`.toLowerCase()
           if (needle && !hay.includes(needle)) continue
           seen.add(id)
@@ -967,7 +1040,7 @@ export function ObjectTable({
       },
     })
     return () => publishFieldsHost(null)
-  }, [typeKey, catalog, viewColumns, byIndex, pathValues.data, peerArticles.data])
+  }, [typeKey, catalog, viewColumns, byIndex, groupedRows, groupBy, pathValues.data, peerArticles.data])
 
   const newRowLabel = newObjectLabel(bound?.singular)
   return (
@@ -989,6 +1062,8 @@ export function ObjectTable({
           setFilter={setFilter}
           setGroup={session.setGroup}
           setLabelFilter={setLabelFilter}
+          activeGroup={session.group}
+          activeLabelFilter={labelFilter}
           assortments={selectionRows}
           defs={defs.data}
         />
@@ -1106,6 +1181,13 @@ export function ObjectTable({
                         onColumn={setActiveColumn}
                         onActivate={onRowClick}
                         onMenu={onRowMenu}
+                        onCellDoubleClick={(row, column) => {
+                          if (!isEditableColumn(column)) return
+                          const path = parseColumnId(column).path
+                          const current = readPathFromDoc(row.doc, defs.data, path)
+                          setEditingDraft(current)
+                          setEditingCell({ rowId: row.id, columnId: column })
+                        }}
                         onFocusGrid={focusGrid}
                       />
                     )
@@ -1137,6 +1219,13 @@ export function ObjectTable({
                   onColumn={setActiveColumn}
                   onActivate={onRowClick}
                   onMenu={onRowMenu}
+                  onCellDoubleClick={(row, column) => {
+                    if (!isEditableColumn(column)) return
+                    const path = parseColumnId(column).path
+                    const current = readPathFromDoc(row.doc, defs.data, path)
+                    setEditingDraft(current)
+                    setEditingCell({ rowId: row.id, columnId: column })
+                  }}
                   onFocusGrid={focusGrid}
                   style={{ position: 'absolute', transform: `translateY(${item.start}px)`, width: '100%' }}
                 />
@@ -1287,6 +1376,7 @@ function Row({
   onColumn,
   onMenu,
   onFocusGrid,
+  onCellDoubleClick,
   style,
 }: {
   row: ObjRow
@@ -1302,6 +1392,7 @@ function Row({
   onColumn: (column: string) => void
   onMenu: (index: number, x: number, y: number, column: string) => void
   onFocusGrid: () => void
+  onCellDoubleClick?: (row: ObjRow, column: string) => void
   style?: CSSProperties
 }) {
   // Background and border share this class. Range picks stay quieter so only the active row looks selected.
@@ -1326,6 +1417,13 @@ function Row({
         const column = columnOf(event.target)
         if (column) onColumn(column)
         onActivate(index, event)
+      }}
+      onDoubleClick={(event) => {
+        const column = columnOf(event.target)
+        if (!column || !onCellDoubleClick) return
+        event.preventDefault()
+        event.stopPropagation()
+        onCellDoubleClick(row, column)
       }}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -1365,6 +1463,8 @@ function TableFilters({
   setFilter,
   setGroup,
   setLabelFilter,
+  activeGroup,
+  activeLabelFilter,
   assortments,
   defs,
 }: {
@@ -1373,6 +1473,8 @@ function TableFilters({
   setFilter: (value: string) => void
   setGroup: (value: string | null) => void
   setLabelFilter: (value: string) => void
+  activeGroup: string | null
+  activeLabelFilter: string
   assortments: Json[]
   defs?: Json
 }) {
@@ -1384,17 +1486,48 @@ function TableFilters({
   }
   const applyAssortment = (item: Json) => {
     const query = (item.query as Json) ?? {}
+    const nextGroup = query.group ? String(query.group) : null
+    const nextLabels = labelSearchFilter(query, defs)
+    // Toggle off when the same selection is already active.
+    const same =
+      (nextGroup ?? '') === (activeGroup ?? '') && nextLabels === activeLabelFilter
+    if (same) {
+      setGroup(null)
+      setLabelFilter('')
+      setFilter('')
+      return
+    }
     setFilter('')
-    setGroup(query.group ? String(query.group) : null)
-    setLabelFilter(labelSearchFilter(query, defs))
+    setGroup(nextGroup)
+    setLabelFilter(nextLabels)
   }
+  const assortmentActive = (item: Json) => {
+    const query = (item.query as Json) ?? {}
+    const wantGroup = query.group ? String(query.group) : ''
+    const wantLabels = labelSearchFilter(query, defs)
+    if (wantGroup && activeGroup) {
+      const a = groupKeyOf(wantGroup, defs)
+      const b = groupKeyOf(activeGroup, defs)
+      if (a === b || wantGroup === activeGroup) return wantLabels === activeLabelFilter
+    }
+    if (!wantGroup && wantLabels && wantLabels === activeLabelFilter && !activeGroup) return true
+    return false
+  }
+  const selectionOn = Boolean(activeGroup || activeLabelFilter)
   return (
     <>
-      <button type="button" className={groupBy === '' ? 'filter-chip on' : 'filter-chip'} onClick={clear}>{copy.all}</button>
+      <button type="button" className={!selectionOn && groupBy === '' ? 'filter-chip on' : 'filter-chip'} onClick={clear}>{copy.all}</button>
       <button type="button" className={groupBy === 'type_key' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'type_key' ? '' : 'type_key')}>{copy.type}</button>
       <button type="button" className={groupBy === 'a_status' ? 'filter-chip on' : 'filter-chip'} onClick={() => setGroupBy(groupBy === 'a_status' ? '' : 'a_status')}>{copy.status}</button>
       {assortments.map((item) => (
-        <button key={String(item.id)} type="button" className="filter-chip" data-testid="assortment" onClick={() => applyAssortment(item)}>
+        <button
+          key={String(item.id)}
+          type="button"
+          className={assortmentActive(item) ? 'filter-chip on' : 'filter-chip'}
+          data-testid="assortment"
+          aria-pressed={assortmentActive(item)}
+          onClick={() => applyAssortment(item)}
+        >
           {assortmentDisplayName(String(item.name))}
         </button>
       ))}

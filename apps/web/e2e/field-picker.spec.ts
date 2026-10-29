@@ -73,10 +73,14 @@ async function drillRight(page: Page, rowTestId: string) {
   throw new Error(`Could not move active highlight to ${rowTestId} for →`)
 }
 
+function cheddarRow(page: Page) {
+  return page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
+}
+
 test.describe('field picker on Products', () => {
   test.setTimeout(180_000)
 
-  test('full flow: Description language, Allergens code, Articles net weight, Specific GTIN', async ({ page }) => {
+  test('full flow: Description en, Allergens code, Articles net weight kg, Specific GTIN', async ({ page }) => {
     await login(page)
     await openProducts(page)
     await expect(page.getByText('Organic oat drink').or(page.getByText('PROD-OAT'))).toBeVisible({ timeout: 60_000 })
@@ -84,9 +88,9 @@ test.describe('field picker on Products', () => {
     await openFieldsPalette(page)
     await expect(page.getByTestId('fields-crumb')).toHaveText(/Fields/)
 
-    // Description → sv (one Enter each)
+    // Description → en (seed has English only)
     await enterOn(page, 'fields-row-description')
-    await enterOn(page, 'fields-row-sv')
+    await enterOn(page, 'fields-row-en')
     await expect(page.getByTestId('fields-check-description')).toBeVisible()
 
     await backToRoot(page)
@@ -103,7 +107,7 @@ test.describe('field picker on Products', () => {
     await enterOn(page, 'fields-row-all')
     await enterOn(page, 'fields-row-net_weight')
     await enterOn(page, 'fields-row-kg')
-    await expect(page.getByRole('columnheader', { name: /Articles › Net weight/i })).toBeVisible()
+    await expect(page.getByTestId('col-articles>net_weight#cardinality:all|unit:kg').or(page.locator('[data-testid^="col-articles>net_weight"]'))).toBeVisible()
 
     await backToRoot(page)
 
@@ -111,7 +115,6 @@ test.describe('field picker on Products', () => {
     await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-specific')
     await enterOn(page, 'fields-row-net_weight')
-    // Search Specific list for cheddar GTIN
     await page.getByTestId('fields-mode-input').fill('07310000000024')
     const cheddar = page.locator('[data-testid^="fields-row-"]').filter({ hasText: '07310000000024' }).first()
     await expect(cheddar).toBeVisible({ timeout: 15_000 })
@@ -123,8 +126,28 @@ test.describe('field picker on Products', () => {
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('fields-mode')).toHaveCount(0)
 
-    // Headers present
-    await expect(page.getByRole('columnheader', { name: /Description/i })).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: /Allergens/i })).toBeVisible()
+    // Cell values from demo seed: Mature cheddar description + 0.2 kg / 0.4 kg articles
+    const row = cheddarRow(page)
+    await expect(row).toBeVisible()
+    await expect(row).toContainText(/firm cow'?s-milk cheddar|Synthetic demo recipe/i)
+    // Net weight all, kg: ART-CHED-200 = 0.2 kg, ART-CHED-400 = 0.4 kg → "0.2 kg, 0.4 kg" (order by peer key)
+    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/0\.[24] kg/)
+  })
+
+  test('column prefs survive an immediate reload', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar').or(page.getByText('PROD-CHEDDAR'))).toBeVisible({ timeout: 60_000 })
+
+    await openFieldsPalette(page)
+    await enterOn(page, 'fields-row-brand')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('fields-mode')).toHaveCount(0)
+    await expect(page.locator('[data-testid^="col-brand"]').first()).toBeVisible()
+
+    // Reload immediately — must not race the prefs PUT
+    await page.reload()
+    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
+    await expect(page.locator('[data-testid^="col-brand"]').first()).toBeVisible({ timeout: 30_000 })
   })
 })
