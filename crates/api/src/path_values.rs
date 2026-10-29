@@ -315,7 +315,10 @@ pub async fn path_values(
 
 fn response_path_key(item: &ResolvedPath) -> String {
     // Prefer the client column id so all/first/specific/unit do not collide on path text.
-    item.key.clone().filter(|key| !key.is_empty()).unwrap_or_else(|| item.text.clone())
+    item.key
+        .clone()
+        .filter(|key| !key.is_empty())
+        .unwrap_or_else(|| item.text.clone())
 }
 
 struct ResolvedPath {
