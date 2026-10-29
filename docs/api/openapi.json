@@ -4848,6 +4848,13 @@
               "null"
             ]
           },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional client column id used as the response map key (cardinality/unit/lang)."
+          },
           "path": {
             "type": "string"
           },
@@ -4951,7 +4958,7 @@
           },
           "values": {
             "type": "object",
-            "description": "`object_id → path_text → display values` (one entry per linked peer when a hop has many).",
+            "description": "`object_id → path key (column id or path text) → display values`.",
             "additionalProperties": {
               "type": "object",
               "additionalProperties": {
