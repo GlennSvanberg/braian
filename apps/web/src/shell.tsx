@@ -658,10 +658,14 @@ export function Shell() {
     }
     migratedRef.current.add(current.id)
     if (!patch.changed) return
-    void persistWorkspaceMigration(current, patch).then(() => {
-      void queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
-      void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
-    })
+    void persistWorkspaceMigration(current, patch)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
+        void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      })
+      .catch(() => {
+        // Migration is best-effort; never surface as an unhandled page error.
+      })
   }, [workspace.data, defs.data, queryClient])
 
   const session: Session = {
