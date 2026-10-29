@@ -4826,11 +4826,74 @@
           }
         }
       },
+      "PathInput": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/components/schemas/PathSpec"
+          }
+        ]
+      },
+      "PathSpec": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "cardinality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Target unit code for measure display conversion."
+          }
+        }
+      },
+      "PathValueEntry": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "True when a requested unit conversion could not be applied."
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
       "PathValuesRequest": {
         "type": "object",
         "required": [
           "ids",
-          "paths"
+          "paths",
+          "type"
         ],
         "properties": {
           "ids": {
@@ -4851,16 +4914,13 @@
           "paths": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/PathInput"
             },
-            "description": "Path texts such as `product>brand` or `weight.unit`."
+            "description": "Path texts or rich specs (`path` + cardinality / peer / unit)."
           },
           "type": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Optional type key or id used to validate paths."
+            "type": "string",
+            "description": "Type key or id used to validate paths (required)."
           }
         }
       },
@@ -4870,6 +4930,25 @@
           "values"
         ],
         "properties": {
+          "entries": {
+            "type": "object",
+            "description": "Richer entries with peer ids and conversion markers.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PathValueEntry"
+                }
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "values": {
             "type": "object",
             "description": "`object_id → path_text → display values` (one entry per linked peer when a hop has many).",

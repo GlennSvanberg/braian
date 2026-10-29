@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useMemo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
@@ -16,8 +16,12 @@ import { exportPayload, runExport, saveWorkbook } from './export'
 import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, sourceLabel, suggestionLines, valuesFromKept } from './field-diff'
 import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
-import { FieldPicker } from './field-picker'
-import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+import { publishFieldsHost } from './fields-host'
+import { fieldCatalogForType } from './fields/catalog'
+import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, type ViewColumn } from './fields/columns'
+import { EMPTY_CELL } from './fields/qualifiers'
+import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
+  prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { fetchPathValues } from './path-values'
 import { FieldDiff } from './field-diff-view'
@@ -122,7 +126,7 @@ export function ObjectTable({
   const [labelFilter, setLabelFilter] = useState('')
   const [pathFilters, setPathFilters] = useState<string[]>([])
   const [exportPaths, setExportPaths] = useState<Array<{ id: string; header: string }>>([])
-  const [picker, setPicker] = useState<null | 'filter' | 'export' | 'fields' | { text: string; label: string }>(null)
+  const [picker, setPicker] = useState<null | 'filter' | 'export' | { text: string; label: string }>(null)
   const [pathValue, setPathValue] = useState('')
   const [queryText, setQueryText] = useState(initial.filter)
   const [sort, setSort] = useState(initial.sort)
@@ -266,18 +270,41 @@ export function ObjectTable({
     enabled: Boolean(typeKey),
   })
   const systemColumns = attributePaths.data?.system_columns ?? []
+  const peerArticles = useQuery({
+    queryKey: ['field-peer-articles'],
+    queryFn: async () => {
+      const result = await api<{ hits?: Array<Record<string, unknown>> }>(
+        `/v1/search?q=&type=article&per_page=100&lang=${encodeURIComponent(uiLanguage)}`,
+      )
+      return result.hits ?? []
+    },
+    enabled: Boolean(typeKey === 'product'),
+    staleTime: 60_000,
+  })
+
   useEffect(() => {
     if (prefsApplied.current || prefs.isPending) return
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
-    const applied = prefs.isSuccess ? prefsToOrderHidden(prefs.data, systemColumns) : null
+    const applied = prefs.isSuccess
+      ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
+      : null
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
+    } else if (prefs.isSuccess && typeKey && !prefs.data?.document) {
+      // No saved prefs row: start from sensible defaults for this type.
+      const defaults = defaultColumnIdsForType(typeKey, defs.data)
+      const ensured = ensureSystemColumns(defaults, [], systemColumns)
+      // Keep an explicit view.state.table.order when the test/harness provided one.
+      if (!Array.isArray((view.state as { table?: { order?: unknown } } | undefined)?.table?.order)) {
+        setOrder(ensured.order)
+        setHidden(ensured.hidden)
+      }
     }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns])
+  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state])
   useEffect(() => {
     if (!prefsReady) return
     const snapshot = JSON.stringify([order, hidden])
@@ -395,16 +422,22 @@ export function ObjectTable({
   }, [activeStamp, selected, session.objectId, queryText, filterBy, sort, view.id, knownStamp])
 
   const pathList = attributePaths.data?.paths ?? []
-  const columnFor = (id: string) =>
-    columns.find((column) => column.id === id) ?? {
-      id,
-      header:
-        systemColumns.find((column) => column.key === id)?.label
-        ?? pathList.find((path) => path.text === id)?.label
-        ?? id,
-      size: 160,
-      sort: '',
-    }
+  const columnFor = (id: string) => {
+    const builtin = columns.find((column) => column.id === id)
+    if (builtin) return builtin
+    const { path, qualifiers } = parseColumnId(id)
+    const pathLabel =
+      systemColumns.find((column) => column.key === id || column.key === path)?.label
+      ?? pathList.find((item) => item.text === path)?.label
+      ?? path
+    // Prefer qualifier-aware title when we can rebuild the column from the catalog.
+    const leafToken = (path.split('>').pop() ?? path).split('.')[0]?.split('@')[0] ?? path
+    const via = path.includes('>') ? path.split('>')[0] : null
+    const fieldPath = via ? [via, leafToken] : [leafToken]
+    const rebuilt = makeViewColumn(fieldPath, qualifiers, fieldCatalogForType(defs.data ?? {}, typeKey))
+    const header = rebuilt ? columnTitle(rebuilt) : pathLabel
+    return { id, header, size: 160, sort: '' }
+  }
   const columnDefs = [
     ...columns,
     ...pathList
@@ -710,7 +743,13 @@ export function ObjectTable({
       registerCommandRunner('table:filter-by', () => setPicker('filter')),
       registerCommandRunner('table:export-columns', () => setPicker('export')),
       registerCommandRunner('table:export', () => { exportVisible() }),
-      registerCommandRunner('fields:select', () => setPicker('fields')),
+      registerCommandRunner('fields:select', () => {
+        window.dispatchEvent(new CustomEvent('braian-fields-palette', { detail: {} }))
+      }),
+      registerCommandRunner('fields:edit', (target) => {
+        const columnId = target?.column ?? ''
+        window.dispatchEvent(new CustomEvent('braian-fields-palette', { detail: { editColumnId: columnId || null } }))
+      }),
       registerCommandRunner('object:new', () => {
         window.dispatchEvent(new Event('braian-new-object'))
       }),
@@ -775,12 +814,12 @@ export function ObjectTable({
     queryFn: () => api<Json>('/v1/proposals'),
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
-  const hopPaths = shown.filter((id) => isHopPath(id))
+  const hopPaths = shown.filter((id) => isHopPath(id) || parseColumnId(id).qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality'))
   const pageRowIds = Array.from(byIndex.values()).map((row) => row.id)
   const pathValues = useQuery({
     queryKey: ['path-values', typeKey, hopPaths, pageRowIds],
     queryFn: () => fetchPathValues({ ids: pageRowIds, paths: hopPaths, typeKey }),
-    enabled: hopPaths.length > 0 && pageRowIds.length > 0,
+    enabled: hopPaths.length > 0 && pageRowIds.length > 0 && Boolean(typeKey),
   })
   const cell = (row: ObjRow, id: string) => {
     if (id === 'key' || id === 'number') return row.key
@@ -796,11 +835,23 @@ export function ObjectTable({
     if (id === 'type') return <MetaChip>{typeLabel(defs.data, row.type, uiLanguage)}</MetaChip>
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
-    if (isHopPath(id)) {
-      const values = pathValues.data?.values?.[row.id]?.[id]
+    if (isHopPath(id) || parseColumnId(id).qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality')) {
+      const apiPath = parseColumnId(id).path
+      const values = pathValues.data?.values?.[row.id]?.[apiPath]
       const summary = summarizePathValues(values)
+      if (summary.text && pathValues.data?.entries?.[row.id]?.[apiPath]?.some((e: { raw?: boolean }) => e.raw)) {
+        return (
+          <span data-testid={`hop-cell-${id}`} title={`${summary.title} (unit not converted)`}>
+            {summary.text}<span className="muted"> ·</span>
+          </span>
+        )
+      }
       if (!summary.text) {
-        return <span className="muted" data-testid={`hop-cell-${id}`} />
+        return (
+          <span className="muted" data-testid={`hop-cell-${id}`}>
+            {EMPTY_CELL}
+          </span>
+        )
       }
       return (
         <span data-testid={`hop-cell-${id}`} title={summary.title}>
@@ -831,13 +882,100 @@ export function ObjectTable({
     })
   }
 
+  
+  const catalog = useMemo(() => fieldCatalogForType(defs.data ?? {}, typeKey), [defs.data, typeKey])
+  const viewColumns: ViewColumn[] = useMemo(() => {
+    const cols: ViewColumn[] = []
+    for (const id of shown) {
+      const { path, qualifiers } = parseColumnId(id)
+      // Rebuild from catalog when possible
+      const parts = path.split('>')
+      const leafToken = (parts[parts.length - 1] ?? path).split('.')[0]?.split('@')[0] ?? path
+      const fieldPath = parts.length > 1 ? [parts[0]!, leafToken] : [leafToken]
+      const col = makeViewColumn(fieldPath, qualifiers, catalog)
+      if (col) cols.push(col)
+      else cols.push({
+        id,
+        path,
+        fieldPath,
+        pathNames: fieldPath,
+        qualifiers,
+        leaf: { id: leafToken, name: leafToken, typeLabel: 'text', shape: 'text' },
+        viaManyLink: path.includes('>'),
+      })
+    }
+    return cols
+  }, [shown, catalog])
+
+  useEffect(() => {
+    publishFieldsHost({
+      typeKey,
+      fields: catalog,
+      columns: viewColumns,
+      onToggleColumn: (column) => {
+        toggleField(column.id)
+      },
+      onReplaceColumn: (previousId, next) => {
+        setOrder((current) => current.map((id) => (id === previousId ? next.id : id)))
+        setHidden((current) => current.filter((id) => id !== previousId))
+      },
+      peerOptionsForField: (leafId, query) => {
+        const needle = query.trim().toLowerCase()
+        const options: Array<{ id: string; label: string; subtitle: string; pickValue: string; shortLabel: string }> = []
+        const seen = new Set<string>()
+        // Prefer live hop entries when present (identity = object id).
+        for (const row of Array.from(byIndex.values())) {
+          const entries = pathValues.data?.entries?.[row.id] ?? {}
+          for (const [path, list] of Object.entries(entries)) {
+            if (!path.includes(leafId)) continue
+            for (const entry of list as Array<{ text?: string; peer_id?: string }>) {
+              const peerId = entry.peer_id
+              if (!peerId || seen.has(peerId)) continue
+              const label = entry.text || peerId
+              if (needle && !`${label} ${peerId}`.toLowerCase().includes(needle)) continue
+              seen.add(peerId)
+              options.push({
+                id: peerId,
+                label,
+                subtitle: row.name || row.key,
+                pickValue: peerId,
+                shortLabel: label,
+              })
+            }
+          }
+        }
+        // Fallback: search-index articles (number / name / gtin).
+        for (const hit of peerArticles.data ?? []) {
+          const id = String(hit.id ?? hit.object_id ?? '')
+          if (!id || seen.has(id)) continue
+          const key = String(hit.key ?? hit.number ?? '')
+          const name = String(hit.name ?? '')
+          const gtin = String((hit as { gtin?: unknown }).gtin ?? hit['a_gtin'] ?? '')
+          const hay = `${key} ${name} ${gtin} ${id}`.toLowerCase()
+          if (needle && !hay.includes(needle)) continue
+          seen.add(id)
+          const shortLabel = gtin || key || name || id
+          options.push({
+            id,
+            label: gtin ? `${gtin} · ${key || name}` : key || name || id,
+            subtitle: name || key,
+            pickValue: id,
+            shortLabel,
+          })
+        }
+        return options
+      },
+    })
+    return () => publishFieldsHost(null)
+  }, [typeKey, catalog, viewColumns, byIndex, pathValues.data, peerArticles.data])
+
   const newRowLabel = newObjectLabel(bound?.singular)
   return (
     <StandardTableChrome
       testId="object-table"
       newRowLabel={newRowLabel}
       onNewRow={() => window.dispatchEvent(new Event('braian-new-object'))}
-      onSelectFields={() => setPicker('fields')}
+      onSelectFields={() => window.dispatchEvent(new CustomEvent('braian-fields-palette', { detail: {} }))}
       selectFieldsLabel={copy.selectFields}
       rowCount={found}
       filterValue={filter}
@@ -1013,19 +1151,7 @@ export function ObjectTable({
           </div>
         ) : null}
       </div>
-      {picker === 'fields' ? (
-        <FieldPicker
-          paths={[
-            ...systemColumns.map((column) => ({ text: column.key, label: column.label })),
-            ...pathList,
-          ]}
-          order={all}
-          hidden={hidden}
-          onToggle={toggleField}
-          onMove={moveField}
-          onClose={() => setPicker(null)}
-        />
-      ) : null}
+      {/* Fields › lives in the Ctrl+K palette */}
       {picker === 'filter' || picker === 'export' ? (
         <PathMenu
           paths={attributePaths.data?.paths ?? []}

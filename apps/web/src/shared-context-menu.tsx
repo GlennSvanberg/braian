@@ -23,6 +23,9 @@ export type OpenMenuRequest = {
 export const OPEN_CONTEXT_MENU = 'braian:open-context-menu'
 
 export function openSharedContextMenu(request: OpenMenuRequest) {
+  // Header/cell right-click must win over an open Ctrl+K palette.
+  window.dispatchEvent(new Event('braian-close-palette'))
+
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent(OPEN_CONTEXT_MENU, { detail: request }))
 }

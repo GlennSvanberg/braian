@@ -152,14 +152,15 @@ fn validate_document(
             Problem::new(
                 StatusCode::BAD_REQUEST,
                 "version",
-                "document.version must be 1",
+                "document.version must be 2",
             )
         })?;
-    if version != 1 {
+    // v1 is rejected on PUT. GET ignores v1 rows so old prefs cannot crash the UI.
+    if version != 2 {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
             "version",
-            "document.version must be 1",
+            "document.version must be 2",
         ));
     }
     let columns = object
@@ -196,11 +197,16 @@ fn validate_document(
                 Problem::new(StatusCode::BAD_REQUEST, code, message)
             })?
         };
-        if !seen.insert(text.clone()) {
+        let qualifiers = column.get("qualifiers").cloned().unwrap_or(Value::Null);
+        let dedupe_key = format!(
+            "{text}|{}",
+            serde_json::to_string(&qualifiers).unwrap_or_default()
+        );
+        if !seen.insert(dedupe_key) {
             return Err(Problem::new(
                 StatusCode::BAD_REQUEST,
                 "duplicate",
-                format!("duplicate path {text}"),
+                format!("duplicate column {text}"),
             ));
         }
         let visible = column
@@ -210,13 +216,18 @@ fn validate_document(
         let mut entry = Map::new();
         entry.insert("path".into(), Value::String(text));
         entry.insert("visible".into(), Value::Bool(visible));
+        if let Some(array) = qualifiers.as_array()
+            && !array.is_empty()
+        {
+            entry.insert("qualifiers".into(), qualifiers);
+        }
         if let Some(path_id) = column.get("path_id").filter(|value| value.is_object()) {
             entry.insert("path_id".into(), path_id.clone());
         }
         normalized.push(Value::Object(entry));
     }
     Ok(json!({
-        "version": 1,
+        "version": 2,
         "columns": normalized,
     }))
 }
@@ -342,10 +353,14 @@ pub async fn get_column_prefs(
     let cached = state.models.get(&state.store).await?;
     let (document, updated_at, stale_paths) = match stored {
         Some((document, updated_at)) => {
-            let (annotated, stale) = annotate_stale(&document, &cached.defs, type_id);
-            // Prefs saved before the system-column allowlist still show type/version.
-            let ensured = ensure_system_view_columns(&annotated);
-            (Some(ensured), Some(updated_at.to_rfc3339()), stale)
+            // v1 (and unknown) documents are discarded — not migrated.
+            if document.get("version").and_then(Value::as_u64) != Some(2) {
+                (None, Some(updated_at.to_rfc3339()), Vec::new())
+            } else {
+                let (annotated, stale) = annotate_stale(&document, &cached.defs, type_id);
+                let ensured = ensure_system_view_columns(&annotated);
+                (Some(ensured), Some(updated_at.to_rfc3339()), stale)
+            }
         }
         None => (None, None, Vec::new()),
     };

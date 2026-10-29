@@ -65,7 +65,7 @@ function headerIds() {
 
 const prefsDocument: ColumnPrefsResponse = {
   document: {
-    version: 1,
+    version: 2,
     columns: [
       { path: 'sku', visible: true },
       { path: 'name', visible: false },
@@ -138,7 +138,7 @@ describe('column prefs helpers', () => {
 
   it('returns null for an empty document', () => {
     expect(prefsToOrderHidden({ document: null })).toBeNull()
-    expect(prefsToOrderHidden({ document: { version: 1, columns: [] } })).toBeNull()
+    expect(prefsToOrderHidden({ document: { version: 2, columns: [] } })).toBeNull()
     expect(prefsToOrderHidden(undefined)).toBeNull()
   })
 
@@ -146,7 +146,7 @@ describe('column prefs helpers', () => {
     expect(
       orderHiddenToDocument(['key', 'name', 'type', 'status', 'version'], ['status'], null, systemColumns),
     ).toEqual({
-      version: 1,
+      version: 2,
       columns: [
         { path: 'number', visible: true },
         { path: 'name', visible: true },
@@ -166,7 +166,7 @@ describe('column prefs helpers', () => {
       prefsToOrderHidden(
         {
           document: {
-            version: 1,
+            version: 2,
             columns: [
               { path: 'number', visible: true },
               { path: 'name', visible: true },
@@ -184,7 +184,7 @@ describe('column prefs helpers', () => {
 
   it('drops paths that the type does not list', () => {
     expect(orderHiddenToDocument(['sku', 'gone', 'packaging>name'], [], ['sku', 'packaging>name'])).toEqual({
-      version: 1,
+      version: 2,
       columns: [
         { path: 'sku', visible: true },
         { path: 'packaging>name', visible: true },
@@ -264,7 +264,7 @@ describe('ObjectTable column prefs', () => {
       const body = JSON.parse(String(put?.[1]?.body))
       expect(body.environment).toBe('default')
       expect(body.document).toEqual({
-        version: 1,
+        version: 2,
         columns: [
           { path: 'sku', visible: false },
           { path: 'name', visible: false },
@@ -279,7 +279,7 @@ describe('ObjectTable column prefs', () => {
   it('keeps type and version after save and reload', async () => {
     let stored: ColumnPrefsResponse = {
       document: {
-        version: 1,
+        version: 2,
         columns: [
           { path: 'sku', visible: true },
           { path: 'type', visible: true },
@@ -320,9 +320,9 @@ describe('ObjectTable column prefs', () => {
       dispatchUi('ui.hide_column', { column: 'sku' })
     })
     await waitFor(() => {
-      expect(stored.document?.columns.some((column) => column.path === 'sku' && column.visible === false)).toBe(true)
-      expect(stored.document?.columns.some((column) => column.path === 'type' && column.visible === true)).toBe(true)
-      expect(stored.document?.columns.some((column) => column.path === 'version' && column.visible === true)).toBe(true)
+      expect(stored.document?.columns?.some((column) => column.path === 'sku' && column.visible === false)).toBe(true)
+      expect(stored.document?.columns?.some((column) => column.path === 'type' && column.visible === true)).toBe(true)
+      expect(stored.document?.columns?.some((column) => column.path === 'version' && column.visible === true)).toBe(true)
     }, { timeout: 2000 })
     unmount()
     render(<PrefsTable />)
@@ -349,7 +349,7 @@ describe('ObjectTable column prefs', () => {
       expect(puts.length).toBeGreaterThan(putsBefore)
       const body = JSON.parse(String(puts.at(-1)?.[1]?.body))
       expect(body.document).toEqual({
-        version: 1,
+        version: 2,
         columns: [
           { path: 'sku', visible: false },
           { path: 'name', visible: false },
@@ -406,7 +406,7 @@ describe('ObjectTable column prefs', () => {
         if (url.includes('/column-prefs')) {
           return json({
             document: {
-              version: 1,
+              version: 2,
               columns: [
                 { path: 'number', visible: true },
                 { path: 'name', visible: true },

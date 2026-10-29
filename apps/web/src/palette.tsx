@@ -34,6 +34,9 @@ import {
 import { applyUiResult, dispatchUi, uiOperations } from './ui-bus'
 import { readUiContext, type UiColumn } from './ui-context'
 import { runCommand } from './command-registry'
+import { FieldsMode, type FieldsPaletteOpen } from './fields/fields-mode'
+import { readFieldsHost, subscribeFieldsHost } from './fields-host'
+import { makeViewColumn, parseColumnId } from './fields/columns'
 
 type SessionLike = {
   objectId: string | null
@@ -71,6 +74,9 @@ export function CommandPalette({
   onPrepareAddView,
   startAddView,
   onClose,
+  fieldsMode,
+  fieldsEditColumnId,
+  onFieldsConsumed,
 }: {
   session: SessionLike
   workspaces: Array<{ id: string; name: string; share_token?: string }>
@@ -82,9 +88,20 @@ export function CommandPalette({
   onPrepareAddView?: () => void
   startAddView?: boolean
   onClose: () => void
+  fieldsMode?: boolean
+  fieldsEditColumnId?: string | null
+  onFieldsConsumed?: () => void
 }) {
   const [query, setQuery] = useState('')
-  const [mode, setMode] = useState<'list' | 'ai'>(ai ? 'ai' : 'list')
+  const [mode, setMode] = useState<'list' | 'ai' | 'fields'>(fieldsMode || ai ? (fieldsMode ? 'fields' : 'ai') : 'list')
+  const [fieldsHost, setFieldsHost] = useState(() => readFieldsHost())
+  useEffect(() => subscribeFieldsHost(() => setFieldsHost(readFieldsHost())), [])
+  useEffect(() => {
+    if (fieldsMode) setMode('fields')
+  }, [fieldsMode])
+  useEffect(() => {
+    if (mode === 'fields' && fieldsEditColumnId) onFieldsConsumed?.()
+  }, [mode, fieldsEditColumnId, onFieldsConsumed])
   const [active, setActive] = useState<number | null>(null)
   const [stack, setStack] = useState<Array<{ label: string; rows: PaletteItem[] }>>([])
   const [turns, setTurns] = useState<Turn[]>([])
@@ -316,8 +333,11 @@ export function CommandPalette({
       return
     }
     if (id === 'fields:select') {
-      void runCommand('fields:select', { typeKey: session.listType ?? session.workspaceType ?? undefined })
-      onClose()
+      setMode('fields')
+      return
+    }
+    if (id === 'fields:edit') {
+      setMode('fields')
       return
     }
     if (id.startsWith('column:hide:') || id.startsWith('column:show:')) {
@@ -799,6 +819,40 @@ export function CommandPalette({
   const question = userTurns.at(-1)?.text ?? ''
   const nothingElse = rows.length === 1 && rows[0]?.group === 'ask'
   const selected = nothingElse ? 0 : active
+
+
+  if (mode === 'fields') {
+    const host = fieldsHost
+    const editId = fieldsEditColumnId
+    const open: FieldsPaletteOpen = (() => {
+      if (editId && host) {
+        const col = host.columns.find((item) => item.id === editId)
+        if (col) return { kind: 'edit', column: col }
+      }
+      return { kind: 'browse' }
+    })()
+    if (!host) {
+      return (
+        <div className="palette" role="dialog" data-testid="command-palette">
+          <p className="muted">Open an object table to select fields.</p>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+      )
+    }
+    return (
+      <div className="palette" role="dialog" data-testid="command-palette" data-fields-mode="true">
+        <FieldsMode
+          open={open}
+          columns={host.columns}
+          fields={host.fields}
+          onClose={onClose}
+          onToggleColumn={host.onToggleColumn}
+          onReplaceColumn={host.onReplaceColumn}
+          peerOptionsForField={host.peerOptionsForField}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="palette" data-testid="palette" onMouseDown={onClose}>

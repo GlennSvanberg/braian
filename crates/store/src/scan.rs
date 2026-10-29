@@ -199,6 +199,21 @@ impl Store {
         tx.commit().await?;
         Ok(hops)
     }
+
+    /// Hop values with peer object ids — for Specific… columns and conversion.
+    pub async fn hop_entries_for(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<BTreeMap<Uuid, BTreeMap<String, Vec<HopPeerValue>>>, Error> {
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut client = self.pool().get().await?;
+        let tx = client.build_transaction().read_only(true).start().await?;
+        let hops = link_hop_entries(&tx, self.form(), ids).await?;
+        tx.commit().await?;
+        Ok(hops)
+    }
 }
 
 /// Exact key, or the list-filter contains pattern. `None` leaves the predicate off.
@@ -264,6 +279,110 @@ async fn link_peer_keys(
             .push(key);
     }
     Ok(peers)
+}
+
+/// One hop cell value tagged with the linked peer object id.
+#[derive(Debug, Clone)]
+pub struct HopPeerValue {
+    pub peer_id: Uuid,
+    pub peer_key: String,
+    pub value: Value,
+}
+
+pub(crate) async fn link_hop_entries(
+    tx: &tokio_postgres::Transaction<'_>,
+    form: StorageForm,
+    ids: &[Uuid],
+) -> Result<BTreeMap<Uuid, BTreeMap<String, Vec<HopPeerValue>>>, Error> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let edges = tx
+        .query(
+            "SELECT l.from_id AS endpoint, l.link_type_id, 'out' AS side,
+                    peer.id AS peer_id, COALESCE(peer.key, '') AS peer_key, link_obj.id AS link_id
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             JOIN objects peer ON peer.id = l.to_id AND peer.deleted_at IS NULL
+             WHERE l.from_id = ANY($1)
+             UNION ALL
+             SELECT l.to_id, l.link_type_id, 'in',
+                    peer.id, COALESCE(peer.key, ''), link_obj.id
+             FROM links l
+             JOIN objects link_obj ON link_obj.id = l.object_id AND link_obj.deleted_at IS NULL
+             JOIN objects peer ON peer.id = l.from_id AND peer.deleted_at IS NULL
+             WHERE l.to_id = ANY($1)
+             ORDER BY endpoint, link_type_id, side, peer_key",
+            &[&ids],
+        )
+        .await?;
+    if edges.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut related = Vec::new();
+    for row in &edges {
+        let peer: Uuid = row.get(3);
+        let link_id: Uuid = row.get(5);
+        related.push(peer);
+        related.push(link_id);
+    }
+    related.sort();
+    related.dedup();
+    let parts = tx.query(PARTS, &[&related]).await?;
+    let mut encoded: BTreeMap<Uuid, BTreeMap<String, Value>> = BTreeMap::new();
+    for row in &parts {
+        let id: Uuid = row.get(0);
+        let part: String = row.get(1);
+        let values: Value = row.get(2);
+        encoded.entry(id).or_default().insert(part, values);
+    }
+    let mut joined = BTreeMap::new();
+    for (id, parts) in &encoded {
+        let values = split::join_parts(form, parts)
+            .map_err(|message| Error::Corrupt(ObjectId::from_uuid(*id), message))?;
+        joined.insert(*id, values);
+    }
+    let number = braian_model::number_id();
+    let mut hops: BTreeMap<Uuid, BTreeMap<String, Vec<HopPeerValue>>> = BTreeMap::new();
+    for row in edges {
+        let endpoint: Uuid = row.get(0);
+        let link_type: Uuid = row.get(1);
+        let side: String = row.get(2);
+        let peer: Uuid = row.get(3);
+        let peer_key: String = row.get(4);
+        let link_id: Uuid = row.get(5);
+        let bucket = hops.entry(endpoint).or_default();
+        let number_slot = format!("{link_type}:{side}:{}", number.as_uuid());
+        bucket.entry(number_slot).or_default().push(HopPeerValue {
+            peer_id: peer,
+            peer_key: peer_key.clone(),
+            value: Value::String(peer_key.clone()),
+        });
+        if let Some(values) = joined.get(&peer) {
+            for (attribute, value) in values {
+                if *attribute == number {
+                    continue;
+                }
+                let slot = format!("{link_type}:{side}:{}", attribute.as_uuid());
+                bucket.entry(slot).or_default().push(HopPeerValue {
+                    peer_id: peer,
+                    peer_key: peer_key.clone(),
+                    value: value.clone(),
+                });
+            }
+        }
+        if let Some(values) = joined.get(&link_id) {
+            for (attribute, value) in values {
+                let slot = format!("{link_type}:link:{}", attribute.as_uuid());
+                bucket.entry(slot).or_default().push(HopPeerValue {
+                    peer_id: peer,
+                    peer_key: peer_key.clone(),
+                    value: value.clone(),
+                });
+            }
+        }
+    }
+    Ok(hops)
 }
 
 pub(crate) async fn link_hop_values(
