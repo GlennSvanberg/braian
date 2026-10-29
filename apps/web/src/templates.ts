@@ -1,6 +1,7 @@
 import { api, type Json } from './api'
 import { splitPair, tabGroup, type Node } from './layout'
 import type { TypeName } from './type-labels'
+import { MODEL_WORKSPACE_VIEW_SPECS, modelWorkspaceLayout } from './model-workspace-migrate'
 import { typeUsesTree } from './type-workspaces'
 
 export type WorkspaceTemplate = {
@@ -61,23 +62,12 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
     id: 'model',
     name: 'Data model',
     summary: 'Object types, links, value lists, units and attribute definitions',
-    views: [
-      { type: 'data_model', title: 'Structures', state: { mode: 'tree' } },
-      { type: 'object_types', title: 'Object types', state: {} },
-      { type: 'link_types', title: 'Link types', state: {} },
-      { type: 'value_lists', title: 'Value lists', state: {} },
-      { type: 'value_list_values', title: 'List values', state: {} },
-      { type: 'units', title: 'Units', state: {} },
-      { type: 'data_model', title: 'Type attributes', state: { mode: 'classes' } },
-      { type: 'attribute_definitions', title: 'Attribute definitions', state: {} },
-    ],
-    layout: (ids) =>
-      splitPair(
-        'horizontal',
-        0.22,
-        tabGroup([ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[3] ?? '', ids[5] ?? ''].filter(Boolean)),
-        splitPair('horizontal', 0.55, tabGroup([ids[7] ?? '', ids[6] ?? ''].filter(Boolean)), tabGroup([ids[4] ?? ''].filter(Boolean))),
-      ),
+    views: MODEL_WORKSPACE_VIEW_SPECS.map((view) => ({
+      type: view.type,
+      title: view.title,
+      state: { ...view.state },
+    })),
+    layout: (ids) => modelWorkspaceLayout(ids),
   },
   {
     id: 'review',
