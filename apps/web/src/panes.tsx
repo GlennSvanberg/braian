@@ -3,7 +3,8 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
-import { indexSort, readIndexed } from './index-fields'
+import { attributeByKey, indexSort, readIndexed } from './index-fields'
+import { cellEditShouldPatch } from './cell-edit'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Slider } from './components/ui/slider'
@@ -40,6 +41,7 @@ import {
   typeOfView,
 } from './type-labels'
 import { publishProposal } from './proposal-bus'
+import { rollbackTargetSeq } from './history-rollback'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
 import { LinkSections } from './link-section'
@@ -144,6 +146,8 @@ export function ObjectTable({
   const [flashId, setFlashId] = useState('')
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null)
   const [editingDraft, setEditingDraft] = useState('')
+  const editingOriginalRef = useRef('')
+  const skipBlurCommitRef = useRef(false)
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
@@ -449,7 +453,8 @@ export function ObjectTable({
     const fieldPath = via ? [via, leafToken] : [leafToken]
     const rebuilt = makeViewColumn(fieldPath, qualifiers, fieldCatalogForType(defs.data ?? {}, typeKey))
     const header = rebuilt ? columnTitle(rebuilt) : pathLabel
-    return { id, header, size: 160, sort: '' }
+    const wide = path.includes('>') || qualifiers.length > 0
+    return { id, header, size: wide ? 260 : 160, sort: '' }
   }
   const columnDefs = [
     ...columns,
@@ -827,14 +832,31 @@ export function ObjectTable({
     queryFn: () => api<Json>('/v1/proposals'),
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
-  const hopPaths = shown.filter((id) => isHopPath(id) || parseColumnId(id).qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality'))
+  /** Columns that Typesense hits do not carry (hops, units, searchable-only / language text). */
+  const columnNeedsPathValues = (id: string) => {
+    if (isHopPath(id)) return true
+    const { path, qualifiers } = parseColumnId(id)
+    if (qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality')) return true
+    if (path.includes('@')) return true
+    const key = (path.split('.')[0] ?? path).split('@')[0] ?? path
+    if (key === 'number' || key === 'name' || key === 'key' || key === 'type' || key === 'version' || key === 'status') {
+      return false
+    }
+    const attr = attributeByKey(defs.data, key)
+    if (!attr) return false
+    if (attr.language_dependent) return true
+    const index = attr.index as { filterable?: boolean; sortable?: boolean } | undefined
+    // Searchable-only fields live in search_{lang}, not a_<id> — grid must use pathValues.
+    if (index && !index.filterable && !index.sortable) return true
+    return false
+  }
+  const pathValueColumns = shown.filter(columnNeedsPathValues)
   // When Status/Type grouping is on, rows live in groupedRows — byIndex stays empty.
-  // pathValues must still load hop cells for every visible row.
   const pageRowIds = (groupBy ? groupedRows : Array.from(byIndex.values())).map((row) => row.id)
   const pathValues = useQuery({
-    queryKey: ['path-values', typeKey, hopPaths, pageRowIds],
-    queryFn: () => fetchPathValues({ ids: pageRowIds, paths: hopPaths, typeKey }),
-    enabled: hopPaths.length > 0 && pageRowIds.length > 0 && Boolean(typeKey),
+    queryKey: ['path-values', typeKey, pathValueColumns, pageRowIds],
+    queryFn: () => fetchPathValues({ ids: pageRowIds, paths: pathValueColumns, typeKey }),
+    enabled: pathValueColumns.length > 0 && pageRowIds.length > 0 && Boolean(typeKey),
   })
   const isEditableColumn = (id: string) => {
     if (isHopPath(id)) return false
@@ -844,8 +866,21 @@ export function ObjectTable({
     return true
   }
 
+  const cellDisplayText = (row: ObjRow, id: string) => {
+    const apiPath = parseColumnId(id).path
+    if (columnNeedsPathValues(id)) {
+      const values = pathValues.data?.values?.[row.id]?.[apiPath]
+      return summarizePathValues(values).text
+    }
+    return readPathFromDoc(row.doc, defs.data, apiPath)
+  }
+
   const commitCellEdit = (row: ObjRow, columnId: string, nextText: string) => {
+    // Prevent the input's blur (fired on unmount after Enter) from double-PATCHing.
+    skipBlurCommitRef.current = true
     setEditingCell(null)
+    const original = editingOriginalRef.current
+    if (!cellEditShouldPatch(original, nextText)) return
     const path = parseColumnId(columnId).path
     const langMatch = path.includes('@') ? path.split('@') : null
     const attrKey = (langMatch ? langMatch[0]! : path).split('.')[0] ?? path
@@ -864,7 +899,16 @@ export function ObjectTable({
         void queryClient.invalidateQueries({ queryKey: ['object', row.id] })
         void queryClient.invalidateQueries({ queryKey: ['path-values'] })
       })
-      .catch(() => undefined)
+      .catch((reason: unknown) => {
+        const message = reason instanceof ApiError ? reason.message : copy.validation
+        session.push(message)
+      })
+  }
+
+  const cancelCellEdit = () => {
+    skipBlurCommitRef.current = true
+    setEditingCell(null)
+    setEditingDraft('')
   }
 
   const cell = (row: ObjRow, id: string) => {
@@ -876,7 +920,13 @@ export function ObjectTable({
           autoFocus
           value={editingDraft}
           onChange={(event) => setEditingDraft(event.target.value)}
-          onBlur={() => commitCellEdit(row, id, editingDraft)}
+          onBlur={() => {
+            if (skipBlurCommitRef.current) {
+              skipBlurCommitRef.current = false
+              return
+            }
+            commitCellEdit(row, id, editingDraft)
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
@@ -886,7 +936,7 @@ export function ObjectTable({
             if (event.key === 'Escape') {
               event.preventDefault()
               event.stopPropagation()
-              setEditingCell(null)
+              cancelCellEdit()
             }
           }}
           onClick={(event) => event.stopPropagation()}
@@ -906,31 +956,31 @@ export function ObjectTable({
     if (id === 'type') return <MetaChip>{typeLabel(defs.data, row.type, uiLanguage)}</MetaChip>
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
-    if (isHopPath(id) || parseColumnId(id).qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality')) {
+    if (columnNeedsPathValues(id)) {
       const apiPath = parseColumnId(id).path
       const values = pathValues.data?.values?.[row.id]?.[apiPath]
       const summary = summarizePathValues(values)
+      const testId = isHopPath(id) ? `hop-cell-${id}` : `path-cell-${id}`
       if (summary.text && pathValues.data?.entries?.[row.id]?.[apiPath]?.some((e: { raw?: boolean }) => e.raw)) {
         return (
-          <span data-testid={`hop-cell-${id}`} title={`${summary.title} (unit not converted)`}>
+          <span data-testid={testId} title={`${summary.title} (unit not converted)`}>
             {summary.text}<span className="muted"> ·</span>
           </span>
         )
       }
       if (!summary.text) {
         return (
-          <span className="muted" data-testid={`hop-cell-${id}`}>
+          <span className="muted" data-testid={testId}>
             {EMPTY_CELL}
           </span>
         )
       }
       return (
-        <span data-testid={`hop-cell-${id}`} title={summary.title}>
+        <span data-testid={testId} title={summary.title}>
           {summary.text}
         </span>
       )
     }
-    // Column ids may carry `#language:en` etc.; Typesense fields use the path text only.
     return readPathFromDoc(row.doc, defs.data, parseColumnId(id).path)
   }
   const toggleField = (path: string) => {
@@ -965,16 +1015,20 @@ export function ObjectTable({
       const leafToken = (parts[parts.length - 1] ?? path).split('.')[0]?.split('@')[0] ?? path
       const fieldPath = parts.length > 1 ? [parts[0]!, leafToken] : [leafToken]
       const col = makeViewColumn(fieldPath, qualifiers, catalog)
-      if (col) cols.push(col)
-      else cols.push({
-        id,
-        path,
-        fieldPath,
-        pathNames: fieldPath,
-        qualifiers,
-        leaf: { id: leafToken, name: leafToken, typeLabel: 'text', shape: 'text' },
-        viaManyLink: path.includes('>'),
-      })
+      if (col) {
+        // Keep the prefs/order id so Edit field → replace matches setOrder entries.
+        cols.push({ ...col, id, path, qualifiers: qualifiers.length > 0 ? qualifiers : col.qualifiers })
+      } else {
+        cols.push({
+          id,
+          path,
+          fieldPath,
+          pathNames: fieldPath,
+          qualifiers,
+          leaf: { id: leafToken, name: leafToken, typeLabel: 'text', shape: 'text' },
+          viaManyLink: path.includes('>'),
+        })
+      }
     }
     return cols
   }, [shown, catalog])
@@ -988,8 +1042,23 @@ export function ObjectTable({
         toggleField(column.id)
       },
       onReplaceColumn: (previousId, next) => {
-        setOrder((current) => current.map((id) => (id === previousId ? next.id : id)))
-        setHidden((current) => current.filter((id) => id !== previousId))
+        setOrder((current) => {
+          if (current.includes(previousId)) {
+            return current.map((id) => (id === previousId ? next.id : id))
+          }
+          // Id drift: replace the hop/own column that shares the same API path.
+          const prevPath = parseColumnId(previousId).path
+          let replaced = false
+          return current.map((id) => {
+            if (replaced) return id
+            if (parseColumnId(id).path === prevPath) {
+              replaced = true
+              return next.id
+            }
+            return id
+          })
+        })
+        setHidden((current) => current.filter((id) => id !== previousId && id !== next.id))
       },
       peerOptionsForField: (leafId, query) => {
         const needle = query.trim().toLowerCase()
@@ -1110,8 +1179,9 @@ export function ObjectTable({
                 onContextMenu={(event) => onHeaderMenu(id, event)}
               >
                 <button
-                  className="icon-btn"
+                  className="icon-btn column-header-btn"
                   draggable
+                  title={column.header}
                   onDragStart={(event) => event.dataTransfer.setData('text/column', id)}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => {
@@ -1140,7 +1210,7 @@ export function ObjectTable({
                     const startX = event.clientX
                     const base = width
                     const move = (moveEvent: MouseEvent) => {
-                      setSizes((current) => ({ ...current, [id]: Math.max(56, base + moveEvent.clientX - startX) }))
+                      setSizes((current) => ({ ...current, [id]: Math.max(120, base + moveEvent.clientX - startX) }))
                     }
                     const up = () => {
                       window.removeEventListener('mousemove', move)
@@ -1183,8 +1253,9 @@ export function ObjectTable({
                         onMenu={onRowMenu}
                         onCellDoubleClick={(row, column) => {
                           if (!isEditableColumn(column)) return
-                          const path = parseColumnId(column).path
-                          const current = readPathFromDoc(row.doc, defs.data, path)
+                          const current = cellDisplayText(row, column)
+                          editingOriginalRef.current = current
+                          skipBlurCommitRef.current = false
                           setEditingDraft(current)
                           setEditingCell({ rowId: row.id, columnId: column })
                         }}
@@ -1221,8 +1292,9 @@ export function ObjectTable({
                   onMenu={onRowMenu}
                   onCellDoubleClick={(row, column) => {
                     if (!isEditableColumn(column)) return
-                    const path = parseColumnId(column).path
-                    const current = readPathFromDoc(row.doc, defs.data, path)
+                    const current = cellDisplayText(row, column)
+                    editingOriginalRef.current = current
+                    skipBlurCommitRef.current = false
                     setEditingDraft(current)
                     setEditingCell({ rowId: row.id, columnId: column })
                   }}
@@ -1554,7 +1626,11 @@ function NewObject({
   const queryClient = useQueryClient()
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
   useEffect(() => {
-    const openForm = () => setOpen(true)
+    const openForm = () => {
+      // Do not open while the command / fields palette has focus (key leaks).
+      if (document.querySelector('[data-testid="command-palette"], [data-testid="fields-mode"]')) return
+      setOpen(true)
+    }
     window.addEventListener('braian-new-object', openForm)
     return () => window.removeEventListener('braian-new-object', openForm)
   }, [])
@@ -2165,7 +2241,16 @@ export function HistoryView({ session }: { session: PanesSession }) {
         method: 'POST',
         body: JSON.stringify({ seq: at }),
       }),
-    onSuccess: (proposal) => session.setProposalId(String(proposal.id)),
+    onSuccess: (proposal) => {
+      const id = String(proposal.id)
+      // Same as assortment / model proposes: open the review dialog so Confirm applies it.
+      publishProposal(id)
+      session.setProposalId(id)
+      session.push(copy.proposed)
+    },
+    onError: (reason: unknown) => {
+      session.push(reason instanceof Error ? reason.message : copy.validation)
+    },
   })
   const seqs = rows.map((row) => Number(row.seq)).sort((left, right) => left - right)
   const minSeq = seqs[0] ?? 0
@@ -2234,7 +2319,14 @@ export function HistoryView({ session }: { session: PanesSession }) {
                   >
                     {copy.viewAsItWas}
                   </button>
-                  <button type="button" className="btn-ghost" data-testid="rollback" onClick={() => rollback.mutate(at)}>{copy.rollback}</button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    data-testid="rollback"
+                    onClick={() => rollback.mutate(rollbackTargetSeq(seqs, at))}
+                  >
+                    {copy.rollback}
+                  </button>
                 </div>
               ) : null}
             </article>
