@@ -292,18 +292,31 @@ export function ObjectTable({
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
+    // sessionStorage bridges reload races; vitest shares one jsdom store across cases.
     let cachedDoc: ColumnPrefsDocument | null = null
-    try {
-      const raw = sessionStorage.getItem(prefsCacheKey(view.id))
-      if (raw) cachedDoc = JSON.parse(raw) as ColumnPrefsDocument
-    } catch {
-      cachedDoc = null
+    if (import.meta.env.MODE !== "test") {
+      try {
+        const raw = sessionStorage.getItem(prefsCacheKey(view.id))
+        if (raw) cachedDoc = JSON.parse(raw) as ColumnPrefsDocument
+      } catch {
+        cachedDoc = null
+      }
     }
-    const fromCache = cachedDoc
-      ? prefsToOrderHidden({ document: cachedDoc }, systemColumns, typeKey, defs.data)
+    const serverApplied = prefs.isSuccess
+      ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
       : null
-    const applied =
-      fromCache ?? (prefs.isSuccess ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data) : null)
+    const serverHasColumns = Boolean(
+      prefs.isSuccess &&
+        prefs.data &&
+        typeof prefs.data === "object" &&
+        Array.isArray((prefs.data as { document?: { columns?: unknown[] } }).document?.columns) &&
+        ((prefs.data as { document?: { columns?: unknown[] } }).document?.columns?.length ?? 0) > 0,
+    )
+    const fromCache =
+      !serverHasColumns && cachedDoc
+        ? prefsToOrderHidden({ document: cachedDoc }, systemColumns, typeKey, defs.data)
+        : null
+    const applied = (serverHasColumns ? serverApplied : null) ?? fromCache ?? serverApplied
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
