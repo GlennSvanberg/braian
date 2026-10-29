@@ -164,7 +164,9 @@ export function ObjectTable({
     viewId: string
     document: ColumnPrefsDocument
     seq: number
+    basisUpdatedAt: string | null
   } | null>(null)
+  const prefsBasisUpdatedAt = useRef<string | null>(null)
   const prefsSeq = useRef(0)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
@@ -181,21 +183,28 @@ export function ObjectTable({
       return
     }
     // Mark as pending until a matching 2xx; survives aborted fetch across reload.
-    writePendingColumnPrefs(pending.viewId, pending.document, pending.seq)
+    writePendingColumnPrefs(
+      pending.viewId,
+      pending.document,
+      pending.seq,
+      pending.basisUpdatedAt,
+    )
     if (opts?.keepalive) {
-      // Fire-and-forget across unload. Do NOT clear pending here — a keepalive 2xx
-      // in a dying document must not drop the entry the remount needs to re-PUT.
+      // Fire-and-forget across unload. Leave sessionStorage pending for remount;
+      // selectInitial drops it if the server already acked a newer document.
       saveColumnPrefsKeepalive(pending.viewId, pending.document)
       return
     }
     void saveColumnPrefs(pending.viewId, pending.document)
-      .then(() => {
-        // If the tab is already hidden (reload/close), keep pending so remount can
-        // re-PUT — a 2xx in this dying document must not drop a newer local entry.
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") return
+      .then((response) => {
         clearPendingColumnPrefs(pending.viewId, pending.seq)
         if (pendingPrefs.current?.seq === pending.seq) pendingPrefs.current = null
         prefsSnapshot.current = pending.snapshot
+        const body = response as { document?: ColumnPrefsDocument; updated_at?: string | null } | undefined
+        if (body?.document?.version === 2) {
+          queryClient.setQueryData(['column-prefs', pending.viewId], body)
+          if (body.updated_at) prefsBasisUpdatedAt.current = body.updated_at
+        }
       })
       .catch(() => undefined)
   }
@@ -314,7 +323,18 @@ export function ObjectTable({
       prefs.isSuccess && prefs.data?.document?.version === 2
         ? (prefs.data.document as ColumnPrefsDocument)
         : null
-    const selected = selectInitialColumnPrefs(hydrateCache, pendingEntry, serverDocument)
+    const serverUpdatedAt =
+      prefs.isSuccess && typeof prefs.data?.updated_at === 'string' ? prefs.data.updated_at : null
+    if (serverUpdatedAt) prefsBasisUpdatedAt.current = serverUpdatedAt
+    const selected = selectInitialColumnPrefs(
+      hydrateCache,
+      pendingEntry,
+      serverDocument,
+      serverUpdatedAt,
+    )
+    if (selected.discardPending && pendingEntry) {
+      clearPendingColumnPrefs(view.id)
+    }
     const applied = selected.document
       ? prefsToOrderHidden({ document: selected.document }, systemColumns, typeKey, defs.data)
       : prefs.isSuccess
@@ -340,18 +360,25 @@ export function ObjectTable({
       const seq = retry.seq
       if (prefsSeq.current < seq) prefsSeq.current = seq
       const snapshot = applied ? JSON.stringify([applied.order, applied.hidden]) : JSON.stringify([[], []])
+      const basis = retry.basisUpdatedAt ?? prefsBasisUpdatedAt.current
       pendingPrefs.current = {
         snapshot,
         viewId: view.id,
         document: retry.document,
         seq,
+        basisUpdatedAt: basis ?? null,
       }
-      writePendingColumnPrefs(view.id, retry.document, seq)
+      writePendingColumnPrefs(view.id, retry.document, seq, basis)
       void saveColumnPrefs(view.id, retry.document)
-        .then(() => {
+        .then((response) => {
           clearPendingColumnPrefs(view.id, seq)
           if (pendingPrefs.current?.seq === seq) pendingPrefs.current = null
           prefsSnapshot.current = snapshot
+          const body = response as { document?: ColumnPrefsDocument; updated_at?: string | null } | undefined
+          if (body?.document?.version === 2) {
+            queryClient.setQueryData(['column-prefs', view.id], body)
+            if (body.updated_at) prefsBasisUpdatedAt.current = body.updated_at
+          }
         })
         .catch(() => undefined)
     }
@@ -375,8 +402,9 @@ export function ObjectTable({
     // Queue immediately so beforeunload/keepalive can flush even if reload wins the race
     // against a debounced timer (Brand disappearing after a column change).
     const seq = ++prefsSeq.current
-    pendingPrefs.current = { snapshot, viewId: view.id, document, seq }
-    writePendingColumnPrefs(view.id, document, seq)
+    const basis = prefsBasisUpdatedAt.current
+    pendingPrefs.current = { snapshot, viewId: view.id, document, seq, basisUpdatedAt: basis }
+    writePendingColumnPrefs(view.id, document, seq, basis)
     if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
     prefsSaveTimer.current = setTimeout(() => {
       prefsSaveTimer.current = null
