@@ -209,6 +209,8 @@ export function ObjectTable({
     queryFn: () => fetchColumnPrefs(view.id),
     enabled: Boolean(view.id),
     retry: false,
+    // Keep optimistic saves across workspace tab remounts; mutation onSuccess refreshes.
+    staleTime: Infinity,
   })
 
   const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
