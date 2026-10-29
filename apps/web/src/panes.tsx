@@ -22,7 +22,7 @@ import { fieldCatalogForType } from './fields/catalog'
 import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, type ViewColumn } from './fields/columns'
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
-  prefsToOrderHidden, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+  prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { cellPathValues, fetchPathValues } from './path-values'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
@@ -157,7 +157,7 @@ export function ObjectTable({
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prefsCacheKey = (viewId: string) => `braian:column-prefs:${viewId}`
   const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
-  flushPendingPrefsRef.current = (_opts) => {
+  flushPendingPrefsRef.current = (opts) => {
     const pending = pendingPrefs.current
     if (!pending) return
     if (prefsSaveTimer.current != null) {
@@ -179,10 +179,19 @@ export function ObjectTable({
     } catch {
       /* private mode */
     }
-    // Always keepalive — survives reload better than a cancelled ordinary fetch.
-    pendingPrefs.current = null
-    saveColumnPrefsKeepalive(pending.viewId, pending.document)
-    prefsSnapshot.current = pending.snapshot
+    if (opts?.keepalive) {
+      pendingPrefs.current = null
+      saveColumnPrefsKeepalive(pending.viewId, pending.document)
+      prefsSnapshot.current = pending.snapshot
+      return
+    }
+    // Keep pending until the PUT finishes so pagehide can still keepalive the same doc.
+    void saveColumnPrefs(pending.viewId, pending.document)
+      .then(() => {
+        if (pendingPrefs.current === pending) pendingPrefs.current = null
+        prefsSnapshot.current = pending.snapshot
+      })
+      .catch(() => undefined)
   }
 
   const virtualizerRef = useRef<{ scrollToIndex: (index: number) => void }>({ scrollToIndex: () => {} })
