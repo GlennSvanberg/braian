@@ -212,9 +212,6 @@ export function FieldsPalette({
   const initial = open.kind === 'edit' ? framesForEdit(open.column) : [rootFrame()]
   const [stack, setStack] = useState<StackFrame[]>(initial)
   const [query, setQuery] = useState('')
-  const [active, setActive] = useState(0)
-  /** Ignore the next Enter after a stack change so cmdk cannot toggle the new first row. */
-  const ignoreEnter = useRef(false)
   const columnsRef = useRef(columns)
   columnsRef.current = columns
   /** Arm outside-dismiss after mount so the opening click cannot close us (Playwright retry / sync paint). */
@@ -230,16 +227,86 @@ export function FieldsPalette({
     }
   }, [])
 
-  /** Swallow at most one Enter after a stack push (cmdk/duplicate key delivery). */
-  function armIgnoreEnter() {
-    ignoreEnter.current = true
+  /** Index of the option/field that already has a column — used when drilling so focus lands on the check. */
+  function focusIndexForQualify(
+    step: QualifierStep,
+    pathIds: string[],
+    applied: AppliedQualifier[],
+    editing?: ProtoColumn,
+  ): number {
+    const cols = columnsRef.current
+    if (editing) {
+      const current = editing.qualifiers.find((q) => q.kind === step.kind)
+      if (current) {
+        const idx = step.options.findIndex((option) => option.id === current.optionId)
+        if (idx >= 0) return idx
+      }
+      return 0
+    }
+    for (let i = 0; i < step.options.length; i += 1) {
+      const option = step.options[i]!
+      const hits = columnsUnder(cols, pathIds, [
+        ...applied.filter(
+          (q) =>
+            q.kind !== step.kind &&
+            !(q.kind === 'cardinality' && q.optionId === 'specific' && !q.value),
+        ),
+        { kind: step.kind, optionId: option.id, label: option.label },
+      ])
+      if (hits.length > 0) return i
+    }
+    return 0
   }
 
-  function consumeIgnoreEnter(): boolean {
-    if (!ignoreEnter.current) return false
-    ignoreEnter.current = false
-    return true
+  function focusIndexForSpecific(
+    options: ArticlePickOption[],
+    pathIds: string[],
+    applied: AppliedQualifier[],
+  ): number {
+    const cols = columnsRef.current
+    for (let i = 0; i < options.length; i += 1) {
+      const option = options[i]!
+      const hits = columnsUnder(cols, pathIds, [
+        ...applied.filter((q) => q.kind !== 'cardinality'),
+        {
+          kind: 'cardinality',
+          optionId: 'specific',
+          label: option.shortLabel,
+          value: option.pickValue,
+        },
+      ])
+      if (hits.length > 0) return i
+    }
+    return 0
   }
+
+  function focusIndexForFields(
+    fields: FieldDef[],
+    pathIds: string[],
+    linkQualifiers: AppliedQualifier[],
+  ): number {
+    const cols = columnsRef.current
+    for (let i = 0; i < fields.length; i += 1) {
+      const field = fields[i]!
+      if (columnsUnder(cols, [...pathIds, field.id], linkQualifiers).length > 0) return i
+    }
+    return 0
+  }
+
+  const [active, setActive] = useState(() => {
+    const top0 = initial[initial.length - 1]
+    if (!top0) return 0
+    if (top0.kind === 'qualify') {
+      return focusIndexForQualify(top0.step, top0.pathIds, top0.applied, top0.editing)
+    }
+    if (top0.kind === 'specific') {
+      return focusIndexForSpecific(top0.options, top0.pathIds, top0.applied)
+    }
+    if (top0.kind === 'fields' && top0.pathIds.length > 0) {
+      return focusIndexForFields(top0.fields, top0.pathIds, top0.linkQualifiers)
+    }
+    return 0
+  })
 
   const top = stack[stack.length - 1]!
   const crumbParts = ['Fields', ...top.crumbs]
@@ -369,8 +436,6 @@ export function FieldsPalette({
     setStack((prev) => prev.slice(0, -1))
     setQuery('')
     setActive(restore)
-    // Navigating back must not leave a stale Enter-ignore that drops the next key.
-    ignoreEnter.current = false
   }
 
 
@@ -395,9 +460,8 @@ export function FieldsPalette({
             crumbs,
           },
         ])
-        armIgnoreEnter()
         setQuery('')
-        setActive(0)
+        setActive(focusIndexForQualify(card, pathIds, frame.linkQualifiers))
         return
       }
       setStack((prev) => [
@@ -413,9 +477,8 @@ export function FieldsPalette({
           crumbs,
         },
       ])
-      armIgnoreEnter()
       setQuery('')
-      setActive(0)
+      setActive(focusIndexForFields(field.link!.peerFields, pathIds, frame.linkQualifiers))
       return
     }
 
@@ -441,9 +504,10 @@ export function FieldsPalette({
           crumbs,
         },
       ])
-      armIgnoreEnter()
       setQuery('')
-      setActive(0)
+      setActive(
+        focusIndexForSpecific(articleOptionsForField(field.id), pathIds, frame.linkQualifiers),
+      )
       return
     }
     const steps = nextQualifierSteps(field, frame.linkQualifiers)
@@ -462,9 +526,8 @@ export function FieldsPalette({
           crumbs,
         },
       ])
-      armIgnoreEnter()
       setQuery('')
-      setActive(0)
+      setActive(focusIndexForQualify(steps[0]!, pathIds, frame.linkQualifiers))
       return
     }
 
@@ -497,9 +560,14 @@ export function FieldsPalette({
             editing: frame.editing,
           },
         ])
-        armIgnoreEnter()
         setQuery('')
-        setActive(0)
+        setActive(
+          focusIndexForSpecific(
+            articleOptionsForField(leaf.id),
+            frame.editing!.fieldPath,
+            frame.editing!.qualifiers,
+          ),
+        )
         return
       }
       if (frame.field.shape === 'link' && frame.field.link) {
@@ -519,9 +587,13 @@ export function FieldsPalette({
             crumbs: [...frame.crumbs, 'Specific'],
           },
         ])
-        armIgnoreEnter()
         setQuery('')
-        setActive(0)
+        setActive(
+          focusIndexForFields(frame.field.link!.peerFields, frame.pathIds, [
+            ...frame.applied.filter((q) => q.kind !== 'cardinality'),
+            { kind: 'cardinality', optionId: 'specific', label: 'Specific' },
+          ]),
+        )
         return
       }
     }
@@ -589,9 +661,8 @@ export function FieldsPalette({
           crumbs: [...frame.crumbs, crumbLabel],
         },
       ])
-      armIgnoreEnter()
       setQuery('')
-      setActive(0)
+      setActive(focusIndexForFields(frame.field.link!.peerFields, frame.pathIds, nextApplied))
       return
     }
 
@@ -611,9 +682,8 @@ export function FieldsPalette({
           crumbs: frame.crumbs,
         },
       ])
-      armIgnoreEnter()
       setQuery('')
-      setActive(0)
+      setActive(focusIndexForQualify(remaining[0]!, frame.pathIds, nextApplied))
       return
     }
 
@@ -655,9 +725,8 @@ export function FieldsPalette({
           crumbs: [...frame.crumbs, value],
         },
       ])
-      armIgnoreEnter()
       setQuery('')
-      setActive(0)
+      setActive(focusIndexForQualify(remaining[0]!, frame.pathIds, nextApplied))
       return
     }
 
@@ -669,15 +738,12 @@ export function FieldsPalette({
   }
 
   function runActive() {
-    if (consumeIgnoreEnter()) return
     const row = rows[Math.min(active, Math.max(0, rows.length - 1))]
     row?.run()
   }
 
   function onKeyDown(event: ReactKeyboardEvent) {
-    if (event.key !== 'Enter' && ignoreEnter.current) {
-      ignoreEnter.current = false
-    }
+    // Handle navigation in capture so cmdk cannot also act on the same keydown.
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
@@ -686,11 +752,13 @@ export function FieldsPalette({
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
+      event.stopPropagation()
       setActive((prev) => Math.min(prev + 1, Math.max(0, rows.length - 1)))
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
+      event.stopPropagation()
       setActive((prev) => Math.max(prev - 1, 0))
       return
     }
@@ -699,12 +767,14 @@ export function FieldsPalette({
       // Drill into any row that opens a deeper level (including All/First/Specific).
       if (row?.drill) {
         event.preventDefault()
+        event.stopPropagation()
         row.run()
       }
       return
     }
     if (event.key === 'ArrowLeft' || (event.key === 'Backspace' && query === '' && stack.length > 1)) {
       event.preventDefault()
+      event.stopPropagation()
       pop()
       return
     }
