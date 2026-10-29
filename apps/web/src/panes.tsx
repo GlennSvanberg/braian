@@ -511,6 +511,8 @@ export function ObjectTable({
     if (event.name === 'ui.select_rows' && Array.isArray(args.ids)) setSelected(args.ids.map(String))
     if (event.name === 'ui.show_column') {
       const column = String(args.column ?? args.id ?? '')
+      // A re-shown column must land last (same rule as Fields toggleField).
+      setOrder((current) => [...current.filter((id) => id !== column), column])
       setHidden((current) => current.filter((id) => id !== column))
     }
     if (event.name === 'ui.hide_column') setHidden((current) => [...new Set([...current, String(args.column ?? args.id ?? '')])])
@@ -971,7 +973,8 @@ export function ObjectTable({
       setHidden((current) => [...new Set([...current, path])])
       return
     }
-    setOrder((current) => (current.includes(path) ? current : [...current, path]))
+    // Re-showing a hidden column (or adding fresh) always appends last — never revive at the old index.
+    setOrder((current) => [...current.filter((id) => id !== path), path])
     setHidden((current) => current.filter((id) => id !== path))
   }
   const moveField = (path: string, delta: number) => {
@@ -1147,12 +1150,12 @@ export function ObjectTable({
         <div className="head">
           {shown.map((id) => {
             const column = columnFor(id)
-            const width = sizes[id] ?? column.size
+            const width = resolvedWidths[id] ?? sizes[id] ?? column.size
             return (
               <div
                 key={id}
                 className="cell"
-                style={{ width }}
+                style={{ width, minWidth: width, maxWidth: width }}
                 data-testid={`col-${id}`}
                 data-column={id}
                 onClick={() => setActiveColumn(id)}
@@ -1462,11 +1465,20 @@ function Row({
       onMouseDown={(event) => {
         // tabindex used to land on the row, so its focus ring stayed put while arrows moved the fill.
         if (event.button !== 0) return
-        event.preventDefault()
+        // detail>=2 is the second press of a double-click. preventDefault here drops
+        // click/dblclick in Firefox (and broke Description cell edit after #108).
+        if (event.detail < 2) event.preventDefault()
         onFocusGrid()
       }}
       onClick={(event) => {
         const column = columnOf(event.target)
+        // Open the cell editor on the second click; skip row activate so Detail is not the only result.
+        if (event.detail >= 2 && column && onCellDoubleClick) {
+          event.preventDefault()
+          event.stopPropagation()
+          onCellDoubleClick(row, column)
+          return
+        }
         if (column) onColumn(column)
         onActivate(index, event)
       }}
@@ -1486,7 +1498,12 @@ function Row({
       {shown.map((id) => {
         const width = sizes[id] ?? 160
         return (
-          <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width }}>
+          <div
+            key={id}
+            className={id === activeColumn ? 'cell active-cell' : 'cell'}
+            data-column={id}
+            style={{ width, minWidth: width, maxWidth: width }}
+          >
             {cell(row, id)}
           </div>
         )

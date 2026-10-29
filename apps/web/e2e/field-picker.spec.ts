@@ -293,12 +293,12 @@ test.describe('field picker on Products', () => {
     await expect(headers.first()).toContainText(/first/i)
   })
 
-  test('new hop columns append in addition order', async ({ page }) => {
+  test('re-adding hidden hops appends All then Specific then First', async ({ page }) => {
     await login(page)
     await openProducts(page)
     await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
-    for (const card of ['all', 'specific', 'first'] as const) {
+    async function addHop(card: 'all' | 'specific' | 'first') {
       await openFieldsPalette(page)
       await drillRight(page, 'fields-row-articles')
       if (card === 'specific') {
@@ -319,19 +319,48 @@ test.describe('field picker on Products', () => {
       await page.keyboard.press('Escape')
     }
 
-    const texts = await page.locator('[data-testid^="col-articles>net_weight"]').allTextContents()
-    expect(texts.length).toBeGreaterThanOrEqual(3)
-    const hop = texts.slice(-3)
-    expect(hop[0]).toMatch(/\ball\b/i)
-    expect(hop[1]).toMatch(/ART-CHED-200|specific/i)
-    expect(hop[2]).toMatch(/first/i)
+    // First pass leaves hidden prefs entries when we Hide column.
+    for (const card of ['first', 'all', 'specific'] as const) {
+      await addHop(card)
+    }
+    const hopHeaders = () => page.locator('[data-testid^="col-articles>net_weight"]')
+    await expect(hopHeaders()).toHaveCount(3)
+
+    // Braian: hide every hop column (visible:false, old order kept in prefs).
+    for (let i = 0; i < 5 && (await hopHeaders().count()) > 0; i += 1) {
+      await hopHeaders().first().click({ button: 'right' })
+      const menu = page.getByTestId('context-menu')
+      await expect(menu).toBeVisible()
+      await menu.getByRole('menuitem', { name: 'Hide column' }).click()
+      await expect(menu).toHaveCount(0)
+    }
+    await expect(hopHeaders()).toHaveCount(0)
+
+    // Re-add in Braian’s order: All → Specific ART-CHED-200 → First
+    for (const card of ['all', 'specific', 'first'] as const) {
+      await addHop(card)
+    }
+    const texts = await hopHeaders().allTextContents()
+    expect(texts).toHaveLength(3)
+    expect(texts[0]).toMatch(/\ball\b/i)
+    expect(texts[1]).toMatch(/ART-CHED-200/i)
+    expect(texts[2]).toMatch(/first/i)
+
+    await page.reload()
+    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
+    const reloaded = await hopHeaders().allTextContents()
+    expect(reloaded).toHaveLength(3)
+    expect(reloaded[0]).toMatch(/\ball\b/i)
+    expect(reloaded[1]).toMatch(/ART-CHED-200/i)
+    expect(reloaded[2]).toMatch(/first/i)
   })
 
-  test('header and body x/width match for every column including Type Status Version', async ({ page }) => {
+  test('header and body x/width match for system and hop columns (≤1px)', async ({ page }) => {
     await login(page)
     await openProducts(page)
     await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
+    // Food-seed Products standard columns are already visible; add one hop.
     await openFieldsPalette(page)
     await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-all')
@@ -341,20 +370,57 @@ test.describe('field picker on Products', () => {
 
     const headers = page.locator('.head [data-testid^="col-"]')
     const count = await headers.count()
-    expect(count).toBeGreaterThan(3)
-    const row = page.locator('[data-testid="object-row"]').first()
+    expect(count).toBeGreaterThan(5)
+    // Must include system columns that previously drifted (Type/Status/Version).
+    await expect(page.locator('.head [data-testid="col-type"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-status"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-version"]')).toBeVisible()
+
+    const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
     await expect(row).toBeVisible()
     for (let i = 0; i < count; i += 1) {
       const header = headers.nth(i)
       const column = await header.getAttribute('data-column')
       expect(column).toBeTruthy()
-      const cell = row.locator(`[data-column="${column}"]`)
+      const cell = row.locator(`[data-column=${JSON.stringify(column)}]`)
       await expect(cell).toBeVisible()
       const hb = await header.boundingBox()
       const cb = await cell.boundingBox()
-      expect(hb && cb).toBeTruthy()
-      expect(Math.abs(hb!.x - cb!.x)).toBeLessThanOrEqual(2)
-      expect(Math.abs(hb!.width - cb!.width)).toBeLessThanOrEqual(2)
+      expect(hb && cb, `missing box for ${column}`).toBeTruthy()
+      expect(Math.abs(hb!.x - cb!.x), `x drift on ${column}`).toBeLessThanOrEqual(1)
+      expect(Math.abs(hb!.width - cb!.width), `width drift on ${column}`).toBeLessThanOrEqual(1)
     }
+  })
+
+  test('double-click Description en opens cell editor, not only Detail', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
+    await openFieldsPalette(page)
+    await enterOn(page, 'fields-row-description')
+    await enterOn(page, 'fields-row-en')
+    await page.keyboard.press('Escape')
+
+    // Close the Detail pane if present so a regression that only reopens Detail is visible.
+    const detailClose = page.locator('.pane').filter({ hasText: /^Product|^Detail/ }).getByRole('button', { name: /close|×|x/i }).first()
+    if (await detailClose.count()) {
+      await detailClose.click({ force: true }).catch(() => undefined)
+    }
+    // Also try the dock tab close affordance.
+    const tabClose = page.locator('.dock-root button, .pane-tab button, .tabs button').filter({ hasText: /^×$|^x$/i }).first()
+    if (await tabClose.count()) {
+      await tabClose.click({ force: true }).catch(() => undefined)
+    }
+
+    const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
+    const descCell = row.locator('[data-column^="description"]').first()
+    await expect(descCell).toBeVisible({ timeout: 30_000 })
+    await descCell.dblclick()
+    const editor = page.locator('[data-testid^="cell-editor-description"]').first()
+    await expect(editor).toBeVisible({ timeout: 10_000 })
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveValue(/firm cow'?s-milk cheddar/i)
+    // Editor present means Detail-only reopen did not win the double-click.
   })
 })

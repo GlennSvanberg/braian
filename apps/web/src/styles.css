@@ -577,6 +577,10 @@ textarea { min-height: 64px; width: 100%; height: auto; padding: 6px 8px; resize
 }
 .table-status p { margin: 0; }
 .cell {
+  /* flex:none + fixed min/max so header content (label + resize) cannot widen past style.width */
+  flex: none;
+  box-sizing: border-box;
+  min-width: 0;
   padding: 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1990,6 +1994,4 @@ button[aria-disabled="true"]:hover,
   white-space: nowrap;
   justify-content: flex-start;
 }
-.head .cell {
-  min-width: 120px;
-}
+/* Header cells use the same width/min/max as body cells (inline); do not floor at 120. */
