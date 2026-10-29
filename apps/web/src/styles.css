@@ -1981,3 +1981,15 @@ button[aria-disabled="true"]:hover,
 .standard-grid-empty { padding: 16px; color: var(--muted); }
 .standard-table-filters { flex-wrap: wrap; gap: 6px; padding: 6px 8px; }
 .type-names legend[title] { cursor: help; border-bottom: 1px dotted var(--muted); }
+
+.column-header-btn {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  justify-content: flex-start;
+}
+.head .cell {
+  min-width: 120px;
+}

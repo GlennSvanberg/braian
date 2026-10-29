@@ -617,7 +617,15 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
         optionId: option.id,
         label: option.label,
       }, catalog)
-      onReplaceColumn(frame.editing.id, updated)
+      const previousId =
+        columns.find((col) => col.id === frame.editing!.id)?.id
+        ?? columns.find(
+          (col) =>
+            col.path === frame.editing!.path
+            && col.fieldPath.join('>') === frame.editing!.fieldPath.join('>'),
+        )?.id
+        ?? frame.editing.id
+      onReplaceColumn(previousId, updated)
       setQuery('')
       setStack((prev) => {
         const copy = [...prev]
@@ -750,22 +758,20 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
   }
 
   function onKeyDown(event: ReactKeyboardEvent) {
-    // Handle navigation in capture so cmdk cannot also act on the same keydown.
+    // Always stop bubbling so table / shell shortcuts (New product, /, …) cannot fire.
+    event.stopPropagation()
     if (event.key === 'Escape') {
       event.preventDefault()
-      event.stopPropagation()
       onClose()
       return
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      event.stopPropagation()
       setActive((prev) => Math.min(prev + 1, Math.max(0, rows.length - 1)))
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      event.stopPropagation()
       setActive((prev) => Math.max(prev - 1, 0))
       return
     }
@@ -774,20 +780,17 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       // Drill into any row that opens a deeper level (including All/First/Specific).
       if (row?.drill) {
         event.preventDefault()
-        event.stopPropagation()
         row.run()
       }
       return
     }
     if (event.key === 'ArrowLeft' || (event.key === 'Backspace' && query === '' && stack.length > 1)) {
       event.preventDefault()
-      event.stopPropagation()
       pop()
       return
     }
     if (event.key === 'Enter') {
       event.preventDefault()
-      event.stopPropagation()
       runActive()
     }
   }

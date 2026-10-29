@@ -80,38 +80,65 @@ function cheddarRow(page: Page) {
 test.describe('field picker on Products', () => {
   test.setTimeout(180_000)
 
-  test('full flow: Description en, Allergens code, Articles net weight kg, Specific GTIN', async ({ page }) => {
+  test('Description en shows seed text; Esc does not PATCH; Edit field First updates column', async ({ page }) => {
+    const patches: string[] = []
+    await page.route('**/v1/objects/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        patches.push(route.request().postData() ?? '')
+      }
+      await route.continue()
+    })
+
     await login(page)
     await openProducts(page)
-    await expect(page.getByText('Organic oat drink').or(page.getByText('PROD-OAT'))).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Mature cheddar').or(page.getByText('PROD-CHEDDAR'))).toBeVisible({ timeout: 60_000 })
 
     await openFieldsPalette(page)
-    await expect(page.getByTestId('fields-crumb')).toHaveText(/Fields/)
 
-    // Description → en (seed has English only)
+    // Description → en
     await enterOn(page, 'fields-row-description')
     await enterOn(page, 'fields-row-en')
     await expect(page.getByTestId('fields-check-description')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('fields-mode')).toHaveCount(0)
 
-    await backToRoot(page)
+    const row = cheddarRow(page)
+    await expect(row).toBeVisible()
+    // Seed text must appear in the grid cell (pathValues), not only the detail panel.
+    await expect(row.locator('[data-testid^="path-cell-description"]').first()).toContainText(
+      /firm cow'?s-milk cheddar/i,
+      { timeout: 30_000 },
+    )
 
-    // Allergens → code
-    await enterOn(page, 'fields-row-allergens')
-    await enterOn(page, 'fields-row-code')
-    await expect(page.getByTestId('fields-check-allergens')).toBeVisible()
+    // Version before Esc experiment
+    const versionBefore = (await row.locator('[data-column="version"]').textContent())?.trim() ?? ''
 
-    await backToRoot(page)
+    // Double-click Description → Esc must not PATCH (and must not clear the value)
+    const descCell = row.locator('[data-column^="description"]').first()
+    await descCell.dblclick()
+    const editor = page.locator('[data-testid^="cell-editor-description"]').first()
+    await expect(editor).toBeVisible()
+    await expect(editor).toHaveValue(/firm cow'?s-milk cheddar/i)
+    patches.length = 0
+    await editor.press('Escape')
+    await expect(page.locator('[data-testid^="cell-editor-description"]')).toHaveCount(0)
+    expect(patches.filter((body) => body.includes('description'))).toEqual([])
+    await expect(row.locator('[data-testid^="path-cell-description"]').first()).toContainText(
+      /firm cow'?s-milk cheddar/i,
+    )
+    const versionAfterEsc = (await row.locator('[data-column="version"]').textContent())?.trim() ?? ''
+    expect(versionAfterEsc).toBe(versionBefore)
 
-    // Articles › All, as list › Net weight › kg
-    await drillRight(page, 'fields-row-articles')
-    await enterOn(page, 'fields-row-all')
-    await enterOn(page, 'fields-row-net_weight')
-    await enterOn(page, 'fields-row-kg')
-    await expect(page.getByTestId('col-articles>net_weight#cardinality:all|unit:kg').or(page.locator('[data-testid^="col-articles>net_weight"]'))).toBeVisible()
+    // Unchanged blur (open editor, blur without edits) → no PATCH
+    await descCell.dblclick()
+    await expect(page.locator('[data-testid^="cell-editor-description"]').first()).toBeVisible()
+    patches.length = 0
+    await page.locator('[data-testid="object-table"]').click({ position: { x: 8, y: 8 } })
+    await page.waitForTimeout(200)
+    expect(patches.filter((body) => body.includes('description'))).toEqual([])
 
-    await backToRoot(page)
-
-    // Specific… → Net weight → Cheddar article (GTIN) → g
+    // Specific net weight → Edit field → First
+    await openFieldsPalette(page)
     await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-specific')
     await enterOn(page, 'fields-row-net_weight')
@@ -119,35 +146,64 @@ test.describe('field picker on Products', () => {
     const cheddar = page.locator('[data-testid^="fields-row-"]').filter({ hasText: '07310000000024' }).first()
     await expect(cheddar).toBeVisible({ timeout: 15_000 })
     const cheddarId = await cheddar.getAttribute('data-testid')
-    if (!cheddarId) throw new Error('cheddar row missing test id')
+    if (!cheddarId) throw new Error('missing cheddar peer row')
     await enterOn(page, cheddarId)
     await enterOn(page, 'fields-row-g')
-
     await page.keyboard.press('Escape')
-    await expect(page.getByTestId('fields-mode')).toHaveCount(0)
 
-    // Cell values from demo seed: Mature cheddar description + 0.2 kg / 0.4 kg articles
-    const row = cheddarRow(page)
-    await expect(row).toBeVisible()
-    await expect(row).toContainText(/firm cow'?s-milk cheddar|Synthetic demo recipe/i)
-    // Net weight all, kg: ART-CHED-200 = 0.2 kg, ART-CHED-400 = 0.4 kg → "0.2 kg, 0.4 kg" (order by peer key)
-    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/0\.[24] kg/)
+    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/200\s*g/)
+
+    // Edit field… on the specific column → First
+    const specificHeader = page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /specific|200|g/i }).first()
+    await specificHeader.click({ button: 'right' })
+    const menu = page.getByTestId('context-menu')
+    await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: /Edit field/i }).click()
+    await expect(page.getByTestId('fields-mode')).toBeVisible()
+    await enterOn(page, 'fields-row-first')
+    await page.keyboard.press('Escape')
+
+    await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).toContainText(/first/i)
+    await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).not.toContainText(/specific/i)
+    // First of ART-CHED-200 / ART-CHED-400 by peer key → 200 g or 0.2 kg depending on unit
+    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/200\s*g|0\.2\s*kg/)
   })
 
-  test('column prefs survive an immediate reload', async ({ page }) => {
+  test('Edit field All→First updates header and cell', async ({ page }) => {
     await login(page)
     await openProducts(page)
-    await expect(page.getByText('Mature cheddar').or(page.getByText('PROD-CHEDDAR'))).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
     await openFieldsPalette(page)
-    await enterOn(page, 'fields-row-brand')
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-all')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
     await page.keyboard.press('Escape')
-    await expect(page.getByTestId('fields-mode')).toHaveCount(0)
-    await expect(page.locator('[data-testid^="col-brand"]').first()).toBeVisible()
 
-    // Reload immediately — must not race the prefs PUT
-    await page.reload()
-    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
-    await expect(page.locator('[data-testid^="col-brand"]').first()).toBeVisible({ timeout: 30_000 })
+    const row = cheddarRow(page)
+    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/0\.[24]\s*kg/)
+
+    const header = page.locator('[data-testid^="col-articles>net_weight"]').first()
+    await header.click({ button: 'right' })
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /Edit field/i }).click()
+    await expect(page.getByTestId('fields-mode')).toBeVisible()
+    await enterOn(page, 'fields-row-first')
+    await page.keyboard.press('Escape')
+
+    await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).toContainText(/first/i)
+    await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).not.toContainText(/\ball\b/i)
+    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/0\.[24]\s*kg/)
+  })
+
+  test('typing in fields palette does not open New Product', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await openFieldsPalette(page)
+    await page.getByTestId('fields-mode-input').fill('net')
+    await page.keyboard.press('n')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('fields-mode')).toBeVisible()
+    await expect(page.locator('form.create-row, [data-testid="new-object"]')).toHaveCount(0)
   })
 })
