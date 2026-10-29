@@ -74,15 +74,28 @@ describe('qualifier module', () => {
     expect(step.options.map((o) => o.id)).toEqual(['g', 'kg'])
   })
 
-  it('formats specific titles without a specific: prefix', () => {
+  it('formats specific titles from label (size), not raw GTIN value', () => {
     expect(
-      qualifierShortLabel({ kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' }),
+      qualifierShortLabel({
+        kind: 'cardinality',
+        optionId: 'specific',
+        label: '1.5L',
+        value: '7300002000022',
+      }),
     ).toBe('1.5L')
+    expect(
+      qualifierShortLabel({
+        kind: 'cardinality',
+        optionId: 'specific',
+        label: '500ml · 7300007000071',
+        value: '7300007000071',
+      }),
+    ).toBe('500ml · 7300007000071')
     expect(
       formatColumnTitle(
         ['Articles', 'Net volume'],
         [
-          { kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' },
+          { kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '7300002000022' },
           { kind: 'unit', optionId: 'ml', label: 'ml' },
         ],
       ),

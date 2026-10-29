@@ -51,26 +51,42 @@ describe('prototype columns', () => {
     expect(readCell(MOCK_PRODUCTS[0]!, specific)).toBe(EMPTY_CELL)
   })
 
-  it('formats specific titles as (1.5L, ml)', () => {
-    const col = makeColumn(
+  it('formats specific titles from shortLabel; GTIN appended when size is shared', () => {
+    const unique = makeColumn(
       ['articles', 'net_volume'],
       [
-        { kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' },
+        { kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '7300002000022' },
         { kind: 'unit', optionId: 'ml', label: 'ml' },
       ],
     )!
-    expect(columnTitle(col)).toBe('Articles › Net volume (1.5L, ml)')
+    expect(columnTitle(unique)).toBe('Articles › Net volume (1.5L, ml)')
+    const shared = makeColumn(
+      ['articles', 'gtin'],
+      [
+        {
+          kind: 'cardinality',
+          optionId: 'specific',
+          label: '500ml · 7300007000071',
+          value: '7300007000071',
+        },
+      ],
+    )!
+    expect(columnTitle(shared)).toBe('Articles › GTIN (500ml · 7300007000071)')
   })
 
-  it('lists Specific articles as GTIN · key, one product subtitle, sorted by product then GTIN', () => {
+  it('lists Specific articles by GTIN identity with unique shortLabel and product→GTIN sort', () => {
     const options = articleOptionsForField('net_volume')
-    const oneFive = options.find((item) => item.pickValue === '1.5L')
+    const oneFive = options.find((item) => item.shortLabel === '1.5L')
     expect(oneFive).toBeTruthy()
-    expect(oneFive!.id).toMatch(/^7300/)
+    expect(oneFive!.pickValue).toBe(oneFive!.id)
+    expect(oneFive!.id).toBe('7300002000022')
     expect(oneFive!.label).toMatch(/^7300.* · 1\.5L$/)
     expect(oneFive!.subtitle).toBe('Whole milk')
-    expect(oneFive!.subtitle).not.toContain(',')
-    // Sorted by product name, then GTIN — no merged multi-product subtitles
+    // Shared size key 500ml (olive oil + soy) must include GTIN in shortLabel
+    const fiveHundred = options.filter((item) => item.label.includes(' · 500ml'))
+    expect(fiveHundred.length).toBeGreaterThanOrEqual(2)
+    expect(fiveHundred.every((item) => item.shortLabel.includes('·'))).toBe(true)
+    expect(fiveHundred.every((item) => item.pickValue === item.id)).toBe(true)
     for (let i = 1; i < options.length; i += 1) {
       const prev = options[i - 1]!
       const cur = options[i]!
@@ -78,9 +94,18 @@ describe('prototype columns', () => {
       expect(byProduct <= 0).toBe(true)
       if (byProduct === 0) expect(prev.id.localeCompare(cur.id) <= 0).toBe(true)
     }
-    const weightOpts = articleOptionsForField('net_weight')
-    expect(weightOpts.every((item) => !item.subtitle.includes(','))).toBe(true)
-    expect(weightOpts.find((item) => item.subtitle === 'Greek yogurt')).toBeTruthy()
+  })
+
+  it('matches Specific cells by GTIN so shared size keys do not cross products', () => {
+    const oliveGtin = '7300007000071'
+    const col = makeColumn(
+      ['articles', 'gtin'],
+      [{ kind: 'cardinality', optionId: 'specific', label: '500ml · 7300007000071', value: oliveGtin }],
+    )!
+    const olive = MOCK_PRODUCTS.find((row) => row.sku === 'OLV-007')!
+    const soy = MOCK_PRODUCTS.find((row) => row.sku === 'SOY-010')!
+    expect(readCell(olive, col)).toBe(oliveGtin)
+    expect(readCell(soy, col)).toBe(EMPTY_CELL)
   })
 
   it('uses Net weight (g/kg) for solids and — when volume is absent', () => {

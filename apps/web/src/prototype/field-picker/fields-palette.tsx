@@ -217,12 +217,28 @@ export function FieldsPalette({
   const ignoreEnter = useRef(false)
   const columnsRef = useRef(columns)
   columnsRef.current = columns
+  /** Arm outside-dismiss after mount so the opening click cannot close us (Playwright retry / sync paint). */
+  const dismissArmed = useRef(false)
+  useEffect(() => {
+    dismissArmed.current = false
+    const timer = window.setTimeout(() => {
+      dismissArmed.current = true
+    }, 100)
+    return () => {
+      window.clearTimeout(timer)
+      dismissArmed.current = false
+    }
+  }, [])
 
+  /** Swallow at most one Enter after a stack push (cmdk/duplicate key delivery). */
   function armIgnoreEnter() {
     ignoreEnter.current = true
-    window.setTimeout(() => {
-      ignoreEnter.current = false
-    }, 150)
+  }
+
+  function consumeIgnoreEnter(): boolean {
+    if (!ignoreEnter.current) return false
+    ignoreEnter.current = false
+    return true
   }
 
   const top = stack[stack.length - 1]!
@@ -255,20 +271,37 @@ export function FieldsPalette({
     }
 
     if (top.kind === 'qualify') {
+      const cardinalityDrills =
+        top.step.kind === 'cardinality' && top.field.shape === 'link' && Boolean(top.field.link?.many)
       return top.step.options
         .filter((option) => !needle || option.label.toLowerCase().includes(needle))
-        .map((option) => ({
-          id: option.id,
-          title: option.label,
-          subtitle: option.subtitle ?? '',
-          drill: Boolean(option.drill),
-          checked:
-            columnsUnder(cols, top.pathIds, [
-              ...top.applied.filter((q) => q.kind !== top.step.kind && !(q.kind === 'cardinality' && q.optionId === 'specific' && !q.value)),
-              { kind: top.step.kind, optionId: option.id, label: option.label },
-            ]).length > 0,
-          run: () => activateQualifier(option, top),
-        }))
+        .map((option) => {
+          const drill = cardinalityDrills || Boolean(option.drill)
+          let checked = false
+          if (top.editing) {
+            // Edit field…: check must reflect THIS column only, not sibling hop columns.
+            const current = top.editing.qualifiers.find((q) => q.kind === top.step.kind)
+            checked = current?.optionId === option.id
+          } else {
+            checked =
+              columnsUnder(cols, top.pathIds, [
+                ...top.applied.filter(
+                  (q) =>
+                    q.kind !== top.step.kind &&
+                    !(q.kind === 'cardinality' && q.optionId === 'specific' && !q.value),
+                ),
+                { kind: top.step.kind, optionId: option.id, label: option.label },
+              ]).length > 0
+          }
+          return {
+            id: option.id,
+            title: option.label,
+            subtitle: option.subtitle ?? '',
+            drill,
+            checked,
+            run: () => activateQualifier(option, top),
+          }
+        })
     }
 
     return top.options
@@ -280,17 +313,64 @@ export function FieldsPalette({
         checked:
           columnsUnder(cols, top.pathIds, [
             ...top.applied.filter((q) => q.kind !== 'cardinality'),
-            { kind: 'cardinality', optionId: 'specific', label: option.pickValue, value: option.pickValue },
+            {
+              kind: 'cardinality',
+              optionId: 'specific',
+              label: option.shortLabel,
+              value: option.pickValue,
+            },
           ]).length > 0,
-        run: () => activateSpecific(option.pickValue, option.pickValue, top),
+        run: () => activateSpecific(option.pickValue, option.shortLabel, top),
       }))
   }, [top, query, columns])
 
 
+  function restoreIndexAfterPop(parent: StackFrame, leaving: StackFrame): number {
+    if (parent.kind === 'fields') {
+      const focusId =
+        leaving.kind === 'qualify'
+          ? leaving.pathIds[leaving.pathIds.length - 1]
+          : leaving.kind === 'fields'
+            ? leaving.pathIds[leaving.pathIds.length - 1]
+            : leaving.kind === 'specific'
+              ? leaving.field.id
+              : undefined
+      const idx = focusId ? parent.fields.findIndex((field) => field.id === focusId) : -1
+      return idx >= 0 ? idx : 0
+    }
+    if (parent.kind === 'qualify') {
+      if (leaving.kind === 'fields') {
+        const card = leaving.linkQualifiers.find((q) => q.kind === 'cardinality')
+        const idx = parent.step.options.findIndex((option) => option.id === card?.optionId)
+        return idx >= 0 ? idx : 0
+      }
+      if (leaving.kind === 'specific') {
+        const idx = parent.step.options.findIndex((option) => option.id === 'specific')
+        return idx >= 0 ? idx : 0
+      }
+      if (leaving.kind === 'qualify') {
+        // Unit/language step under a leaf: highlight the leaf field option is N/A on qualify parent
+        return 0
+      }
+    }
+    if (parent.kind === 'specific' && leaving.kind === 'qualify') {
+      const gtin = leaving.applied.find((q) => q.kind === 'cardinality')?.value
+      const idx = parent.options.findIndex((option) => option.pickValue === gtin || option.id === gtin)
+      return idx >= 0 ? idx : 0
+    }
+    return 0
+  }
+
   function pop() {
-    setStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev))
+    if (stack.length <= 1) return
+    const leaving = stack[stack.length - 1]!
+    const parent = stack[stack.length - 2]!
+    const restore = restoreIndexAfterPop(parent, leaving)
+    setStack((prev) => prev.slice(0, -1))
     setQuery('')
-    setActive(0)
+    setActive(restore)
+    // Navigating back must not leave a stale Enter-ignore that drops the next key.
+    ignoreEnter.current = false
   }
 
 
@@ -549,7 +629,7 @@ export function FieldsPalette({
   function activateSpecific(value: string, label: string, frame: SpecificFrame) {
     const chosen: AppliedQualifier = { kind: 'cardinality', optionId: 'specific', label, value }
     const nextApplied: AppliedQualifier[] = [...frame.applied.filter((item) => item.kind !== 'cardinality'), chosen]
-    const optionIndex = frame.options.findIndex((item) => item.id === value)
+    const optionIndex = frame.options.findIndex((item) => item.pickValue === value || item.id === value)
 
     if (frame.editing) {
       onReplaceColumn(frame.editing.id, withReplacedQualifier(frame.editing, chosen))
@@ -589,12 +669,15 @@ export function FieldsPalette({
   }
 
   function runActive() {
-    if (ignoreEnter.current) return
+    if (consumeIgnoreEnter()) return
     const row = rows[Math.min(active, Math.max(0, rows.length - 1))]
     row?.run()
   }
 
   function onKeyDown(event: ReactKeyboardEvent) {
+    if (event.key !== 'Enter' && ignoreEnter.current) {
+      ignoreEnter.current = false
+    }
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
@@ -613,6 +696,7 @@ export function FieldsPalette({
     }
     if (event.key === 'ArrowRight') {
       const row = rows[active]
+      // Drill into any row that opens a deeper level (including All/First/Specific).
       if (row?.drill) {
         event.preventDefault()
         row.run()
@@ -634,7 +718,14 @@ export function FieldsPalette({
   const selected = Math.min(active, Math.max(0, rows.length - 1))
 
   return (
-    <div className="palette" data-testid="fields-palette" onMouseDown={onClose}>
+    <div
+      className="palette"
+      data-testid="fields-palette"
+      onMouseDown={(event) => {
+        if (!dismissArmed.current) return
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
       <style>{`
         [data-testid="fields-palette"] .hit.on,
         [data-testid="fields-palette"] .fields-hit-active {
@@ -663,7 +754,6 @@ export function FieldsPalette({
         shouldFilter={false}
         loop={false}
         disablePointerSelection
-        value={rows[selected]?.id ?? ''}
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDownCapture={onKeyDown}
       >

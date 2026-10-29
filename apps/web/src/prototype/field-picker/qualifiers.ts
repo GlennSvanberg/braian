@@ -125,7 +125,8 @@ export function qualifierShortLabel(q: AppliedQualifier): string {
   if (q.kind === 'cardinality') {
     if (q.optionId === 'all') return 'all'
     if (q.optionId === 'first') return 'first'
-    if (q.optionId === 'specific') return q.value ? q.value : 'specific'
+    // Prefer display label (size, or size · GTIN when ambiguous); value is the GTIN identity.
+    if (q.optionId === 'specific') return q.label || q.value || 'specific'
   }
   return q.label.toLowerCase()
 }

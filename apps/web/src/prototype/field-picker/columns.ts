@@ -21,13 +21,15 @@ export type ProtoColumn = {
 export type CellDisplay = { text: string; title: string }
 
 export type ArticlePickOption = {
-  /** Unique row id (GTIN). */
+  /** Unique row id = article GTIN (identity for Specific…). */
   id: string
   label: string
   /** One product name only. */
   subtitle: string
-  /** Article key used as Specific… qualifier value (keeps titles like 1.5L). */
+  /** GTIN stored as Specific… value so matching is by identity, not size key. */
   pickValue: string
+  /** Title short label: size key, or `key · GTIN` when the key is not unique. */
+  shortLabel: string
 }
 
 export function columnIdOf(col: Pick<ProtoColumn, 'fieldPath' | 'qualifiers'>): string {
@@ -89,22 +91,31 @@ export function columnWidthPx(col: ProtoColumn): number {
 /**
  * Articles for Specific… after a leaf field is chosen.
  * One row per article that has the field; sorted by product name then GTIN.
- * Label is `GTIN · key`; subtitle is that article's product only.
+ * Identity is GTIN; title shortLabel is the size key, with GTIN appended when the key is shared.
  */
 export function articleOptionsForField(leafId: string): ArticlePickOption[] {
-  const options: ArticlePickOption[] = []
+  const collected: Array<{ productName: string; gtin: string; key: string }> = []
   for (const product of MOCK_PRODUCTS) {
     for (const article of product.articles) {
       const raw = (article as Record<string, unknown>)[leafId]
       if (raw == null) continue
-      options.push({
-        id: article.gtin,
-        label: `${article.gtin} · ${article.key}`,
-        subtitle: product.name,
-        pickValue: article.key,
-      })
+      collected.push({ productName: product.name, gtin: article.gtin, key: article.key })
     }
   }
+  const keyCounts = new Map<string, number>()
+  for (const item of collected) {
+    keyCounts.set(item.key, (keyCounts.get(item.key) ?? 0) + 1)
+  }
+  const options: ArticlePickOption[] = collected.map((item) => {
+    const unique = (keyCounts.get(item.key) ?? 0) <= 1
+    return {
+      id: item.gtin,
+      label: `${item.gtin} · ${item.key}`,
+      subtitle: item.productName,
+      pickValue: item.gtin,
+      shortLabel: unique ? item.key : `${item.key} · ${item.gtin}`,
+    }
+  })
   return options.sort((a, b) => {
     const byProduct = a.subtitle.localeCompare(b.subtitle, 'en')
     if (byProduct !== 0) return byProduct
@@ -141,9 +152,8 @@ export function readCellDetail(row: ProductRow, col: ProtoColumn): CellDisplay {
     }
     if (card.optionId === 'specific') {
       const want = card.value ?? ''
-      return withEmpty(
-        projected.find((item) => item.key === want || item.gtin === want)?.text ?? '',
-      )
+      // Match by GTIN identity (size keys like 500ml are not unique across products).
+      return withEmpty(projected.find((item) => item.gtin === want)?.text ?? '')
     }
     return withEmpty('')
   }
