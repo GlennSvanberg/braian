@@ -423,4 +423,138 @@ test.describe('field picker on Products', () => {
     await expect(editor).toHaveValue(/firm cow'?s-milk cheddar/i)
     // Editor present means Detail-only reopen did not win the double-click.
   })
+
+  test('hidden hops stay hidden after Articles round-trip', async ({ page }) => {
+    let productsViewId = ''
+    await page.route('**/column-prefs**', async (route) => {
+      const url = route.request().url()
+      const m = url.match(/\/v1\/views\/([^/]+)\/column-prefs/)
+      if (m) productsViewId = decodeURIComponent(m[1])
+      await route.continue()
+    })
+
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
+    async function addHop(card: 'all' | 'specific' | 'first') {
+      await openFieldsPalette(page)
+      await drillRight(page, 'fields-row-articles')
+      if (card === 'specific') {
+        await enterOn(page, 'fields-row-specific')
+        await enterOn(page, 'fields-row-net_weight')
+        await page.getByTestId('fields-mode-input').fill('ART-CHED-200')
+        const peer = page.locator('[data-testid^="fields-row-"]').filter({ hasText: /ART-CHED-200/i }).first()
+        await expect(peer).toBeVisible({ timeout: 20_000 })
+        const id = await peer.getAttribute('data-testid')
+        if (!id) throw new Error('peer')
+        await enterOn(page, id)
+        await enterOn(page, 'fields-row-kg')
+      } else {
+        await enterOn(page, `fields-row-${card}`)
+        await enterOn(page, 'fields-row-net_weight')
+        await enterOn(page, 'fields-row-kg')
+      }
+      await page.keyboard.press('Escape')
+    }
+
+    for (const card of ['all', 'specific', 'first'] as const) {
+      await addHop(card)
+    }
+    const hopHeaders = () => page.locator('[data-testid^="col-articles>net_weight"]')
+    await expect.poll(async () => hopHeaders().count()).toBeGreaterThanOrEqual(3)
+
+    for (let i = 0; i < 5 && (await hopHeaders().count()) > 0; i += 1) {
+      await hopHeaders().first().click({ button: 'right' })
+      const menu = page.getByTestId('context-menu')
+      await expect(menu).toBeVisible()
+      await menu.getByRole('menuitem', { name: 'Hide column' }).click()
+      await expect(menu).toHaveCount(0)
+    }
+    await expect(hopHeaders()).toHaveCount(0)
+
+    await page.reload()
+    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
+    await expect(hopHeaders()).toHaveCount(0)
+    await expect(page.locator('.head [data-testid="col-number"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-status"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-brand"]')).toBeVisible()
+    const afterReload = await page.locator('.head [data-testid^="col-"]').evaluateAll((nodes) =>
+      nodes.map((n) => n.getAttribute('data-testid')),
+    )
+    expect(afterReload.some((id) => id?.startsWith('col-articles>net_weight'))).toBe(false)
+    expect(productsViewId).toBeTruthy()
+
+    // Stale pending that still claims hops are visible (older than the server ack).
+    await page.evaluate((viewId) => {
+      const stale = {
+        viewId,
+        seq: 1,
+        basisUpdatedAt: '2000-01-01T00:00:00.000Z',
+        document: {
+          version: 2,
+          columns: [
+            { path: 'number', visible: true },
+            { path: 'name', visible: true },
+            { path: 'status', visible: true },
+            { path: 'brand', visible: true },
+            {
+              path: 'articles>net_weight',
+              visible: true,
+              qualifiers: [{ kind: 'cardinality', optionId: 'all', label: 'All' }],
+            },
+            {
+              path: 'articles>net_weight',
+              visible: true,
+              qualifiers: [{ kind: 'cardinality', optionId: 'specific', label: 'ART-CHED-200', value: 'ART-CHED-200' }],
+            },
+            {
+              path: 'articles>net_weight',
+              visible: true,
+              qualifiers: [{ kind: 'cardinality', optionId: 'first', label: 'First' }],
+            },
+          ],
+        },
+      }
+      sessionStorage.setItem(`braian:column-prefs-pending:${viewId}`, JSON.stringify(stale))
+    }, productsViewId)
+
+    await page.locator('nav.tabs').getByRole('button', { name: /^Articles/ }).click()
+    await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible({ timeout: 30_000 })
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
+    await expect(hopHeaders()).toHaveCount(0)
+    await expect(page.locator('.head [data-testid="col-number"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-status"]')).toBeVisible()
+    await expect(page.locator('.head [data-testid="col-brand"]')).toBeVisible()
+    const afterRoundTrip = await page.locator('.head [data-testid^="col-"]').evaluateAll((nodes) =>
+      nodes.map((n) => n.getAttribute('data-testid')),
+    )
+    expect(afterRoundTrip).toEqual(afterReload)
+  })
+
+  test('right-click header with palette open closes palette then shows Hide column', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+    await expect(page.locator('.head [data-testid="col-brand"]')).toBeVisible()
+
+    await openFieldsPalette(page)
+    await expect(page.getByTestId('fields-mode')).toBeVisible()
+
+    // Palette may overlay the header; force the contextmenu onto the Brand cell so
+    // shared-context-menu still receives it (same path as a real header right-click).
+    const brand = page.locator('.head [data-testid="col-brand"]')
+    await brand.dispatchEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })
+    const menu = page.getByTestId('context-menu')
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Hide column' })).toBeVisible()
+    // Current #105 behaviour: opening the header menu closes the palette first.
+    // Glenn can decide later whether the palette should stay open (decision 9).
+    await expect(page.getByTestId('fields-mode')).toHaveCount(0)
+    await expect(page.getByTestId('command-palette')).toHaveCount(0)
+  })
 })

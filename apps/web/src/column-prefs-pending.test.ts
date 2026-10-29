@@ -5,6 +5,7 @@ import {
   clearAllPendingColumnPrefs,
   clearPendingColumnPrefs,
   pendingPrefsKey,
+  prefsDocumentsEqual,
   readPendingColumnPrefs,
   selectInitialColumnPrefs,
   writePendingColumnPrefs,
@@ -26,12 +27,13 @@ afterEach(() => {
 })
 
 describe('pending column prefs', () => {
-  it('stores a pending entry with seq and document version', () => {
-    writePendingColumnPrefs(viewId, doc(), 1)
+  it('stores a pending entry with seq, document version and basis', () => {
+    writePendingColumnPrefs(viewId, doc(), 1, '2026-01-01T00:00:00.000Z')
     expect(readPendingColumnPrefs(viewId)).toEqual({
       viewId,
       seq: 1,
       document: { version: 2, columns: [{ path: 'name', visible: true }] },
+      basisUpdatedAt: '2026-01-01T00:00:00.000Z',
     })
     expect(sessionStorage.getItem(pendingPrefsKey(viewId))).toContain('"seq":1')
   })
@@ -52,7 +54,6 @@ describe('pending column prefs', () => {
 
   it('leaves pending in place when not cleared (simulating a failed PUT)', () => {
     writePendingColumnPrefs(viewId, doc(), 3)
-    // caller swallows the error and does not clear
     expect(readPendingColumnPrefs(viewId)?.seq).toBe(3)
   })
 
@@ -68,30 +69,70 @@ describe('pending column prefs', () => {
 describe('selectInitialColumnPrefs', () => {
   const server: ColumnPrefsDocument = {
     version: 2,
-    columns: [{ path: 'sku', visible: true }],
+    columns: [{ path: 'sku', visible: false }],
   }
   const pendingDoc: ColumnPrefsDocument = {
     version: 2,
-    columns: [{ path: 'sku', visible: false }],
+    columns: [{ path: 'sku', visible: true }],
   }
 
-  it('mount with pending uses it and asks for a retry PUT', () => {
-    const pending = { viewId, seq: 4, document: pendingDoc }
-    const result = selectInitialColumnPrefs(true, pending, server)
+  it('mount with unacked pending uses it and asks for a retry PUT', () => {
+    const pending = {
+      viewId,
+      seq: 4,
+      document: pendingDoc,
+      basisUpdatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const result = selectInitialColumnPrefs(true, pending, server, '2026-01-01T00:00:00.000Z')
     expect(result.document).toEqual(pendingDoc)
     expect(result.retryPending).toEqual(pending)
+    expect(result.discardPending).toBe(false)
   })
 
   it('mount without pending uses the server document', () => {
-    const result = selectInitialColumnPrefs(true, null, server)
+    const result = selectInitialColumnPrefs(true, null, server, '2026-01-02T00:00:00.000Z')
     expect(result.document).toEqual(server)
     expect(result.retryPending).toBeNull()
   })
 
   it('skips pending when hydrateCache is false (vitest)', () => {
-    const pending = { viewId, seq: 4, document: pendingDoc }
-    const result = selectInitialColumnPrefs(false, pending, server)
+    const pending = { viewId, seq: 4, document: pendingDoc, basisUpdatedAt: '2026-01-01T00:00:00.000Z' }
+    const result = selectInitialColumnPrefs(false, pending, server, '2026-01-02T00:00:00.000Z')
     expect(result.document).toEqual(server)
     expect(result.retryPending).toBeNull()
+  })
+
+  it('discards pending when the server already matches (acked)', () => {
+    const pending = { viewId, seq: 4, document: server, basisUpdatedAt: '2026-01-01T00:00:00.000Z' }
+    const result = selectInitialColumnPrefs(true, pending, server, '2026-01-02T00:00:00.000Z')
+    expect(result.document).toEqual(server)
+    expect(result.retryPending).toBeNull()
+    expect(result.discardPending).toBe(true)
+  })
+
+  it('discards pending older than a newer server ack', () => {
+    const pending = {
+      viewId,
+      seq: 1,
+      document: pendingDoc,
+      basisUpdatedAt: '2000-01-01T00:00:00.000Z',
+    }
+    const result = selectInitialColumnPrefs(true, pending, server, '2026-10-29T12:00:00.000Z')
+    expect(result.document).toEqual(server)
+    expect(result.retryPending).toBeNull()
+    expect(result.discardPending).toBe(true)
+  })
+
+  it('null basis keeps unacked pending even when server has updated_at', () => {
+    const pending = { viewId, seq: 1, document: pendingDoc, basisUpdatedAt: null }
+    const result = selectInitialColumnPrefs(true, pending, server, '2026-10-29T12:00:00.000Z')
+    expect(result.document).toEqual(pendingDoc)
+    expect(result.retryPending).toEqual(pending)
+    expect(result.discardPending).toBe(false)
+  })
+
+  it('prefsDocumentsEqual compares columns', () => {
+    expect(prefsDocumentsEqual(server, { version: 2, columns: [{ path: 'sku', visible: false }] })).toBe(true)
+    expect(prefsDocumentsEqual(server, pendingDoc)).toBe(false)
   })
 })

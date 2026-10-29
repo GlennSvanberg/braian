@@ -11,10 +11,23 @@ export type PendingColumnPrefsEntry = {
   /** Monotonic id for this tab's writes — an older 2xx must not clear a newer entry. */
   seq: number
   document: ColumnPrefsDocument
+  /**
+   * Server `updated_at` we knew when this edit was queued. If the server later
+   * reports a newer timestamp, this pending must not revive an older layout.
+   */
+  basisUpdatedAt?: string | null
 }
 
 export function pendingPrefsKey(viewId: string): string {
   return `${PENDING_PREFS_KEY_PREFIX}${viewId}`
+}
+
+export function prefsDocumentsEqual(
+  left: ColumnPrefsDocument | null | undefined,
+  right: ColumnPrefsDocument | null | undefined,
+): boolean {
+  if (!left || !right) return false
+  return JSON.stringify(left.columns) === JSON.stringify(right.columns)
 }
 
 export function readPendingColumnPrefs(viewId: string): PendingColumnPrefsEntry | null {
@@ -37,8 +50,14 @@ export function writePendingColumnPrefs(
   viewId: string,
   document: ColumnPrefsDocument,
   seq: number,
+  basisUpdatedAt?: string | null,
 ): PendingColumnPrefsEntry {
-  const entry: PendingColumnPrefsEntry = { viewId, seq, document }
+  const entry: PendingColumnPrefsEntry = {
+    viewId,
+    seq,
+    document,
+    basisUpdatedAt: basisUpdatedAt ?? null,
+  }
   try {
     sessionStorage.setItem(pendingPrefsKey(viewId), JSON.stringify(entry))
   } catch {
@@ -76,17 +95,38 @@ export function clearAllPendingColumnPrefs(): void {
   }
 }
 
-/** Decide which document to apply on mount. `hydrateCache` is false under vitest. */
+/**
+ * Decide which document to apply on mount. `hydrateCache` is false under vitest.
+ * Pending never wins over a server document that was acked after the edit basis.
+ */
 export function selectInitialColumnPrefs(
   hydrateCache: boolean,
   pending: PendingColumnPrefsEntry | null,
   serverDocument: ColumnPrefsDocument | null | undefined,
-): { document: ColumnPrefsDocument | null; retryPending: PendingColumnPrefsEntry | null } {
+  serverUpdatedAt?: string | null,
+): {
+  document: ColumnPrefsDocument | null
+  retryPending: PendingColumnPrefsEntry | null
+  discardPending: boolean
+} {
   if (hydrateCache && pending) {
-    return { document: pending.document, retryPending: pending }
+    const sameAsServer = prefsDocumentsEqual(pending.document, serverDocument)
+    if (sameAsServer && serverDocument) {
+      return { document: serverDocument, retryPending: null, discardPending: true }
+    }
+    const basis = pending.basisUpdatedAt ?? null
+    // Only discard when we know the edit basis and the server moved past it.
+    // A null basis means we cannot prove the pending is older — keep it for retry.
+    const serverMovedOn =
+      Boolean(serverUpdatedAt) && basis != null && String(serverUpdatedAt) > String(basis)
+    if (serverMovedOn && serverDocument) {
+      // Server acked something newer than the edit we based pending on — drop it.
+      return { document: serverDocument, retryPending: null, discardPending: true }
+    }
+    return { document: pending.document, retryPending: pending, discardPending: false }
   }
   if (serverDocument && serverDocument.version === 2 && Array.isArray(serverDocument.columns)) {
-    return { document: serverDocument, retryPending: null }
+    return { document: serverDocument, retryPending: null, discardPending: false }
   }
-  return { document: null, retryPending: null }
+  return { document: null, retryPending: null, discardPending: false }
 }
