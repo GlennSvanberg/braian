@@ -197,6 +197,9 @@ export function ObjectTable({
     }
     void saveColumnPrefs(pending.viewId, pending.document)
       .then((response) => {
+        // Keep pending across unload so remount can retry if the PUT never committed.
+        // Stale pending vs a newer server ack is discarded in selectInitial instead.
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
         clearPendingColumnPrefs(pending.viewId, pending.seq)
         if (pendingPrefs.current?.seq === pending.seq) pendingPrefs.current = null
         prefsSnapshot.current = pending.snapshot

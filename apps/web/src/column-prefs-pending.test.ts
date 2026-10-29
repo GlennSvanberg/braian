@@ -123,6 +123,14 @@ describe('selectInitialColumnPrefs', () => {
     expect(result.discardPending).toBe(true)
   })
 
+  it('null basis keeps unacked pending even when server has updated_at', () => {
+    const pending = { viewId, seq: 1, document: pendingDoc, basisUpdatedAt: null }
+    const result = selectInitialColumnPrefs(true, pending, server, '2026-10-29T12:00:00.000Z')
+    expect(result.document).toEqual(pendingDoc)
+    expect(result.retryPending).toEqual(pending)
+    expect(result.discardPending).toBe(false)
+  })
+
   it('prefsDocumentsEqual compares columns', () => {
     expect(prefsDocumentsEqual(server, { version: 2, columns: [{ path: 'sku', visible: false }] })).toBe(true)
     expect(prefsDocumentsEqual(server, pendingDoc)).toBe(false)

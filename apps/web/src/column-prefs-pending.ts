@@ -115,8 +115,10 @@ export function selectInitialColumnPrefs(
       return { document: serverDocument, retryPending: null, discardPending: true }
     }
     const basis = pending.basisUpdatedAt ?? null
+    // Only discard when we know the edit basis and the server moved past it.
+    // A null basis means we cannot prove the pending is older — keep it for retry.
     const serverMovedOn =
-      Boolean(serverUpdatedAt) && (basis == null || String(serverUpdatedAt) > String(basis))
+      Boolean(serverUpdatedAt) && basis != null && String(serverUpdatedAt) > String(basis)
     if (serverMovedOn && serverDocument) {
       // Server acked something newer than the edit we based pending on — drop it.
       return { document: serverDocument, retryPending: null, discardPending: true }
