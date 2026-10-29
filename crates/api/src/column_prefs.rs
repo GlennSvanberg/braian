@@ -227,7 +227,7 @@ fn validate_document(
         normalized.push(Value::Object(entry));
     }
     Ok(json!({
-        "version": 1,
+        "version": 2,
         "columns": normalized,
     }))
 }

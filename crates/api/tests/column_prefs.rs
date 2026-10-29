@@ -357,7 +357,7 @@ async fn column_prefs_put_rejects_invalid_documents() {
     let cookie = login_cookie(&app, "bad-prefs@braian.local", "secret-bad").await;
 
     let cases = [
-        (json!({ "version": 2, "columns": [] }), "version"),
+        (json!({ "version": 1, "columns": [] }), "version"),
         (
             json!({ "version": 2, "columns": [{ "path": "no_such_attr", "visible": true }] }),
             "path",
