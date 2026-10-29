@@ -18,11 +18,11 @@ async function login(page: Page) {
 
 async function openArticles(page: Page) {
   await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('palette')).toBeVisible()
+  await expect(page.getByTestId('command-palette')).toBeVisible()
   await page.getByTestId('palette-input').fill('Articles view')
-  const entry = page.getByTestId('palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' })
+  const entry = page.getByTestId('command-palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' })
   await entry.first().click()
-  await expect(page.getByTestId('palette')).toHaveCount(0)
+  await expect(page.getByTestId('command-palette')).toHaveCount(0)
   await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible()
 }
 

@@ -167,6 +167,7 @@ export function fetchColumnPrefs(viewId: string) {
 export function saveColumnPrefs(viewId: string, document: ColumnPrefsDocument) {
   return api(columnPrefsUrl(viewId), {
     method: 'PUT',
+    keepalive: true,
     body: JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document }),
   })
 }

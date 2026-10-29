@@ -5,6 +5,10 @@ import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FieldPicker } from './field-picker'
 import { ensureSystemColumns, orderHiddenToDocument, prefsToOrderHidden, type ColumnPrefsResponse, type SystemViewColumn } from './column-prefs'
+import {
+  pendingPrefsKey,
+  readPendingColumnPrefs,
+} from './column-prefs-pending'
 import { ObjectTable, type PanesSession } from './panes'
 import { dispatchUi } from './ui-bus'
 
@@ -77,6 +81,7 @@ const prefsDocument: ColumnPrefsResponse = {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -123,6 +128,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  sessionStorage.clear()
   vi.unstubAllGlobals()
 })
 
@@ -358,7 +364,7 @@ describe('ObjectTable column prefs', () => {
           { path: 'packaging>name', visible: true },
         ],
       })
-      expect(puts.at(-1)?.[1]?.keepalive).not.toBe(true)
+      expect(puts.at(-1)?.[1]?.keepalive).toBe(true)
     })
   })
 
@@ -397,6 +403,80 @@ describe('ObjectTable column prefs', () => {
       else Reflect.deleteProperty(document, 'visibilityState')
     }
   })
+
+
+  it('clears pending column prefs after a 2xx PUT', async () => {
+    const viewId = '018f0000-0000-7000-8000-000000000999'
+    render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'sku' })
+    })
+    await waitFor(() => {
+      const puts = vi.mocked(fetch).mock.calls.filter(
+        ([input, init]) => String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+      )
+      expect(puts.length).toBeGreaterThan(0)
+      expect(puts.at(-1)?.[1]?.keepalive).toBe(true)
+    })
+    await waitFor(() => {
+      expect(sessionStorage.getItem(pendingPrefsKey(viewId))).toBeNull()
+    })
+  })
+
+  it('keeps pending column prefs when the PUT fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/column-prefs')) {
+          if ((init?.method ?? 'GET').toUpperCase() === 'PUT') {
+            return new Response(JSON.stringify({ error: 'boom' }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          }
+          return json(prefsDocument)
+        }
+        if (url.includes('/attribute-paths')) return json({ paths, system_columns: systemColumns })
+        if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
+        if (url.includes('/v1/definitions')) {
+          return json({
+            languages: ['en'],
+            types: [{ id: product, key: 'product', labels: { en: 'Product' }, singular: { en: 'Product' }, plural: { en: 'Products' }, key_attribute: 'sku', attributes: [] }],
+            attributes: [],
+            structures: [],
+          })
+        }
+        if (url.includes('/v1/assortments')) return json({ assortments: [] })
+        if (url.includes('/v1/proposals')) return json({ pending: { total: 0 } })
+        if (url.includes('/v1/views')) return json({})
+        return json({})
+      }),
+    )
+    const viewId = '018f0000-0000-7000-8000-000000000999'
+    render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
+    act(() => {
+      dispatchUi('ui.hide_column', { column: 'sku' })
+    })
+    await waitFor(() => {
+      const puts = vi.mocked(fetch).mock.calls.filter(
+        ([input, init]) => String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+      )
+      expect(puts.length).toBeGreaterThan(0)
+    })
+    await waitFor(() => {
+      const pending = readPendingColumnPrefs(viewId)
+      expect(pending).not.toBeNull()
+      expect(pending?.document.columns.some((c) => c.path === 'sku' && c.visible === false)).toBe(true)
+    })
+  })
+
 
   it('shows system columns from an old document that omitted them', async () => {
     vi.stubGlobal(

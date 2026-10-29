@@ -23,6 +23,12 @@ import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, ty
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
   prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+import {
+  clearPendingColumnPrefs,
+  readPendingColumnPrefs,
+  selectInitialColumnPrefs,
+  writePendingColumnPrefs,
+} from './column-prefs-pending'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { cellPathValues, fetchPathValues } from './path-values'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
@@ -153,25 +159,42 @@ export function ObjectTable({
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
   const prefsSnapshot = useRef<string | null>(null)
-  const pendingPrefs = useRef<{ snapshot: string; viewId: string; document: ColumnPrefsDocument } | null>(null)
+  const pendingPrefs = useRef<{
+    snapshot: string
+    viewId: string
+    document: ColumnPrefsDocument
+    seq: number
+  } | null>(null)
+  const prefsSeq = useRef(0)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
   flushPendingPrefsRef.current = (opts) => {
     const pending = pendingPrefs.current
     if (!pending) return
-    pendingPrefs.current = null
     if (prefsSaveTimer.current != null) {
       clearTimeout(prefsSaveTimer.current)
       prefsSaveTimer.current = null
     }
-    if (pending.document.columns.length === 0) return
+    if (pending.document.columns.length === 0) {
+      pendingPrefs.current = null
+      clearPendingColumnPrefs(pending.viewId)
+      return
+    }
+    // Mark as pending until a matching 2xx; survives aborted fetch across reload.
+    writePendingColumnPrefs(pending.viewId, pending.document, pending.seq)
     if (opts?.keepalive) {
+      // Fire-and-forget across unload. Do NOT clear pending here — a keepalive 2xx
+      // in a dying document must not drop the entry the remount needs to re-PUT.
       saveColumnPrefsKeepalive(pending.viewId, pending.document)
-      prefsSnapshot.current = pending.snapshot
       return
     }
     void saveColumnPrefs(pending.viewId, pending.document)
       .then(() => {
+        // If the tab is already hidden (reload/close), keep pending so remount can
+        // re-PUT — a 2xx in this dying document must not drop a newer local entry.
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return
+        clearPendingColumnPrefs(pending.viewId, pending.seq)
+        if (pendingPrefs.current?.seq === pending.seq) pendingPrefs.current = null
         prefsSnapshot.current = pending.snapshot
       })
       .catch(() => undefined)
@@ -284,9 +307,19 @@ export function ObjectTable({
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
-    const applied = prefs.isSuccess
-      ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
-      : null
+    // Pending sessionStorage only wins while our own PUT is unacked. Skip under vitest.
+    const hydrateCache = import.meta.env.MODE !== 'test'
+    const pendingEntry = hydrateCache ? readPendingColumnPrefs(view.id) : null
+    const serverDocument =
+      prefs.isSuccess && prefs.data?.document?.version === 2
+        ? (prefs.data.document as ColumnPrefsDocument)
+        : null
+    const selected = selectInitialColumnPrefs(hydrateCache, pendingEntry, serverDocument)
+    const applied = selected.document
+      ? prefsToOrderHidden({ document: selected.document }, systemColumns, typeKey, defs.data)
+      : prefs.isSuccess
+        ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
+        : null
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
@@ -301,7 +334,28 @@ export function ObjectTable({
       }
     }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state])
+    // Remount with a pending entry: re-send the PUT immediately.
+    const retry = selected.retryPending
+    if (retry && retry.document.columns.length > 0) {
+      const seq = retry.seq
+      if (prefsSeq.current < seq) prefsSeq.current = seq
+      const snapshot = applied ? JSON.stringify([applied.order, applied.hidden]) : JSON.stringify([[], []])
+      pendingPrefs.current = {
+        snapshot,
+        viewId: view.id,
+        document: retry.document,
+        seq,
+      }
+      writePendingColumnPrefs(view.id, retry.document, seq)
+      void saveColumnPrefs(view.id, retry.document)
+        .then(() => {
+          clearPendingColumnPrefs(view.id, seq)
+          if (pendingPrefs.current?.seq === seq) pendingPrefs.current = null
+          prefsSnapshot.current = snapshot
+        })
+        .catch(() => undefined)
+    }
+  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
   useLayoutEffect(() => {
     if (!prefsReady) return
     const snapshot = JSON.stringify([order, hidden])
@@ -320,7 +374,9 @@ export function ObjectTable({
     if (document.columns.length === 0) return
     // Queue immediately so beforeunload/keepalive can flush even if reload wins the race
     // against a debounced timer (Brand disappearing after a column change).
-    pendingPrefs.current = { snapshot, viewId: view.id, document }
+    const seq = ++prefsSeq.current
+    pendingPrefs.current = { snapshot, viewId: view.id, document, seq }
+    writePendingColumnPrefs(view.id, document, seq)
     if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
     prefsSaveTimer.current = setTimeout(() => {
       prefsSaveTimer.current = null
@@ -341,9 +397,11 @@ export function ObjectTable({
       if (document.visibilityState === 'hidden') flush()
     }
     window.addEventListener('beforeunload', flush)
+    window.addEventListener('pagehide', flush)
     document.addEventListener('visibilitychange', onHide)
     return () => {
       window.removeEventListener('beforeunload', flush)
+      window.removeEventListener('pagehide', flush)
       document.removeEventListener('visibilitychange', onHide)
     }
   }, [])
@@ -511,6 +569,8 @@ export function ObjectTable({
     if (event.name === 'ui.select_rows' && Array.isArray(args.ids)) setSelected(args.ids.map(String))
     if (event.name === 'ui.show_column') {
       const column = String(args.column ?? args.id ?? '')
+      // A re-shown column must land last (same rule as Fields toggleField).
+      setOrder((current) => [...current.filter((id) => id !== column), column])
       setHidden((current) => current.filter((id) => id !== column))
     }
     if (event.name === 'ui.hide_column') setHidden((current) => [...new Set([...current, String(args.column ?? args.id ?? '')])])
@@ -965,14 +1025,32 @@ export function ObjectTable({
     }
     return readPathFromDoc(row.doc, defs.data, parseColumnId(id).path)
   }
+  /** Same path + cardinality (and Specific peer) with a different unit are one logical column. */
+  const isUnitSibling = (existingId: string, nextId: string) => {
+    if (existingId === nextId) return true
+    const a = parseColumnId(existingId)
+    const b = parseColumnId(nextId)
+    if (a.path !== b.path) return false
+    const cardA = a.qualifiers.find((q) => q.kind === 'cardinality')
+    const cardB = b.qualifiers.find((q) => q.kind === 'cardinality')
+    if (!cardA || !cardB || cardA.optionId !== cardB.optionId) return false
+    if (cardA.optionId === 'specific') return (cardA.value ?? '') === (cardB.value ?? '')
+    return true
+  }
+  const showField = (path: string) => {
+    // Completing a Fields qualify/specific path must never hide — only ensure visible + last.
+    // Drop unit-siblings (e.g. First@g when showing First@kg) so one logical hop column remains.
+    setOrder((current) => [...current.filter((id) => !isUnitSibling(id, path)), path])
+    setHidden((current) => current.filter((id) => !isUnitSibling(id, path)))
+  }
   const toggleField = (path: string) => {
     const shownNow = order.includes(path) && !hidden.includes(path)
     if (shownNow) {
       setHidden((current) => [...new Set([...current, path])])
       return
     }
-    setOrder((current) => (current.includes(path) ? current : [...current, path]))
-    setHidden((current) => current.filter((id) => id !== path))
+    // Re-showing a hidden column (or adding fresh) always appends last — never revive at the old index.
+    showField(path)
   }
   const moveField = (path: string, delta: number) => {
     setOrder((current) => {
@@ -1023,22 +1101,32 @@ export function ObjectTable({
       onToggleColumn: (column) => {
         toggleField(column.id)
       },
+      onShowColumn: (column) => {
+        showField(column.id)
+      },
       onReplaceColumn: (previousId, next) => {
         setOrder((current) => {
           const prevAt = current.indexOf(previousId)
-          const existingAt = current.indexOf(next.id)
-          // Identical column already present: merge — drop the edited one, keep existing place.
-          if (existingAt >= 0 && previousId !== next.id) {
-            return current.filter((id) => id !== previousId)
+          // Exact or unit-sibling of next already present: drop the edited one and
+          // upgrade the sibling slot to next.id (e.g. First@g → First@kg).
+          const siblingAt = current.findIndex((id) => id !== previousId && isUnitSibling(id, next.id))
+          if (siblingAt >= 0 && previousId !== next.id) {
+            const withoutPrev = current.filter((id) => id !== previousId)
+            const at = withoutPrev.findIndex((id) => isUnitSibling(id, next.id))
+            if (at < 0) return withoutPrev
+            const copy = [...withoutPrev]
+            copy[at] = next.id
+            return copy.filter((id, index) => id !== next.id || index === at)
           }
           if (prevAt >= 0) {
             const copy = [...current]
             copy[prevAt] = next.id
-            return copy.filter((id, index) => id !== next.id || index === prevAt)
+            // Drop other unit-siblings of next; keep the replaced slot.
+            return copy.filter((id, index) => index === prevAt || !isUnitSibling(id, next.id))
           }
-          return current.includes(next.id) ? current : [...current, next.id]
+          return [...current.filter((id) => !isUnitSibling(id, next.id)), next.id]
         })
-        setHidden((current) => current.filter((id) => id !== previousId && id !== next.id))
+        setHidden((current) => current.filter((id) => id !== previousId && !isUnitSibling(id, next.id)))
       },
       peerOptionsForField: (leafId, query) => {
         const needle = query.trim().toLowerCase()
@@ -1147,12 +1235,12 @@ export function ObjectTable({
         <div className="head">
           {shown.map((id) => {
             const column = columnFor(id)
-            const width = sizes[id] ?? column.size
+            const width = resolvedWidths[id] ?? sizes[id] ?? column.size
             return (
               <div
                 key={id}
                 className="cell"
-                style={{ width }}
+                style={{ width, minWidth: width, maxWidth: width }}
                 data-testid={`col-${id}`}
                 data-column={id}
                 onClick={() => setActiveColumn(id)}
@@ -1462,11 +1550,20 @@ function Row({
       onMouseDown={(event) => {
         // tabindex used to land on the row, so its focus ring stayed put while arrows moved the fill.
         if (event.button !== 0) return
-        event.preventDefault()
+        // detail>=2 is the second press of a double-click. preventDefault here drops
+        // click/dblclick in Firefox (and broke Description cell edit after #108).
+        if (event.detail < 2) event.preventDefault()
         onFocusGrid()
       }}
       onClick={(event) => {
         const column = columnOf(event.target)
+        // Open the cell editor on the second click; skip row activate so Detail is not the only result.
+        if (event.detail >= 2 && column && onCellDoubleClick) {
+          event.preventDefault()
+          event.stopPropagation()
+          onCellDoubleClick(row, column)
+          return
+        }
         if (column) onColumn(column)
         onActivate(index, event)
       }}
@@ -1486,7 +1583,12 @@ function Row({
       {shown.map((id) => {
         const width = sizes[id] ?? 160
         return (
-          <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width }}>
+          <div
+            key={id}
+            className={id === activeColumn ? 'cell active-cell' : 'cell'}
+            data-column={id}
+            style={{ width, minWidth: width, maxWidth: width }}
+          >
             {cell(row, id)}
           </div>
         )

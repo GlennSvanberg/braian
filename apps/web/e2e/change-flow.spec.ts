@@ -118,7 +118,7 @@ test('a person saves directly and reviews an agent draft field by field', async 
   await expect(marked.getByTestId('suggestion-count')).toContainText(`${onObject} suggested`)
 
   await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('palette')).toContainText(paletteTitle)
+  await expect(page.getByTestId('command-palette')).toContainText(paletteTitle)
   await page.keyboard.press('Escape')
 
   await page.locator('nav.tabs').getByRole('button', { name: /Review/ }).click()

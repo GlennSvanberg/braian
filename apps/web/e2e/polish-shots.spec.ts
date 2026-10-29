@@ -96,14 +96,14 @@ test('polish screenshots', async ({ page }) => {
   await page.getByRole('button', { name: 'Dark' }).click()
 
   await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('palette')).toBeVisible()
+  await expect(page.getByTestId('command-palette')).toBeVisible()
   await page.getByTestId('palette-input').fill('cheese')
   await expect(page.locator('.meta-chip').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/palette-dark.png` })
   await page.keyboard.press('Escape')
 
   await page.keyboard.press('Control+j')
-  await expect(page.getByTestId('palette')).toBeVisible()
+  await expect(page.getByTestId('command-palette')).toBeVisible()
   await expect(page.getByText('AI', { exact: true })).toBeVisible()
   await page.screenshot({ path: `${shots}/palette-ai-dark.png` })
   await page.keyboard.press('Escape')

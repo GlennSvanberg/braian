@@ -66,6 +66,7 @@ apiEnv.BRAIAN_SEARCH_ALIAS = 'braian_e2e'
 apiEnv.BRAIAN_API_ADDR = '127.0.0.1:8095'
 apiEnv.BRAIAN_SEED_COUNT = process.env.BRAIAN_E2E_SEED_COUNT || '250'
 apiEnv.BRAIAN_AGENT_MOCK = process.env.BRAIAN_AGENT_MOCK || '1'
+apiEnv.BRAIAN_E2E = '1'
 
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const windows = process.platform === 'win32'
@@ -96,7 +97,7 @@ let code = 1
 try {
   await waitFor('http://127.0.0.1:8095/healthz')
   await waitFor('http://127.0.0.1:3010/')
-  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts', 'e2e/drag.spec.ts', 'e2e/layout.spec.ts', 'e2e/graph.spec.ts', 'e2e/history.spec.ts', 'e2e/import.spec.ts', 'e2e/structure.spec.ts', 'e2e/group-filter.spec.ts', 'e2e/type-workspace.spec.ts', 'e2e/pane-scroll.spec.ts', 'e2e/model-tree.spec.ts', 'e2e/change-flow.spec.ts', 'e2e/record.spec.ts'], {
+  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts', 'e2e/drag.spec.ts', 'e2e/layout.spec.ts', 'e2e/graph.spec.ts', 'e2e/history.spec.ts', 'e2e/import.spec.ts', 'e2e/structure.spec.ts', 'e2e/group-filter.spec.ts', 'e2e/type-workspace.spec.ts', 'e2e/pane-scroll.spec.ts', 'e2e/model-tree.spec.ts', 'e2e/change-flow.spec.ts', 'e2e/record.spec.ts', 'e2e/field-picker.spec.ts'], {
     cwd: root,
     stdio: 'inherit',
     shell: windows,

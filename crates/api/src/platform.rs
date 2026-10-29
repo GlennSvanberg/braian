@@ -953,6 +953,15 @@ async fn login(
         .create_session(user.id, &auth::token_hash(&token), expires)
         .await
         .map_err(store_status)?;
+    // Playwright reuses one demo user across specs; leftover hop columns from an earlier
+    // test break later count assertions. Only e2e.mjs sets BRAIAN_E2E=1.
+    if std::env::var("BRAIAN_E2E").ok().as_deref() == Some("1") {
+        state
+            .store
+            .delete_all_view_column_prefs_for_user(user.id)
+            .await
+            .map_err(store_status)?;
+    }
     let mut response = Json(json!({
         "email": user.email,
         "role": user.role,

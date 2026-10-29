@@ -42,7 +42,7 @@ test('final surfaces', async ({ page }) => {
   await page.keyboard.press('Escape')
 
   await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('palette')).toBeVisible()
+  await expect(page.getByTestId('command-palette')).toBeVisible()
   await expect(page.getByText('Ask AI', { exact: true })).toBeVisible()
   await page.screenshot({ path: `${shots}/command-palette.png` })
   await page.keyboard.press('Escape')
