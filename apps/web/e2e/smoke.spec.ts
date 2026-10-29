@@ -84,12 +84,13 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await entry.click()
   await page.getByTestId('rollback').click()
 
-  await page.locator('nav.tabs').getByRole('button', { name: /^Review/ }).click()
-  await expect(page.getByTestId('proposal')).toBeVisible()
-  await expect(page.getByTestId('save-all')).toBeVisible()
+  // Restore opens the consequence review dialog (publishProposal), then Confirm applies it.
+  await expect(page.getByTestId('consequence')).toBeVisible()
+  await expect(page.getByTestId('activity-log')).toContainText('Proposed')
   await page.screenshot({ path: `${shots}/proposal.png` })
-  await page.getByTestId('save-all').click()
-  await expect(page.getByTestId('activity-log')).toContainText('Saved')
+  await page.getByTestId('confirm-model').click()
+  await expect(page.getByTestId('consequence')).toHaveCount(0)
+  await expect(page.getByTestId('activity-log')).toContainText(/Confirm|Saved/)
 
   await page.getByRole('button', { name: 'Data model' }).click()
   await expect(page.getByTestId('data-model').first()).toBeVisible()
