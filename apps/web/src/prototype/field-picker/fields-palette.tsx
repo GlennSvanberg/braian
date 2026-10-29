@@ -280,9 +280,9 @@ export function FieldsPalette({
         checked:
           columnsUnder(cols, top.pathIds, [
             ...top.applied.filter((q) => q.kind !== 'cardinality'),
-            { kind: 'cardinality', optionId: 'specific', label: option.id, value: option.id },
+            { kind: 'cardinality', optionId: 'specific', label: option.pickValue, value: option.pickValue },
           ]).length > 0,
-        run: () => activateSpecific(option.id, option.label, top),
+        run: () => activateSpecific(option.pickValue, option.pickValue, top),
       }))
   }, [top, query, columns])
 
@@ -635,6 +635,30 @@ export function FieldsPalette({
 
   return (
     <div className="palette" data-testid="fields-palette" onMouseDown={onClose}>
+      <style>{`
+        [data-testid="fields-palette"] .hit.on,
+        [data-testid="fields-palette"] .fields-hit-active {
+          background: color-mix(in srgb, var(--accent) 24%, transparent);
+          box-shadow: inset 3px 0 0 var(--accent);
+        }
+        [data-testid="fields-palette"] .hit:hover:not(.on) {
+          background: color-mix(in srgb, var(--accent) 12%, transparent);
+        }
+        [data-testid="fields-palette"] .fields-check {
+          color: var(--text-2);
+          background: transparent !important;
+          box-shadow: none !important;
+          border: 0;
+          border-radius: 0;
+          padding: 0;
+          margin-left: auto;
+          flex: none;
+          display: inline-block;
+        }
+        [data-testid="fields-palette"] .hit.on .fields-check {
+          color: var(--accent);
+        }
+      `}</style>
       <Command
         shouldFilter={false}
         loop={false}
@@ -665,8 +689,9 @@ export function FieldsPalette({
                 key={`${top.kind}-${top.crumbs.join('/')}-${row.id}`}
                 role="option"
                 aria-selected={index === selected}
-                className={index === selected ? 'hit on' : 'hit'}
+                className={index === selected ? 'hit on fields-hit-active' : 'hit'}
                 data-testid={`fields-row-${row.id}`}
+                data-active={index === selected ? 'true' : undefined}
                 onMouseEnter={() => setActive(index)}
                 onClick={(event) => {
                   event.preventDefault()
@@ -679,7 +704,15 @@ export function FieldsPalette({
                   <span className="hit-title">{row.title}</span>
                   {row.subtitle ? <small>{row.subtitle}</small> : null}
                 </span>
-                {row.checked ? <Check size={14} data-testid={`fields-check-${row.id}`} /> : null}
+                {row.checked ? (
+                  <Check
+                    size={14}
+                    className="fields-check"
+                    strokeWidth={2.25}
+                    aria-hidden="true"
+                    data-testid={`fields-check-${row.id}`}
+                  />
+                ) : null}
                 {row.drill ? <span aria-hidden="true">›</span> : null}
               </div>
             ))}

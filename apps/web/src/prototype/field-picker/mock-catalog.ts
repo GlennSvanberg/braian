@@ -1,7 +1,7 @@
 /* english-check: allow — mock bilingual product copy for the field-picker prototype */
 import type { FieldDef } from './qualifiers'
 
-/** Article peer fields (Net volume with unit, GTIN). */
+/** Article peer fields: liquids use Net volume; solids use Net weight; GTIN always. */
 export const ARTICLE_FIELDS: FieldDef[] = [
   {
     id: 'net_volume',
@@ -9,6 +9,13 @@ export const ARTICLE_FIELDS: FieldDef[] = [
     typeLabel: 'Number',
     shape: 'unit',
     units: ['ml', 'l'],
+  },
+  {
+    id: 'net_weight',
+    name: 'Net weight',
+    typeLabel: 'Number',
+    shape: 'unit',
+    units: ['g', 'kg'],
   },
   {
     id: 'gtin',
@@ -69,7 +76,10 @@ export const PRODUCT_FIELDS: FieldDef[] = [
 export type ArticleRow = {
   key: string
   gtin: string
-  net_volume: { value: number; unit: 'ml' | 'l' }
+  /** Liquids only. */
+  net_volume?: { value: number; unit: 'ml' | 'l' }
+  /** Solids only. */
+  net_weight?: { value: number; unit: 'g' | 'kg' }
 }
 
 export type SupplierRow = {
@@ -125,7 +135,7 @@ export const MOCK_PRODUCTS: ProductRow[] = [
     description: { en: 'Thick strained yogurt', sv: 'Tjock grekisk yoghurt' },
     allergens: { code: 'MILK', label: 'Milk' },
     storage_temperature: { min: 2, max: 5 },
-    articles: [{ key: '450g', gtin: '7300003000031', net_volume: { value: 450, unit: 'ml' } }],
+    articles: [{ key: '450g', gtin: '7300003000031', net_weight: { value: 450, unit: 'g' } }],
     supplier: { key: 'hellenic', name: 'Hellenic Foods', country: 'Greece' },
   },
   {
@@ -148,7 +158,7 @@ export const MOCK_PRODUCTS: ProductRow[] = [
     description: { en: 'Stone-baked sourdough loaf', sv: 'Stenbakat surdegsbröd' },
     allergens: { code: 'GLUTEN', label: 'Gluten' },
     storage_temperature: { min: 15, max: 22 },
-    articles: [{ key: '800g', gtin: '7300005000051', net_volume: { value: 800, unit: 'ml' } }],
+    articles: [{ key: '800g', gtin: '7300005000051', net_weight: { value: 800, unit: 'g' } }],
     supplier: { key: 'bakery-nord', name: 'Bakery Nord', country: 'Sweden' },
   },
   {
@@ -159,8 +169,8 @@ export const MOCK_PRODUCTS: ProductRow[] = [
     allergens: { code: 'GLUTEN', label: 'Gluten' },
     storage_temperature: { min: 10, max: 25 },
     articles: [
-      { key: '500g', gtin: '7300006000061', net_volume: { value: 500, unit: 'ml' } },
-      { key: '1kg', gtin: '7300006000062', net_volume: { value: 1000, unit: 'ml' } },
+      { key: '500g', gtin: '7300006000061', net_weight: { value: 500, unit: 'g' } },
+      { key: '1kg', gtin: '7300006000062', net_weight: { value: 1, unit: 'kg' } },
     ],
     supplier: { key: 'pasta-roma', name: 'Pasta Roma', country: 'Italy' },
   },
@@ -186,8 +196,8 @@ export const MOCK_PRODUCTS: ProductRow[] = [
     allergens: { code: 'MILK', label: 'Milk' },
     storage_temperature: { min: 2, max: 6 },
     articles: [
-      { key: '200g', gtin: '7300008000081', net_volume: { value: 200, unit: 'ml' } },
-      { key: '400g', gtin: '7300008000082', net_volume: { value: 400, unit: 'ml' } },
+      { key: '200g', gtin: '7300008000081', net_weight: { value: 200, unit: 'g' } },
+      { key: '400g', gtin: '7300008000082', net_weight: { value: 400, unit: 'g' } },
     ],
     supplier: { key: 'cheddar-vale', name: 'Cheddar Vale', country: 'United Kingdom' },
   },
@@ -198,7 +208,7 @@ export const MOCK_PRODUCTS: ProductRow[] = [
     description: { en: 'Lightly salted roasted almonds', sv: 'Lättsaltade rostade mandlar' },
     allergens: { code: 'NUTS', label: 'Nuts' },
     storage_temperature: { min: 10, max: 22 },
-    articles: [{ key: '150g', gtin: '7300009000091', net_volume: { value: 150, unit: 'ml' } }],
+    articles: [{ key: '150g', gtin: '7300009000091', net_weight: { value: 150, unit: 'g' } }],
     supplier: { key: 'nut-house', name: 'Nut House', country: 'USA' },
   },
   {

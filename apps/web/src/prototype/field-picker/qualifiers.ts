@@ -159,19 +159,34 @@ export type CellSource = {
   peers?: unknown[]
 }
 
-/** Convert a volume value into the display unit (ml or l). 1 l = 1000 ml. */
+/** Convert volume (ml/l) or mass (g/kg). 1 l = 1000 ml; 1 kg = 1000 g. */
 export function convertVolume(
+  value: number,
+  fromUnit: string,
+  toUnit: string,
+): number {
+  return convertMeasure(value, fromUnit, toUnit)
+}
+
+const MEASURE_FACTOR: Record<string, number> = {
+  ml: 1,
+  l: 1000,
+  g: 1,
+  kg: 1000,
+}
+
+/** Convert within one measure family (volume or mass). */
+export function convertMeasure(
   value: number,
   fromUnit: string,
   toUnit: string,
 ): number {
   const from = fromUnit.toLowerCase()
   const to = toUnit.toLowerCase()
-  let ml = value
-  if (from === 'l') ml = value * 1000
-  else if (from === 'ml') ml = value
-  if (to === 'l') return ml / 1000
-  return ml
+  const fromFactor = MEASURE_FACTOR[from]
+  const toFactor = MEASURE_FACTOR[to]
+  if (fromFactor == null || toFactor == null) return value
+  return (value * fromFactor) / toFactor
 }
 
 /**
@@ -218,9 +233,11 @@ function projectLeaf(raw: unknown, field: FieldDef, qualifiers: AppliedQualifier
       const fromUnit = obj.unit != null ? String(obj.unit) : unit ?? ''
       const toUnit = unit ?? fromUnit
       if (Number.isFinite(rawValue) && fromUnit && toUnit) {
-        const converted = convertVolume(rawValue, fromUnit, toUnit)
+        const converted = convertMeasure(rawValue, fromUnit, toUnit)
         const display =
-          toUnit === 'l' && converted % 1 !== 0 ? String(converted) : String(converted)
+          (toUnit === 'l' || toUnit === 'kg') && converted % 1 !== 0
+            ? String(converted)
+            : String(converted)
         return `${display} ${toUnit}`
       }
       const value = obj.value ?? raw

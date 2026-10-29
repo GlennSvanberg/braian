@@ -8,6 +8,7 @@ import {
   summarizeList,
   cardinalityStepForLink,
   convertVolume,
+  convertMeasure,
   cardinalityCrumbLabel,
   qualifierShortLabel,
   type AppliedQualifier,
@@ -61,6 +62,18 @@ describe('qualifier module', () => {
     expect(step.options.map((o) => o.id)).toEqual(['ml', 'l'])
   })
 
+  it('lists g and kg as Net weight unit options', () => {
+    const weight: FieldDef = {
+      id: 'net_weight',
+      name: 'Net weight',
+      typeLabel: 'Number',
+      shape: 'unit',
+      units: ['g', 'kg'],
+    }
+    const step = nextQualifierSteps(weight, [])[0]!
+    expect(step.options.map((o) => o.id)).toEqual(['g', 'kg'])
+  })
+
   it('formats specific titles without a specific: prefix', () => {
     expect(
       qualifierShortLabel({ kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' }),
@@ -106,10 +119,13 @@ describe('qualifier module', () => {
     expect(long.title).toBe('A, B, C, D')
   })
 
-  it('converts litres to millilitres', () => {
+  it('converts litres to millilitres and kilograms to grams', () => {
     expect(convertVolume(1, 'l', 'ml')).toBe(1000)
     expect(convertVolume(1.5, 'l', 'ml')).toBe(1500)
     expect(convertVolume(1000, 'ml', 'l')).toBe(1)
+    expect(convertMeasure(1, 'kg', 'g')).toBe(1000)
+    expect(convertMeasure(450, 'g', 'kg')).toBe(0.45)
+    expect(convertMeasure(500, 'g', 'kg')).toBe(0.5)
   })
 
   it('formats cells for language, unit conversion, value list, range °C, and cardinality', () => {

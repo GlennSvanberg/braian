@@ -21,9 +21,13 @@ export type ProtoColumn = {
 export type CellDisplay = { text: string; title: string }
 
 export type ArticlePickOption = {
+  /** Unique row id (GTIN). */
   id: string
   label: string
+  /** One product name only. */
   subtitle: string
+  /** Article key used as Specific… qualifier value (keeps titles like 1.5L). */
+  pickValue: string
 }
 
 export function columnIdOf(col: Pick<ProtoColumn, 'fieldPath' | 'qualifiers'>): string {
@@ -84,29 +88,28 @@ export function columnWidthPx(col: ProtoColumn): number {
 
 /**
  * Articles for Specific… after a leaf field is chosen.
- * Label is `GTIN · key`; subtitle is product name(s). Only articles that have the field.
+ * One row per article that has the field; sorted by product name then GTIN.
+ * Label is `GTIN · key`; subtitle is that article's product only.
  */
 export function articleOptionsForField(leafId: string): ArticlePickOption[] {
-  const byKey = new Map<string, ArticlePickOption>()
+  const options: ArticlePickOption[] = []
   for (const product of MOCK_PRODUCTS) {
     for (const article of product.articles) {
       const raw = (article as Record<string, unknown>)[leafId]
       if (raw == null) continue
-      const existing = byKey.get(article.key)
-      if (existing) {
-        if (!existing.subtitle.split(', ').includes(product.name)) {
-          existing.subtitle = `${existing.subtitle}, ${product.name}`
-        }
-        continue
-      }
-      byKey.set(article.key, {
-        id: article.key,
+      options.push({
+        id: article.gtin,
         label: `${article.gtin} · ${article.key}`,
         subtitle: product.name,
+        pickValue: article.key,
       })
     }
   }
-  return [...byKey.values()].sort((a, b) => a.id.localeCompare(b.id))
+  return options.sort((a, b) => {
+    const byProduct = a.subtitle.localeCompare(b.subtitle, 'en')
+    if (byProduct !== 0) return byProduct
+    return a.id.localeCompare(b.id)
+  })
 }
 
 function withEmpty(text: string, title = ''): CellDisplay {
@@ -124,6 +127,7 @@ export function readCellDetail(row: ProductRow, col: ProtoColumn): CellDisplay {
       const raw = (article as Record<string, unknown>)[leafKey]
       return {
         key: article.key,
+        gtin: article.gtin,
         text: formatCellValue({ value: raw }, col.leaf, leafQualifiers),
       }
     })
@@ -131,9 +135,15 @@ export function readCellDetail(row: ProductRow, col: ProtoColumn): CellDisplay {
       const summary = summarizeList(projected.map((item) => item.text).filter(Boolean))
       return withEmpty(summary.text, summary.title)
     }
-    if (card.optionId === 'first') return withEmpty(projected[0]?.text ?? '')
+    if (card.optionId === 'first') {
+      const hit = projected.find((item) => item.text)
+      return withEmpty(hit?.text ?? '')
+    }
     if (card.optionId === 'specific') {
-      return withEmpty(projected.find((item) => item.key === card.value)?.text ?? '')
+      const want = card.value ?? ''
+      return withEmpty(
+        projected.find((item) => item.key === want || item.gtin === want)?.text ?? '',
+      )
     }
     return withEmpty('')
   }
