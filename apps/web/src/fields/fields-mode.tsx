@@ -238,7 +238,14 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
     }
   }, [])
   useEffect(() => {
-    setEditingColumn(open.kind === 'edit' ? open.column : null)
+    // Parent clears fieldsEditColumnId after mount (open becomes browse). Keep editing.
+    if (open.kind === 'edit') {
+      setEditingColumn(open.column)
+      // Ensure keyboard focus lands in the palette, not the table under the context menu.
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLInputElement>('[data-testid="fields-mode-input"]')?.focus()
+      })
+    }
   }, [open])
 
   /** Index of the option/field that already has a column — used when drilling so focus lands on the check. */
@@ -576,7 +583,12 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
 
     const col = makeViewColumn(pathIds, frame.linkQualifiers, catalog)
     if (col) {
-      onToggleColumn(col)
+      if (editingColumn) {
+        onReplaceColumn(editingColumn.id, col)
+        setEditingColumn(col)
+      } else {
+        onToggleColumn(col)
+      }
       // Stay on this fields list; clear the filter and highlight the toggled field
       setQuery('')
       setActive(frame.fields.findIndex((item) => item.id === field.id))
@@ -646,50 +658,9 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       { kind: frame.step.kind, optionId: option.id, label: option.label },
     ]
 
-    // Edit-in-place: swap this qualifier on the existing column and stay here
-    const editing = editingColumn ?? frame.editing
-    if (editing) {
-      const updated = withReplacedQualifier(editing, {
-        kind: frame.step.kind,
-        optionId: option.id,
-        label: option.label,
-      }, catalog)
-      const previousId = columns.find((col) => col.id === editing.id)?.id ?? editing.id
-      onReplaceColumn(previousId, updated)
-      setEditingColumn(updated)
-      setQuery('')
-      setStack((prev) => {
-        const copy = [...prev]
-        const last = copy[copy.length - 1]
-        if (last?.kind === 'qualify') {
-          copy[copy.length - 1] = {
-            ...last,
-            applied: nextApplied,
-            editing: updated,
-            crumbs:
-              frame.step.kind === 'cardinality'
-                ? [...frame.crumbs.slice(0, -0), ...frame.crumbs]
-                : frame.crumbs,
-          }
-          // Update crumb trailing All/First when swapping cardinality
-          if (frame.step.kind === 'cardinality') {
-            const base = frame.crumbs.filter(
-              (c) => c !== 'All' && c !== 'First' && c !== 'Specific',
-            )
-            copy[copy.length - 1] = {
-              ...(copy[copy.length - 1] as QualifyFrame),
-              crumbs: base,
-              editing: updated,
-              applied: nextApplied,
-            }
-          }
-        }
-        return copy
-      })
-      const optionIndex = frame.step.options.findIndex((item) => item.id === option.id)
-      setActive(optionIndex >= 0 ? optionIndex : 0)
-      return
-    }
+    // Edit mode: do not commit on intermediate qualifier picks — drill so
+    // First › Net weight › kg can replace in one final step after Backspace.
+    // editingColumn state survives pop; frame.editing is set when opened via Edit field.
 
     // After cardinality on a many-link, drill into peer fields (intermediate step)
     if (frame.step.kind === 'cardinality' && frame.field.shape === 'link' && frame.field.link) {
@@ -736,7 +707,13 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
     // Completing a column — stay on this qualifier level
     const col = makeViewColumn(frame.pathIds, nextApplied, catalog)
     if (!col) return
-    onToggleColumn(col)
+    const editing = editingColumn ?? frame.editing
+    if (editing) {
+      onReplaceColumn(editing.id, col)
+      setEditingColumn(col)
+    } else {
+      onToggleColumn(col)
+    }
     setQuery('')
     const optionIndex = frame.step.options.findIndex((item) => item.id === option.id)
     setActive(optionIndex >= 0 ? optionIndex : 0)
@@ -771,7 +748,7 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
           viaMany: true,
           applied: nextApplied,
           pendingLeaf: frame.pendingLeaf,
-          crumbs: [...frame.crumbs, value],
+          crumbs: [...frame.crumbs, label],
         },
       ])
       setQuery('')
@@ -781,7 +758,12 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
 
     const col = makeViewColumn(frame.pathIds, nextApplied, catalog)
     if (!col) return
-    onToggleColumn(col)
+    if (editingColumn) {
+      onReplaceColumn(editingColumn.id, col)
+      setEditingColumn(col)
+    } else {
+      onToggleColumn(col)
+    }
     setQuery('')
     setActive(optionIndex >= 0 ? optionIndex : 0)
   }

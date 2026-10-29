@@ -161,6 +161,8 @@ test.describe('field picker on Products', () => {
     await menu.getByRole('menuitem', { name: /Edit field/i }).click()
     await expect(page.getByTestId('fields-mode')).toBeVisible()
     await enterOn(page, 'fields-row-first')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-g')
     await page.keyboard.press('Escape')
 
     await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).toContainText(/first/i)
@@ -169,32 +171,6 @@ test.describe('field picker on Products', () => {
     await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/200\s*g|0\.2\s*kg/)
   })
 
-  test('Edit field All→First updates header and cell', async ({ page }) => {
-    await login(page)
-    await openProducts(page)
-    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
-
-    await openFieldsPalette(page)
-    await drillRight(page, 'fields-row-articles')
-    await enterOn(page, 'fields-row-all')
-    await enterOn(page, 'fields-row-net_weight')
-    await enterOn(page, 'fields-row-kg')
-    await page.keyboard.press('Escape')
-
-    const row = cheddarRow(page)
-    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/0\.[24]\s*kg/)
-
-    const header = page.locator('[data-testid^="col-articles>net_weight"]').first()
-    await header.click({ button: 'right' })
-    await page.getByTestId('context-menu').getByRole('menuitem', { name: /Edit field/i }).click()
-    await expect(page.getByTestId('fields-mode')).toBeVisible()
-    await enterOn(page, 'fields-row-first')
-    await page.keyboard.press('Escape')
-
-    await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).toContainText(/first/i)
-    await expect(page.locator('[data-testid^="col-articles>net_weight"]').first()).not.toContainText(/\ball\b/i)
-    await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/0\.[24]\s*kg/)
-  })
 
   test('typing in fields palette does not open New Product', async ({ page }) => {
     await login(page)
@@ -207,28 +183,38 @@ test.describe('field picker on Products', () => {
     await expect(page.locator('form.create-row, [data-testid="new-object"]')).toHaveCount(0)
   })
 
-  test('Specific search finds cheddar GTIN beyond first page; Edit field First replaces without duplicate', async ({ page }) => {
+  test('full GTIN Specific search finds cheddar; breadcrumb shows ART-CHED key', async ({ page }) => {
     await login(page)
     await openProducts(page)
     await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
-    // Specific… server search (GTIN with/without leading 0)
     await openFieldsPalette(page)
     await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-specific')
     await enterOn(page, 'fields-row-net_weight')
-    await page.getByTestId('fields-mode-input').fill('7310000000024')
-    const cheddar = page.locator('[data-testid^="fields-row-"]').filter({ hasText: /07310000000024|ART-CHED|cheddar/i }).first()
+    await page.getByTestId('fields-mode-input').fill('07310000000024')
+    const cheddar = page
+      .locator('[data-testid^="fields-row-"]')
+      .filter({ hasText: /07310000000024|ART-CHED-200/i })
+      .first()
     await expect(cheddar).toBeVisible({ timeout: 20_000 })
     const cheddarId = await cheddar.getAttribute('data-testid')
     if (!cheddarId) throw new Error('missing cheddar peer')
     await enterOn(page, cheddarId)
+    await expect(page.getByTestId('fields-crumb')).toContainText(/ART-CHED-200/i)
+    await expect(page.getByTestId('fields-crumb')).not.toContainText(/018f1000/i)
     await enterOn(page, 'fields-row-g')
     await page.keyboard.press('Escape')
     const row = cheddarRow(page)
     await expect(row.locator('[data-testid^="hop-cell-articles>net_weight"]').first()).toContainText(/200\s*g/)
+    await expect(page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /ART-CHED-200/i })).toBeVisible()
+  })
 
-    // Add All kg, then Edit field → First must replace, not duplicate
+  test('Edit field replaces all→first in place after back navigation', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
     await openFieldsPalette(page)
     await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-all')
@@ -236,36 +222,116 @@ test.describe('field picker on Products', () => {
     await enterOn(page, 'fields-row-kg')
     await page.keyboard.press('Escape')
 
-    const allHeaders = page.locator('[data-testid^="col-articles>net_weight"]')
-    const beforeCount = await allHeaders.count()
-    expect(beforeCount).toBeGreaterThanOrEqual(2)
+    const headers = () => page.locator('[data-testid^="col-articles>net_weight"]')
+    const allHeader = page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /\ball\b/i }).first()
+    await expect(allHeader).toBeVisible()
+    const beforeHeaders = await headers().allTextContents()
+    const beforeCount = beforeHeaders.length
+    const allIndex = beforeHeaders.findIndex((text) => /\ball\b/i.test(text))
+    expect(allIndex).toBeGreaterThanOrEqual(0)
 
+    await allHeader.click({ button: 'right' })
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /Edit field/i }).click()
+    await expect(page.getByTestId('fields-mode')).toBeVisible()
+    await expect(page.getByTestId('fields-mode-input')).toBeFocused({ timeout: 5_000 })
+
+    // Exact repro: ←, back in, First, Net weight, kg, Enter
+    await page.keyboard.press('ArrowLeft')
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-first')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
+    await page.keyboard.press('Escape')
+
+    const afterHeaders = await headers().allTextContents()
+    expect(afterHeaders.length).toBe(beforeCount)
+    expect(afterHeaders.some((text) => /\ball\b/i.test(text))).toBe(false)
+    expect(afterHeaders[allIndex] ?? '').toMatch(/first/i)
+
+    await page.reload()
+    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
+    const reloaded = await headers().allTextContents()
+    expect(reloaded.length).toBe(beforeCount)
+    expect(reloaded.some((text) => /\ball\b/i.test(text))).toBe(false)
+    expect(reloaded.some((text) => /first/i.test(text))).toBe(true)
+  })
+
+  test('Edit field merges into an existing identical first column', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
+    // first kg
+    await openFieldsPalette(page)
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-first')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
+    await page.keyboard.press('Escape')
+    // all kg
+    await openFieldsPalette(page)
+    await drillRight(page, 'fields-row-articles')
+    await enterOn(page, 'fields-row-all')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
+    await page.keyboard.press('Escape')
+
+    const headers = page.locator('[data-testid^="col-articles>net_weight"]')
+    await expect(headers).toHaveCount(2)
     const allHeader = page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /\ball\b/i }).first()
     await allHeader.click({ button: 'right' })
     await page.getByTestId('context-menu').getByRole('menuitem', { name: /Edit field/i }).click()
     await expect(page.getByTestId('fields-mode')).toBeVisible()
-    // Navigate away and back — editing mode must survive
     await page.keyboard.press('ArrowLeft')
-    await page.keyboard.press('ArrowLeft')
-    await page.keyboard.press('ArrowRight')
+    await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-first')
+    await enterOn(page, 'fields-row-net_weight')
+    await enterOn(page, 'fields-row-kg')
     await page.keyboard.press('Escape')
 
-    const firstHeaders = page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /first/i })
-    await expect(firstHeaders).toHaveCount(await firstHeaders.count())
-    // No duplicate identical first headers for same unit after replace of all→first
-    // At most one "all" remains (none) and first count should not grow by +1 beyond prior firsts
-    await expect(page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /\ball\b/i })).toHaveCount(0)
-    const afterFirst = await page.locator('[data-testid^="col-articles>net_weight"]').filter({ hasText: /first/i }).count()
-    expect(afterFirst).toBeGreaterThanOrEqual(1)
-    // Total hop net_weight columns should not exceed previous (all replaced, not added)
-    const afterCount = await page.locator('[data-testid^="col-articles>net_weight"]').count()
-    expect(afterCount).toBeLessThanOrEqual(beforeCount)
+    await expect(headers).toHaveCount(1)
+    await expect(headers.first()).toContainText(/first/i)
   })
 
-  test('header and body column widths match for hop columns', async ({ page }) => {
+  test('new hop columns append in addition order', async ({ page }) => {
     await login(page)
     await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
+    for (const card of ['all', 'specific', 'first'] as const) {
+      await openFieldsPalette(page)
+      await drillRight(page, 'fields-row-articles')
+      if (card === 'specific') {
+        await enterOn(page, 'fields-row-specific')
+        await enterOn(page, 'fields-row-net_weight')
+        await page.getByTestId('fields-mode-input').fill('ART-CHED-200')
+        const peer = page.locator('[data-testid^="fields-row-"]').filter({ hasText: /ART-CHED-200/i }).first()
+        await expect(peer).toBeVisible({ timeout: 20_000 })
+        const id = await peer.getAttribute('data-testid')
+        if (!id) throw new Error('peer')
+        await enterOn(page, id)
+        await enterOn(page, 'fields-row-kg')
+      } else {
+        await enterOn(page, `fields-row-${card}`)
+        await enterOn(page, 'fields-row-net_weight')
+        await enterOn(page, 'fields-row-kg')
+      }
+      await page.keyboard.press('Escape')
+    }
+
+    const texts = await page.locator('[data-testid^="col-articles>net_weight"]').allTextContents()
+    expect(texts.length).toBeGreaterThanOrEqual(3)
+    const hop = texts.slice(-3)
+    expect(hop[0]).toMatch(/\ball\b/i)
+    expect(hop[1]).toMatch(/ART-CHED-200|specific/i)
+    expect(hop[2]).toMatch(/first/i)
+  })
+
+  test('header and body x/width match for every column including Type Status Version', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+
     await openFieldsPalette(page)
     await drillRight(page, 'fields-row-articles')
     await enterOn(page, 'fields-row-all')
@@ -273,14 +339,22 @@ test.describe('field picker on Products', () => {
     await enterOn(page, 'fields-row-kg')
     await page.keyboard.press('Escape')
 
-    const header = page.locator('[data-testid^="col-articles>net_weight"]').first()
-    await expect(header).toBeVisible()
-    const headerBox = await header.boundingBox()
-    const cell = page.locator('[data-testid="object-row"]').first().locator('[data-column^="articles>net_weight"]').first()
-    await expect(cell).toBeVisible()
-    const cellBox = await cell.boundingBox()
-    expect(headerBox && cellBox).toBeTruthy()
-    expect(Math.abs((headerBox!.width) - (cellBox!.width))).toBeLessThanOrEqual(2)
+    const headers = page.locator('.head [data-testid^="col-"]')
+    const count = await headers.count()
+    expect(count).toBeGreaterThan(3)
+    const row = page.locator('[data-testid="object-row"]').first()
+    await expect(row).toBeVisible()
+    for (let i = 0; i < count; i += 1) {
+      const header = headers.nth(i)
+      const column = await header.getAttribute('data-column')
+      expect(column).toBeTruthy()
+      const cell = row.locator(`[data-column="${column}"]`)
+      await expect(cell).toBeVisible()
+      const hb = await header.boundingBox()
+      const cb = await cell.boundingBox()
+      expect(hb && cb).toBeTruthy()
+      expect(Math.abs(hb!.x - cb!.x)).toBeLessThanOrEqual(2)
+      expect(Math.abs(hb!.width - cb!.width)).toBeLessThanOrEqual(2)
+    }
   })
-
 })
