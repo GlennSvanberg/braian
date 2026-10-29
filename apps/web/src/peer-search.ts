@@ -21,6 +21,17 @@ export function gtinSearchVariants(raw: string): string[] {
   return [...out]
 }
 
+/**
+ * Typesense filter for exact GTIN match.
+ * Use `field:=[a,b]` (same-field OR) — `(a || b)` breaks translate_filter_expression
+ * which only splits on `&&` and then cannot parse a parenthesized OR clause.
+ * Backticks keep leading zeros as strings.
+ */
+export function gtinExactFilter(variants: string[]): string {
+  const list = variants.map((value) => `\`${value}\``).join(',')
+  return `type_key:=article && gtin:=[${list}]`
+}
+
 function hitToOption(hit: Record<string, unknown>, defs: Json | undefined): PeerPickOption | null {
   const doc = ((hit.document as Json | undefined) ?? (hit as Json)) as Json
   const id = String(hit.id ?? doc.id ?? '')
@@ -28,7 +39,7 @@ function hitToOption(hit: Record<string, unknown>, defs: Json | undefined): Peer
   const key = String(doc.key ?? '')
   const name = catalogName(doc, defs) || String(doc.name ?? '')
   const gtin = readIndexed(doc, defs, 'gtin') || String(doc.gtin ?? '')
-  const shortLabel = gtin || key || name || id
+  const shortLabel = key || gtin || name || id
   return {
     id,
     label: gtin ? `${gtin} · ${key || name}` : key || name || id,
@@ -38,9 +49,24 @@ function hitToOption(hit: Record<string, unknown>, defs: Json | undefined): Peer
   }
 }
 
+function pushHits(
+  result: { hits?: Array<Record<string, unknown>> },
+  defs: Json | undefined,
+  options: PeerPickOption[],
+  seen: Set<string>,
+) {
+  for (const hit of result.hits ?? []) {
+    const option = hitToOption(hit, defs)
+    if (!option || seen.has(option.id)) continue
+    seen.add(option.id)
+    options.push(option)
+  }
+}
+
 /**
  * Server-side article search for Specific….
- * Digit queries filter on GTIN (with/without leading 0); otherwise Typesense `q` on key/name.
+ * Digit queries exact-match GTIN (with/without leading 0) via filter, then also
+ * `q=` so prefixes hit the searchable blob. Text uses `q` on key/name.
  */
 export async function searchPeerArticles(
   query: string,
@@ -51,25 +77,31 @@ export async function searchPeerArticles(
   const perPage = opts?.perPage ?? 50
   const lang = encodeURIComponent(uiLanguage)
   const variants = gtinSearchVariants(needle)
-  let url: string
-  if (variants.length > 0) {
-    const gtinOr = variants.map((value) => `gtin:=${value}`).join(' || ')
-    const filter = encodeURIComponent(`type_key:=article && (${gtinOr})`)
-    url = `/v1/search?q=*&filter=${filter}&per_page=${perPage}&lang=${lang}`
-  } else {
-    const filter = encodeURIComponent('type_key:=article')
-    const q = encodeURIComponent(needle || '*')
-    url = `/v1/search?q=${q}&filter=${filter}&per_page=${perPage}&lang=${lang}`
-  }
-  const result = await api<{ hits?: Array<Record<string, unknown>> }>(url)
   const options: PeerPickOption[] = []
   const seen = new Set<string>()
-  for (const hit of result.hits ?? []) {
-    const option = hitToOption(hit, defs)
-    if (!option || seen.has(option.id)) continue
-    seen.add(option.id)
-    options.push(option)
+  const typeFilter = encodeURIComponent('type_key:=article')
+
+  if (variants.length > 0) {
+    const filter = encodeURIComponent(gtinExactFilter(variants))
+    try {
+      const exact = await api<{ hits?: Array<Record<string, unknown>> }>(
+        `/v1/search?q=*&filter=${filter}&per_page=${perPage}&lang=${lang}`,
+      )
+      pushHits(exact, defs, options, seen)
+    } catch {
+      // Fall through to q= — filter translation / Typesense errors must not blank the list.
+    }
+  }
+
+  // Text and digit prefixes: searchable blob includes gtin when indexed searchable.
+  const q = encodeURIComponent(needle || '*')
+  try {
+    const text = await api<{ hits?: Array<Record<string, unknown>> }>(
+      `/v1/search?q=${q}&filter=${typeFilter}&per_page=${perPage}&lang=${lang}`,
+    )
+    pushHits(text, defs, options, seen)
+  } catch {
+    /* ignore */
   }
   return options
 }
-

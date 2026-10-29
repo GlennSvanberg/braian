@@ -26,7 +26,22 @@ export type ViewColumn = {
 
 export function encodeQualifiers(qualifiers: AppliedQualifier[]): string {
   return qualifiers
-    .map((item) => `${item.kind}:${item.optionId}${item.value ? `=${item.value}` : ''}`)
+    .map((item) => {
+      let token = `${item.kind}:${item.optionId}`
+      if (item.value) {
+        token += `=${item.value}`
+        // Persist Specific display label (key/name) so titles survive reload from prefs ids.
+        if (
+          item.label &&
+          item.label !== item.optionId &&
+          item.label !== item.value &&
+          !item.value.includes('~')
+        ) {
+          token += `~${encodeURIComponent(item.label)}`
+        }
+      }
+      return token
+    })
     .join('|')
 }
 
@@ -47,11 +62,23 @@ export function parseColumnId(id: string): { path: string; qualifiers: AppliedQu
     const [head, value] = part.split('=')
     const [kind, optionId] = (head ?? '').split(':')
     if (!kind || !optionId) continue
+    let peerValue = value || undefined
+    let label = optionId
+    if (peerValue && peerValue.includes('~')) {
+      const tilde = peerValue.indexOf('~')
+      const rawLabel = peerValue.slice(tilde + 1)
+      peerValue = peerValue.slice(0, tilde) || undefined
+      try {
+        label = decodeURIComponent(rawLabel) || optionId
+      } catch {
+        label = rawLabel || optionId
+      }
+    }
     qualifiers.push({
       kind: kind as AppliedQualifier['kind'],
       optionId,
-      label: optionId,
-      value: value || undefined,
+      label,
+      value: peerValue,
     })
   }
   return { path, qualifiers }

@@ -142,6 +142,9 @@ export function Shell() {
       const detail = (event as CustomEvent<{ editColumnId?: string | null }>).detail
       setFieldsEditColumnId(detail?.editColumnId ?? null)
       setPaletteMode('fields')
+      window.setTimeout(() => {
+        document.querySelector<HTMLInputElement>('[data-testid="fields-mode-input"]')?.focus()
+      }, 0)
     }
     window.addEventListener('braian-fields-palette', onFields)
     return () => window.removeEventListener('braian-fields-palette', onFields)

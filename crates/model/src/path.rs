@@ -1155,6 +1155,34 @@ mod tests {
     }
 
     #[test]
+    fn string_array_filter_translates_without_parentheses() {
+        let defs = catalog();
+        let brand = defs
+            .attributes
+            .iter()
+            .find(|item| item.key == "brand")
+            .expect("brand in catalog");
+        let filter = translate_filter_expression(
+            "type_key:=article && brand:=[`07310000000024`,`7310000000024`]",
+            &defs,
+        )
+        .unwrap();
+        let field = attribute_index_field(brand.id, None);
+        assert_eq!(
+            filter,
+            format!("type_key:=article && {field}:=[`07310000000024`,`7310000000024`]")
+        );
+        assert!(!filter.contains("||") && !filter.contains('('), "{filter}");
+        assert!(
+            translate_filter_expression(
+                "type_key:=article && (brand:=07310000000024 || brand:=7310000000024)",
+                &defs,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn an_old_index_field_becomes_a_path_and_stays_a_path() {
         let defs = catalog();
         let weight = defs

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gtinSearchVariants } from './peer-search'
+import { gtinExactFilter, gtinSearchVariants } from './peer-search'
 
 describe('gtinSearchVariants', () => {
   it('matches with and without a leading zero', () => {
@@ -14,5 +14,14 @@ describe('gtinSearchVariants', () => {
   it('ignores non-GTIN text', () => {
     expect(gtinSearchVariants('cheddar')).toEqual([])
     expect(gtinSearchVariants('ART-CHED')).toEqual([])
+  })
+})
+
+describe('gtinExactFilter', () => {
+  it('uses same-field array OR with backticks (no parentheses)', () => {
+    const filter = gtinExactFilter(['07310000000024', '7310000000024'])
+    expect(filter).toBe('type_key:=article && gtin:=[`07310000000024`,`7310000000024`]')
+    expect(filter).not.toContain('||')
+    expect(filter).not.toContain('(')
   })
 })

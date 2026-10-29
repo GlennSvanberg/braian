@@ -1025,14 +1025,18 @@ export function ObjectTable({
       },
       onReplaceColumn: (previousId, next) => {
         setOrder((current) => {
-          if (current.includes(previousId)) {
-            return current.map((id) => (id === previousId ? next.id : id))
-          }
-          // Exact id only — never collapse all/first/specific by bare path.
-          if (current.includes(next.id)) {
+          const prevAt = current.indexOf(previousId)
+          const existingAt = current.indexOf(next.id)
+          // Identical column already present: merge — drop the edited one, keep existing place.
+          if (existingAt >= 0 && previousId !== next.id) {
             return current.filter((id) => id !== previousId)
           }
-          return current
+          if (prevAt >= 0) {
+            const copy = [...current]
+            copy[prevAt] = next.id
+            return copy.filter((id, index) => id !== next.id || index === prevAt)
+          }
+          return current.includes(next.id) ? current : [...current, next.id]
         })
         setHidden((current) => current.filter((id) => id !== previousId && id !== next.id))
       },
@@ -1068,6 +1072,11 @@ export function ObjectTable({
     })
     return () => publishFieldsHost(null)
   }, [typeKey, catalog, viewColumns, byIndex, groupedRows, groupBy, pathValues.data, defs.data])
+
+  const resolvedWidths: Record<string, number> = {}
+  for (const id of shown) {
+    resolvedWidths[id] = sizes[id] ?? columnFor(id).size
+  }
 
   const newRowLabel = newObjectLabel(bound?.singular)
   return (
@@ -1213,7 +1222,7 @@ export function ObjectTable({
                         row={row}
                         index={rowIndex}
                         shown={shown}
-                        sizes={sizes}
+                        sizes={resolvedWidths}
                         selected={selected}
                         cell={cell}
                         flash={flashId === row.id}
@@ -1252,7 +1261,7 @@ export function ObjectTable({
                   row={row}
                   index={item.index}
                   shown={shown}
-                  sizes={sizes}
+                  sizes={resolvedWidths}
                   selected={selected}
                   cell={cell}
                   flash={flashId === row.id}
@@ -1475,7 +1484,7 @@ function Row({
       }}
     >
       {shown.map((id) => {
-        const width = sizes[id] ?? (id.includes('>') || id.includes('#') ? 260 : 160)
+        const width = sizes[id] ?? 160
         return (
           <div key={id} className={id === activeColumn ? 'cell active-cell' : 'cell'} data-column={id} style={{ width }}>
             {cell(row, id)}
