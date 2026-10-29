@@ -58,6 +58,9 @@ export type StandardEditableTableProps<T extends { id: string }> = {
   getRowKeyAttr?: (row: T) => string | undefined
   /** Extra toolbar content under the chrome bar. */
   belowBar?: ReactNode
+  /** Opens the field picker (Columns control in chrome). */
+  onSelectFields?: () => void
+  selectFieldsLabel?: string
   /** Per-row edit gate (e.g. lock standard attribute keys). */
   canEdit?: (row: T, column: StandardColumn<T>) => boolean
   /** Shared context menu: context for a row, or empty surface when row is null. */
@@ -94,6 +97,8 @@ export function StandardEditableTable<T extends { id: string }>({
   getRowTestId,
   getRowKeyAttr,
   belowBar,
+  onSelectFields,
+  selectFieldsLabel,
   canEdit,
   menuContext,
   getMenuTarget,
@@ -268,6 +273,8 @@ export function StandardEditableTable<T extends { id: string }>({
       testId={testId}
       newRowLabel={newRowLabel}
       onNewRow={createDraftRow && onDraftRowsChange ? onNewRow : undefined}
+      onSelectFields={onSelectFields}
+      selectFieldsLabel={selectFieldsLabel}
       rowCount={filtered.length}
       filterValue={filterValue}
       onFilterChange={onFilterChange}
@@ -287,6 +294,7 @@ export function StandardEditableTable<T extends { id: string }>({
               key={column.id}
               className="standard-grid-cell head"
               role="columnheader"
+              data-column={column.id}
               style={column.width ? { width: column.width, flex: 'none' } : undefined}
             >
               {column.header}
