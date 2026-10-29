@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StandardEditableTable, type StandardColumn } from '../../standard-editable-table'
 import { FieldsPalette, type FieldsPaletteOpen } from './fields-palette'
 import { MOCK_PRODUCTS, type ProductRow } from './mock-catalog'
-import { columnTitle, defaultColumns, readCell, type ProtoColumn } from './columns'
+import { columnTitle, columnWidthPx, defaultColumns, readCellDetail, type ProtoColumn } from './columns'
 
 type HeaderMenu = { columnId: string; x: number; y: number }
 
@@ -16,28 +16,27 @@ export function FieldPickerPrototypePage() {
   const [headerMenu, setHeaderMenu] = useState<HeaderMenu | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
-  const specificOptions = useMemo(() => {
-    const keys = new Set<string>()
-    for (const product of MOCK_PRODUCTS) {
-      for (const article of product.articles) keys.add(article.key)
-    }
-    return [...keys].sort().map((key) => ({ id: key, label: key }))
-  }, [])
-
   const openBrowse = useCallback(() => setPalette({ kind: 'browse' }), [])
 
   const tableColumns: Array<StandardColumn<ProductRow>> = useMemo(
     () =>
-      columns.map((col) => ({
-        id: col.id,
-        header: columnTitle(col),
-        type: 'readonly' as const,
-        editable: false,
-        truncate: true,
-        width: 180,
-        read: (row) => readCell(row, col),
-        display: (row) => readCell(row, col),
-      })),
+      columns.map((col) => {
+        const header = columnTitle(col)
+        return {
+          id: col.id,
+          header,
+          type: 'readonly' as const,
+          editable: false,
+          truncate: true,
+          width: columnWidthPx(col),
+          read: (row) => readCellDetail(row, col).text,
+          title: (row) => readCellDetail(row, col).title,
+          display: (row) => {
+            const cell = readCellDetail(row, col)
+            return <span title={cell.title || undefined}>{cell.text}</span>
+          },
+        }
+      }),
     [columns],
   )
 
@@ -55,7 +54,6 @@ export function FieldPickerPrototypePage() {
 
   useEffect(() => {
     document.title = 'Field picker prototype · Braian'
-    // Focus the page so Ctrl+K works immediately without clicking.
     rootRef.current?.focus()
   }, [])
 
@@ -106,7 +104,7 @@ export function FieldPickerPrototypePage() {
     >
       <header className="topbar" style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
         <strong>Field picker prototype</strong>
-        <span style={{ opacity: 0.7 }}>Mock products · Fields › in Ctrl+K</span>
+        <span style={{ opacity: 0.7 }}>Prototype with mock data. Press Ctrl+K to pick fields.</span>
         <button type="button" data-testid="open-fields-command" onClick={openBrowse}>
           Select fields…
         </button>
@@ -127,7 +125,6 @@ export function FieldPickerPrototypePage() {
           key={palette.kind === 'edit' ? `edit:${palette.column.id}` : 'browse'}
           open={palette}
           columns={columns}
-          specificOptions={specificOptions}
           onClose={() => setPalette(null)}
           onToggleColumn={onToggleColumn}
           onReplaceColumn={onReplaceColumn}

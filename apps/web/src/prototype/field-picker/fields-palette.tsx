@@ -6,13 +6,14 @@ import {
   cardinalityCrumbLabel,
   cardinalityStepForLink,
   nextQualifierSteps,
+  qualifierShortLabel,
   type AppliedQualifier,
   type FieldDef,
   type QualifierOption,
   type QualifierStep,
 } from './qualifiers'
 import { PRODUCT_FIELDS } from './mock-catalog'
-import { makeColumn, withReplacedQualifier, type ProtoColumn } from './columns'
+import { articleOptionsForField, makeColumn, withReplacedQualifier, type ArticlePickOption, type ProtoColumn } from './columns'
 
 export type FieldsPaletteOpen =
   | { kind: 'browse' }
@@ -46,7 +47,7 @@ type QualifyFrame = {
 
 type SpecificFrame = {
   kind: 'specific'
-  options: Array<{ id: string; label: string }>
+  options: ArticlePickOption[]
   field: FieldDef
   pathIds: string[]
   pathNames: string[]
@@ -71,7 +72,6 @@ type Row = {
 type Props = {
   open: FieldsPaletteOpen
   columns: ProtoColumn[]
-  specificOptions: Array<{ id: string; label: string }>
   onClose: () => void
   onToggleColumn: (column: ProtoColumn) => void
   onReplaceColumn: (previousId: string, next: ProtoColumn) => void
@@ -163,39 +163,39 @@ function pathMatches(col: ProtoColumn, pathIds: string[]): boolean {
   return pathIds.every((id, index) => col.fieldPath[index] === id)
 }
 
-function hasColumnUnder(columns: ProtoColumn[], pathIds: string[]): boolean {
-  return columns.some((col) => pathMatches(col, pathIds) && col.fieldPath.length >= pathIds.length)
-}
-
-function hasExactColumn(columns: ProtoColumn[], column: ProtoColumn | null): boolean {
-  if (!column) return false
-  return columns.some((col) => col.id === column.id)
-}
-
-function hasQualifierChoice(
-  columns: ProtoColumn[],
-  pathIds: string[],
-  kind: AppliedQualifier['kind'],
-  optionId: string,
-  applied: AppliedQualifier[],
-): boolean {
-  return columns.some((col) => {
-    if (!pathMatches(col, pathIds)) return false
-    // For cardinality, path may be longer (peer leaf); for leaf quals, path should match exactly
-    if (kind !== 'cardinality' && col.fieldPath.length !== pathIds.length) return false
-    if (kind === 'cardinality' && col.fieldPath.length < pathIds.length) return false
-    const hit = col.qualifiers.find((q) => q.kind === kind)
-    if (!hit || hit.optionId !== optionId) return false
-    // Other applied qualifiers (except the one being chosen) should match when present on the column
-    for (const req of applied) {
-      if (req.kind === kind) continue
-      const other = col.qualifiers.find((q) => q.kind === req.kind)
-      if (!other) continue
-      if (other.optionId !== req.optionId) return false
-      if ((other.value ?? '') !== (req.value ?? '')) return false
-    }
+/** A required qualifier without `value` matches any value (e.g. Specific before the row is picked). */
+function qualifiersMatch(col: ProtoColumn, required: AppliedQualifier[]): boolean {
+  return required.every((req) => {
+    const hit = col.qualifiers.find((q) => q.kind === req.kind)
+    if (!hit || hit.optionId !== req.optionId) return false
+    if (req.value != null && (hit.value ?? '') !== req.value) return false
     return true
   })
+}
+
+function columnsUnder(columns: ProtoColumn[], pathIds: string[], required: AppliedQualifier[]): ProtoColumn[] {
+  return columns.filter((col) => pathMatches(col, pathIds) && qualifiersMatch(col, required))
+}
+
+/** Subtitle for a checked row: which sub-choice is active, e.g. `Description — sv`. */
+function activeChoiceSubtitle(
+  field: FieldDef,
+  depth: number,
+  matches: ProtoColumn[],
+  frameQualifiers: AppliedQualifier[],
+): string {
+  const known = new Set(frameQualifiers.map((q) => `${q.kind}:${q.optionId}`))
+  const parts = matches.map((col) => {
+    const rest = col.pathNames.slice(depth + 1).join(' › ')
+    const quals = col.qualifiers
+      .filter((q) => !known.has(`${q.kind}:${q.optionId}`))
+      .map(qualifierShortLabel)
+      .join(', ')
+    if (rest && quals) return `${rest} (${quals})`
+    return rest || quals
+  })
+  const unique = [...new Set(parts.filter(Boolean))]
+  return unique.length > 0 ? `${field.name} — ${unique.join('; ')}` : ''
 }
 
 /**
@@ -205,7 +205,6 @@ function hasQualifierChoice(
 export function FieldsPalette({
   open,
   columns,
-  specificOptions,
   onClose,
   onToggleColumn,
   onReplaceColumn,
@@ -241,19 +240,13 @@ export function FieldsPalette({
           const needsQualify = nextQualifierSteps(field, top.linkQualifiers).length > 0
           const drill = isLink || needsQualify
           const childPath = [...top.pathIds, field.id]
-          let checked = false
-          if (isLink) {
-            checked = hasColumnUnder(cols, childPath)
-          } else if (needsQualify) {
-            checked = hasColumnUnder(cols, childPath)
-          } else {
-            const candidate = makeColumn(childPath, top.linkQualifiers)
-            checked = hasExactColumn(cols, candidate)
-          }
+          const matches = columnsUnder(cols, childPath, top.linkQualifiers)
+          const checked = matches.length > 0
+          const choice = checked && drill ? activeChoiceSubtitle(field, top.pathIds.length, matches, top.linkQualifiers) : ''
           return {
             id: field.id,
             title: field.name,
-            subtitle: field.typeLabel,
+            subtitle: choice || field.typeLabel,
             drill,
             checked,
             run: () => activateField(field, top),
@@ -269,7 +262,11 @@ export function FieldsPalette({
           title: option.label,
           subtitle: option.subtitle ?? '',
           drill: Boolean(option.drill),
-          checked: hasQualifierChoice(cols, top.pathIds, top.step.kind, option.id, top.applied),
+          checked:
+            columnsUnder(cols, top.pathIds, [
+              ...top.applied.filter((q) => q.kind !== top.step.kind && !(q.kind === 'cardinality' && q.optionId === 'specific' && !q.value)),
+              { kind: top.step.kind, optionId: option.id, label: option.label },
+            ]).length > 0,
           run: () => activateQualifier(option, top),
         }))
     }
@@ -279,14 +276,12 @@ export function FieldsPalette({
       .map((option) => ({
         id: option.id,
         title: option.label,
-        subtitle: '',
-        checked: hasQualifierChoice(
-          cols,
-          top.pathIds,
-          'cardinality',
-          'specific',
-          [...top.applied.filter((q) => q.kind !== 'cardinality'), { kind: 'cardinality', optionId: 'specific', label: option.label, value: option.id }],
-        ),
+        subtitle: option.subtitle,
+        checked:
+          columnsUnder(cols, top.pathIds, [
+            ...top.applied.filter((q) => q.kind !== 'cardinality'),
+            { kind: 'cardinality', optionId: 'specific', label: option.id, value: option.id },
+          ]).length > 0,
         run: () => activateSpecific(option.id, option.label, top),
       }))
   }, [top, query, columns])
@@ -320,6 +315,7 @@ export function FieldsPalette({
             crumbs,
           },
         ])
+        armIgnoreEnter()
         setQuery('')
         setActive(0)
         return
@@ -346,6 +342,30 @@ export function FieldsPalette({
     const pathIds = [...frame.pathIds, field.id]
     const pathNames = [...frame.pathNames, field.name]
     const crumbs = [...frame.crumbs, field.name]
+    const pendingSpecific = frame.linkQualifiers.find(
+      (q) => q.kind === 'cardinality' && q.optionId === 'specific' && !q.value,
+    )
+    if (pendingSpecific) {
+      // Field first, then the linked row: only rows that have this field are listed.
+      setStack((prev) => [
+        ...prev,
+        {
+          kind: 'specific',
+          options: articleOptionsForField(field.id),
+          field,
+          pathIds,
+          pathNames,
+          viaMany: true,
+          applied: frame.linkQualifiers,
+          pendingLeaf: field,
+          crumbs,
+        },
+      ])
+      armIgnoreEnter()
+      setQuery('')
+      setActive(0)
+      return
+    }
     const steps = nextQualifierSteps(field, frame.linkQualifiers)
     if (steps.length > 0) {
       setStack((prev) => [
@@ -371,32 +391,59 @@ export function FieldsPalette({
     const col = makeColumn(pathIds, frame.linkQualifiers)
     if (col) {
       onToggleColumn(col)
-      // Stay on this fields list; highlight the toggled field
+      // Stay on this fields list; clear the filter and highlight the toggled field
+      setQuery('')
       setActive(frame.fields.findIndex((item) => item.id === field.id))
     }
   }
 
   function activateQualifier(option: QualifierOption, frame: QualifyFrame) {
-    if (option.drill) {
-      setStack((prev) => [
-        ...prev,
-        {
-          kind: 'specific',
-          options: specificOptions,
-          field: frame.field,
-          pathIds: frame.pathIds,
-          pathNames: frame.pathNames,
-          viaMany: frame.viaMany,
-          applied: frame.applied,
-          pendingLeaf: frame.pendingLeaf,
-          crumbs: [...frame.crumbs, 'Specific'],
-          editing: frame.editing,
-        },
-      ])
-      armIgnoreEnter()
-      setQuery('')
-      setActive(0)
-      return
+    if (frame.step.kind === 'cardinality' && option.id === 'specific') {
+      if (frame.editing) {
+        // Edit field: the leaf is known, go straight to the linked-row list.
+        const leaf = frame.editing.leaf
+        setStack((prev) => [
+          ...prev,
+          {
+            kind: 'specific',
+            options: articleOptionsForField(leaf.id),
+            field: leaf,
+            pathIds: frame.editing!.fieldPath,
+            pathNames: frame.editing!.pathNames,
+            viaMany: true,
+            applied: frame.editing!.qualifiers,
+            pendingLeaf: leaf,
+            crumbs: [...frame.crumbs, 'Specific'],
+            editing: frame.editing,
+          },
+        ])
+        armIgnoreEnter()
+        setQuery('')
+        setActive(0)
+        return
+      }
+      if (frame.field.shape === 'link' && frame.field.link) {
+        setStack((prev) => [
+          ...prev,
+          {
+            kind: 'fields',
+            fields: frame.field.link!.peerFields,
+            label: frame.field.name,
+            pathIds: frame.pathIds,
+            pathNames: frame.pathNames,
+            viaMany: true,
+            linkQualifiers: [
+              ...frame.applied.filter((q) => q.kind !== 'cardinality'),
+              { kind: 'cardinality', optionId: 'specific', label: 'Specific' },
+            ],
+            crumbs: [...frame.crumbs, 'Specific'],
+          },
+        ])
+        armIgnoreEnter()
+        setQuery('')
+        setActive(0)
+        return
+      }
     }
 
     const nextApplied: AppliedQualifier[] = [
@@ -412,6 +459,7 @@ export function FieldsPalette({
         label: option.label,
       })
       onReplaceColumn(frame.editing.id, updated)
+      setQuery('')
       setStack((prev) => {
         const copy = [...prev]
         const last = copy[copy.length - 1]
@@ -493,42 +541,38 @@ export function FieldsPalette({
     const col = makeColumn(frame.pathIds, nextApplied)
     if (!col) return
     onToggleColumn(col)
+    setQuery('')
     const optionIndex = frame.step.options.findIndex((item) => item.id === option.id)
     setActive(optionIndex >= 0 ? optionIndex : 0)
   }
 
   function activateSpecific(value: string, label: string, frame: SpecificFrame) {
-    const nextApplied: AppliedQualifier[] = [
-      ...frame.applied.filter((item) => item.kind !== 'cardinality'),
-      { kind: 'cardinality', optionId: 'specific', label: `Specific: ${label}`, value },
-    ]
+    const chosen: AppliedQualifier = { kind: 'cardinality', optionId: 'specific', label, value }
+    const nextApplied: AppliedQualifier[] = [...frame.applied.filter((item) => item.kind !== 'cardinality'), chosen]
+    const optionIndex = frame.options.findIndex((item) => item.id === value)
 
-    if (frame.editing && frame.field.shape === 'link') {
-      // Replace cardinality only; keep leaf qualifiers from editing column
-      const updated = withReplacedQualifier(frame.editing, {
-        kind: 'cardinality',
-        optionId: 'specific',
-        label: `Specific: ${label}`,
-        value,
-      })
-      onReplaceColumn(frame.editing.id, updated)
-      const optionIndex = frame.options.findIndex((item) => item.id === value)
+    if (frame.editing) {
+      onReplaceColumn(frame.editing.id, withReplacedQualifier(frame.editing, chosen))
+      setQuery('')
       setActive(optionIndex >= 0 ? optionIndex : 0)
       return
     }
 
-    if (frame.field.shape === 'link' && frame.field.link) {
+    // Link qualifier first (row), then the field's own qualifiers (e.g. unit)
+    const remaining = nextQualifierSteps(frame.pendingLeaf, nextApplied)
+    if (remaining.length > 0) {
       setStack((prev) => [
         ...prev,
         {
-          kind: 'fields',
-          fields: frame.field.link!.peerFields,
-          label: frame.field.name,
+          kind: 'qualify',
+          step: remaining[0]!,
+          field: frame.pendingLeaf,
           pathIds: frame.pathIds,
           pathNames: frame.pathNames,
           viaMany: true,
-          linkQualifiers: nextApplied,
-          crumbs: [...frame.crumbs.filter((c) => c !== 'Specific'), 'Specific'],
+          applied: nextApplied,
+          pendingLeaf: frame.pendingLeaf,
+          crumbs: [...frame.crumbs, value],
         },
       ])
       armIgnoreEnter()
@@ -540,7 +584,7 @@ export function FieldsPalette({
     const col = makeColumn(frame.pathIds, nextApplied)
     if (!col) return
     onToggleColumn(col)
-    const optionIndex = frame.options.findIndex((item) => item.id === value)
+    setQuery('')
     setActive(optionIndex >= 0 ? optionIndex : 0)
   }
 

@@ -64,7 +64,7 @@ const CARDINALITY_STEP: QualifierStep = {
   options: [
     { id: 'all', label: 'All, as list', subtitle: 'Every linked row, comma-separated' },
     { id: 'first', label: 'First', subtitle: 'Only the first linked row' },
-    { id: 'specific', label: 'Specific…', subtitle: 'Pick one linked row', drill: true },
+    { id: 'specific', label: 'Specific…', subtitle: 'Pick field, then one linked row' },
   ],
 }
 
@@ -125,7 +125,7 @@ export function qualifierShortLabel(q: AppliedQualifier): string {
   if (q.kind === 'cardinality') {
     if (q.optionId === 'all') return 'all'
     if (q.optionId === 'first') return 'first'
-    if (q.optionId === 'specific') return q.value ? `specific:${q.value}` : 'specific'
+    if (q.optionId === 'specific') return q.value ? q.value : 'specific'
   }
   return q.label.toLowerCase()
 }
@@ -252,6 +252,8 @@ function projectLeaf(raw: unknown, field: FieldDef, qualifiers: AppliedQualifier
   if (Array.isArray(raw)) return summarizeList(raw.map(String)).text
   return String(raw)
 }
+
+export const EMPTY_CELL = '—'
 
 export function isColumnComplete(field: FieldDef, applied: AppliedQualifier[], viaManyLink: boolean): boolean {
   if (viaManyLink && !applied.some((item) => item.kind === 'cardinality')) return false

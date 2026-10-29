@@ -27,6 +27,8 @@ export type StandardColumn<T> = {
   write?: (row: T, value: string) => T
   /** Render display cell; defaults to String(read(row)). */
   display?: (row: T) => ReactNode
+  /** Native title tooltip for the cell (e.g. full list behind +N). */
+  title?: (row: T) => string
   truncate?: boolean
   /** Optional test id for the cell content, used by attribute definitions. */
   cellTestId?: (row: T) => string | undefined
@@ -295,7 +297,8 @@ export function StandardEditableTable<T extends { id: string }>({
               className={column.truncate ? 'standard-grid-cell head truncate' : 'standard-grid-cell head'}
               role="columnheader"
               data-column={column.id}
-              style={column.width ? { width: column.width, flex: 'none' } : undefined}
+              title={column.header}
+              style={column.width ? { width: column.width, flex: 'none', minWidth: column.width } : undefined}
             >
               {column.header}
             </div>
@@ -331,8 +334,8 @@ export function StandardEditableTable<T extends { id: string }>({
                     className={column.truncate ? 'standard-grid-cell truncate' : 'standard-grid-cell'}
                     role="gridcell"
                     data-column={column.id}
-                    style={column.width ? { width: column.width, flex: 'none' } : undefined}
-                    title={column.truncate ? title : undefined}
+                    style={column.width ? { width: column.width, flex: 'none', minWidth: column.width } : undefined}
+                    title={column.title?.(row) || (column.truncate ? title : undefined)}
                     onDoubleClick={() => beginEdit(row, column)}
                   >
                     {isEditing ? (

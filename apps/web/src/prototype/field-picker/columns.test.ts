@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { columnTitle, makeColumn, readCell, withReplacedQualifier } from './columns'
+import {
+  articleOptionsForField,
+  columnTitle,
+  columnWidthPx,
+  makeColumn,
+  readCell,
+  readCellDetail,
+  withReplacedQualifier,
+} from './columns'
+import { EMPTY_CELL } from './qualifiers'
 import { MOCK_PRODUCTS } from './mock-catalog'
 
 describe('prototype columns', () => {
@@ -17,23 +26,59 @@ describe('prototype columns', () => {
     expect(readCell(oat, col!)).toBe('1000 ml, 250 ml')
   })
 
-  it('formats first and specific article volumes', () => {
-    const first = makeColumn(
+  it('exposes full list title for +N tooltips', () => {
+    const col = makeColumn(
       ['articles', 'net_volume'],
       [
-        { kind: 'cardinality', optionId: 'first', label: 'First' },
-        { kind: 'unit', optionId: 'l', label: 'l' },
-      ],
-    )!
-    expect(readCell(MOCK_PRODUCTS[0]!, first)).toBe('1 l')
-    const specific = makeColumn(
-      ['articles', 'net_volume'],
-      [
-        { kind: 'cardinality', optionId: 'specific', label: 'Specific', value: '250ml' },
+        { kind: 'cardinality', optionId: 'all', label: 'All, as list' },
         { kind: 'unit', optionId: 'ml', label: 'ml' },
       ],
     )!
-    expect(readCell(MOCK_PRODUCTS[0]!, specific)).toBe('250 ml')
+    const milk = MOCK_PRODUCTS[1]! // 1L, 1.5L, 250ml → three values
+    const detail = readCellDetail(milk, col)
+    expect(detail.text).toBe('1000 ml, 1500 ml +1')
+    expect(detail.title).toBe('1000 ml, 1500 ml, 250 ml')
+  })
+
+  it('shows an em dash for empty cells', () => {
+    const specific = makeColumn(
+      ['articles', 'net_volume'],
+      [
+        { kind: 'cardinality', optionId: 'specific', label: 'Missing', value: 'no-such' },
+        { kind: 'unit', optionId: 'ml', label: 'ml' },
+      ],
+    )!
+    expect(readCell(MOCK_PRODUCTS[0]!, specific)).toBe(EMPTY_CELL)
+  })
+
+  it('formats specific titles as (1.5L, ml)', () => {
+    const col = makeColumn(
+      ['articles', 'net_volume'],
+      [
+        { kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' },
+        { kind: 'unit', optionId: 'ml', label: 'ml' },
+      ],
+    )!
+    expect(columnTitle(col)).toBe('Articles › Net volume (1.5L, ml)')
+  })
+
+  it('lists Specific articles as GTIN · key with product subtitle', () => {
+    const options = articleOptionsForField('net_volume')
+    const oneFive = options.find((item) => item.id === '1.5L')
+    expect(oneFive).toBeTruthy()
+    expect(oneFive!.label).toMatch(/^7300.* · 1\.5L$/)
+    expect(oneFive!.subtitle).toContain('Whole milk')
+  })
+
+  it('gives long headers a roomy width', () => {
+    const col = makeColumn(
+      ['articles', 'net_volume'],
+      [
+        { kind: 'cardinality', optionId: 'all', label: 'All, as list' },
+        { kind: 'unit', optionId: 'ml', label: 'ml' },
+      ],
+    )!
+    expect(columnWidthPx(col)).toBeGreaterThanOrEqual(200)
   })
 
   it('formats language, allergens, range °C, and supplier hops', () => {

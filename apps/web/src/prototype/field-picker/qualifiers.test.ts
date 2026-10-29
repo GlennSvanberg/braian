@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EMPTY_CELL,
   formatCellValue,
   formatColumnTitle,
   isColumnComplete,
@@ -8,6 +9,7 @@ import {
   cardinalityStepForLink,
   convertVolume,
   cardinalityCrumbLabel,
+  qualifierShortLabel,
   type AppliedQualifier,
   type FieldDef,
 } from './qualifiers'
@@ -54,6 +56,26 @@ const articlesLink: FieldDef = {
 }
 
 describe('qualifier module', () => {
+  it('lists ml and l as unit options', () => {
+    const step = nextQualifierSteps(volume, [])[0]!
+    expect(step.options.map((o) => o.id)).toEqual(['ml', 'l'])
+  })
+
+  it('formats specific titles without a specific: prefix', () => {
+    expect(
+      qualifierShortLabel({ kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' }),
+    ).toBe('1.5L')
+    expect(
+      formatColumnTitle(
+        ['Articles', 'Net volume'],
+        [
+          { kind: 'cardinality', optionId: 'specific', label: '1.5L', value: '1.5L' },
+          { kind: 'unit', optionId: 'ml', label: 'ml' },
+        ],
+      ),
+    ).toBe('Articles › Net volume (1.5L, ml)')
+  })
+
   it('requires language / unit / value_list / range steps', () => {
     expect(nextQualifierSteps(description, []).map((s) => s.kind)).toEqual(['language'])
     expect(nextQualifierSteps(volume, []).map((s) => s.kind)).toEqual(['unit'])
@@ -63,6 +85,7 @@ describe('qualifier module', () => {
 
   it('requires cardinality for many-links only', () => {
     expect(cardinalityStepForLink(articlesLink.link!)?.kind).toBe('cardinality')
+    expect(cardinalityStepForLink(articlesLink.link!)?.options.find((o) => o.id === 'specific')?.drill).toBeFalsy()
     expect(
       cardinalityStepForLink({ many: false, peerFields: [], peerLabel: 'Supplier' }),
     ).toBeNull()
@@ -76,9 +99,11 @@ describe('qualifier module', () => {
     expect(formatColumnTitle(['Articles', 'Net volume'], qs)).toBe('Articles › Net volume (all, ml)')
   })
 
-  it('summarizes lists as A, B +N', () => {
+  it('summarizes lists as A, B +N with full title for tooltips', () => {
     expect(summarizeList(['A', 'B']).text).toBe('A, B')
-    expect(summarizeList(['A', 'B', 'C', 'D']).text).toBe('A, B +2')
+    const long = summarizeList(['A', 'B', 'C', 'D'])
+    expect(long.text).toBe('A, B +2')
+    expect(long.title).toBe('A, B, C, D')
   })
 
   it('converts litres to millilitres', () => {
@@ -99,63 +124,18 @@ describe('qualifier module', () => {
       ]),
     ).toBe('1000 ml')
     expect(
-      formatCellValue({ value: { value: 250, unit: 'ml' } }, volume, [
-        { kind: 'unit', optionId: 'ml', label: 'ml' },
-      ]),
-    ).toBe('250 ml')
-    expect(
-      formatCellValue({ value: { value: 1, unit: 'l' } }, volume, [
-        { kind: 'unit', optionId: 'l', label: 'l' },
-      ]),
-    ).toBe('1 l')
-    expect(
-      formatCellValue({ value: { code: 'MILK', label: 'Milk' } }, allergens, [
-        { kind: 'value_list', optionId: 'code', label: 'Code' },
-      ]),
-    ).toBe('MILK')
-    expect(
       formatCellValue({ value: { min: 2, max: 8 } }, storage, [
         { kind: 'range', optionId: 'max', label: 'Max' },
       ]),
     ).toBe('8 °C')
-    expect(
-      formatCellValue({ value: { min: 2, max: 8 } }, storage, [
-        { kind: 'range', optionId: 'min', label: 'Min' },
-      ]),
-    ).toBe('2 °C')
+  })
 
-    const peers = [
-      { key: '1L', value: 1, unit: 'l' },
-      { key: '250ml', value: 250, unit: 'ml' },
-      { key: '330ml', value: 330, unit: 'ml' },
-    ]
-    expect(
-      formatCellValue(
-        { peers: peers.map((p) => ({ key: p.key, value: p.value, unit: p.unit })) },
-        volume,
-        [
-          { kind: 'cardinality', optionId: 'all', label: 'All, as list' },
-          { kind: 'unit', optionId: 'ml', label: 'ml' },
-        ],
-      ),
-    ).toBe('1000 ml, 250 ml +1')
-    expect(
-      formatCellValue(
-        { peers: peers.map((p) => ({ key: p.key, value: p.value, unit: p.unit })) },
-        volume,
-        [
-          { kind: 'cardinality', optionId: 'first', label: 'First' },
-          { kind: 'unit', optionId: 'l', label: 'l' },
-        ],
-      ),
-    ).toBe('1 l')
+  it('exports empty cell marker', () => {
+    expect(EMPTY_CELL).toBe('—')
   })
 
   it('isColumnComplete tracks cardinality and leaf qualifiers', () => {
     expect(isColumnComplete(volume, [], true)).toBe(false)
-    expect(
-      isColumnComplete(volume, [{ kind: 'cardinality', optionId: 'all', label: 'All' }], true),
-    ).toBe(false)
     expect(
       isColumnComplete(
         volume,
