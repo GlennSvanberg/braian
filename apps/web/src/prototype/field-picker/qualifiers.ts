@@ -13,6 +13,8 @@ export type QualifierOption = {
   label: string
   /** Opens a nested picker (e.g. Specific… → pick which article). */
   drill?: boolean
+  /** Short explanatory subtitle; omit for none. */
+  subtitle?: string
 }
 
 /** A step the user must resolve before a column is complete. */
@@ -31,7 +33,15 @@ export type AppliedQualifier = {
   value?: string
 }
 
-export type FieldValueShape = 'text' | 'number' | 'boolean' | 'language' | 'unit' | 'value_list' | 'range' | 'link'
+export type FieldValueShape =
+  | 'text'
+  | 'number'
+  | 'boolean'
+  | 'language'
+  | 'unit'
+  | 'value_list'
+  | 'range'
+  | 'link'
 
 export type FieldDef = {
   id: string
@@ -44,15 +54,17 @@ export type FieldDef = {
   units?: string[]
   valueListModes?: Array<'label' | 'code'>
   rangeParts?: Array<'min' | 'max'>
+  /** Suffix appended to range cell values (e.g. °C). */
+  rangeUnit?: string
 }
 
 const CARDINALITY_STEP: QualifierStep = {
   kind: 'cardinality',
   title: 'How many linked rows',
   options: [
-    { id: 'all', label: 'All, as list' },
-    { id: 'first', label: 'First' },
-    { id: 'specific', label: 'Specific…', drill: true },
+    { id: 'all', label: 'All, as list', subtitle: 'Every linked row, comma-separated' },
+    { id: 'first', label: 'First', subtitle: 'Only the first linked row' },
+    { id: 'specific', label: 'Specific…', subtitle: 'Pick one linked row', drill: true },
   ],
 }
 
@@ -64,7 +76,10 @@ export function nextQualifierSteps(field: FieldDef, applied: AppliedQualifier[])
     steps.push({
       kind: 'language',
       title: 'Language',
-      options: (field.languages ?? ['en']).map((code) => ({ id: code, label: code.toUpperCase() })),
+      options: (field.languages ?? ['en']).map((code) => ({
+        id: code,
+        label: code.toUpperCase(),
+      })),
     })
   }
   if (field.shape === 'unit' && !have.has('unit')) {
@@ -144,6 +159,21 @@ export type CellSource = {
   peers?: unknown[]
 }
 
+/** Convert a volume value into the display unit (ml or l). 1 l = 1000 ml. */
+export function convertVolume(
+  value: number,
+  fromUnit: string,
+  toUnit: string,
+): number {
+  const from = fromUnit.toLowerCase()
+  const to = toUnit.toLowerCase()
+  let ml = value
+  if (from === 'l') ml = value * 1000
+  else if (from === 'ml') ml = value
+  if (to === 'l') return ml / 1000
+  return ml
+}
+
 /**
  * Display a cell for a completed column path.
  * Cardinality all → list summary; first → first peer; specific → matching peer.
@@ -184,8 +214,14 @@ function projectLeaf(raw: unknown, field: FieldDef, qualifiers: AppliedQualifier
     const unit = qualifiers.find((item) => item.kind === 'unit')?.optionId
     if (typeof raw === 'object' && raw && !Array.isArray(raw)) {
       const obj = raw as { value?: unknown; unit?: unknown }
-      if (unit && obj.unit != null && String(obj.unit) !== unit) {
-        // Still show value; prototype does not convert units.
+      const rawValue = Number(obj.value)
+      const fromUnit = obj.unit != null ? String(obj.unit) : unit ?? ''
+      const toUnit = unit ?? fromUnit
+      if (Number.isFinite(rawValue) && fromUnit && toUnit) {
+        const converted = convertVolume(rawValue, fromUnit, toUnit)
+        const display =
+          toUnit === 'l' && converted % 1 !== 0 ? String(converted) : String(converted)
+        return `${display} ${toUnit}`
       }
       const value = obj.value ?? raw
       const u = unit ?? (obj.unit != null ? String(obj.unit) : '')
@@ -204,9 +240,12 @@ function projectLeaf(raw: unknown, field: FieldDef, qualifiers: AppliedQualifier
   }
   if (field.shape === 'range') {
     const part = qualifiers.find((item) => item.kind === 'range')?.optionId ?? 'min'
+    const suffix = field.rangeUnit ? ` ${field.rangeUnit}` : ''
     if (typeof raw === 'object' && raw && !Array.isArray(raw)) {
       const obj = raw as { min?: unknown; max?: unknown }
-      return String(part === 'max' ? obj.max ?? '' : obj.min ?? '')
+      const num = part === 'max' ? obj.max : obj.min
+      if (num == null || num === '') return ''
+      return `${num}${suffix}`
     }
     return String(raw)
   }
@@ -221,4 +260,12 @@ export function isColumnComplete(field: FieldDef, applied: AppliedQualifier[], v
     if (card?.optionId === 'specific' && !card.value) return false
   }
   return nextQualifierSteps(field, applied).length === 0
+}
+
+/** Breadcrumb label for a cardinality option id. */
+export function cardinalityCrumbLabel(optionId: string): string {
+  if (optionId === 'all') return 'All'
+  if (optionId === 'first') return 'First'
+  if (optionId === 'specific') return 'Specific'
+  return optionId
 }

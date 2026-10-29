@@ -292,7 +292,7 @@ export function StandardEditableTable<T extends { id: string }>({
           {columns.map((column) => (
             <div
               key={column.id}
-              className="standard-grid-cell head"
+              className={column.truncate ? 'standard-grid-cell head truncate' : 'standard-grid-cell head'}
               role="columnheader"
               data-column={column.id}
               style={column.width ? { width: column.width, flex: 'none' } : undefined}

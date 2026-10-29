@@ -34,6 +34,7 @@ export function FieldPickerPrototypePage() {
         type: 'readonly' as const,
         editable: false,
         truncate: true,
+        width: 180,
         read: (row) => readCell(row, col),
         display: (row) => readCell(row, col),
       })),
@@ -50,6 +51,12 @@ export function FieldPickerPrototypePage() {
 
   const onReplaceColumn = useCallback((previousId: string, next: ProtoColumn) => {
     setColumns((prev) => prev.map((item) => (item.id === previousId ? next : item)))
+  }, [])
+
+  useEffect(() => {
+    document.title = 'Field picker prototype · Braian'
+    // Focus the page so Ctrl+K works immediately without clicking.
+    rootRef.current?.focus()
   }, [])
 
   useEffect(() => {
@@ -90,7 +97,13 @@ export function FieldPickerPrototypePage() {
   }, [headerMenu])
 
   return (
-    <div className="app" data-testid="field-picker-prototype" ref={rootRef}>
+    <div
+      className="app"
+      data-testid="field-picker-prototype"
+      ref={rootRef}
+      tabIndex={-1}
+      style={{ outline: 'none' }}
+    >
       <header className="topbar" style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
         <strong>Field picker prototype</strong>
         <span style={{ opacity: 0.7 }}>Mock products · Fields › in Ctrl+K</span>
@@ -111,6 +124,7 @@ export function FieldPickerPrototypePage() {
       </main>
       {palette ? (
         <FieldsPalette
+          key={palette.kind === 'edit' ? `edit:${palette.column.id}` : 'browse'}
           open={palette}
           columns={columns}
           specificOptions={specificOptions}

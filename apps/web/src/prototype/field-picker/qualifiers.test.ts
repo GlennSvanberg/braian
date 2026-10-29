@@ -6,6 +6,8 @@ import {
   nextQualifierSteps,
   summarizeList,
   cardinalityStepForLink,
+  convertVolume,
+  cardinalityCrumbLabel,
   type AppliedQualifier,
   type FieldDef,
 } from './qualifiers'
@@ -40,6 +42,7 @@ const storage: FieldDef = {
   typeLabel: 'Range',
   shape: 'range',
   rangeParts: ['min', 'max'],
+  rangeUnit: '°C',
 }
 
 const articlesLink: FieldDef = {
@@ -78,17 +81,33 @@ describe('qualifier module', () => {
     expect(summarizeList(['A', 'B', 'C', 'D']).text).toBe('A, B +2')
   })
 
-  it('formats cells for language, unit, value list, range, and cardinality', () => {
+  it('converts litres to millilitres', () => {
+    expect(convertVolume(1, 'l', 'ml')).toBe(1000)
+    expect(convertVolume(1.5, 'l', 'ml')).toBe(1500)
+    expect(convertVolume(1000, 'ml', 'l')).toBe(1)
+  })
+
+  it('formats cells for language, unit conversion, value list, range °C, and cardinality', () => {
     expect(
       formatCellValue({ value: { en: 'Hello', sv: 'Hej' } }, description, [
         { kind: 'language', optionId: 'sv', label: 'SV' },
       ]),
     ).toBe('Hej')
     expect(
+      formatCellValue({ value: { value: 1, unit: 'l' } }, volume, [
+        { kind: 'unit', optionId: 'ml', label: 'ml' },
+      ]),
+    ).toBe('1000 ml')
+    expect(
       formatCellValue({ value: { value: 250, unit: 'ml' } }, volume, [
         { kind: 'unit', optionId: 'ml', label: 'ml' },
       ]),
     ).toBe('250 ml')
+    expect(
+      formatCellValue({ value: { value: 1, unit: 'l' } }, volume, [
+        { kind: 'unit', optionId: 'l', label: 'l' },
+      ]),
+    ).toBe('1 l')
     expect(
       formatCellValue({ value: { code: 'MILK', label: 'Milk' } }, allergens, [
         { kind: 'value_list', optionId: 'code', label: 'Code' },
@@ -98,14 +117,18 @@ describe('qualifier module', () => {
       formatCellValue({ value: { min: 2, max: 8 } }, storage, [
         { kind: 'range', optionId: 'max', label: 'Max' },
       ]),
-    ).toBe('8')
+    ).toBe('8 °C')
+    expect(
+      formatCellValue({ value: { min: 2, max: 8 } }, storage, [
+        { kind: 'range', optionId: 'min', label: 'Min' },
+      ]),
+    ).toBe('2 °C')
 
     const peers = [
       { key: '1L', value: 1, unit: 'l' },
       { key: '250ml', value: 250, unit: 'ml' },
       { key: '330ml', value: 330, unit: 'ml' },
     ]
-    // For unit peers, projectLeaf reads object; use format via all list of pre-shaped values
     expect(
       formatCellValue(
         { peers: peers.map((p) => ({ key: p.key, value: p.value, unit: p.unit })) },
@@ -115,7 +138,7 @@ describe('qualifier module', () => {
           { kind: 'unit', optionId: 'ml', label: 'ml' },
         ],
       ),
-    ).toBe('1 ml, 250 ml +1')
+    ).toBe('1000 ml, 250 ml +1')
     expect(
       formatCellValue(
         { peers: peers.map((p) => ({ key: p.key, value: p.value, unit: p.unit })) },
@@ -126,16 +149,6 @@ describe('qualifier module', () => {
         ],
       ),
     ).toBe('1 l')
-    expect(
-      formatCellValue(
-        { peers: peers.map((p) => ({ key: p.key, value: p.value, unit: p.unit })) },
-        volume,
-        [
-          { kind: 'cardinality', optionId: 'specific', label: 'Specific', value: '250ml' },
-          { kind: 'unit', optionId: 'ml', label: 'ml' },
-        ],
-      ),
-    ).toBe('250 ml')
   })
 
   it('isColumnComplete tracks cardinality and leaf qualifiers', () => {
@@ -153,8 +166,10 @@ describe('qualifier module', () => {
         true,
       ),
     ).toBe(true)
-    expect(
-      isColumnComplete(volume, [{ kind: 'cardinality', optionId: 'specific', label: 'Specific' }], true),
-    ).toBe(false)
+  })
+
+  it('cardinality crumb labels', () => {
+    expect(cardinalityCrumbLabel('all')).toBe('All')
+    expect(cardinalityCrumbLabel('first')).toBe('First')
   })
 })

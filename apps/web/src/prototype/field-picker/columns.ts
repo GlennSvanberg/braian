@@ -27,6 +27,11 @@ export function columnIdOf(col: Pick<ProtoColumn, 'fieldPath' | 'qualifiers'>): 
   return `${col.fieldPath.join('.')}${q ? `#${q}` : ''}`
 }
 
+/** Identity of the path + non-edited qualifier kinds, used to match a column when swapping one qualifier. */
+export function columnPathKey(col: Pick<ProtoColumn, 'fieldPath'>): string {
+  return col.fieldPath.join('.')
+}
+
 export function makeColumn(
   fieldPath: string[],
   qualifiers: AppliedQualifier[],
@@ -104,4 +109,23 @@ export function readCell(row: ProductRow, col: ProtoColumn): string {
 /** Default columns shown when the prototype opens. */
 export function defaultColumns(): ProtoColumn[] {
   return [makeColumn(['sku'], [])!, makeColumn(['name'], [])!]
+}
+
+/**
+ * Replace one qualifier on a column, keeping other qualifiers and path.
+ * Used by Edit field / in-place qualifier swaps (All ↔ First without re-picking unit).
+ */
+export function withReplacedQualifier(
+  column: ProtoColumn,
+  next: AppliedQualifier,
+): ProtoColumn {
+  const others = column.qualifiers.filter((item) => item.kind !== next.kind)
+  const qualifiers = [...others, next]
+  // Keep cardinality before leaf qualifiers for stable title order
+  qualifiers.sort((a, b) => {
+    const order = (k: AppliedQualifier['kind']) =>
+      k === 'cardinality' ? 0 : k === 'language' || k === 'unit' || k === 'value_list' || k === 'range' ? 1 : 2
+    return order(a.kind) - order(b.kind)
+  })
+  return makeColumn(column.fieldPath, qualifiers) ?? { ...column, qualifiers, id: columnIdOf({ fieldPath: column.fieldPath, qualifiers }) }
 }

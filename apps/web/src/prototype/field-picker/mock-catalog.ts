@@ -48,6 +48,7 @@ export const PRODUCT_FIELDS: FieldDef[] = [
     typeLabel: 'Range',
     shape: 'range',
     rangeParts: ['min', 'max'],
+    rangeUnit: '°C',
   },
   {
     id: 'articles',
