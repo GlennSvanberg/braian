@@ -66,6 +66,7 @@ apiEnv.BRAIAN_SEARCH_ALIAS = 'braian_e2e'
 apiEnv.BRAIAN_API_ADDR = '127.0.0.1:8095'
 apiEnv.BRAIAN_SEED_COUNT = process.env.BRAIAN_E2E_SEED_COUNT || '250'
 apiEnv.BRAIAN_AGENT_MOCK = process.env.BRAIAN_AGENT_MOCK || '1'
+apiEnv.BRAIAN_E2E = '1'
 
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const windows = process.platform === 'win32'

@@ -976,10 +976,23 @@ export function ObjectTable({
     }
     return readPathFromDoc(row.doc, defs.data, parseColumnId(id).path)
   }
+  /** Same path + cardinality (and Specific peer) with a different unit are one logical column. */
+  const isUnitSibling = (existingId: string, nextId: string) => {
+    if (existingId === nextId) return true
+    const a = parseColumnId(existingId)
+    const b = parseColumnId(nextId)
+    if (a.path !== b.path) return false
+    const cardA = a.qualifiers.find((q) => q.kind === 'cardinality')
+    const cardB = b.qualifiers.find((q) => q.kind === 'cardinality')
+    if (!cardA || !cardB || cardA.optionId !== cardB.optionId) return false
+    if (cardA.optionId === 'specific') return (cardA.value ?? '') === (cardB.value ?? '')
+    return true
+  }
   const showField = (path: string) => {
     // Completing a Fields qualify/specific path must never hide — only ensure visible + last.
-    setOrder((current) => [...current.filter((id) => id !== path), path])
-    setHidden((current) => current.filter((id) => id !== path))
+    // Drop unit-siblings (e.g. First@g when showing First@kg) so one logical hop column remains.
+    setOrder((current) => [...current.filter((id) => !isUnitSibling(id, path)), path])
+    setHidden((current) => current.filter((id) => !isUnitSibling(id, path)))
   }
   const toggleField = (path: string) => {
     const shownNow = order.includes(path) && !hidden.includes(path)
@@ -1045,19 +1058,26 @@ export function ObjectTable({
       onReplaceColumn: (previousId, next) => {
         setOrder((current) => {
           const prevAt = current.indexOf(previousId)
-          const existingAt = current.indexOf(next.id)
-          // Identical column already present: merge — drop the edited one, keep existing place.
-          if (existingAt >= 0 && previousId !== next.id) {
-            return current.filter((id) => id !== previousId)
+          // Exact or unit-sibling of next already present: drop the edited one and
+          // upgrade the sibling slot to next.id (e.g. First@g → First@kg).
+          const siblingAt = current.findIndex((id) => id !== previousId && isUnitSibling(id, next.id))
+          if (siblingAt >= 0 && previousId !== next.id) {
+            const withoutPrev = current.filter((id) => id !== previousId)
+            const at = withoutPrev.findIndex((id) => isUnitSibling(id, next.id))
+            if (at < 0) return withoutPrev
+            const copy = [...withoutPrev]
+            copy[at] = next.id
+            return copy.filter((id, index) => id !== next.id || index === at)
           }
           if (prevAt >= 0) {
             const copy = [...current]
             copy[prevAt] = next.id
-            return copy.filter((id, index) => id !== next.id || index === prevAt)
+            // Drop other unit-siblings of next; keep the replaced slot.
+            return copy.filter((id, index) => index === prevAt || !isUnitSibling(id, next.id))
           }
-          return current.includes(next.id) ? current : [...current, next.id]
+          return [...current.filter((id) => !isUnitSibling(id, next.id)), next.id]
         })
-        setHidden((current) => current.filter((id) => id !== previousId && id !== next.id))
+        setHidden((current) => current.filter((id) => id !== previousId && !isUnitSibling(id, next.id)))
       },
       peerOptionsForField: (leafId, query) => {
         const needle = query.trim().toLowerCase()
