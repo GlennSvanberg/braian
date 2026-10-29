@@ -22,7 +22,7 @@ import { fieldCatalogForType } from './fields/catalog'
 import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, type ViewColumn } from './fields/columns'
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
-  prefsToOrderHidden, saveColumnPrefs, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+  prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import {
   clearPendingColumnPrefs,
   readPendingColumnPrefs,
@@ -167,8 +167,8 @@ export function ObjectTable({
   } | null>(null)
   const prefsSeq = useRef(0)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const flushPendingPrefsRef = useRef<() => void>(() => undefined)
-  flushPendingPrefsRef.current = () => {
+  const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
+  flushPendingPrefsRef.current = (opts) => {
     const pending = pendingPrefs.current
     if (!pending) return
     if (prefsSaveTimer.current != null) {
@@ -182,8 +182,17 @@ export function ObjectTable({
     }
     // Mark as pending until a matching 2xx; survives aborted fetch across reload.
     writePendingColumnPrefs(pending.viewId, pending.document, pending.seq)
+    if (opts?.keepalive) {
+      // Fire-and-forget across unload. Do NOT clear pending here — a keepalive 2xx
+      // in a dying document must not drop the entry the remount needs to re-PUT.
+      saveColumnPrefsKeepalive(pending.viewId, pending.document)
+      return
+    }
     void saveColumnPrefs(pending.viewId, pending.document)
       .then(() => {
+        // If the tab is already hidden (reload/close), keep pending so remount can
+        // re-PUT — a 2xx in this dying document must not drop a newer local entry.
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return
         clearPendingColumnPrefs(pending.viewId, pending.seq)
         if (pendingPrefs.current?.seq === pending.seq) pendingPrefs.current = null
         prefsSnapshot.current = pending.snapshot
@@ -383,7 +392,7 @@ export function ObjectTable({
     }
   }, [order, hidden, prefsReady, attributePaths.data, systemColumns, view.id])
   useEffect(() => {
-    const flush = () => flushPendingPrefsRef.current()
+    const flush = () => flushPendingPrefsRef.current({ keepalive: true })
     const onHide = () => {
       if (document.visibilityState === 'hidden') flush()
     }
