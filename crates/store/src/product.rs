@@ -566,7 +566,10 @@ impl Store {
     pub async fn delete_all_view_column_prefs_for_user(&self, user_id: Uuid) -> Result<(), Error> {
         let client = self.pool().get().await?;
         client
-            .execute("DELETE FROM view_column_prefs WHERE user_id = $1", &[&user_id])
+            .execute(
+                "DELETE FROM view_column_prefs WHERE user_id = $1",
+                &[&user_id],
+            )
             .await?;
         Ok(())
     }

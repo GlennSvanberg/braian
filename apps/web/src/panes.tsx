@@ -22,7 +22,7 @@ import { fieldCatalogForType } from './fields/catalog'
 import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, type ViewColumn } from './fields/columns'
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
-  prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+  prefsToOrderHidden, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { cellPathValues, fetchPathValues } from './path-values'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
@@ -155,8 +155,9 @@ export function ObjectTable({
   const prefsSnapshot = useRef<string | null>(null)
   const pendingPrefs = useRef<{ snapshot: string; viewId: string; document: ColumnPrefsDocument } | null>(null)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prefsCacheKey = (viewId: string) => `braian:column-prefs:${viewId}`
   const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
-  flushPendingPrefsRef.current = (opts) => {
+  flushPendingPrefsRef.current = (_opts) => {
     const pending = pendingPrefs.current
     if (!pending) return
     if (prefsSaveTimer.current != null) {
@@ -165,23 +166,23 @@ export function ObjectTable({
     }
     if (pending.document.columns.length === 0) {
       pendingPrefs.current = null
+      try {
+        sessionStorage.removeItem(prefsCacheKey(pending.viewId))
+      } catch {
+        /* private mode */
+      }
       return
     }
-    if (opts?.keepalive) {
-      // Keepalive must leave nothing pending — the tab may die immediately after.
-      pendingPrefs.current = null
-      saveColumnPrefsKeepalive(pending.viewId, pending.document)
-      prefsSnapshot.current = pending.snapshot
-      return
+    // Mirror synchronously so reload in this tab cannot lose hops when a PUT is aborted.
+    try {
+      sessionStorage.setItem(prefsCacheKey(pending.viewId), JSON.stringify(pending.document))
+    } catch {
+      /* private mode */
     }
-    // Do NOT clear pending until the PUT finishes. A reload that aborts an in-flight
-    // fetch must still find the doc here so beforeunload can keepalive it.
-    void saveColumnPrefs(pending.viewId, pending.document)
-      .then(() => {
-        if (pendingPrefs.current === pending) pendingPrefs.current = null
-        prefsSnapshot.current = pending.snapshot
-      })
-      .catch(() => undefined)
+    // Always keepalive — survives reload better than a cancelled ordinary fetch.
+    pendingPrefs.current = null
+    saveColumnPrefsKeepalive(pending.viewId, pending.document)
+    prefsSnapshot.current = pending.snapshot
   }
 
   const virtualizerRef = useRef<{ scrollToIndex: (index: number) => void }>({ scrollToIndex: () => {} })
@@ -291,9 +292,18 @@ export function ObjectTable({
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
-    const applied = prefs.isSuccess
-      ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
+    let cachedDoc: ColumnPrefsDocument | null = null
+    try {
+      const raw = sessionStorage.getItem(prefsCacheKey(view.id))
+      if (raw) cachedDoc = JSON.parse(raw) as ColumnPrefsDocument
+    } catch {
+      cachedDoc = null
+    }
+    const fromCache = cachedDoc
+      ? prefsToOrderHidden({ document: cachedDoc }, systemColumns, typeKey, defs.data)
       : null
+    const applied =
+      fromCache ?? (prefs.isSuccess ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data) : null)
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
@@ -308,7 +318,7 @@ export function ObjectTable({
       }
     }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state])
+  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
   useLayoutEffect(() => {
     if (!prefsReady) return
     const snapshot = JSON.stringify([order, hidden])
