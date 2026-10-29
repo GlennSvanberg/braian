@@ -986,7 +986,12 @@ function Login({ onDone }: { onDone: () => void }) {
           try {
             for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
               const key = sessionStorage.key(i)
-              if (key?.startsWith('braian:column-prefs:')) sessionStorage.removeItem(key)
+              if (
+                key?.startsWith('braian:column-prefs-pending:') ||
+                key?.startsWith('braian:column-prefs:')
+              ) {
+                sessionStorage.removeItem(key)
+              }
             }
           } catch {
             /* private mode */

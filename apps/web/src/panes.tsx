@@ -22,7 +22,13 @@ import { fieldCatalogForType } from './fields/catalog'
 import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, type ViewColumn } from './fields/columns'
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
-  prefsToOrderHidden, saveColumnPrefs, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+  prefsToOrderHidden, saveColumnPrefs, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
+import {
+  clearPendingColumnPrefs,
+  readPendingColumnPrefs,
+  selectInitialColumnPrefs,
+  writePendingColumnPrefs,
+} from './column-prefs-pending'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { cellPathValues, fetchPathValues } from './path-values'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
@@ -153,11 +159,16 @@ export function ObjectTable({
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
   const prefsSnapshot = useRef<string | null>(null)
-  const pendingPrefs = useRef<{ snapshot: string; viewId: string; document: ColumnPrefsDocument } | null>(null)
+  const pendingPrefs = useRef<{
+    snapshot: string
+    viewId: string
+    document: ColumnPrefsDocument
+    seq: number
+  } | null>(null)
+  const prefsSeq = useRef(0)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const prefsCacheKey = (viewId: string) => `braian:column-prefs:${viewId}`
-  const flushPendingPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
-  flushPendingPrefsRef.current = (opts) => {
+  const flushPendingPrefsRef = useRef<() => void>(() => undefined)
+  flushPendingPrefsRef.current = () => {
     const pending = pendingPrefs.current
     if (!pending) return
     if (prefsSaveTimer.current != null) {
@@ -166,29 +177,15 @@ export function ObjectTable({
     }
     if (pending.document.columns.length === 0) {
       pendingPrefs.current = null
-      try {
-        sessionStorage.removeItem(prefsCacheKey(pending.viewId))
-      } catch {
-        /* private mode */
-      }
+      clearPendingColumnPrefs(pending.viewId)
       return
     }
-    // Mirror synchronously so reload in this tab cannot lose hops when a PUT is aborted.
-    try {
-      sessionStorage.setItem(prefsCacheKey(pending.viewId), JSON.stringify(pending.document))
-    } catch {
-      /* private mode */
-    }
-    if (opts?.keepalive) {
-      pendingPrefs.current = null
-      saveColumnPrefsKeepalive(pending.viewId, pending.document)
-      prefsSnapshot.current = pending.snapshot
-      return
-    }
-    // Keep pending until the PUT finishes so pagehide can still keepalive the same doc.
+    // Mark as pending until a matching 2xx; survives aborted fetch across reload.
+    writePendingColumnPrefs(pending.viewId, pending.document, pending.seq)
     void saveColumnPrefs(pending.viewId, pending.document)
       .then(() => {
-        if (pendingPrefs.current === pending) pendingPrefs.current = null
+        clearPendingColumnPrefs(pending.viewId, pending.seq)
+        if (pendingPrefs.current?.seq === pending.seq) pendingPrefs.current = null
         prefsSnapshot.current = pending.snapshot
       })
       .catch(() => undefined)
@@ -301,24 +298,19 @@ export function ObjectTable({
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     prefsApplied.current = true
-    // sessionStorage bridges reload races; cleared on Sign in. Skip under vitest.
-    let cachedDoc: ColumnPrefsDocument | null = null
-    if (import.meta.env.MODE !== "test") {
-      try {
-        const raw = sessionStorage.getItem(prefsCacheKey(view.id))
-        if (raw) cachedDoc = JSON.parse(raw) as ColumnPrefsDocument
-      } catch {
-        cachedDoc = null
-      }
-    }
-    const fromCache = cachedDoc
-      ? prefsToOrderHidden({ document: cachedDoc }, systemColumns, typeKey, defs.data)
-      : null
-    const serverApplied = prefs.isSuccess
-      ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
-      : null
-    // Prefer the tab-local cache after a reload; fall back to the server document.
-    const applied = fromCache ?? serverApplied
+    // Pending sessionStorage only wins while our own PUT is unacked. Skip under vitest.
+    const hydrateCache = import.meta.env.MODE !== 'test'
+    const pendingEntry = hydrateCache ? readPendingColumnPrefs(view.id) : null
+    const serverDocument =
+      prefs.isSuccess && prefs.data?.document?.version === 2
+        ? (prefs.data.document as ColumnPrefsDocument)
+        : null
+    const selected = selectInitialColumnPrefs(hydrateCache, pendingEntry, serverDocument)
+    const applied = selected.document
+      ? prefsToOrderHidden({ document: selected.document }, systemColumns, typeKey, defs.data)
+      : prefs.isSuccess
+        ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
+        : null
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
@@ -333,6 +325,27 @@ export function ObjectTable({
       }
     }
     setPrefsReady(true)
+    // Remount with a pending entry: re-send the PUT immediately.
+    const retry = selected.retryPending
+    if (retry && retry.document.columns.length > 0) {
+      const seq = retry.seq
+      if (prefsSeq.current < seq) prefsSeq.current = seq
+      const snapshot = applied ? JSON.stringify([applied.order, applied.hidden]) : JSON.stringify([[], []])
+      pendingPrefs.current = {
+        snapshot,
+        viewId: view.id,
+        document: retry.document,
+        seq,
+      }
+      writePendingColumnPrefs(view.id, retry.document, seq)
+      void saveColumnPrefs(view.id, retry.document)
+        .then(() => {
+          clearPendingColumnPrefs(view.id, seq)
+          if (pendingPrefs.current?.seq === seq) pendingPrefs.current = null
+          prefsSnapshot.current = snapshot
+        })
+        .catch(() => undefined)
+    }
   }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
   useLayoutEffect(() => {
     if (!prefsReady) return
@@ -352,12 +365,9 @@ export function ObjectTable({
     if (document.columns.length === 0) return
     // Queue immediately so beforeunload/keepalive can flush even if reload wins the race
     // against a debounced timer (Brand disappearing after a column change).
-    pendingPrefs.current = { snapshot, viewId: view.id, document }
-    try {
-      sessionStorage.setItem(prefsCacheKey(view.id), JSON.stringify(document))
-    } catch {
-      /* private mode */
-    }
+    const seq = ++prefsSeq.current
+    pendingPrefs.current = { snapshot, viewId: view.id, document, seq }
+    writePendingColumnPrefs(view.id, document, seq)
     if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
     prefsSaveTimer.current = setTimeout(() => {
       prefsSaveTimer.current = null
@@ -373,7 +383,7 @@ export function ObjectTable({
     }
   }, [order, hidden, prefsReady, attributePaths.data, systemColumns, view.id])
   useEffect(() => {
-    const flush = () => flushPendingPrefsRef.current({ keepalive: true })
+    const flush = () => flushPendingPrefsRef.current()
     const onHide = () => {
       if (document.visibilityState === 'hidden') flush()
     }
