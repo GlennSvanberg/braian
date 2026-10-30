@@ -99,6 +99,11 @@ const columns = [
 
 const pageSize = 100
 
+/** Prefs not applied yet: mutate against builtin chrome, not []. */
+function orderBase(current: string[]) {
+  return current.length > 0 ? current : columns.map((column) => column.id)
+}
+
 function savedTable(view: PanesView) {
   const table = (view.state.table as Json | undefined) ?? {}
   return {
@@ -330,21 +335,27 @@ export function ObjectTable({
       setHidden(applied.hidden)
       // Align baseline so this apply does not schedule a PUT.
       prefsSnapshot.current = JSON.stringify([applied.order, applied.hidden])
-    } else if (prefs.isSuccess && typeKey && !prefs.data?.document) {
+    } else if (prefs.isSuccess && !prefs.data?.document) {
       // No saved prefs row: defaults only after load (never as a flash).
       const viewOrder = (view.state as { table?: { order?: unknown } } | undefined)?.table?.order
       if (Array.isArray(viewOrder)) {
         const orderIds = viewOrder.map(String)
         const ensured = ensureSystemColumns(orderIds, [], systemColumns)
-        setOrder(ensured.order)
-        setHidden(ensured.hidden)
+        setOrder((current) => (current.length > 0 ? current : ensured.order))
+        setHidden((current) => (current.length > 0 ? current : ensured.hidden))
         prefsSnapshot.current = JSON.stringify([ensured.order, ensured.hidden])
-      } else {
+      } else if (typeKey) {
         const defaults = defaultColumnIdsForType(typeKey, defs.data)
         const ensured = ensureSystemColumns(defaults, [], systemColumns)
-        setOrder(ensured.order)
-        setHidden(ensured.hidden)
+        setOrder((current) => (current.length > 0 ? current : ensured.order))
+        setHidden((current) => (current.length > 0 ? current : ensured.hidden))
         prefsSnapshot.current = JSON.stringify([ensured.order, ensured.hidden])
+      } else {
+        // Harness / untitled view: seed builtin chrome once (never clobber a local move).
+        const builtinIds = columns.map((column) => column.id)
+        setOrder((current) => (current.length > 0 ? current : builtinIds))
+        setHidden((current) => (current.length > 0 ? current : []))
+        prefsSnapshot.current = JSON.stringify([builtinIds, []])
       }
     }
     setPrefsReady(true)
@@ -593,7 +604,7 @@ export function ObjectTable({
     if (event.name === 'ui.show_column') {
       const column = String(args.column ?? args.id ?? '')
       // A re-shown column must land last (same rule as Fields toggleField).
-      setOrder((current) => [...current.filter((id) => id !== column), column])
+      setOrder((current) => [...orderBase(current).filter((id) => id !== column), column])
       setHidden((current) => current.filter((id) => id !== column))
     }
     if (event.name === 'ui.hide_column') setHidden((current) => [...new Set([...current, String(args.column ?? args.id ?? '')])])
@@ -604,7 +615,8 @@ export function ObjectTable({
       if (direction === 'left' || direction === 'right') {
         const delta = direction === 'left' ? -1 : 1
         setOrder((current) => {
-          const next = current.includes(from) ? [...current] : [...current, from]
+          const next = [...orderBase(current)]
+          if (!next.includes(from)) next.push(from)
           const at = next.indexOf(from)
           const to = Math.min(next.length - 1, Math.max(0, at + delta))
           if (at === to) return next
@@ -616,7 +628,7 @@ export function ObjectTable({
       }
       const to = String(args.to ?? '')
       setOrder((current) => {
-        const next = current.filter((item) => item !== from)
+        const next = orderBase(current).filter((item) => item !== from)
         const at = to ? next.indexOf(to) : next.length
         next.splice(at < 0 ? next.length : at, 0, from)
         return next
