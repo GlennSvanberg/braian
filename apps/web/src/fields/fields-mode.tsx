@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Check } from 'lucide-react'
 import { Command, CommandInput, CommandList } from '../components/ui/command'
+import { Checkbox } from '../components/ui/checkbox'
 import { Kbd } from '../components/ui/kbd'
 import {
   cardinalityCrumbLabel,
@@ -881,18 +881,9 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
           background: color-mix(in srgb, var(--accent) 12%, transparent);
         }
         [data-testid="fields-mode"] .fields-check {
-          color: var(--text-2);
-          background: transparent !important;
-          box-shadow: none !important;
-          border: 0;
-          border-radius: 0;
-          padding: 0;
           margin-left: auto;
           flex: none;
-          display: inline-block;
-        }
-        [data-testid="fields-mode"] .hit.on .fields-check {
-          color: var(--accent);
+          pointer-events: none;
         }
       `}</style>
       <Command
@@ -939,15 +930,14 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
                   <span className="hit-title">{row.title}</span>
                   {row.subtitle ? <small>{row.subtitle}</small> : null}
                 </span>
-                {row.checked ? (
-                  <Check
-                    size={14}
-                    className="fields-check"
-                    strokeWidth={2.25}
-                    aria-hidden="true"
-                    data-testid={`fields-check-${row.id}`}
-                  />
-                ) : null}
+                <Checkbox
+                  className="fields-check"
+                  checked={Boolean(row.checked)}
+                  tabIndex={-1}
+                  data-testid={`fields-check-${row.id}`}
+                  aria-label={row.checked ? 'Shown' : 'Hidden'}
+                  onCheckedChange={() => {}}
+                />
                 {row.drill ? <span aria-hidden="true">›</span> : null}
               </div>
             ))}
