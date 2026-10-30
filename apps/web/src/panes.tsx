@@ -320,25 +320,19 @@ export function ObjectTable({
     setPrefsReady(true)
   }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
 
-  // Other tabs' saves: on focus, when this tab is clean, drop the one-shot latch and
-  // invalidate so React Query refetches and the apply effect can run again.
+  // Other tabs' saves: when this tab becomes visible again and is clean, drop the
+  // one-shot latch and invalidate so React Query refetches and apply can run.
+  // Do not listen to window focus — that fires on ordinary clicks and races saves.
   useEffect(() => {
-    const syncFromServer = () => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
       if (prefsDirtyRef.current) return
       if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
       prefsApplied.current = false
       void queryClient.invalidateQueries({ queryKey: columnPrefsQueryKey(view.id) })
     }
-    const onFocus = () => syncFromServer()
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') syncFromServer()
-    }
-    window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [queryClient, view.id])
   useLayoutEffect(() => {
     if (!prefsReady) return
