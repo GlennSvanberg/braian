@@ -48,7 +48,9 @@ export function modelWorkspaceLayout(ids: string[]): Node {
     splitPair(
       'horizontal',
       0.55,
-      tabGroup([ids[7] ?? '', ids[6] ?? ''].filter(Boolean)),
+      // Type attributes first so it stays the active center tab after a legacy reset
+      // (same order as the seed: Attributes @0, Attribute definitions @1).
+      tabGroup([ids[6] ?? '', ids[7] ?? ''].filter(Boolean)),
       tabGroup([ids[4] ?? ''].filter(Boolean)),
     ),
   )
