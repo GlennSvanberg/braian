@@ -75,18 +75,13 @@ export async function searchPeerArticles(
 ): Promise<PeerPickOption[]> {
   const needle = query.trim()
   const perPage = opts?.perPage ?? 50
-  const lang = encodeURIComponent(uiLanguage)
   const variants = gtinSearchVariants(needle)
   const options: PeerPickOption[] = []
   const seen = new Set<string>()
-  const typeFilter = encodeURIComponent('type_key:=article')
 
   if (variants.length > 0) {
-    const filter = encodeURIComponent(gtinExactFilter(variants))
     try {
-      const exact = await api<{ hits?: Array<Record<string, unknown>> }>(
-        `/v1/search?q=*&filter=${filter}&per_page=${perPage}&lang=${lang}`,
-      )
+      const exact = await api.get('/v1/search', { params: { query: { q: '*', filter: gtinExactFilter(variants), per_page: perPage, lang: uiLanguage } } })
       pushHits(exact, defs, options, seen)
     } catch {
       // Fall through to q= — filter translation / Typesense errors must not blank the list.
@@ -94,11 +89,8 @@ export async function searchPeerArticles(
   }
 
   // Text and digit prefixes: searchable blob includes gtin when indexed searchable.
-  const q = encodeURIComponent(needle || '*')
   try {
-    const text = await api<{ hits?: Array<Record<string, unknown>> }>(
-      `/v1/search?q=${q}&filter=${typeFilter}&per_page=${perPage}&lang=${lang}`,
-    )
+    const text = await api.get('/v1/search', { params: { query: { q: needle || '*', filter: 'type_key:=article', per_page: perPage, lang: uiLanguage } } })
     pushHits(text, defs, options, seen)
   } catch {
     /* ignore */

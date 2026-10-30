@@ -25,6 +25,7 @@ use futures::stream;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::auth::{self, Auth, Identity, Role};
@@ -2988,8 +2989,8 @@ async fn get_frecency(
     })))
 }
 
-#[derive(Deserialize)]
-struct FrecencyBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct FrecencyBody {
     id: String,
 }
 
@@ -4260,8 +4261,8 @@ fn fields_after(entries: &[HistoryEntry], seq: i64) -> BTreeSet<String> {
     fields
 }
 
-#[derive(Deserialize)]
-struct NamesBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct NamesBody {
     #[serde(default)]
     ids: Vec<String>,
 }
@@ -5715,32 +5716,35 @@ fn cookie_from(headers: &HeaderMap, name: &str) -> Option<String> {
     None
 }
 
-#[derive(Deserialize)]
-struct LoginBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct LoginBody {
     email: String,
     password: String,
 }
 
-#[derive(Deserialize)]
-struct TokenBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct TokenBody {
     name: String,
     #[serde(default)]
     kind: String,
 }
 
-#[derive(Deserialize)]
-struct AgentBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AgentBody {
+    #[schema(value_type = Vec<crate::http_schema::FreeObject>)]
     messages: Vec<Value>,
     #[serde(default)]
     stream: bool,
     /// Compact screen snapshot from the browser. Included in the system
     /// prompt on every turn and returned by `ui.get_context`.
     #[serde(default)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     context: Value,
 }
 
-#[derive(Deserialize)]
-struct SearchParams {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct SearchParams {
     q: Option<String>,
     lang: Option<String>,
     filter: Option<String>,
@@ -5751,8 +5755,9 @@ struct SearchParams {
     wait_seq: Option<i64>,
 }
 
-#[derive(Deserialize)]
-struct ListParams {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ListParams {
     q: Option<String>,
     #[serde(rename = "type")]
     r#type: Option<String>,
@@ -5761,33 +5766,36 @@ struct ListParams {
     cursor: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct WorkspaceBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct WorkspaceBody {
     id: Option<Uuid>,
     name: String,
     locked: Option<bool>,
     share_token: Option<String>,
+    #[schema(value_type = Option<crate::http_schema::FreeObject>)]
     layout: Option<Value>,
 }
 
-#[derive(Deserialize)]
-struct StateQuery {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct StateQuery {
     environment: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct StateBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct StateBody {
     environment: Option<String>,
+    #[schema(value_type = crate::http_schema::FreeObject)]
     document: Value,
 }
 
-#[derive(Deserialize)]
-struct AssignBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AssignBody {
     email: String,
 }
 
-#[derive(Deserialize)]
-struct ViewBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ViewBody {
     id: Option<Uuid>,
     workspace_id: Uuid,
     #[serde(rename = "type")]
@@ -5795,34 +5803,37 @@ struct ViewBody {
     title: String,
     pane: Option<String>,
     position: Option<i32>,
+    #[schema(value_type = Option<crate::http_schema::FreeObject>)]
     state: Option<Value>,
 }
 
-#[derive(Deserialize)]
-struct ViewTypeBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ViewTypeBody {
     key: String,
     title: String,
     embed_url: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct AssortmentTypeQuery {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AssortmentTypeQuery {
     #[serde(rename = "type")]
     r#type: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct AssortmentBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AssortmentBody {
     id: Option<Uuid>,
     name: String,
     /// Type id or key. Absent until validation so an agent still gets 403 first.
     #[serde(default)]
     r#type: Option<String>,
+    #[schema(value_type = crate::http_schema::FreeObject)]
     query: Value,
 }
 
-#[derive(Deserialize)]
-struct JobTypeBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct JobTypeBody {
     key: String,
     title: String,
     #[serde(default)]
@@ -5830,13 +5841,13 @@ struct JobTypeBody {
     assortment_id: Option<Uuid>,
 }
 
-#[derive(Deserialize)]
-struct BulkBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct BulkBody {
     objects: Vec<CreateObject>,
 }
 
-#[derive(Deserialize)]
-struct ProposalBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ProposalBody {
     title: String,
     /// Ignored. `source` is taken from the authenticated principal.
     /// The field stays so a client can send it and the value is discarded.
@@ -5846,43 +5857,47 @@ struct ProposalBody {
     rows: Vec<ProposalRowBody>,
 }
 
-#[derive(Deserialize)]
-struct ProposalRowBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ProposalRowBody {
     id: Option<Uuid>,
     object_id: Option<Uuid>,
     object_key: Option<String>,
     type_key: Option<String>,
     base_version: Option<i64>,
+    #[schema(value_type = crate::http_schema::FreeObject)]
     patch: Value,
     conflict: Option<bool>,
 }
 
-#[derive(Deserialize)]
-struct AcceptBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AcceptBody {
     rows: Option<Vec<Uuid>>,
     /// Replacement patches keyed by proposal row. An empty `values` object rejects that row.
     #[serde(default)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     patches: BTreeMap<Uuid, Value>,
 }
 
-#[derive(Deserialize)]
-struct HistoryParams {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct HistoryParams {
     object: Option<Uuid>,
     limit: Option<i64>,
 }
 
-#[derive(Deserialize)]
-struct AsOfParams {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AsOfParams {
     seq: i64,
 }
 
-#[derive(Deserialize)]
-struct RollbackBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct RollbackBody {
     seq: i64,
 }
 
-#[derive(Deserialize)]
-struct ImpactBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ImpactBody {
     remove_attribute: Option<String>,
     #[serde(alias = "remove_group")]
     remove_class: Option<String>,
@@ -5890,8 +5905,8 @@ struct ImpactBody {
     kind: Option<AttributeKind>,
 }
 
-#[derive(Deserialize)]
-struct WebhookBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct WebhookBody {
     url: String,
     secret: Option<String>,
     assortment_id: Option<Uuid>,

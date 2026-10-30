@@ -96,20 +96,15 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
 export async function createWorkspaceFromTemplate(template: WorkspaceTemplate, options?: { shareToken?: string }) {
   const workspaceId = crypto.randomUUID()
   const viewIds = template.views.map(() => crypto.randomUUID())
-  await api('/v1/workspaces', {
-    method: 'POST',
-    body: JSON.stringify({
+  await api.post('/v1/workspaces', { body: {
       id: workspaceId,
       name: template.name,
       locked: false,
       share_token: options?.shareToken ?? `user-${workspaceId.slice(0, 8)}`,
       layout: template.layout(viewIds),
-    }),
-  })
+    } })
   for (const [index, view] of template.views.entries()) {
-    await api('/v1/views', {
-      method: 'POST',
-      body: JSON.stringify({
+    await api.post('/v1/views', { body: {
         id: viewIds[index],
         workspace_id: workspaceId,
         type: view.type,
@@ -117,8 +112,7 @@ export async function createWorkspaceFromTemplate(template: WorkspaceTemplate, o
         pane: index === 0 ? 'left' : 'main',
         position: index,
         state: view.state ?? {},
-      }),
-    })
+      } })
   }
   return workspaceId
 }

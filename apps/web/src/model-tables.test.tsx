@@ -6,13 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { copy } from './i18n'
 import { ValueListsTable, valueListOptions } from './model-tables'
 
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 const stageModel = vi.hoisted(() => vi.fn(async () => undefined))
 const reviewDraft = vi.hoisted(() => vi.fn(async () => undefined))
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 vi.mock('./model-stage', async () => {
@@ -48,14 +55,13 @@ function Host({ onOpenList }: { onOpenList?: (key: string) => void }) {
 
 describe('value lists table', () => {
   beforeEach(() => {
-    api.mockReset()
-    stageModel.mockClear()
-    reviewDraft.mockClear()
-    api.mockImplementation((path: string) => {
+    mock.use((path) => {
       if (path === '/v1/definitions') return Promise.resolve(definitions)
       if (path === '/v1/model/draft') return Promise.resolve({ count: 0, conflict: false, steps: [] })
       return Promise.resolve({})
     })
+    stageModel.mockClear()
+    reviewDraft.mockClear()
   })
 
   afterEach(() => cleanup())

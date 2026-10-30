@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
 import { MetaChip, optionLabel, statusTone, typeLabel, type ChipTone } from './chips'
 import { toast } from 'sonner'
-import { ApiError, api, catalogName, textValue, type Json } from './api'
+import { ApiError, api, catalogName, operationId, textValue, type Json } from './api'
 import { readIndexed } from './index-fields'
 import { streamAgent, type AgentEvent } from './agent-stream'
 import { renderAgentAnswer } from './agent-answer'
@@ -79,7 +79,7 @@ export function CommandPalette({
   onFieldsConsumed,
 }: {
   session: SessionLike
-  workspaces: Array<{ id: string; name: string; share_token?: string }>
+  workspaces: Array<{ id: string; name: string; share_token?: string | null }>
   views: Array<{ id: string; title: string; type: string; state?: Json }>
   ai?: boolean
   feedbackEnabled?: boolean
@@ -112,12 +112,12 @@ export function CommandPalette({
   const [editing, setEditing] = useState<number | null>(null)
   const found = useQuery({
     queryKey: ['palette', query],
-    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(query)}&per_page=8&lang=${uiLanguage}`),
+    queryFn: () => api.get('/v1/search', { params: { query: { q: query, per_page: 8, lang: uiLanguage } } }),
     enabled: mode === 'list' && query.trim().length > 0 && stack.length === 0,
   })
   const remoteFrecency = useQuery({
     queryKey: ['frecency'],
-    queryFn: () => api<{ entries: Record<string, { uses: number; last: number }> }>('/v1/frecency'),
+    queryFn: () => api.get('/v1/frecency'),
     staleTime: 30_000,
   })
   const [frecencyTick, setFrecencyTick] = useState(0)
@@ -129,16 +129,16 @@ export function CommandPalette({
   }, [remoteFrecency.data])
   const frecency = useMemo(() => readFrecency(), [query, turns.length, frecencyTick])
 
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), staleTime: 60_000 })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions'), staleTime: 60_000 })
   const workspaceType = session.workspaceType || session.listType || ''
   const selections = useQuery({
     queryKey: ['assortments', workspaceType],
-    queryFn: () => api<{ assortments: Json[] }>(`/v1/assortments?type=${encodeURIComponent(workspaceType)}`),
+    queryFn: () => api.get('/v1/assortments', { params: { query: { type: workspaceType } } }),
     enabled: Boolean(workspaceType),
   })
   const selectedObject = useQuery({
     queryKey: ['object', session.objectId],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    queryFn: () => api.get('/v1/objects/{id}', { params: { path: { id: session.objectId ?? '' } } }),
     enabled: Boolean(session.objectId),
     staleTime: 30_000,
   })
@@ -149,7 +149,7 @@ export function CommandPalette({
   )
   const suggestions = useQuery({
     queryKey: ['proposals'],
-    queryFn: () => api<Json>('/v1/proposals'),
+    queryFn: () => api.get('/v1/proposals'),
   })
   const suggestionTotal = Number(((suggestions.data?.pending as Json | undefined)?.total) ?? 0)
   const selectedKey = String(selectedObject.data?.type ?? '')
@@ -267,7 +267,7 @@ export function CommandPalette({
     const remembered = item.group === 'best' || item.id.startsWith('best:') ? id : item.id
     if (id !== 'ask') {
       touch(remembered)
-      void api('/v1/frecency', { method: 'POST', body: JSON.stringify({ id: remembered }) }).catch(() => undefined)
+      void api.post('/v1/frecency', { body: { id: remembered } }).catch(() => undefined)
     }
     if (isAddViewRoot(id)) {
       onPrepareAddView?.()
@@ -298,7 +298,7 @@ export function CommandPalette({
     if (id === 'filter:by' || id === 'export:columns') {
       const type = session.workspaceType || session.listType || ''
       const mode = id === 'filter:by' ? 'filter' : 'export'
-      void api<{ paths: Array<{ text: string; label: string }> }>(`/v1/types/${encodeURIComponent(type)}/attribute-paths`)
+      void api.get('/v1/types/{id}/attribute-paths', { params: { path: { id: type } } })
         .then((body) => {
           setStack((current) => [...current, {
             label: item.title,
@@ -412,7 +412,7 @@ export function CommandPalette({
       return
     }
     if (id === 'model:undo') {
-      void api('/v1/operations/model.undo', { method: 'POST', body: '{}' }).catch((reason: unknown) => {
+      void api.post('/v1/operations/{name}', { params: { path: { name: "model.undo" } }, body: {} }).catch((reason: unknown) => {
         session.push(reason instanceof Error ? reason.message : copy.validation)
       })
       onClose()
@@ -436,11 +436,8 @@ export function CommandPalette({
     if (id === 'model:delete-group' && session.group) {
       const [structure, group] = session.group.split(':')
       if (structure && group) {
-        void api<Json>('/v1/operations/model.delete_group', {
-          method: 'POST',
-          body: JSON.stringify({ structure, group }),
-        }).then((result) => {
-          const proposal = String(result.proposal_id ?? result.id ?? '')
+        void api.post('/v1/operations/{name}', { params: { path: { name: "model.delete_group" } }, body: { structure, group } }).then((result) => {
+          const proposal = operationId(result)
           if (proposal) {
             void import('./proposal-bus').then(({ publishProposal }) => publishProposal(proposal))
           }
@@ -481,18 +478,15 @@ export function CommandPalette({
     if (id === 'assortment:save') {
       const name = query.replace(/^save (?:assortment|selection)\s+/i, '').trim()
       const type = session.workspaceType || session.listType || ''
-      void api<Json>('/v1/operations/assortment.save', {
-        method: 'POST',
-        body: JSON.stringify({
+      void api.post('/v1/operations/{name}', { params: { path: { name: "assortment.save" } }, body: {
           name,
           ...(type ? { type } : {}),
           query: {
             ...(session.group ? { group: session.group } : {}),
           },
-        }),
-      })
+        } })
         .then((result) => {
-          const proposalId = String(result.proposal_id ?? result.id ?? '')
+          const proposalId = operationId(result)
           if (!proposalId) return
           publishProposal(proposalId)
           session.setProposalId(proposalId)
@@ -551,11 +545,11 @@ export function CommandPalette({
     if (id === 'model:command') {
       const deleting = /^delete\b/i.test(query.trim())
       const call = deleting
-        ? api<Json>('/v1/operations/model.command', { method: 'POST', body: JSON.stringify({ text: query }) })
+        ? api.post('/v1/operations/{name}', { params: { path: { name: "model.command" } }, body: { text: query } })
         : stageModel('model.command', { text: query })
       void call
         .then((result) => {
-          const proposalId = String(result.proposal_id ?? result.id ?? '')
+          const proposalId = operationId(result)
           if (proposalId) {
             publishProposal(proposalId)
             session.setProposalId(proposalId)
@@ -932,8 +926,8 @@ export function CommandPalette({
                 ))}
                 {proposal.error ? <p className="error">{proposal.error}</p> : null}
                 <div className="toolbar">
-                  <button type="button" onClick={() => void api(`/v1/proposals/${proposal.id}/discard`, { method: 'POST' }).then(() => setProposal(null))}>{copy.discardAll}</button>
-                  <button type="button" className="primary" onClick={() => void api(`/v1/proposals/${proposal.id}/accept`, { method: 'POST', body: '{}' }).then(() => { session.setProposalId(proposal.id); setProposal(null); session.push(copy.saved) })}>{copy.saveAll}</button>
+                  <button type="button" onClick={() => void api.post('/v1/proposals/{id}/discard', { params: { path: { id: proposal.id } } }).then(() => setProposal(null))}>{copy.discardAll}</button>
+                  <button type="button" className="primary" onClick={() => void api.post('/v1/proposals/{id}/accept', { params: { path: { id: proposal.id } }, body: {} }).then(() => { session.setProposalId(proposal.id); setProposal(null); session.push(copy.saved) })}>{copy.saveAll}</button>
                 </div>
               </div>
             ) : null}
@@ -1014,7 +1008,7 @@ function stepHint(event: AgentEvent, types: ReturnType<typeof typeNames>) {
 }
 
 function buildCatalog(
-  workspaces: Array<{ id: string; name: string; share_token?: string }>,
+  workspaces: Array<{ id: string; name: string; share_token?: string | null }>,
   views: Array<{ id: string; title: string; type: string; state?: Json }>,
   objectId: string | null,
   types: ReturnType<typeof typeNames>,
@@ -1218,7 +1212,7 @@ async function loadProposal(
   setProposal: (value: ProposalPreview | null) => void,
   session: SessionLike,
 ) {
-  const body = await api<Json>(`/v1/proposals/${id}`).catch(() => null)
+  const body = await api.get('/v1/proposals/{id}', { params: { path: { id: id } } }).catch(() => null)
   const rows = ((body?.rows as Json[]) ?? [])
   const lines = ((body?.consequence as Json | undefined)?.lines as unknown[] | undefined)?.map(String) ?? []
   setProposal({

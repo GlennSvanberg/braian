@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Json } from './api'
+import { api, failureLines, type Json } from './api'
 import { copy } from './i18n'
 import { formatCount } from './format'
 import { affectedLabel, typeNames } from './type-labels'
@@ -31,10 +31,10 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
     setTyped('')
     setId(proposal.id)
   }), [])
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), staleTime: 60_000 })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions'), staleTime: 60_000 })
   const proposal = useQuery({
     queryKey: ['proposal', id],
-    queryFn: () => api<Json>(`/v1/proposals/${id}`),
+    queryFn: () => api.get('/v1/proposals/{id}', { params: { path: { id: id ?? '' } } }),
     enabled: Boolean(id),
   })
   useEffect(() => {
@@ -70,7 +70,7 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   }
   const discard = () => {
     setBusy(true)
-    void api(`/v1/proposals/${id}/discard`, { method: 'POST' })
+    void api.post('/v1/proposals/{id}/discard', { params: { path: { id: id } } })
       .then(() => {
         session.push(copy.cancel)
         void queryClient.invalidateQueries({ queryKey: ['proposals'] })
@@ -81,9 +81,9 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
   }
   const confirm = () => {
     setBusy(true)
-    void api<Json>(`/v1/proposals/${id}/accept`, { method: 'POST', body: '{}' })
+    void api.post('/v1/proposals/{id}/accept', { params: { path: { id: id } }, body: {} })
       .then((result) => {
-        const failed = (result.failed as Json[] | undefined) ?? []
+        const failed = failureLines(result)
         if (failed.length > 0) {
           setError(String(failed[0]?.detail ?? copy.validation))
           return

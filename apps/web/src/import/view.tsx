@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from 'sonner'
-import { api } from '../api'
+import { api, jsonRecord } from '../api'
 import { copy } from '../i18n'
 import { handleAppContextMenu } from '../app-context-menu'
 import {
@@ -51,6 +51,43 @@ type PreviewRow = {
   object_key?: string | null
   cells: Record<string, { value?: string; before?: string; state?: string; error?: { message?: string } }>
   errors?: Array<{ message?: string }>
+}
+
+function previewFrom(row: { row_no: number; status: string; object_key?: string | null; cells: unknown; errors: unknown }): PreviewRow {
+  return {
+    row_no: row.row_no,
+    status: row.status,
+    object_key: row.object_key,
+    cells: cellsFrom(row.cells),
+    errors: errorsFrom(row.errors),
+  }
+}
+
+function cellsFrom(value: unknown): PreviewRow['cells'] {
+  const record = jsonRecord(value)
+  const cells: PreviewRow['cells'] = {}
+  if (!record) return cells
+  for (const [key, item] of Object.entries(record)) {
+    const cell = jsonRecord(item)
+    if (!cell) continue
+    const error = jsonRecord(cell.error)
+    cells[key] = {
+      ...(typeof cell.value === 'string' ? { value: cell.value } : {}),
+      ...(typeof cell.before === 'string' ? { before: cell.before } : {}),
+      ...(typeof cell.state === 'string' ? { state: cell.state } : {}),
+      ...(error ? { error: { ...(typeof error.message === 'string' ? { message: error.message } : {}) } } : {}),
+    }
+  }
+  return cells
+}
+
+function errorsFrom(value: unknown): PreviewRow['errors'] {
+  if (!Array.isArray(value)) return undefined
+  return value.flatMap((item) => {
+    const row = jsonRecord(item)
+    if (!row) return []
+    return [{ ...(typeof row.message === 'string' ? { message: row.message } : {}) }]
+  })
 }
 
 const fixtureRows: PreviewRow[] = [
@@ -335,9 +372,7 @@ function Preview() {
   const localRows = fixtureRows.filter((row) => snap.filter === 'all' || row.status === snap.filter)
   const probe = useQuery({
     queryKey: ['import-rows', session.id, snap.filter, 'count'],
-    queryFn: () => api<{ total: number; rows: PreviewRow[] }>(
-      `/v1/imports/${session.id}/rows?offset=0&limit=1&status=${encodeURIComponent(snap.filter)}`,
-    ),
+    queryFn: () => api.get('/v1/imports/{id}/rows', { params: { path: { id: session.id }, query: { offset: 0, limit: 1, status: snap.filter } } }),
     enabled: !fixture,
   })
   const total = fixture ? localRows.length : probe.data?.total ?? 0
@@ -352,16 +387,14 @@ function Preview() {
   const windows = useQueries({
     queries: pages.map((page) => ({
       queryKey: ['import-rows', session.id, snap.filter, page],
-      queryFn: () => api<{ total: number; rows: PreviewRow[] }>(
-        `/v1/imports/${session.id}/rows?offset=${page * 100}&limit=100&status=${encodeURIComponent(snap.filter)}`,
-      ),
+      queryFn: () => api.get('/v1/imports/{id}/rows', { params: { path: { id: session.id }, query: { offset: Number(page * 100), limit: 100, status: snap.filter } } }),
     })),
   })
   const byIndex = new Map<number, PreviewRow>()
   if (fixture) localRows.forEach((row, index) => byIndex.set(index, row))
   windows.forEach((result, index) => {
     const page = pages[index] ?? 0
-    ;(result.data?.rows ?? []).forEach((row, offset) => byIndex.set(page * 100 + offset, row))
+    ;(result.data?.rows ?? []).forEach((row, offset) => byIndex.set(page * 100 + offset, previewFrom(row)))
   })
   const headers = (session.headers ?? []).filter((header) => {
     const column = snap.columns.find((item) => item.col === header.index)

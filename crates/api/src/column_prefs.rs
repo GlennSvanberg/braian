@@ -17,6 +17,7 @@ use braian_model::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::auth::{Auth, Identity, Role};
@@ -29,13 +30,14 @@ const DOCUMENT_LIMIT: usize = 64 * 1024;
 const MAX_COLUMNS: usize = 200;
 
 #[derive(Debug, Deserialize)]
-pub struct PrefsQuery {
+pub(crate) struct PrefsQuery {
     pub environment: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct PrefsBody {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct PrefsBody {
     pub environment: Option<String>,
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub document: Value,
 }
 
@@ -330,7 +332,8 @@ async fn resolve_type_id(state: &AppState, view_state: &Value) -> Result<Option<
         ("environment" = Option<String>, Query, description = "Layout environment, default `default`")
     ),
     responses(
-        (status = 200, description = "Own column preferences. Stale paths are flagged, never a 500."),
+        (status = 200, description = "Own column preferences. Stale paths are flagged, never a 500.", body = crate::http_schema::ColumnPrefsView),
+        (status = 401, description = "Missing or unknown token", body = crate::problem::Problem, content_type = "application/problem+json"),
     ),
     security(("bearer" = []))
 )]
@@ -377,9 +380,11 @@ pub async fn get_column_prefs(
     path = "/v1/views/{view_id}/column-prefs",
     tag = "platform",
     params(("view_id" = Uuid, Path, description = "View id")),
+    request_body = PrefsBody,
     responses(
-        (status = 200, description = "Saved own column preferences"),
-        (status = 400, description = "Invalid document, unknown path, duplicate, or too large"),
+        (status = 200, description = "Saved own column preferences", body = crate::http_schema::ColumnPrefsSaved),
+        (status = 400, description = "Invalid document, unknown path, duplicate, or too large", body = crate::problem::Problem, content_type = "application/problem+json"),
+        (status = 401, description = "Missing or unknown token", body = crate::problem::Problem, content_type = "application/problem+json"),
     ),
     security(("bearer" = []))
 )]
@@ -422,7 +427,10 @@ pub async fn put_column_prefs(
         ("view_id" = Uuid, Path, description = "View id"),
         ("environment" = Option<String>, Query, description = "Layout environment, default `default`")
     ),
-    responses((status = 204, description = "Own column preferences removed")),
+    responses(
+        (status = 204, description = "Own column preferences removed"),
+        (status = 401, description = "Missing or unknown token", body = crate::problem::Problem, content_type = "application/problem+json"),
+    ),
     security(("bearer" = []))
 )]
 pub async fn delete_column_prefs(

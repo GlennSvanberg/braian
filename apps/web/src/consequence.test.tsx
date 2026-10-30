@@ -7,11 +7,18 @@ import type { Json } from './api'
 import { ConsequenceHost } from './consequence'
 import { publishProposal } from './proposal-bus'
 
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 const proposal: Json = {
@@ -42,10 +49,9 @@ function Host() {
 
 describe('consequence dialog', () => {
   beforeEach(() => {
-    api.mockReset()
-    api.mockImplementation((path: string) => {
+    mock.use((path) => {
       if (path === '/v1/definitions') return Promise.resolve({ languages: ['en'], types: [] })
-      if (String(path).startsWith('/v1/proposals/')) return Promise.resolve(proposal)
+      if (path.startsWith('/v1/proposals/')) return Promise.resolve(proposal)
       return Promise.resolve({})
     })
   })
@@ -71,11 +77,12 @@ describe('consequence dialog', () => {
 
     await waitFor(() => expect(screen.queryByTestId('consequence')).toBeNull())
     expect(underneath).not.toHaveBeenCalled()
-    const writes = api.mock.calls.filter((call) => {
-      const path = String(call[0])
-      const method = String((call[1] as RequestInit | undefined)?.method ?? 'GET').toUpperCase()
-      return method !== 'GET' || path.includes('/discard') || path.includes('/accept')
-    })
+    const writes = [
+      ...mock.methods.post.mock.calls,
+      ...mock.methods.put.mock.calls,
+      ...mock.methods.patch.mock.calls,
+      ...mock.methods.delete.mock.calls,
+    ]
     expect(writes).toEqual([])
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })

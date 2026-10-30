@@ -33,14 +33,14 @@ pub struct CreateLink {
     pub from_id: Uuid,
     pub to_id: Uuid,
     #[serde(default)]
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub values: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PatchLink {
     #[serde(default)]
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub values: BTreeMap<String, Value>,
     pub from_id: Option<Uuid>,
     pub to_id: Option<Uuid>,

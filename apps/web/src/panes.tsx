@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
+import { ApiError, api, catalogName, failureLines, freeObject, jsonRecord, recordNumber, recordTitle, searchQuery, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
 import { attributeByKey, indexSort, readIndexed, sortKeyForColumnId } from './index-fields'
 import { cellEditShouldPatch } from './cell-edit'
@@ -178,7 +178,7 @@ export function ObjectTable({
   /** Unsaved local column-pref edits in this tab (shell.tsx dirtyRef pattern). */
   const prefsDirtyRef = useRef(false)
   const prefsSaveGen = useRef(0)
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api<{ user_id?: string }>('/v1/me'), retry: false })
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get('/v1/me'), retry: false })
   const prefsMutation = useSaveColumnPrefs(view.id, me.data?.user_id ?? '')
   const flushPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
   flushPrefsRef.current = (opts) => {
@@ -225,9 +225,7 @@ export function ObjectTable({
     if (workspace.locked) return
     const timer = setTimeout(() => {
       const state = { ...view.state, table: { filter, sort, groupBy, sizes } }
-      void api('/v1/views', {
-        method: 'POST',
-        body: JSON.stringify({
+      void api.post('/v1/views', { body: {
           id: view.id,
           workspace_id: workspace.id,
           type: view.type,
@@ -235,8 +233,7 @@ export function ObjectTable({
           pane: view.pane ?? 'center',
           position: view.position ?? 0,
           state,
-        }),
-      })
+        } })
     }, 400)
     return () => clearTimeout(timer)
   }, [filter, sort, groupBy, sizes, view, workspace])
@@ -250,7 +247,7 @@ export function ObjectTable({
     staleTime: 30_000,
   })
 
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
@@ -270,7 +267,7 @@ export function ObjectTable({
   const typeKey = bound?.key ?? ''
   const assortments = useQuery({
     queryKey: ['assortments', typeKey],
-    queryFn: () => api<{ assortments: Json[] }>(`/v1/assortments?type=${encodeURIComponent(typeKey)}`),
+    queryFn: () => api.get('/v1/assortments', { params: { query: { type: typeKey } } }),
     enabled: Boolean(typeKey),
   })
   const selectionRows = (assortments.data?.assortments ?? []).filter((item) =>
@@ -307,9 +304,7 @@ export function ObjectTable({
   const attributePaths = useQuery({
     queryKey: ['attribute-paths', typeKey],
     queryFn: () =>
-      api<{ paths: ListedPath[]; system_columns?: SystemViewColumn[] }>(
-        `/v1/types/${encodeURIComponent(typeKey)}/attribute-paths`,
-      ),
+      api.get('/v1/types/{id}/attribute-paths', { params: { path: { id: typeKey } } }),
     enabled: Boolean(typeKey),
   })
   const systemColumns = attributePaths.data?.system_columns ?? []
@@ -583,18 +578,19 @@ export function ObjectTable({
   }
   const mass = useMutation({
     mutationFn: () =>
-      api<Json>('/v1/operations/mass_edit', {
-        method: 'POST',
-        body: JSON.stringify({
+      api.post('/v1/operations/{name}', {
+        params: { path: { name: 'mass_edit' } },
+        body: {
           title: 'Status OK',
           ids: selected,
           type: [...byIndex.values()].find((row) => selected.includes(row.id))?.type ?? 'article',
           values: { status: 'ok' },
-        }),
+        },
       }),
     onSuccess: (result) => {
-      session.setProposalId(String(result.id))
-      session.push(`${copy.proposals} ${result.id}`)
+      const id = String(jsonRecord(result)?.id ?? '')
+      session.setProposalId(id)
+      session.push(`${copy.proposals} ${id}`)
     },
   })
 
@@ -931,7 +927,7 @@ export function ObjectTable({
 
   const suggestions = useQuery({
     queryKey: ['proposals'],
-    queryFn: () => api<Json>('/v1/proposals'),
+    queryFn: () => api.get('/v1/proposals'),
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
   /** Columns that Typesense hits do not carry (hops, units, searchable-only / language text). */
@@ -990,11 +986,7 @@ export function ObjectTable({
     const bodyValues: Json = language
       ? { [attrKey]: { [language]: nextText } }
       : { [attrKey]: nextText }
-    void api<Json>(`/v1/objects/${row.id}`, {
-      method: 'PATCH',
-      headers: { 'If-Match': String(row.version ?? 0) },
-      body: JSON.stringify({ values: bodyValues }),
-    })
+    void api.patch('/v1/objects/{id}', { params: { path: { id: row.id }, header: { 'If-Match': Number(row.version ?? 0) } }, body: { values: freeObject(bodyValues) } })
       .then(() => {
         session.push(copy.saved)
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
@@ -1557,17 +1549,14 @@ function MoveToGroup({
         event.preventDefault()
         const [structure, group] = choice.split(':')
         if (!structure) return
-        void api<Json>(`/v1/objects/${id}`)
+        void api.get('/v1/objects/{id}', { params: { path: { id: id } } })
           .then((object) =>
-            api<Json>('/v1/operations/move_to_group', {
-              method: 'POST',
-              body: JSON.stringify({
+            api.post('/v1/operations/{name}', { params: { path: { name: "move_to_group" } }, body: {
                 id,
                 structure,
                 group: group || null,
                 base_version: object.version,
-              }),
-            }),
+              } }),
           )
           .then(() => onMoved())
           .catch(() => onClose())
@@ -1701,9 +1690,8 @@ async function loadPage(q: string, filter: string, sort: string, groupBy: string
   if (filter) params.set('filter', filter)
   if (sort) params.set('sort', sort)
   if (groupBy) params.set('group', groupBy)
-  const body = await api<Json>(`/v1/search?${params}`)
-  body.page = page
-  return body
+  const body = await api.get('/v1/search', { params: { query: searchQuery(params) } })
+  return { ...body, page }
 }
 
 function TableFilters({
@@ -1801,7 +1789,7 @@ function NewObject({
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   useEffect(() => {
     const openForm = () => {
       // Do not open while the command / fields palette has focus (key leaks).
@@ -1825,20 +1813,17 @@ function NewObject({
           setError(copy.validation)
           return
         }
-        void api<Json>('/v1/objects', {
-          method: 'POST',
-          body: JSON.stringify(newObjectBody({
+        void api.post('/v1/objects', { body: newObjectBody({
             typeKey: typeKey || 'product',
             number,
             name,
             group: session.group,
             structures: named?.structures,
-          })),
-        })
+          }) })
           .then((created) => {
             setError('')
             setOpen(false)
-            session.setObjectId(String(created.id))
+            if ('id' in created) session.setObjectId(String(created.id))
             session.push(`${copy.saved} ${number}`)
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
             void queryClient.invalidateQueries({ queryKey: ['path-values'] })
@@ -1857,10 +1842,10 @@ function NewObject({
 export function ClassAttributes({ session }: { session: PanesSession }) {
   const object = useQuery({
     queryKey: ['object', session.objectId],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    queryFn: () => api.get('/v1/objects/{id}', { params: { path: { id: session.objectId ?? '' } } }),
     enabled: Boolean(session.objectId),
   })
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const types = typeNames(defs.data, uiLanguage)
   const listed = session.listType ? types.find((item) => item.key === session.listType) : undefined
   if (!session.objectId || !object.data) {
@@ -1912,13 +1897,13 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const queryClient = useQueryClient()
   const object = useQuery({
     queryKey: ['object', session.objectId],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    queryFn: () => api.get('/v1/objects/{id}', { params: { path: { id: session.objectId ?? '' } } }),
     enabled: Boolean(session.objectId),
   })
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const suggestions = useQuery({
     queryKey: ['proposals'],
-    queryFn: () => api<Json>('/v1/proposals'),
+    queryFn: () => api.get('/v1/proposals'),
   })
   const [draft, setDraft] = useState<Json>({})
   const [error, setError] = useState('')
@@ -1933,8 +1918,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
     const stored = (object.data.values as Json) ?? {}
     const language = session.language || 'en'
     enrichSelection({
-      id: session.objectId,
-      key: recordNumber(stored) || String(object.data.key ?? ''),
+      id: session.objectId ?? '',
+      key: recordNumber(stored) || String(jsonRecord(object.data)?.key ?? ''),
       name: recordTitle(stored, language),
       type: String(object.data.type ?? ''),
       version: String(object.data.version ?? ''),
@@ -1962,11 +1947,7 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
   const suggestionCount = suggestionIndex(suggestions.data).get(session.objectId) ?? 0
   const save = () => {
     if (Object.keys(draft).length === 0) return
-    void api<Json>(`/v1/objects/${session.objectId}`, {
-      method: 'PATCH',
-      headers: { 'If-Match': String(object.data?.version ?? 0) },
-      body: JSON.stringify({ values: draft }),
-    })
+    void api.patch('/v1/objects/{id}', { params: { path: { id: session.objectId ?? '' }, header: { 'If-Match': Number(object.data?.version ?? 0) } }, body: { values: freeObject(draft) } })
       .then(() => {
         setDraft({})
         setError('')
@@ -2327,7 +2308,7 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
   const [open, setOpen] = useState(false)
   const found = useQuery({
     queryKey: ['ref-pick', q],
-    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(q)}&per_page=8&lang=${uiLanguage}`),
+    queryFn: () => api.get('/v1/search', { params: { query: { q: q, per_page: 8, lang: uiLanguage } } }),
     enabled: open && q.trim().length > 1,
   })
   return (
@@ -2369,15 +2350,15 @@ function ObjectRefField({ value, onChange }: { value: unknown; onChange: (value:
 }
 
 export function GraphView({ session }: { session: PanesSession }) {
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const graph = useQuery({
     queryKey: ['graph', session.objectId],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}/graph`),
+    queryFn: () => api.get('/v1/objects/{id}/graph', { params: { path: { id: session.objectId ?? '' } } }),
     enabled: Boolean(session.objectId),
   })
   const object = useQuery({
     queryKey: ['object', session.objectId],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}`),
+    queryFn: () => api.get('/v1/objects/{id}', { params: { path: { id: session.objectId ?? '' } } }),
     enabled: Boolean(session.objectId),
   })
   if (!session.objectId) return <StateNote tone="empty" title={emptyGraph(typeNames(defs.data, uiLanguage), session.listType)} testId="graph" />
@@ -2396,10 +2377,10 @@ export function GraphView({ session }: { session: PanesSession }) {
 }
 
 export function HistoryView({ session }: { session: PanesSession }) {
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const changes = useQuery({
     queryKey: ['history', session.objectId],
-    queryFn: () => api<Json[]>(`/v1/objects/${session.objectId}/changes`),
+    queryFn: () => api.get('/v1/objects/{id}/changes', { params: { path: { id: session.objectId ?? '' } } }),
     enabled: Boolean(session.objectId),
   })
   const [open, setOpen] = useState<number | null>(null)
@@ -2409,15 +2390,12 @@ export function HistoryView({ session }: { session: PanesSession }) {
   const current = seq || Number(rows[0]?.seq ?? 0)
   const asOf = useQuery({
     queryKey: ['asof', session.objectId, current],
-    queryFn: () => api<Json>(`/v1/objects/${session.objectId}/as-of?seq=${current}`),
+    queryFn: () => api.get('/v1/objects/{id}/as-of', { params: { path: { id: session.objectId ?? '' }, query: { seq: Number(current) } } }),
     enabled: Boolean(session.objectId && current && travel),
   })
   const rollback = useMutation({
     mutationFn: (at: number) =>
-      api<Json>(`/v1/objects/${session.objectId}/rollback`, {
-        method: 'POST',
-        body: JSON.stringify({ seq: at }),
-      }),
+      api.post('/v1/objects/{id}/rollback', { params: { path: { id: session.objectId ?? '' } }, body: { seq: at } }),
     onSuccess: (proposal) => {
       const id = String(proposal.id)
       // Same as assortment / model proposes: open the review dialog so Confirm applies it.
@@ -2606,7 +2584,7 @@ function renderValue(value: unknown, field: string, defs: Json | undefined): Rea
 export function JobHistory({ view }: { view: PanesView }) {
   const types = useQuery({
     queryKey: ['job-types'],
-    queryFn: () => api<{ job_types: Json[] }>('/v1/job-types'),
+    queryFn: () => api.get('/v1/job-types'),
   })
   const [key, setKey] = useState(String(view.state.type ?? ''))
   useEffect(() => {
@@ -2615,7 +2593,7 @@ export function JobHistory({ view }: { view: PanesView }) {
   }, [types.data, key])
   const runs = useQuery({
     queryKey: ['jobs', key],
-    queryFn: () => api<{ runs: Json[] }>(`/v1/job-types/${encodeURIComponent(key)}/runs`),
+    queryFn: () => api.get('/v1/job-types/{key}/runs', { params: { path: { key: key } } }),
     enabled: Boolean(key),
   })
   return (
@@ -2641,14 +2619,14 @@ export function ProposalView({ session }: { session: PanesSession }) {
   const queryClient = useQueryClient()
   const list = useQuery({
     queryKey: ['proposals'],
-    queryFn: () => api<Json>('/v1/proposals'),
+    queryFn: () => api.get('/v1/proposals'),
   })
   const proposal = useQuery({
     queryKey: ['proposal', session.proposalId],
-    queryFn: () => api<Json>(`/v1/proposals/${session.proposalId}`),
+    queryFn: () => api.get('/v1/proposals/{id}', { params: { path: { id: session.proposalId ?? '' } } }),
     enabled: Boolean(session.proposalId),
   })
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const [dropped, setDropped] = useState<string[]>([])
   const [error, setError] = useState('')
   useEffect(() => {
@@ -2668,19 +2646,16 @@ export function ProposalView({ session }: { session: PanesSession }) {
   const loaded = useQueries({
     queries: objectRows.map((row) => ({
       queryKey: ['object', String(row.object_id)],
-      queryFn: () => api<Json>(`/v1/objects/${String(row.object_id)}`),
+      queryFn: () => api.get('/v1/objects/{id}', { params: { path: { id: String(row.object_id) } } }),
     })),
   })
   const objects = new Map(objectRows.map((row, index) => [String(row.object_id), loaded[index]?.data]))
   const loadingObjects = loaded.some((query) => query.isLoading)
   const accept = useMutation({
     mutationFn: (body: { rows: string[]; patches: Record<string, Json> }) =>
-      api<Json>(`/v1/proposals/${session.proposalId}/accept`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
+      api.post('/v1/proposals/{id}/accept', { params: { path: { id: session.proposalId ?? '' } }, body: body }),
     onSuccess: (result) => {
-      const failed = (result.failed as Json[] | undefined) ?? []
+      const failed = failureLines(result)
       session.push(failed.length > 0 ? String(failed[0]?.detail ?? copy.validation) : copy.saved)
       setDropped([])
       setError('')
@@ -2699,7 +2674,7 @@ export function ProposalView({ session }: { session: PanesSession }) {
     },
   })
   const discard = useMutation({
-    mutationFn: () => api(`/v1/proposals/${session.proposalId}/discard`, { method: 'POST' }),
+    mutationFn: () => api.post('/v1/proposals/{id}/discard', { params: { path: { id: session.proposalId ?? '' } } }),
     onSuccess: () => {
       session.push(copy.discard)
       setError('')

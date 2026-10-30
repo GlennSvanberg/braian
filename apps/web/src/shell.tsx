@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
-import { api, keepaliveJsonPut, recordTitle, textValue, type Json } from './api'
+import { api, freeObject, jsonRecord, keepaliveJsonPut, operationId, recordTitle, textValue, type Json } from './api'
 import { AssortmentList, NewSelectionDialog } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
 import { ImportScreen } from './import/view'
@@ -64,8 +64,12 @@ import {
 } from './panes'
 
 type View = { id: string; type: string; title: string; pane?: string; position?: number; state: Json }
-type ListedWorkspace = { id: string; name: string; locked?: boolean; share_token?: string; layout?: unknown; owner_id?: string }
-type Workspace = { id: string; name: string; locked: boolean; share_token?: string; layout: unknown; owner_id?: string; views: View[] }
+type ListedWorkspace = { id: string; name: string; locked?: boolean; share_token?: string | null; layout?: Json | null; owner_id?: string }
+type Workspace = { id: string; name: string; locked: boolean; share_token?: string | null; layout: Json; owner_id?: string; views?: View[] | null }
+
+function viewRows<T>(views: readonly T[] | null | undefined): T[] {
+  return views ? [...views] : []
+}
 type Me = {
   email?: string
   role: string
@@ -119,7 +123,7 @@ function layoutCommand(name: string) {
 
 export function Shell() {
   const queryClient = useQueryClient()
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/v1/me'), retry: false })
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get('/v1/me'), retry: false })
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [booted, setBooted] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
@@ -243,12 +247,12 @@ export function Shell() {
 
   const workspaces = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => api<{ workspaces: ListedWorkspace[] }>('/v1/workspaces'),
+    queryFn: () => api.get('/v1/workspaces'),
     enabled: booted && me.isSuccess,
   })
   const defs = useQuery({
     queryKey: ['definitions'],
-    queryFn: () => api<Json>('/v1/definitions'),
+    queryFn: () => api.get('/v1/definitions'),
     enabled: booted && me.isSuccess,
     staleTime: 60_000,
   })
@@ -283,12 +287,12 @@ export function Shell() {
 
   const workspace = useQuery({
     queryKey: ['workspace', workspaceId],
-    queryFn: () => api<Workspace>(`/v1/workspaces/${workspaceId}`),
+    queryFn: () => api.get('/v1/workspaces/{id}', { params: { path: { id: workspaceId ?? '' } } }),
     enabled: Boolean(workspaceId),
   })
   const opened = useQuery({
     queryKey: ['object', objectId],
-    queryFn: () => api<Json>(`/v1/objects/${objectId}`),
+    queryFn: () => api.get('/v1/objects/{id}', { params: { path: { id: objectId ?? '' } } }),
     enabled: Boolean(objectId),
   })
   const feedbackEnabled = me.data?.feedback === true
@@ -407,7 +411,7 @@ export function Shell() {
     docRef.current = painted
     setDoc(painted)
     let cancelled = false
-    void api<ServerLayout>(`/v1/workspaces/${workspaceId}/state?environment=${LAYOUT_ENVIRONMENT}`)
+    void api.get('/v1/workspaces/{id}/state', { params: { path: { id: workspaceId }, query: { environment: LAYOUT_ENVIRONMENT } } })
       .then((server) => {
         if (cancelled || dirtyRef.current || loadedFor.current !== stamp) return
         const fresh = readLayoutStore(key)
@@ -436,21 +440,20 @@ export function Shell() {
       const current = docRef.current
       const ws = workspaceRef.current
       if (!current || !ws || ws.id !== workspaceId || saveGen.current !== gen) return
-      const body = JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document: current })
-      void api(`/v1/workspaces/${workspaceId}/state`, { method: 'PUT', body }).then(() => {
+      void api.put('/v1/workspaces/{id}/state', {
+        params: { path: { id: workspaceId } },
+        body: { environment: LAYOUT_ENVIRONMENT, document: freeObject(current) },
+      }).then(() => {
         if (saveGen.current === gen) dirtyRef.current = false
       })
       if (!editsArePersonal(ws)) {
-        void api('/v1/workspaces', {
-          method: 'POST',
-          body: JSON.stringify({
+        void api.post('/v1/workspaces', { body: {
             id: ws.id,
             name: ws.name,
             locked: ws.locked,
             share_token: ws.share_token,
             layout: current.layout,
-          }),
-        }).then(() => {
+          } }).then(() => {
           canonicalRef.current = current.layout
         })
       }
@@ -569,7 +572,7 @@ export function Shell() {
     if (!doc || !surface || surface.id !== workspaceId) return
     const openIds = doc.zoom ? [doc.zoom] : layoutViews(doc.layout)
     const focused = doc.focus && openIds.includes(doc.focus) ? doc.focus : openIds[0] ?? null
-    const detail = surface.views.find((view) => view.type === 'object_detail')
+    const detail = viewRows(surface.views).find((view) => view.type === 'object_detail')
     const language = typeof detail?.state.language === 'string' ? detail.state.language : 'en'
     const workspaceType = typeKeyFromShare(surface.share_token)
     publishFrame({
@@ -578,7 +581,7 @@ export function Shell() {
         name: workspaceDisplayName(surface.name, surface.share_token),
         ...(workspaceType ? { type: workspaceType } : {}),
       },
-      panes: panesFromCatalog(openIds, focused, surface.views),
+      panes: panesFromCatalog(openIds, focused, viewRows(surface.views)),
       focused,
       language,
     })
@@ -588,7 +591,7 @@ export function Shell() {
     const surface = workspace.data
     const wanted = peekQueuedViewType()
     if (!surface || !wanted) return
-    const found = surface.views.find((view) => view.type === wanted)
+    const found = viewRows(surface.views).find((view) => view.type === wanted)
     if (!found) return
     clearQueuedViewType()
     applyRef.current('ui.open_view', { id: found.id, zone: 'center' })
@@ -601,7 +604,7 @@ export function Shell() {
       const docNow = docRef.current
       if (!key || !surfaceNow || !docNow) return
       void (async () => {
-        let views = surfaceNow.views
+        let views: View[] = viewRows(surfaceNow.views)
         let found = views.find((view) => view.type === 'value_list_values')
         const title = copy.valueListValues
         if (!found) {
@@ -612,24 +615,38 @@ export function Shell() {
             title,
             pane: 'right',
             position: views.length,
-            state: { list_key: key },
+            state: freeObject({ list_key: key }),
           }
-          await api('/v1/views', {
-            method: 'POST',
-            body: JSON.stringify({ ...created, workspace_id: surfaceNow.id }),
+          await api.post('/v1/views', {
+            body: {
+              id,
+              workspace_id: surfaceNow.id,
+              type: created.type,
+              title,
+              pane: 'right',
+              position: views.length,
+              state: freeObject({ list_key: key }),
+            },
           })
           views = [...views, created]
           found = created
         } else {
-          const updated = { ...found, state: { ...found.state, list_key: key }, title }
-          await api('/v1/views', {
-            method: 'POST',
-            body: JSON.stringify({ ...updated, workspace_id: surfaceNow.id }),
+          const updated: View = { ...found, state: freeObject({ ...found.state, list_key: key }), title }
+          await api.post('/v1/views', {
+            body: {
+              id: updated.id,
+              workspace_id: surfaceNow.id,
+              type: updated.type,
+              title,
+              pane: updated.pane ?? 'right',
+              position: updated.position ?? 0,
+              state: freeObject(updated.state),
+            },
           })
           views = views.map((view) => (view.id === found!.id ? updated : view))
           found = updated
         }
-        const nextSurface = { ...surfaceNow, views }
+        const nextSurface = { ...surfaceNow, views: views.map((view) => ({ ...view, pane: view.pane ?? 'center', position: view.position ?? 0, state: freeObject(view.state) })) }
         workspaceRef.current = nextSurface
         queryClient.setQueryData(['workspace', surfaceNow.id], nextSurface)
         const current = docRef.current
@@ -668,7 +685,7 @@ export function Shell() {
     if (!current || !defs.data || migratedRef.current.has(current.id)) return
     const types = typeNames(defs.data)
     if (types.length === 0) return
-    const patch = migrateSavedWorkspace(current, current.views, types)
+    const patch = migrateSavedWorkspace(current, viewRows(current.views), types)
     migratedRef.current.add(current.id)
     if (!patch.changed) return
     void persistWorkspaceMigration(current, patch).then(() => {
@@ -704,8 +721,8 @@ export function Shell() {
     )
   }
   const user = me.data
-  const userName = user.display_name || user.handle || user.email || ''
-  const userEmail = user.email || user.handle || ''
+  const userName = user.handle || ''
+  const userEmail = user.handle || ''
   const surface = workspace.data
 
   const commitDoc = (next: LayoutDoc) => {
@@ -722,7 +739,7 @@ export function Shell() {
     let nextArgs = args
     if ((name === 'open_view' || name === 'ui.open_view') && typeof args.entity === 'string') {
       const entity = args.entity
-      const known = workspace.data.views.some((view) => view.id === entity || view.title === entity || view.type === entity)
+      const known = viewRows(workspace.data.views).some((view) => view.id === entity || view.title === entity || view.type === entity)
       if (!known) {
         setObjectId(entity)
         nextArgs = { ...args, title: 'Detail' }
@@ -733,7 +750,7 @@ export function Shell() {
     }
     const place = name === 'open_view' || name === 'ui.open_view' || name === 'ui.place' ? placeOverride.current : undefined
     const result = applyLayoutCommand(current, name, nextArgs, {
-      views: workspace.data.views.map((view) => ({ id: view.id, title: view.title, type: view.type })),
+      views: viewRows(workspace.data.views).map((view) => ({ id: view.id, title: view.title, type: view.type })),
       canonical: canonicalRef.current,
       place,
     })
@@ -754,7 +771,7 @@ export function Shell() {
     const type = typeNames(queryClient.getQueryData<Json>(['definitions'])).find((item) => item.id === typeId)
     if (!type) return
     void (async () => {
-      let views = surfaceNow.views
+      let views: View[] = viewRows(surfaceNow.views)
       let found = views.find((view) => view.type === 'object_table' && (String(view.state.object_type ?? '') === type.id || String(view.state.type_key ?? '') === type.key))
       if (!found) {
         const id = crypto.randomUUID()
@@ -764,19 +781,26 @@ export function Shell() {
           title: type.plural,
           pane: 'center',
           position: views.length,
-          state: {
+          state: freeObject({
             object_type: type.id,
             type_key: type.key,
             columns: ['number', 'name', 'type', 'status'],
             sort: 'number',
-          },
+          }),
         }
-        await api('/v1/views', {
-          method: 'POST',
-          body: JSON.stringify({ ...created, workspace_id: surfaceNow.id }),
+        await api.post('/v1/views', {
+          body: {
+            id,
+            workspace_id: surfaceNow.id,
+            type: created.type,
+            title: created.title,
+            pane: 'center',
+            position: views.length,
+            state: freeObject(created.state),
+          },
         })
         views = [...views, created]
-        const nextSurface = { ...surfaceNow, views }
+        const nextSurface = { ...surfaceNow, views: views.map((view) => ({ ...view, pane: view.pane ?? 'center', position: view.position ?? 0, state: freeObject(view.state) })) }
         workspaceRef.current = nextSurface
         queryClient.setQueryData(['workspace', surfaceNow.id], nextSurface)
         found = created
@@ -793,16 +817,13 @@ export function Shell() {
   }
 
   const toggleLock = (item: ListedWorkspace) => {
-    void api('/v1/workspaces', {
-      method: 'POST',
-      body: JSON.stringify({
+    void api.post('/v1/workspaces', { body: {
         id: item.id,
         name: item.name,
         locked: !item.locked,
         share_token: item.share_token,
-        layout: item.layout ?? { tabs: [] },
-      }),
-    }).then(() => {
+        layout: freeObject(item.layout ?? { tabs: [] }),
+      } }).then(() => {
       void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
       void queryClient.invalidateQueries({ queryKey: ['workspace', item.id] })
       push(item.locked ? copy.unlockWorkspace : copy.lockWorkspace)
@@ -842,7 +863,7 @@ export function Shell() {
         <span className="who">{userName}</span>
         <button
           className="icon-btn"
-          onClick={() => void api('/v1/logout', { method: 'POST' }).then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))}
+          onClick={() => void api.post('/v1/logout').then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))}
         >
           {copy.signOut}
         </button>
@@ -851,10 +872,10 @@ export function Shell() {
         {doc && surface ? (
           <WorkspaceDock
             doc={doc}
-            views={surface.views.map((view) => ({ ...view, title: displayViewTitle(view, typeCatalog, openTypeKey) }))}
+            views={viewRows(surface.views).map((view) => ({ ...view, title: displayViewTitle(view, typeCatalog, openTypeKey) }))}
             onChange={commitDoc}
             renderView={(item) => {
-              const full = surface.views.find((view) => view.id === item.id)
+              const full = viewRows(surface.views).find((view) => view.id === item.id)
               return full ? <ViewBody view={full} session={session} workspace={surface} /> : <p>{copy.empty}</p>
             }}
             onAddView={(target) => {
@@ -887,11 +908,11 @@ export function Shell() {
             setFeedbackCapture(null)
           }}
           capture={feedbackCapture}
-          user={{ handle: user.handle || userName, role: user.role, email: user.email }}
+          user={{ handle: user.handle || userName, role: user.role }}
           object={objectId ? {
             id: objectId,
             type: String(opened.data?.type ?? ''),
-            key: String(opened.data?.key ?? ''),
+            key: String(jsonRecord(opened.data)?.key ?? ''),
             title: recordTitle(opened.data?.values as Json | undefined),
           } : null}
         />
@@ -983,7 +1004,7 @@ function Login({ onDone }: { onDone: () => void }) {
       <form
         onSubmit={(event) => {
           event.preventDefault()
-          void api('/v1/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+          void api.post('/v1/login', { body: { email, password } })
             .then(onDone)
             .catch(() => setError(copy.loginFailed))
         }}
@@ -1044,10 +1065,10 @@ type TreeEntry = {
 }
 
 export function StructureTree({ session, view }: { session: Session; view: View }) {
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const counts = useQuery({
     queryKey: ['group-counts'],
-    queryFn: () => api<Json>('/v1/search?group=groups&per_page=1'),
+    queryFn: () => api.get('/v1/search', { params: { query: { group: "groups", per_page: 1 } } }),
   })
   const [openKeys, setOpenKeys] = useState<string[]>(() => (view.state.expanded as string[] | undefined) ?? [])
   const [menu, setMenu] = useState<{ x: number; y: number; row: TreeEntry } | null>(null)
@@ -1066,7 +1087,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
       return {
         queryKey: ['unplaced', String(typeRow?.id ?? ''), token],
         enabled: Boolean(typeRow?.id) && shown,
-        queryFn: () => api<Json>(`/v1/types/${typeRow?.id}/unplaced?structure=${encodeURIComponent(token)}`),
+        queryFn: () => api.get('/v1/types/{id}/unplaced', { params: { path: { id: String(typeRow?.id) }, query: { structure: token } } }),
       }
     }),
   })
@@ -1149,7 +1170,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
     setEditing(null)
     try {
       const result = await stageModel(name, args)
-      const id = String(result.proposal_id ?? result.id ?? '')
+      const id = operationId(result)
       if (id && name.includes('delete')) {
         publishProposal(id)
         session.setProposalId(id)
@@ -1400,7 +1421,7 @@ export function StructureTree({ session, view }: { session: Session; view: View 
 
 
 function BatchLog() {
-  const history = useQuery({ queryKey: ['batches'], queryFn: () => api<Json>('/v1/history?limit=50') })
+  const history = useQuery({ queryKey: ['batches'], queryFn: () => api.get('/v1/history', { params: { query: { limit: 50 } } }) })
   const rows = (history.data?.changes as Json[]) ?? []
   return (
     <div className="timeline" data-testid="batch-log">
@@ -1438,32 +1459,26 @@ async function persistWorkspaceMigration(
   patch: { name?: string; views: Array<{ id: string; title: string; state: Json }> },
 ) {
   if (patch.name && patch.name !== workspace.name) {
-    await api('/v1/workspaces', {
-      method: 'POST',
-      body: JSON.stringify({
+    await api.post('/v1/workspaces', { body: {
         id: workspace.id,
         name: patch.name,
         locked: workspace.locked,
         share_token: workspace.share_token,
-        layout: workspace.layout ?? { tabs: [] },
-      }),
-    })
+        layout: freeObject(workspace.layout ?? { tabs: [] }),
+      } })
   }
   for (const view of patch.views) {
-    const full = workspace.views.find((item) => item.id === view.id)
+    const full = viewRows(workspace.views).find((item) => item.id === view.id)
     if (!full) continue
-    await api('/v1/views', {
-      method: 'POST',
-      body: JSON.stringify({
+    await api.post('/v1/views', { body: {
         id: full.id,
         workspace_id: workspace.id,
         type: full.type,
         title: view.title,
         pane: full.pane ?? 'center',
         position: full.position ?? 0,
-        state: view.state,
-      }),
-    })
+        state: freeObject(view.state),
+      } })
   }
 }
 

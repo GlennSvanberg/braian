@@ -67,6 +67,10 @@ demo-3:
 openapi:
     cargo run -p braian-server -- openapi --out docs/api/openapi.json
 
+# Skriv apps/web/src/api/schema.d.ts från den committade specen.
+openapi-ts:
+    pnpm --dir apps/web exec openapi-typescript ../../docs/api/openapi.json -o src/api/schema.d.ts
+
 # Fas 3: HTTP-latens mot ett direkt store-anrop, tung nivå.
 api-latency:
     cargo run -p braian-bench --release -- api-latency

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Json } from './api'
+import { api, jsonRecord, type Json } from './api'
 import { onAttributeAction, type AttributeAction } from './attribute-actions'
 import { rowsFromCatalog, rowsFromDefinitions, type AttributeDefinitionRow, type AttributeFlags } from './attribute-rows'
 import { formatCount } from './format'
@@ -28,11 +28,11 @@ const KINDS: Array<[string, string]> = [
 
 export function AttributeDefinitions() {
   const queryClient = useQueryClient()
-  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api<Json>('/v1/model/draft') })
+  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
+  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api.get('/v1/model/draft') })
   const listed = useQuery({
     queryKey: ['attribute-definitions'],
-    queryFn: () => api<Json>('/v1/operations/model.list_attribute_definitions', { method: 'POST', body: '{}' }),
+    queryFn: () => api.post('/v1/operations/{name}', { params: { path: { name: "model.list_attribute_definitions" } }, body: {} }),
   })
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState('')
@@ -48,12 +48,13 @@ export function AttributeDefinitions() {
     void queryClient.invalidateQueries({ queryKey: ['model-draft'] })
   }), [queryClient])
 
-  const preview = draft.data?.conflict === true ? undefined : (draft.data?.definitions as Json | undefined)
+  const preview = draft.data?.conflict === true ? undefined : jsonRecord(draft.data?.definitions) ?? undefined
+  const catalog = jsonRecord(listed.data) ?? undefined
   const defs = preview ?? stored.data
   const rows = useMemo(() => {
-    const source = preview ? rowsFromDefinitions(preview, listed.data) : rowsFromCatalog(listed.data)
+    const source = preview ? rowsFromDefinitions(preview, catalog) : rowsFromCatalog(catalog)
     return source.sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key))
-  }, [preview, listed.data])
+  }, [preview, catalog])
 
   const filteredBase = useMemo(() => {
     const needle = query.trim().toLowerCase()

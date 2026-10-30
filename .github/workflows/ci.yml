@@ -23,6 +23,7 @@ jobs:
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             case "$f" in
+              docs/api/*) code=true; break ;;
               docs/*|*.md|apps/landing/*) ;;
               *) code=true; break ;;
             esac
@@ -92,6 +93,7 @@ jobs:
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             case "$f" in
+              docs/api/*) code=true; break ;;
               docs/*|*.md|apps/landing/*) ;;
               *) code=true; break ;;
             esac
@@ -131,6 +133,7 @@ jobs:
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             case "$f" in
+              docs/api/*) code=true; break ;;
               docs/*|*.md|apps/landing/*) ;;
               *) code=true; break ;;
             esac
@@ -259,6 +262,9 @@ jobs:
       - name: Typecheck and unit tests
         run: |
           pnpm install --frozen-lockfile
+          root="$(git rev-parse --show-toplevel)"
+          pnpm --dir apps/web exec openapi-typescript "$root/docs/api/openapi.json" -o /tmp/schema.d.ts
+          diff -u "$root/apps/web/src/api/schema.d.ts" /tmp/schema.d.ts
           pnpm --dir apps/web exec tsc --noEmit
           pnpm --dir apps/web exec vitest run
           pnpm --dir apps/landing exec tsc --noEmit

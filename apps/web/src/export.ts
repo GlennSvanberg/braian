@@ -1,4 +1,4 @@
-import { api } from './api'
+import { ApiError, api, client, type Schemas } from './api'
 
 export type ExportColumnInput = { id: string; header: string }
 
@@ -44,8 +44,7 @@ export function exportPayload(input: {
   return body
 }
 
-type JobBody = { mode?: string; id?: string; status?: string; total?: number }
-type JobRun = { status?: string; log?: string }
+type ExportJob = Schemas['ExportJob']
 
 const POLL_MS = 2_000
 const TIMEOUT_MS = 30 * 60 * 1000
@@ -56,15 +55,22 @@ function sleep(ms: number): Promise<void> {
 
 /** Inline file, or a job whose progress arrives on `/v1/stream` and whose file is downloaded after. */
 export async function runExport(body: ExportRequest): Promise<Blob> {
-  const result = await api<Blob | JobBody>('/v1/export', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-  if (result instanceof Blob) return result
-  const id = result.id
-  if (!id) throw new Error('Export did not start')
-  await waitForJob(id)
-  return api<Blob>(`/v1/exports/${id}`)
+  const result = await client.POST('/v1/export', { body, parseAs: 'blob' })
+  if (!result.response.ok) {
+    const body = result.error
+    const detail = body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
+      ? body.detail
+      : result.response.statusText
+    throw new ApiError(result.response.status, detail, body ?? null)
+  }
+  const type = result.response.headers.get('content-type') ?? ''
+  const file = result.data
+  if (!file) throw new Error('Export did not start')
+  if (!type.includes('json')) return file
+  const job = JSON.parse(await file.text()) as ExportJob
+  if (!job.id) throw new Error('Export did not start')
+  await waitForJob(job.id)
+  return api.get('/v1/exports/{id}', { params: { path: { id: job.id } }, parseAs: 'blob' })
 }
 
 async function waitForJob(id: string): Promise<void> {
@@ -85,7 +91,7 @@ async function waitForJob(id: string): Promise<void> {
     for (;;) {
       if (Date.now() - started > TIMEOUT_MS) throw new Error('Export timed out')
       if (sse === 'failed') throw new Error('Export failed')
-      const job = await api<JobRun>(`/v1/jobs/${id}`)
+      const job = await api.get('/v1/jobs/{id}', { params: { path: { id } } })
       if (job.status === 'succeeded' || sse === 'succeeded') return
       if (job.status === 'failed') throw new Error(job.log || 'Export failed')
       await sleep(POLL_MS)

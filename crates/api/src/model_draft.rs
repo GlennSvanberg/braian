@@ -19,6 +19,7 @@ use braian_store::{Actor, BatchKind, Error, PrincipalKind};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::auth::{Auth, Identity};
@@ -27,9 +28,10 @@ use crate::model_proposal::{consequence, model_status};
 use crate::problem::{Problem, store_status};
 use crate::state::AppState;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct DraftBody {
     #[serde(default)]
+    #[schema(value_type = Vec<crate::http_schema::ModelStep>)]
     pub steps: Vec<ModelChange>,
     /// Drops the step at this index. Cannot be combined with `steps`.
     #[serde(default)]
@@ -38,10 +40,11 @@ pub struct DraftBody {
     #[serde(default)]
     pub operation: Option<String>,
     #[serde(default)]
+    #[schema(value_type = Option<crate::http_schema::FreeObject>)]
     pub args: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SaveBody {
     #[serde(default)]
     pub dry_run: bool,

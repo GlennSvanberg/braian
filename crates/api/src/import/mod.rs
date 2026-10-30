@@ -17,6 +17,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::auth::{Auth, Identity, Role};
@@ -809,34 +810,36 @@ fn failed_workbook(
     workbook.save_to_buffer().map_err(|error| error.to_string())
 }
 
-#[derive(Deserialize)]
-struct SheetBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SheetBody {
     sheet_index: usize,
 }
 
-#[derive(Deserialize)]
-struct RemapBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct RemapBody {
     #[serde(rename = "type")]
     type_key: String,
     id_column: Option<String>,
     columns: Option<Vec<ColumnBody>>,
 }
 
-#[derive(Deserialize)]
-struct ColumnBody {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ColumnBody {
     col: usize,
     target: String,
 }
 
-#[derive(Deserialize)]
-struct RowQuery {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct RowQuery {
     offset: Option<i64>,
     limit: Option<i64>,
     status: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct SaveBody {
+#[derive(Deserialize, ToSchema)]
+#[schema(as = ImportSaveBody)]
+pub(crate) struct SaveBody {
     #[serde(default)]
     skip_failed: bool,
 }

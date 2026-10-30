@@ -1,4 +1,4 @@
-import { api, keepaliveJsonPut } from './api'
+import { api, freeObject, keepaliveJsonPut } from './api'
 import { LAYOUT_ENVIRONMENT } from './workspace-doc'
 import type { AppliedQualifier } from './fields/qualifiers'
 import { columnIdOf, defaultColumnIdsForType, parseColumnId } from './fields/columns'
@@ -161,14 +161,16 @@ export function columnPrefsUrl(viewId: string) {
 }
 
 export function fetchColumnPrefs(viewId: string) {
-  return api<ColumnPrefsResponse>(columnPrefsUrl(viewId))
+  return api.get('/v1/views/{view_id}/column-prefs', {
+    params: { path: { view_id: viewId }, query: { environment: LAYOUT_ENVIRONMENT } },
+  })
 }
 
 export function saveColumnPrefs(viewId: string, document: ColumnPrefsDocument) {
-  return api(columnPrefsUrl(viewId), {
-    method: 'PUT',
+  return api.put('/v1/views/{view_id}/column-prefs', {
+    params: { path: { view_id: viewId } },
     keepalive: true,
-    body: JSON.stringify({ environment: LAYOUT_ENVIRONMENT, document }),
+    body: { environment: LAYOUT_ENVIRONMENT, document: freeObject(document) },
   })
 }
 

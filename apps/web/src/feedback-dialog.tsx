@@ -68,15 +68,12 @@ export function FeedbackDialog({
     setError('')
     void (async () => {
       try {
-        await api('/v1/feedback', {
-          method: 'POST',
-          body: JSON.stringify({
+        await api.post('/v1/feedback', { body: {
             message: trimmed,
             context,
             log: includeLog ? logSnapshot : null,
             screenshot: includeScreenshot ? capture?.screenshot ?? null : null,
-          }),
-        })
+          } })
         toast.success('Feedback sent')
         onClose()
       } catch (reason: unknown) {

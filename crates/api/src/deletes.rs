@@ -8,9 +8,10 @@ use axum::response::{IntoResponse, Response};
 use braian_model::{ModelChange, purge_for};
 use braian_rules::CompiledModel;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DryRun {
     #[serde(default)]
     pub dry_run: bool,

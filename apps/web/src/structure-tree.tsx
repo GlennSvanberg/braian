@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
-import { ApiError, api, type Json } from './api'
+import { ApiError, api, operationId, type Json } from './api'
 import { formatCount } from './format'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu'
@@ -126,7 +126,7 @@ export function StructureSection({
         <NameField
           label={copy.newStructure}
           inputRef={nameRef}
-          onCommit={(name) => commitName(name, (key, label) => api('/v1/structures:create', { method: 'POST', body: JSON.stringify({ key, label }) }).then(() => undefined))}
+          onCommit={(name) => commitName(name, (key, label) => api.post('/v1/structures:create', { body: { key, label } }).then(() => undefined))}
           onCancel={() => setDraft(null)}
         />
       ) : null}
@@ -146,7 +146,7 @@ export function StructureSection({
                       setNotice(copy.nameRequired)
                       return
                     }
-                    void run(() => api(`/v1/structures/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify({ label }) }).then(() => undefined))
+                    void run(() => api.patch('/v1/structures/{id}', { params: { path: { id: key } }, body: { label } }).then(() => undefined))
                   }}
                   onCancel={() => setDraft(null)}
                 />
@@ -183,7 +183,7 @@ export function StructureSection({
                 <NameField
                   label={copy.addChild}
                   inputRef={nameRef}
-                  onCommit={(name) => commitName(name, (groupKey, label) => api(`/v1/structures/${encodeURIComponent(key)}/groups`, { method: 'POST', body: JSON.stringify({ key: groupKey, label }) }).then(() => undefined))}
+                  onCommit={(name) => commitName(name, (groupKey, label) => api.post('/v1/structures/{id}/groups', { params: { path: { id: key } }, body: { key: groupKey, label } }).then(() => undefined))}
                   onCancel={() => setDraft(null)}
                 />
               </DraftRow>
@@ -203,10 +203,7 @@ export function StructureSection({
                 expandGroup(key, parent)
                 editName({ kind: 'group', structure: key, parent })
               }}
-              onCreate={(parent, name) => commitName(name, (groupKey, label) => api(`/v1/structures/${encodeURIComponent(key)}/groups`, {
-                method: 'POST',
-                body: JSON.stringify({ key: groupKey, label, parent }),
-              }).then(() => undefined))}
+              onCreate={(parent, name) => commitName(name, (groupKey, label) => api.post('/v1/structures/{id}/groups', { params: { path: { id: key } }, body: { key: groupKey, label, parent } }).then(() => undefined))}
               onRename={(group, label) => editName({ kind: 'rename-group', structure: key, group, value: label })}
               onRenameKey={(group) => editName({ kind: 'rename-group-key', structure: key, group, value: group })}
               onRenameCommit={(group, name) => {
@@ -215,7 +212,7 @@ export function StructureSection({
                   setNotice(copy.nameRequired)
                   return
                 }
-                void run(() => api(`/v1/structures/${encodeURIComponent(key)}/groups/${encodeURIComponent(group)}`, { method: 'PATCH', body: JSON.stringify({ label }) }).then(() => undefined))
+                void run(() => api.patch('/v1/structures/{id}/groups/{group}', { params: { path: { id: key, group: group } }, body: { label } }).then(() => undefined))
               }}
               onMove={(group, label, parentKey) => setDialog({ kind: 'move', structure: key, group, label, parent: parentKey ?? '', error: '' })}
               onDelete={(group) => void run(() => proposeKey('model.delete_group', { structure: key, group }))}
@@ -234,19 +231,20 @@ export function StructureSection({
           if (!dialog || busy) return
           if (dialog.kind === 'move') {
             const parent = dialog.parent || null
-            void run(() => api(`/v1/structures/${encodeURIComponent(dialog.structure)}/groups/${encodeURIComponent(dialog.group)}/parent`, {
-              method: 'POST',
-              body: JSON.stringify({ parent }),
-            }).then(() => undefined))
+            void run(() => api.post('/v1/structures/{id}/groups/{group}/parent', { params: { path: { id: dialog.structure, group: dialog.group } }, body: { parent } }).then(() => undefined))
             return
           }
           if (dialog.kind === 'delete-structure') {
-            void run(() => api(`/v1/structures/${encodeURIComponent(dialog.structure)}`, { method: 'DELETE' }).then(() => undefined))
+            void run(() => api.delete('/v1/structures/{id}', { params: { path: { id: dialog.structure } } }).then(() => undefined))
             return
           }
           const group = dialog.group ?? ''
-          const query = dialog.moveTo ? `?move_to=${encodeURIComponent(dialog.moveTo)}` : ''
-          void run(() => api(`/v1/structures/${encodeURIComponent(dialog.structure)}/groups/${encodeURIComponent(group)}${query}`, { method: 'DELETE' }).then(() => undefined))
+          void run(() => api.delete('/v1/structures/{id}/groups/{group}', {
+            params: {
+              path: { id: dialog.structure, group },
+              ...(dialog.moveTo ? { query: { move_to: dialog.moveTo } } : {}),
+            },
+          }).then(() => undefined))
         }}
       />
     </section>
@@ -317,11 +315,8 @@ function GroupList({
                     const next = name.trim()
                     setDraft(null)
                     if (!next || next === node.key) return
-                    void api<Json>('/v1/operations/model.rename_group_key', {
-                      method: 'POST',
-                      body: JSON.stringify({ structure, group: node.key, new_key: next }),
-                    }).then(async (result) => {
-                      const id = String(result.proposal_id ?? result.id ?? '')
+                    void api.post('/v1/operations/{name}', { params: { path: { name: "model.rename_group_key" } }, body: { structure, group: node.key, new_key: next } }).then(async (result) => {
+                      const id = operationId(result)
                       if (!id) return
                       const { publishProposal } = await import('./proposal-bus')
                       publishProposal(id)

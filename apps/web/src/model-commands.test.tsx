@@ -10,7 +10,14 @@ import { ObjectTypesTable } from './model-tables'
 
 const stageModel = vi.hoisted(() => vi.fn(() => Promise.resolve({})))
 const openModelDialog = vi.hoisted(() => vi.fn())
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 
 vi.mock('./model-stage', async () => {
   const actual = await vi.importActual<typeof import('./model-stage')>('./model-stage')
@@ -19,7 +26,7 @@ vi.mock('./model-stage', async () => {
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 const definitions = {
@@ -73,8 +80,7 @@ function Host() {
 
 describe('model table context menu', () => {
   beforeEach(() => {
-    api.mockReset()
-    api.mockImplementation((path: string) => {
+    mock.use((path) => {
       if (path === '/v1/definitions') return Promise.resolve(definitions)
       if (path === '/v1/model/draft') return Promise.resolve({ count: 0, conflict: false, steps: [] })
       return Promise.resolve({})
