@@ -18,7 +18,17 @@ import { diffLines, historyTitle, isCreate, proposedValues, relativeTime, source
 import { formatCount, formatMeasure, formatTimestamp } from './format'
 import { PathMenu, type ListedPath } from './path-picker'
 import { publishFieldsHost } from './fields-host'
-import { fieldCatalogForType } from './fields/catalog'
+import { fieldCatalogForType, withSystemViewFields } from './fields/catalog'
+import { SortableColumnHeader } from './sortable-column-header'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { SortableContext, arrayMove, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, type ViewColumn } from './fields/columns'
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
@@ -51,7 +61,7 @@ import { RecordSection } from './record-section'
 import { groupKeyOf, labelCodes, labelSearchFilter, publishSelectionLabels, SELECTION_APPLIED_EVENT, selectionMatchesType } from './assortment-filter'
 import { appendPathFilter, objectTableFilter } from './table-filter'
 import { dispatchUi, onUi } from './ui-bus'
-import { enrichSelection, publishColumns, publishSelection, publishTable } from './ui-context'
+import { enrichSelection, publishActiveColumn, publishColumns, publishSelection, publishTable } from './ui-context'
 
 export type PanesSession = {
   group: string | null
@@ -153,6 +163,8 @@ export function ObjectTable({
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
+  /** dataUpdatedAt we last applied; re-apply when invalidate lands a newer fetch. */
+  const prefsAppliedAt = useRef(0)
   const prefsSnapshot = useRef<string | null>(null)
   const latestPrefsDocument = useRef<ColumnPrefsDocument | null>(null)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -183,7 +195,10 @@ export function ObjectTable({
       { document },
       {
         onSuccess: () => {
-          if (prefsSaveGen.current === gen) prefsDirtyRef.current = false
+          if (prefsSaveGen.current !== gen) return
+          prefsDirtyRef.current = false
+          // dataUpdatedAt latch in the apply effect re-applies after onSettled's
+          // invalidate (isMutating === 1), including other tabs' writes.
         },
       },
     )
@@ -294,13 +309,17 @@ export function ObjectTable({
 
 
   useEffect(() => {
-    if (prefsApplied.current || prefs.isPending) return
+    if (prefs.isPending || prefs.isFetching) return
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     // Local edits and in-flight saves win over a refetch that landed mid-edit.
     if (prefsDirtyRef.current) return
     if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
+    const updatedAt = prefs.dataUpdatedAt ?? 0
+    // Same snapshot we already applied (unless onVisible/onSuccess cleared the latch).
+    if (prefsApplied.current && prefsAppliedAt.current === updatedAt) return
     prefsApplied.current = true
+    prefsAppliedAt.current = updatedAt
     const applied =
       prefs.isSuccess
         ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
@@ -322,7 +341,7 @@ export function ObjectTable({
       }
     }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
+  }, [prefs.isPending, prefs.isFetching, prefs.isSuccess, prefs.data, prefs.dataUpdatedAt, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id, queryClient])
 
   // Other tabs' saves: when this tab becomes visible again and is clean, drop the
   // one-shot latch and invalidate so React Query refetches and apply can run.
@@ -330,7 +349,13 @@ export function ObjectTable({
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
-      if (prefsDirtyRef.current) return
+      // Hidden before the mutate timer: only keepalive ran and dirty stayed true, so
+      // we would never sync other tabs. Finish via TanStack mutate (clears dirty on
+      // success; onSettled still invalidates when isMutating === 1).
+      if (prefsDirtyRef.current) {
+        flushPrefsRef.current()
+        return
+      }
       if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
       prefsApplied.current = false
       void queryClient.invalidateQueries({ queryKey: columnPrefsQueryKey(view.id) })
@@ -492,6 +517,9 @@ export function ObjectTable({
   useEffect(() => {
     publishColumns(view.id, all.map((id) => ({ id, header: columnHeader(id), hidden: hidden.includes(id) })))
   }, [columnStamp, view.id])
+  useEffect(() => {
+    publishActiveColumn(view.id, activeColumn || null)
+  }, [activeColumn, view.id])
   const exportVisible = () => {
     const body = exportPayload({
       columns: columnDefs,
@@ -557,8 +585,22 @@ export function ObjectTable({
     if (event.name === 'ui.hide_column') setHidden((current) => [...new Set([...current, String(args.column ?? args.id ?? '')])])
     if (event.name === 'ui.move_column') {
       const from = String(args.from ?? args.column ?? '')
-      const to = String(args.to ?? '')
       if (!from) return
+      const direction = String(args.direction ?? '')
+      if (direction === 'left' || direction === 'right') {
+        const delta = direction === 'left' ? -1 : 1
+        setOrder((current) => {
+          const next = current.includes(from) ? [...current] : [...current, from]
+          const at = next.indexOf(from)
+          const to = Math.min(next.length - 1, Math.max(0, at + delta))
+          if (at === to) return next
+          next.splice(at, 1)
+          next.splice(to, 0, from)
+          return next
+        })
+        return
+      }
+      const to = String(args.to ?? '')
       setOrder((current) => {
         const next = current.filter((item) => item !== from)
         const at = to ? next.indexOf(to) : next.length
@@ -705,7 +747,7 @@ export function ObjectTable({
     })
   }
 
-  const onHeaderMenu = (column: string, event: ReactMouseEvent<HTMLDivElement>) => {
+  const onHeaderMenu = (column: string, event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
     setActiveColumn(column)
@@ -1046,7 +1088,10 @@ export function ObjectTable({
   }
 
   
-  const catalog = useMemo(() => fieldCatalogForType(defs.data ?? {}, typeKey), [defs.data, typeKey])
+  const catalog = useMemo(
+    () => withSystemViewFields(fieldCatalogForType(defs.data ?? {}, typeKey), systemColumns),
+    [defs.data, typeKey, systemColumns],
+  )
   const viewColumns: ViewColumn[] = useMemo(() => {
     const cols: ViewColumn[] = []
     for (const id of shown) {
@@ -1142,6 +1187,22 @@ export function ObjectTable({
     return () => publishFieldsHost(null)
   }, [typeKey, catalog, viewColumns, byIndex, groupedRows, groupBy, pathValues.data, defs.data])
 
+  const columnSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  )
+  const onColumnDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const from = String(active.id)
+    const to = String(over.id)
+    setOrder((current) => {
+      const oldIndex = current.indexOf(from)
+      const newIndex = current.indexOf(to)
+      if (oldIndex < 0 || newIndex < 0) return current
+      return arrayMove(current, oldIndex, newIndex)
+    })
+  }
+
   const resolvedWidths: Record<string, number> = {}
   for (const id of shown) {
     resolvedWidths[id] = sizes[id] ?? columnFor(id).size
@@ -1213,68 +1274,47 @@ export function ObjectTable({
           openMenuFromKeyboard(event.target)
         }}
       >
-        <div className="head">
-          {shown.map((id) => {
-            const column = columnFor(id)
-            const width = resolvedWidths[id] ?? sizes[id] ?? column.size
-            return (
-              <div
-                key={id}
-                className="cell"
-                style={{ width, minWidth: width, maxWidth: width }}
-                data-testid={`col-${id}`}
-                data-column={id}
-                onClick={() => setActiveColumn(id)}
-                onContextMenu={(event) => onHeaderMenu(id, event)}
-              >
-                <button
-                  className="icon-btn column-header-btn"
-                  draggable
-                  title={column.header}
-                  onDragStart={(event) => event.dataTransfer.setData('text/column', id)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    const from = event.dataTransfer.getData('text/column')
-                    if (!from || from === id) return
-                    setOrder((current) => {
-                      const next = current.filter((item) => item !== from)
-                      const at = next.indexOf(id)
-                      next.splice(at < 0 ? next.length : at, 0, from)
-                      return next
-                    })
-                  }}
-                  onClick={() => {
-                    if (!column.sort) return
-                    const desc = sort === `${column.sort}:asc` ? 'desc' : 'asc'
-                    setSort(`${column.sort}:${desc}`)
-                  }}
-                >
-                  {column.header}
-                </button>
-                <span
-                  className="icon-btn"
-                  data-testid={`resize-${id}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    const startX = event.clientX
-                    const base = width
-                    const move = (moveEvent: MouseEvent) => {
-                      setSizes((current) => ({ ...current, [id]: Math.max(120, base + moveEvent.clientX - startX) }))
-                    }
-                    const up = () => {
-                      window.removeEventListener('mousemove', move)
-                      window.removeEventListener('mouseup', up)
-                    }
-                    window.addEventListener('mousemove', move)
-                    window.addEventListener('mouseup', up)
-                  }}
-                >
-                  |
-                </span>
-              </div>
-            )
-          })}
-        </div>
+        <DndContext sensors={columnSensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
+          <SortableContext items={shown} strategy={horizontalListSortingStrategy}>
+            <div className="head">
+              {shown.map((id) => {
+                const column = columnFor(id)
+                const width = resolvedWidths[id] ?? sizes[id] ?? column.size
+                return (
+                  <SortableColumnHeader
+                    key={id}
+                    id={id}
+                    width={width}
+                    header={column.header}
+                    sortable={Boolean(column.sort)}
+                    onActivate={() => setActiveColumn(id)}
+                    onSort={() => {
+                      if (!column.sort) return
+                      const desc = sort === `${column.sort}:asc` ? 'desc' : 'asc'
+                      setSort(`${column.sort}:${desc}`)
+                    }}
+                    onContextMenu={(event) => onHeaderMenu(id, event)}
+                    onResizeStart={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      const startX = event.clientX
+                      const base = width
+                      const move = (moveEvent: MouseEvent) => {
+                        setSizes((current) => ({ ...current, [id]: Math.max(120, base + moveEvent.clientX - startX) }))
+                      }
+                      const up = () => {
+                        window.removeEventListener('mousemove', move)
+                        window.removeEventListener('mouseup', up)
+                      }
+                      window.addEventListener('mousemove', move)
+                      window.addEventListener('mouseup', up)
+                    }}
+                  />
+                )
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
         {groupBy ? (
           <div style={{ flex: 'none' }}>
             {(() => {

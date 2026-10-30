@@ -365,6 +365,138 @@ describe('ObjectTable column prefs', () => {
   })
 
 
+  it('after keepalive-only hide, becoming visible flushes mutate and syncs other tabs', async () => {
+    // Keepalive PUT: plain headers object. TanStack mutate (api): Headers instance.
+    // Hide after dirty is set but before the 0ms timer fires → only keepalive, dirty stuck.
+    let releaseHang!: () => void
+    const hangGate = new Promise<void>((resolve) => {
+      releaseHang = resolve
+    })
+    let serverDoc: ColumnPrefsResponse = prefsDocument
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/column-prefs')) {
+          if ((init?.method ?? 'GET').toUpperCase() === 'PUT') {
+            if (init?.headers instanceof Headers) await hangGate
+            return json({ document: {} })
+          }
+          return json(serverDoc)
+        }
+        if (url.includes('/attribute-paths')) return json({ paths, system_columns: systemColumns })
+        if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
+        if (url.includes('/v1/definitions')) {
+          return json({
+            languages: ['en'],
+            types: [
+              {
+                id: product,
+                key: 'product',
+                labels: { en: 'Product' },
+                singular: { en: 'Product' },
+                plural: { en: 'Products' },
+                key_attribute: 'sku',
+                attributes: [],
+              },
+            ],
+            attributes: [],
+            structures: [],
+          })
+        }
+        if (url.includes('/v1/assortments')) return json({ assortments: [] })
+        if (url.includes('/v1/proposals')) return json({ pending: { total: 0 } })
+        if (url.includes('/v1/views')) return json({})
+        return json({})
+      }),
+    )
+
+    render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
+    const previous = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    try {
+      // Layout effect sets dirty + schedules 0ms timer; act does not flush that timer.
+      act(() => {
+        dispatchUi('ui.hide_column', { column: 'sku' })
+      })
+      // Clear the pending timer via keepalive hide before the mutate runs.
+      act(() => {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'hidden',
+        })
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      await waitFor(() => {
+        const keepalive = vi.mocked(fetch).mock.calls.find(
+          ([input, init]) =>
+            String(input).includes('/column-prefs') &&
+            (init?.method ?? 'GET').toUpperCase() === 'PUT' &&
+            !(init?.headers instanceof Headers),
+        )
+        expect(keepalive).toBeTruthy()
+      })
+      expect(
+        vi.mocked(fetch).mock.calls.some(
+          ([input, init]) =>
+            String(input).includes('/column-prefs') &&
+            (init?.method ?? 'GET').toUpperCase() === 'PUT' &&
+            init?.headers instanceof Headers,
+        ),
+      ).toBe(false)
+
+      serverDoc = {
+        document: {
+          version: 2,
+          columns: [
+            { path: 'sku', visible: false },
+            { path: 'name', visible: false },
+            { path: 'weight', visible: true, stale: true },
+            { path: 'packaging>name', visible: true },
+            { path: 'type', visible: false },
+            { path: 'version', visible: true },
+          ],
+        },
+        stale_paths: ['weight'],
+      }
+
+      act(() => {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'visible',
+        })
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+
+      await waitFor(() => {
+        expect(
+          vi.mocked(fetch).mock.calls.some(
+            ([input, init]) =>
+              String(input).includes('/column-prefs') &&
+              (init?.method ?? 'GET').toUpperCase() === 'PUT' &&
+              init?.headers instanceof Headers,
+          ),
+        ).toBe(true)
+      })
+      expect(headerIds().includes('col-type')).toBe(true)
+
+      releaseHang()
+
+      await waitFor(() => {
+        expect(headerIds().includes('col-type')).toBe(false)
+      })
+      expect(headerIds().includes('col-sku')).toBe(false)
+      expect(headerIds()).toContain('col-packaging>name')
+      expect(headerIds()).toContain('col-version')
+    } finally {
+      releaseHang()
+      if (previous) Object.defineProperty(document, 'visibilityState', previous)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    }
+  })
+
   it('does not keepalive-PUT on hide when this tab has no unsaved prefs', async () => {
     render(<PrefsTable />)
     await waitFor(() =>
@@ -434,6 +566,44 @@ describe('ObjectTable column prefs', () => {
 
 
   it('writes the hidden column into the query cache after a 2xx PUT', async () => {
+    let stored: ColumnPrefsResponse = prefsDocument
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/column-prefs')) {
+          if ((init?.method ?? 'GET').toUpperCase() === 'PUT') {
+            stored = { document: JSON.parse(String(init?.body)).document }
+            return json(stored)
+          }
+          return json(stored)
+        }
+        if (url.includes('/attribute-paths')) return json({ paths, system_columns: systemColumns })
+        if (url.includes('/v1/search')) return json({ found: 0, hits: [] })
+        if (url.includes('/v1/definitions')) {
+          return json({
+            languages: ['en'],
+            types: [
+              {
+                id: product,
+                key: 'product',
+                labels: { en: 'Product' },
+                singular: { en: 'Product' },
+                plural: { en: 'Products' },
+                key_attribute: 'sku',
+                attributes: [],
+              },
+            ],
+            attributes: [],
+            structures: [],
+          })
+        }
+        if (url.includes('/v1/assortments')) return json({ assortments: [] })
+        if (url.includes('/v1/proposals')) return json({ pending: { total: 0 } })
+        if (url.includes('/v1/views')) return json({})
+        return json({})
+      }),
+    )
     render(<PrefsTable />)
     await waitFor(() =>
       expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
