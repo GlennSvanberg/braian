@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent , useLayoutEffect, useRef} from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
 import { MetaChip, optionLabel, statusTone, typeLabel, type ChipTone } from './chips'
@@ -94,6 +94,12 @@ export function CommandPalette({
 }) {
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<'list' | 'ai' | 'fields'>(fieldsMode || ai ? (fieldsMode ? 'fields' : 'ai') : 'list')
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Focus before paint so the first key after Ctrl+K is not lost to a microtask race.
+  useLayoutEffect(() => {
+    if (mode === 'fields') return
+    inputRef.current?.focus()
+  }, [mode])
   const [fieldsHost, setFieldsHost] = useState(() => readFieldsHost())
   useEffect(() => subscribeFieldsHost(() => setFieldsHost(readFieldsHost())), [])
   useEffect(() => {
@@ -875,6 +881,7 @@ export function CommandPalette({
         <div className="palette-query">
           {mode === 'ai' ? <span className="ai-badge" data-testid="ai-badge">AI</span> : null}
           <CommandInput
+            ref={inputRef}
             data-testid="palette-input"
             autoFocus
             value={query}

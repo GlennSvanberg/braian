@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
 import { api, freeObject, jsonRecord, keepaliveJsonPut, operationId, recordTitle, textValue, type Json } from './api'
@@ -135,6 +136,8 @@ export function Shell() {
   const [liveState, setLiveState] = useState('closed')
   const [statusLine, setStatusLine] = useState<string>(copy.activity)
   const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai' | 'fields'>(null)
+  /** Bumped on every Ctrl+K / palette:search so list opens at root even if mode was already list. */
+  const [paletteEpoch, setPaletteEpoch] = useState(0)
   const [fieldsEditColumnId, setFieldsEditColumnId] = useState<string | null>(null)
   useEffect(() => {
     const close = () => setPaletteMode(null)
@@ -299,7 +302,12 @@ export function Shell() {
 
   useEffect(() => {
     const stops = [
-      registerCommandRunner('palette:search', () => setPaletteMode('list')),
+      registerCommandRunner('palette:search', () => {
+        setFieldsEditColumnId(null)
+        setPaletteStartAddView(false)
+        setPaletteMode('list')
+        setPaletteEpoch((value) => value + 1)
+      }),
 
       registerCommandRunner('feedback:send', () => openFeedback()),
       registerCommandRunner('layout:reset_layout', () => applyRef.current('reset_layout', {})),
@@ -492,11 +500,15 @@ export function Shell() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         event.stopPropagation()
-        setPaletteMode('list')
-        // Steal focus from Detail / other inputs so the next keystroke hits the palette.
-        queueMicrotask(() => {
-          document.querySelector<HTMLInputElement>('[data-testid="palette-input"], [data-testid="fields-mode-input"]')?.focus()
+        // Remount at list root (clears Fields › / stack left from Select fields ›) and
+        // focus synchronously so the first typed character is not dropped.
+        flushSync(() => {
+          setFieldsEditColumnId(null)
+          setPaletteStartAddView(false)
+          setPaletteMode('list')
+          setPaletteEpoch((value) => value + 1)
         })
+        document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')?.focus()
         return
       }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
@@ -926,7 +938,7 @@ export function Shell() {
               fieldsMode={paletteMode === 'fields'}
               fieldsEditColumnId={fieldsEditColumnId}
               onFieldsConsumed={() => setFieldsEditColumnId(null)}
-          key={`${paletteMode}:${paletteStartAddView ? 'add-view' : 'root'}`}
+          key={`${paletteMode}:${paletteEpoch}:${paletteStartAddView ? 'add-view' : 'root'}`}
           ai={paletteMode === 'ai'}
           session={session}
           workspaces={orderedWorkspaces}
