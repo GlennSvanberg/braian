@@ -1995,3 +1995,17 @@ button[aria-disabled="true"]:hover,
   justify-content: flex-start;
 }
 /* Header cells use the same width/min/max as body cells (inline); do not floor at 120. */
+
+.column-not-sortable .column-header-btn-static {
+  cursor: default;
+}
+.column-sort-indicator {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.head-skeleton .cell {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  border-radius: 2px;
+  color: transparent;
+  user-select: none;
+}

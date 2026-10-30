@@ -5,12 +5,17 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
+import { copy } from './i18n'
+
+export type HeaderSortState = 'asc' | 'desc' | false
 
 type Props = {
   id: string
   width: number
   header: string
+  /** Typesense can sort this column. */
   sortable: boolean
+  sortState: HeaderSortState
   onActivate: () => void
   onSort: () => void
   onContextMenu: (event: ReactMouseEvent<HTMLElement>) => void
@@ -22,6 +27,7 @@ export function SortableColumnHeader({
   width,
   header,
   sortable,
+  sortState,
   onActivate,
   onSort,
   onContextMenu,
@@ -37,20 +43,30 @@ export function SortableColumnHeader({
     opacity: isDragging ? 0.85 : undefined,
     zIndex: isDragging ? 2 : undefined,
   }
+  const title = sortable
+    ? header
+    : `${header} — ${copy.columnNotSortable}`
+  const indicator =
+    sortState === 'asc' ? ' ↑' : sortState === 'desc' ? ' ↓' : ''
   return (
     <div
       ref={setNodeRef}
-      className="cell"
+      className={`cell${sortable ? '' : ' column-not-sortable'}`}
       style={style}
       data-testid={`col-${id}`}
       data-column={id}
+      data-sortable={sortable ? 'true' : 'false'}
+      aria-sort={
+        sortState === 'asc' ? 'ascending' : sortState === 'desc' ? 'descending' : 'none'
+      }
       onClick={onActivate}
       onContextMenu={onContextMenu}
     >
       <button
         type="button"
-        className="icon-btn column-header-btn"
-        title={header}
+        className={`icon-btn column-header-btn${sortable ? '' : ' column-header-btn-static'}`}
+        title={title}
+        aria-label={sortable ? header : `${header} (${copy.columnNotSortable})`}
         {...attributes}
         {...listeners}
         onClick={(event) => {
@@ -61,6 +77,11 @@ export function SortableColumnHeader({
         }}
       >
         {header}
+        {sortable && indicator ? (
+          <span className="column-sort-indicator" aria-hidden="true">
+            {indicator}
+          </span>
+        ) : null}
       </button>
       <span
         className="icon-btn"

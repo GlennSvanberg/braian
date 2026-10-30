@@ -588,12 +588,18 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       if (editingColumn) {
         onReplaceColumn(editingColumn.id, col)
         setEditingColumn(col)
+        // Edit field may change the row label; keep the filter so Enter repeats.
       } else {
         onToggleColumn(col)
       }
-      // Stay on this fields list; clear the filter and highlight the toggled field
-      setQuery('')
-      setActive(frame.fields.findIndex((item) => item.id === field.id))
+      // Keep filter + highlight so Enter, Enter toggles the same field.
+      // (Re-adding still appends last in the table — Glenn's rule — but the list stays put.)
+      const needle = query.trim().toLowerCase()
+      const filtered = frame.fields.filter(
+        (item) => !needle || `${item.name} ${item.typeLabel}`.toLowerCase().includes(needle),
+      )
+      const at = filtered.findIndex((item) => item.id === field.id)
+      setActive(at >= 0 ? at : 0)
     }
   }
 
