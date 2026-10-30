@@ -26,7 +26,12 @@ export type SavedView = {
 export type WorkspaceMigration = {
   changed: boolean
   name?: string
-  views: Array<{ id: string; title: string; state: Json }>
+  /** Existing views to PATCH (title/state, and optionally type when converting a legacy pane). */
+  views: Array<{ id: string; title: string; state: Json; type?: string }>
+  /** New views to create (Data model standard tables). */
+  create?: Array<{ id: string; type: string; title: string; state: Json; pane?: string; position?: number }>
+  /** Replacement workspace layout when the view set changed. */
+  layout?: unknown
 }
 
 const GENERIC_TITLES = new Set(['objects'])
@@ -115,7 +120,7 @@ export function isGenericObjectTitle(title: string) {
 }
 
 export function migrateSavedWorkspace(
-  _workspace: { name: string },
+  _workspace: { name: string; share_token?: string | null },
   views: SavedView[],
   types: TypeName[],
 ): WorkspaceMigration {
