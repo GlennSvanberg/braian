@@ -721,19 +721,19 @@ export function Shell() {
         await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
         // Template reset replaces the layout; drop any personal/local doc so tabs
         // show the new Structures / Object types set instead of Model / Preview.
-        if (patch.layout && userId) {
+        if (patch.layout) {
           const next = canonicalDoc({
             id: current.id,
             name: current.name,
             layout: patch.layout,
             owner_id: current.owner_id,
           })
-          writeLayoutStore(layoutStorageKey(userId, current.id), next)
+          if (userId) writeLayoutStore(layoutStorageKey(userId, current.id), next)
           docRef.current = next
           dirtyRef.current = false
           setDoc(next)
           canonicalRef.current = next.layout
-          loadedFor.current = `${userId}:${current.id}`
+          if (userId) loadedFor.current = `${userId}:${current.id}`
         }
       })
       .catch(() => {
@@ -1521,7 +1521,7 @@ async function persistWorkspaceMigration(
         name: patch.name ?? workspace.name,
         locked: workspace.locked,
         share_token: workspace.share_token,
-        layout: freeObject(layout),
+        layout: freeObject(layout && typeof layout === 'object' ? layout : { tabs: [] }),
       } })
   }
   for (const view of patch.views) {
