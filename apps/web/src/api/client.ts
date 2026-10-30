@@ -74,12 +74,14 @@ type Ok<T> = T extends { data: infer D; error?: never } ? D : never
 type Media = `${string}/json`
 type Method = 'get' | 'post' | 'put' | 'patch' | 'delete'
 type PathsWith<M extends Method> = {
-  [P in keyof paths]: paths[P][M] extends { responses: unknown } ? P : never
+  [P in keyof paths]: paths[P] extends { [K in M]: unknown } ? P : never
 }[keyof paths]
-type RequiredKeys<T> = {
-  [K in keyof T]-?: Record<string, never> extends Pick<T, K> ? never : K
-}[keyof T]
-type InitOf<Init> = RequiredKeys<Init> extends never ? [init?: Init] : [init: Init]
+type RequiredKeysOfHelper<T> = { [K in keyof T]: {} extends Pick<T, K> ? never : K }[keyof T]
+type RequiredKeysOf<T> = RequiredKeysOfHelper<T> extends undefined ? never : RequiredKeysOfHelper<T>
+/** Same shape as openapi-fetch's init tuple, so a call can pass it straight through. */
+type InitParam<Init> = RequiredKeysOf<Init> extends never
+  ? [(Init & { [key: string]: unknown })?]
+  : [Init & { [key: string]: unknown }]
 type Op<Path extends keyof paths, M extends Method> = NonNullable<paths[Path][M]>
 type Data<Path extends keyof paths, M extends Method, Init> = Ok<FetchResponse<Op<Path, M>, Init, Media>>
 
@@ -93,37 +95,37 @@ async function settle<T extends Settled>(pending: Promise<T>): Promise<Ok<T>> {
 
 export function get<Path extends PathsWith<'get'>, Init extends MaybeOptionalInit<paths[Path], 'get'>>(
   path: Path,
-  ...init: InitOf<Init>
+  ...init: InitParam<Init>
 ): Promise<Data<Path, 'get', Init>> {
-  return settle(client.GET(path, ...(init as unknown as never[]))) as Promise<Data<Path, 'get', Init>>
+  return settle(client.GET<Path, Init>(path, ...init))
 }
 
 export function post<Path extends PathsWith<'post'>, Init extends MaybeOptionalInit<paths[Path], 'post'>>(
   path: Path,
-  ...init: InitOf<Init>
+  ...init: InitParam<Init>
 ): Promise<Data<Path, 'post', Init>> {
-  return settle(client.POST(path, ...(init as unknown as never[]))) as Promise<Data<Path, 'post', Init>>
+  return settle(client.POST<Path, Init>(path, ...init))
 }
 
 export function put<Path extends PathsWith<'put'>, Init extends MaybeOptionalInit<paths[Path], 'put'>>(
   path: Path,
-  ...init: InitOf<Init>
+  ...init: InitParam<Init>
 ): Promise<Data<Path, 'put', Init>> {
-  return settle(client.PUT(path, ...(init as unknown as never[]))) as Promise<Data<Path, 'put', Init>>
+  return settle(client.PUT<Path, Init>(path, ...init))
 }
 
 export function patch<Path extends PathsWith<'patch'>, Init extends MaybeOptionalInit<paths[Path], 'patch'>>(
   path: Path,
-  ...init: InitOf<Init>
+  ...init: InitParam<Init>
 ): Promise<Data<Path, 'patch', Init>> {
-  return settle(client.PATCH(path, ...(init as unknown as never[]))) as Promise<Data<Path, 'patch', Init>>
+  return settle(client.PATCH<Path, Init>(path, ...init))
 }
 
 export function del<Path extends PathsWith<'delete'>, Init extends MaybeOptionalInit<paths[Path], 'delete'>>(
   path: Path,
-  ...init: InitOf<Init>
+  ...init: InitParam<Init>
 ): Promise<Data<Path, 'delete', Init>> {
-  return settle(client.DELETE(path, ...(init as unknown as never[]))) as Promise<Data<Path, 'delete', Init>>
+  return settle(client.DELETE<Path, Init>(path, ...init))
 }
 
 /** Fire-and-forget JSON PUT that survives tab close. */
