@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import type { Json } from './api'
 import {
   MODEL_WORKSPACE_VIEW_SPECS,
   isKnownViewType,
@@ -76,7 +75,7 @@ describe('legacy data model workspace migration', () => {
         id: view.id,
         type: view.type,
         title: view.title,
-        state: view.state as Json,
+        state: view.state,
       })),
     ]
     const again = migrateLegacyModelViews({ share_token: 'braian-model' }, nextViews)
@@ -126,5 +125,37 @@ describe('legacy data model workspace migration', () => {
     const again = { changed: againObject.changed || againModel.changed }
     // Shell only calls persist when patch.changed is true.
     expect(again.changed).toBe(false)
+  })
+
+  it('keeps user-added panes outside the legacy set', () => {
+    const withCustom = [
+      ...legacyViews,
+      { id: 'v-notes', type: 'embed', title: 'My notes', state: { url: 'https://example.com' } },
+    ]
+    const patch = migrateLegacyModelViews({ share_token: 'braian-model' }, withCustom, {
+      newId: () => 'new-extra',
+    })
+    expect(patch.changed).toBe(true)
+    const layoutText = JSON.stringify(patch.layout)
+    expect(layoutText).toContain('v-notes')
+    expect(withCustom.find((view) => view.id === 'v-notes')?.title).toBe('My notes')
+  })
+
+  it('reports no change for an already modern workspace (persist must not run)', () => {
+    const modern = [
+      { id: 's', type: 'data_model', title: 'Structures', state: { mode: 'tree' } },
+      { id: 'o', type: 'object_types', title: 'Object types', state: {} },
+      { id: 'l', type: 'link_types', title: 'Link types', state: {} },
+      { id: 'vl', type: 'value_lists', title: 'Value lists', state: {} },
+      { id: 'u', type: 'units', title: 'Units', state: {} },
+      { id: 'ta', type: 'data_model', title: 'Type attributes', state: { mode: 'classes' } },
+    ]
+    expect(needsLegacyModelMigration({ share_token: 'braian-model' }, modern)).toBe(false)
+    const patch = migrateLegacyModelViews({ share_token: 'braian-model' }, modern)
+    // Shell only calls persistWorkspaceMigration when patch.changed is true.
+    expect(patch.changed).toBe(false)
+    expect(patch.views).toEqual([])
+    expect(patch.create ?? []).toEqual([])
+    expect(patch.layout).toBeUndefined()
   })
 })

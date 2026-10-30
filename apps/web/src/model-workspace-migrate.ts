@@ -41,10 +41,13 @@ export function isKnownViewType(type: string) {
 }
 
 export function modelWorkspaceLayout(ids: string[]): Node {
+  const extras = ids.slice(MODEL_WORKSPACE_VIEW_SPECS.length).filter(Boolean)
   return splitPair(
     'horizontal',
     0.22,
-    tabGroup([ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[3] ?? '', ids[5] ?? ''].filter(Boolean)),
+    tabGroup(
+      [ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[3] ?? '', ids[5] ?? '', ...extras].filter(Boolean),
+    ),
     splitPair(
       'horizontal',
       0.55,
@@ -141,7 +144,7 @@ export function migrateLegacyModelViews(
 
   const pushUpdate = (id: string, spec: (typeof MODEL_WORKSPACE_VIEW_SPECS)[number], previous: SavedView) => {
     orderedIds.push(id)
-    const state = { ...(spec.type === previous.type ? previous.state ?? {} : {}), ...spec.state } as Json
+    const state: Json = { ...(spec.type === previous.type ? previous.state ?? {} : {}), ...spec.state }
     const typeChanged = previous.type !== spec.type
     const titleChanged = previous.title !== spec.title
     const stateChanged = JSON.stringify(previous.state ?? {}) !== JSON.stringify(state)
@@ -162,7 +165,7 @@ export function migrateLegacyModelViews(
       id,
       type: spec.type,
       title: spec.title,
-      state: { ...spec.state } as Json,
+      state: { ...spec.state },
       pane: 'main',
       position: orderedIds.length - 1,
     })
@@ -195,6 +198,14 @@ export function migrateLegacyModelViews(
       continue
     }
     pushCreate(spec)
+  }
+
+  // Keep panes the user added (embeds, extra tables). Do not re-home leftover
+  // unused legacy Model/Preview clones — those are replaced by the specs above.
+  for (const view of views) {
+    if (used.has(view.id)) continue
+    if (isLegacyPreviewView(view) || isLegacyModelNavView(view)) continue
+    orderedIds.push(view.id)
   }
 
   return {
