@@ -1,4 +1,3 @@
-import type { Json } from './api'
 import { splitPair, tabGroup, type Node } from './layout'
 import type { SavedView, WorkspaceMigration } from './type-labels'
 
@@ -41,13 +40,10 @@ export function isKnownViewType(type: string) {
 }
 
 export function modelWorkspaceLayout(ids: string[]): Node {
-  const extras = ids.slice(MODEL_WORKSPACE_VIEW_SPECS.length).filter(Boolean)
   return splitPair(
     'horizontal',
     0.22,
-    tabGroup(
-      [ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[3] ?? '', ids[5] ?? '', ...extras].filter(Boolean),
-    ),
+    tabGroup([ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', ids[3] ?? '', ids[5] ?? ''].filter(Boolean)),
     splitPair(
       'horizontal',
       0.55,
@@ -72,25 +68,6 @@ export function isLegacyPreviewView(view: SavedView) {
   return mode === 'card' || mode === 'editor' || titleOf(view) === 'preview'
 }
 
-/** Old type-attributes pane (still data_model, mode classes). */
-export function isTypeAttributesView(view: SavedView) {
-  if (view.type !== 'data_model') return false
-  const mode = modeOf(view)
-  if (mode === 'classes' || mode === 'attributes') return true
-  return titleOf(view) === 'attributes' || titleOf(view) === 'type attributes'
-}
-
-/**
- * Old ModelNav tree pane. Before #99 the template titled it "Model" with mode
- * `tree`; the Structures tree kept the same type with title "Structures".
- */
-export function isLegacyModelNavView(view: SavedView) {
-  if (view.type !== 'data_model') return false
-  if (isLegacyPreviewView(view) || isTypeAttributesView(view)) return false
-  if (modeOf(view) === 'impact') return false
-  return titleOf(view) === 'model' || modeOf(view) === 'tree' || modeOf(view) === ''
-}
-
 export function needsLegacyModelMigration(
   workspace: { share_token?: string | null; name?: string },
   views: SavedView[],
@@ -106,9 +83,9 @@ export function needsLegacyModelMigration(
 type ModelMigration = Pick<WorkspaceMigration, 'changed' | 'views' | 'create' | 'layout'>
 
 /**
- * Rewrite a pre-#99 Data model workspace onto the standard tables.
- * Keeps the Structures tree and Type attributes panes; converts Preview into a
- * table view when possible; adds any missing standard tables; rebuilds layout.
+ * Replace a pre-#99 Data model workspace with the current standard template.
+ * User panes and column prefs are not preserved (personal layouts can be reset).
+ * Idempotent: once `object_types` exists, this is a no-op.
  */
 export function migrateLegacyModelViews(
   workspace: { share_token?: string | null; name?: string },
@@ -120,97 +97,23 @@ export function migrateLegacyModelViews(
   }
 
   const newId = options?.newId ?? (() => crypto.randomUUID())
-  const updates: WorkspaceMigration['views'] = []
-  const create: NonNullable<WorkspaceMigration['create']> = []
-  const used = new Set<string>()
-
-  const take = (predicate: (view: SavedView) => boolean): SavedView | undefined => {
-    const found = views.find((view) => !used.has(view.id) && predicate(view))
-    if (found) used.add(found.id)
-    return found
-  }
-
-  const structures =
-    take((view) => view.type === 'data_model' && titleOf(view) === 'structures')
-    ?? take((view) => view.type === 'data_model' && titleOf(view) === 'model')
-    ?? take((view) => view.type === 'data_model' && modeOf(view) === 'tree')
-    ?? take((view) => view.type === 'data_model' && !isLegacyPreviewView(view) && !isTypeAttributesView(view))
-
-  const classes = take(isTypeAttributesView)
-  const attributeDefinitions = take((view) => view.type === 'attribute_definitions')
-  let convertible = take(isLegacyPreviewView)
-
   const orderedIds: string[] = []
-
-  const pushUpdate = (id: string, spec: (typeof MODEL_WORKSPACE_VIEW_SPECS)[number], previous: SavedView) => {
-    orderedIds.push(id)
-    const state: Json = { ...(spec.type === previous.type ? previous.state ?? {} : {}), ...spec.state }
-    const typeChanged = previous.type !== spec.type
-    const titleChanged = previous.title !== spec.title
-    const stateChanged = JSON.stringify(previous.state ?? {}) !== JSON.stringify(state)
-    if (typeChanged || titleChanged || stateChanged) {
-      updates.push({
-        id,
-        title: spec.title,
-        state,
-        ...(typeChanged ? { type: spec.type } : {}),
-      })
-    }
-  }
-
-  const pushCreate = (spec: (typeof MODEL_WORKSPACE_VIEW_SPECS)[number]) => {
+  const create: NonNullable<WorkspaceMigration['create']> = MODEL_WORKSPACE_VIEW_SPECS.map((spec, index) => {
     const id = newId()
     orderedIds.push(id)
-    create.push({
+    return {
       id,
       type: spec.type,
       title: spec.title,
       state: { ...spec.state },
       pane: 'main',
-      position: orderedIds.length - 1,
-    })
-  }
-
-  for (const spec of MODEL_WORKSPACE_VIEW_SPECS) {
-    if (spec.type === 'data_model' && spec.state.mode === 'tree') {
-      if (structures) pushUpdate(structures.id, spec, structures)
-      else pushCreate(spec)
-      continue
+      position: index,
     }
-    if (spec.type === 'data_model' && spec.state.mode === 'classes') {
-      if (classes) pushUpdate(classes.id, spec, classes)
-      else pushCreate(spec)
-      continue
-    }
-    if (spec.type === 'attribute_definitions') {
-      if (attributeDefinitions) pushUpdate(attributeDefinitions.id, spec, attributeDefinitions)
-      else pushCreate(spec)
-      continue
-    }
-    const existing = take((view) => view.type === spec.type)
-    if (existing) {
-      pushUpdate(existing.id, spec, existing)
-      continue
-    }
-    if (convertible) {
-      pushUpdate(convertible.id, spec, convertible)
-      convertible = undefined
-      continue
-    }
-    pushCreate(spec)
-  }
-
-  // Keep panes the user added (embeds, extra tables). Do not re-home leftover
-  // unused legacy Model/Preview clones — those are replaced by the specs above.
-  for (const view of views) {
-    if (used.has(view.id)) continue
-    if (isLegacyPreviewView(view) || isLegacyModelNavView(view)) continue
-    orderedIds.push(view.id)
-  }
+  })
 
   return {
     changed: true,
-    views: updates,
+    views: [],
     create,
     layout: modelWorkspaceLayout(orderedIds),
   }

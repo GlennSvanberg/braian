@@ -6,7 +6,6 @@ import {
   migrateLegacyModelViews,
   needsLegacyModelMigration,
 } from './model-workspace-migrate'
-import { migrateSavedWorkspace, typeNames } from './type-labels'
 import { workspaceTemplates } from './templates'
 
 const legacyViews = [
@@ -35,113 +34,26 @@ describe('legacy data model workspace migration', () => {
     expect(needsLegacyModelMigration({ share_token: 'braian-model' }, modern)).toBe(false)
   })
 
-  it('rewrites Model/Preview into Structures and standard tables', () => {
+  it('resets a legacy workspace onto the standard template views', () => {
     let n = 0
     const patch = migrateLegacyModelViews({ share_token: 'braian-model' }, legacyViews, {
       newId: () => `new-${++n}`,
     })
     expect(patch.changed).toBe(true)
-    expect(patch.views.find((view) => view.id === 'v-model')).toMatchObject({
-      title: 'Structures',
-      state: { mode: 'tree' },
-    })
-    expect(patch.views.find((view) => view.id === 'v-attrs')).toMatchObject({
-      title: 'Type attributes',
-      state: { mode: 'classes' },
-    })
-    expect(patch.views.find((view) => view.id === 'v-preview')).toMatchObject({
-      type: 'object_types',
-      title: 'Object types',
-    })
-    const createdTypes = (patch.create ?? []).map((view) => view.type)
-    expect(createdTypes).toEqual(['link_types', 'value_lists', 'value_list_values', 'units'])
+    expect(patch.views).toEqual([])
+    expect((patch.create ?? []).map((view) => view.type)).toEqual(
+      MODEL_WORKSPACE_VIEW_SPECS.map((view) => view.type),
+    )
+    expect((patch.create ?? []).map((view) => view.title)).toEqual(
+      MODEL_WORKSPACE_VIEW_SPECS.map((view) => view.title),
+    )
     expect(patch.layout).toBeTruthy()
     const layoutText = JSON.stringify(patch.layout)
-    expect(layoutText).toContain('v-model')
-    expect(layoutText).toContain('v-preview')
     expect(layoutText).toContain('new-1')
+    expect(layoutText).toContain('new-8')
   })
 
-  it('preserves Structures and is idempotent on the second pass', () => {
-    const first = migrateLegacyModelViews({ share_token: 'braian-model' }, legacyViews, {
-      newId: () => 'created-id',
-    })
-    const nextViews = [
-      { id: 'v-model', type: 'data_model', title: 'Structures', state: { mode: 'tree' } },
-      { id: 'v-attrs', type: 'data_model', title: 'Type attributes', state: { mode: 'classes' } },
-      { id: 'v-preview', type: 'object_types', title: 'Object types', state: {} },
-      { id: 'v-defs', type: 'attribute_definitions', title: 'Attribute definitions', state: {} },
-      ...(first.create ?? []).map((view) => ({
-        id: view.id,
-        type: view.type,
-        title: view.title,
-        state: view.state,
-      })),
-    ]
-    const again = migrateLegacyModelViews({ share_token: 'braian-model' }, nextViews)
-    expect(again.changed).toBe(false)
-    expect(again.views).toEqual([])
-    expect(again.create ?? []).toEqual([])
-    expect(again.layout).toBeUndefined()
-    expect(nextViews.find((view) => view.id === 'v-model')?.title).toBe('Structures')
-  })
-
-  it('marks unknown view types and keeps known ones', () => {
-    expect(isKnownViewType('object_types')).toBe(true)
-    expect(isKnownViewType('data_model')).toBe(true)
-    expect(isKnownViewType('model_nav')).toBe(false)
-    expect(isKnownViewType('preview')).toBe(false)
-  })
-
-  it('save-back only when the composed migration reports a change', () => {
-    const types = typeNames({
-      types: [{ id: '200', key: 'product', labels: { en: 'Product' } }],
-    })
-    const objectPatch = migrateSavedWorkspace({ name: 'Data model', share_token: 'braian-model' }, legacyViews, types)
-    const modelPatch = migrateLegacyModelViews({ share_token: 'braian-model' }, legacyViews, {
-      newId: () => 'x',
-    })
-    const first = {
-      changed: objectPatch.changed || modelPatch.changed,
-      create: modelPatch.create,
-      layout: modelPatch.layout,
-    }
-    expect(first.changed).toBe(true)
-    expect(first.create?.length).toBeGreaterThan(0)
-    expect(first.layout).toBeTruthy()
-
-    const migratedViews = [
-      { id: 'v-model', type: 'data_model', title: 'Structures', state: { mode: 'tree' } },
-      { id: 'v-attrs', type: 'data_model', title: 'Type attributes', state: { mode: 'classes' } },
-      { id: 'v-preview', type: 'object_types', title: 'Object types', state: {} },
-      { id: 'v-defs', type: 'attribute_definitions', title: 'Attribute definitions', state: {} },
-      { id: 'a', type: 'link_types', title: 'Link types', state: {} },
-      { id: 'b', type: 'value_lists', title: 'Value lists', state: {} },
-      { id: 'c', type: 'value_list_values', title: 'List values', state: {} },
-      { id: 'd', type: 'units', title: 'Units', state: {} },
-    ]
-    const againObject = migrateSavedWorkspace({ name: 'Data model', share_token: 'braian-model' }, migratedViews, types)
-    const againModel = migrateLegacyModelViews({ share_token: 'braian-model' }, migratedViews)
-    const again = { changed: againObject.changed || againModel.changed }
-    // Shell only calls persist when patch.changed is true.
-    expect(again.changed).toBe(false)
-  })
-
-  it('keeps user-added panes outside the legacy set', () => {
-    const withCustom = [
-      ...legacyViews,
-      { id: 'v-notes', type: 'embed', title: 'My notes', state: { url: 'https://example.com' } },
-    ]
-    const patch = migrateLegacyModelViews({ share_token: 'braian-model' }, withCustom, {
-      newId: () => 'new-extra',
-    })
-    expect(patch.changed).toBe(true)
-    const layoutText = JSON.stringify(patch.layout)
-    expect(layoutText).toContain('v-notes')
-    expect(withCustom.find((view) => view.id === 'v-notes')?.title).toBe('My notes')
-  })
-
-  it('reports no change for an already modern workspace (persist must not run)', () => {
+  it('is a no-op once object_types exists (persist must not run)', () => {
     const modern = [
       { id: 's', type: 'data_model', title: 'Structures', state: { mode: 'tree' } },
       { id: 'o', type: 'object_types', title: 'Object types', state: {} },
@@ -152,10 +64,16 @@ describe('legacy data model workspace migration', () => {
     ]
     expect(needsLegacyModelMigration({ share_token: 'braian-model' }, modern)).toBe(false)
     const patch = migrateLegacyModelViews({ share_token: 'braian-model' }, modern)
-    // Shell only calls persistWorkspaceMigration when patch.changed is true.
     expect(patch.changed).toBe(false)
     expect(patch.views).toEqual([])
     expect(patch.create ?? []).toEqual([])
     expect(patch.layout).toBeUndefined()
+  })
+
+  it('marks unknown view types and keeps known ones', () => {
+    expect(isKnownViewType('object_types')).toBe(true)
+    expect(isKnownViewType('data_model')).toBe(true)
+    expect(isKnownViewType('model_nav')).toBe(false)
+    expect(isKnownViewType('preview')).toBe(false)
   })
 })
