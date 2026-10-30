@@ -113,7 +113,8 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
         await page.getByTestId('fields-mode-input').fill(key === 'number' ? 'Number' : 'Brand')
         const row = page.getByTestId(`fields-row-${key}`)
         await expect(row).toBeVisible()
-        if ((await page.getByTestId(`fields-check-${key}`).count()) === 0) {
+        const ensureCheck = page.getByTestId(`fields-check-${key}`)
+        if ((await ensureCheck.getAttribute('aria-checked')) !== 'true') {
           await row.click()
         }
         await page.keyboard.press('Escape')
@@ -151,24 +152,20 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
     await row.hover()
     await expect(row).toHaveAttribute('data-active', 'true')
 
-    const wasChecked = (await page.getByTestId('fields-check-brand').count()) > 0
+    const brandCheck = page.getByTestId('fields-check-brand')
+    await expect(brandCheck).toBeVisible()
+    const wasChecked = (await brandCheck.getAttribute('aria-checked')) === 'true'
     await page.keyboard.press('Enter')
     await expect(input).toHaveValue('Brand')
     await expect(row).toHaveAttribute('data-active', 'true')
-    if (wasChecked) {
-      await expect(page.getByTestId('fields-check-brand')).toHaveCount(0)
-    } else {
-      await expect(page.getByTestId('fields-check-brand')).toBeVisible()
-    }
+    await expect(brandCheck).toHaveAttribute('aria-checked', wasChecked ? 'false' : 'true')
+    await expect(brandCheck).toHaveAttribute('data-state', wasChecked ? 'unchecked' : 'checked')
 
     await page.keyboard.press('Enter')
     await expect(input).toHaveValue('Brand')
     await expect(row).toHaveAttribute('data-active', 'true')
-    if (wasChecked) {
-      await expect(page.getByTestId('fields-check-brand')).toBeVisible()
-    } else {
-      await expect(page.getByTestId('fields-check-brand')).toHaveCount(0)
-    }
+    await expect(brandCheck).toHaveAttribute('aria-checked', wasChecked ? 'true' : 'false')
+    await expect(brandCheck).toHaveAttribute('data-state', wasChecked ? 'checked' : 'unchecked')
   })
 
   test('prefs GET 500 seeds defaults; Fields › toggle keeps other columns', async ({ page }) => {
@@ -226,11 +223,18 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
     await expect(label).toBeVisible()
     await label.hover()
     await expect(label).toHaveAttribute('data-active', 'true')
+    const check = page.getByTestId('fields-check-label')
+    // Same checked indicator as top-level: always present with aria-checked + data-state.
+    await expect(check).toBeVisible()
+    await expect(check).toHaveAttribute('aria-checked', 'false')
+    await expect(check).toHaveAttribute('data-state', 'unchecked')
+
     await page.keyboard.press('Enter')
 
     await expect(input).toHaveValue('lab')
     await expect(label).toHaveAttribute('data-active', 'true')
-    await expect(page.getByTestId('fields-check-label')).toBeVisible()
+    await expect(check).toHaveAttribute('aria-checked', 'true')
+    await expect(check).toHaveAttribute('data-state', 'checked')
     // Column visible behind the palette
     await expect(page.locator('.head [data-testid^="col-nutriscore.label"]')).toBeVisible()
 
@@ -238,7 +242,8 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
     await page.keyboard.press('Enter')
     await expect(input).toHaveValue('lab')
     await expect(label).toHaveAttribute('data-active', 'true')
-    await expect(page.getByTestId('fields-check-label')).toHaveCount(0)
+    await expect(check).toHaveAttribute('aria-checked', 'false')
+    await expect(check).toHaveAttribute('data-state', 'unchecked')
     await expect(page.locator('.head [data-testid^="col-nutriscore.label"]')).toHaveCount(0)
   })
 
