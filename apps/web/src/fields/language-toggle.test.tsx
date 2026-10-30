@@ -43,7 +43,7 @@ describe('FieldsMode language completion', () => {
     const onReplaceColumn = vi.fn()
     render(
       <FieldsMode
-        open={{}}
+        open={{ kind: 'browse' }}
         columns={[existing!]}
         fields={[description]}
         onClose={() => undefined}
