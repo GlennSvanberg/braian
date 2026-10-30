@@ -170,4 +170,40 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
       await expect(page.getByTestId('fields-check-brand')).toHaveCount(0)
     }
   })
+
+  test('prefs GET 500 seeds defaults; Fields › toggle keeps other columns', async ({ page }) => {
+    await page.route('**/v1/views/**/column-prefs**', async (route: Route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ status: 500, contentType: 'text/plain', body: 'prefs unavailable' })
+        return
+      }
+      await route.continue()
+    })
+
+    await login(page)
+    await openProducts(page)
+    await expect(page.getByTestId('column-prefs-load-error')).toBeVisible()
+    await expect(page.getByTestId('column-prefs-load-error')).toContainText(/Couldn't load saved view/i)
+
+    const before = await headerIds(page).count()
+    expect(before).toBeGreaterThan(1)
+    await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
+
+    await openFieldsPalette(page)
+    const input = page.getByTestId('fields-mode-input')
+    await input.fill('Brand')
+    const row = page.getByTestId('fields-row-brand')
+    await expect(row).toBeVisible()
+    await row.hover()
+    await expect(row).toHaveAttribute('data-active', 'true')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Escape')
+
+    // Without the fix, order was [] and the toggle collapsed the table to Brand alone.
+    await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
+    const after = await headerIds(page).count()
+    expect(after).toBeGreaterThan(1)
+    await expect(page.getByTestId('column-prefs-load-error')).toBeVisible()
+  })
+
 })

@@ -136,6 +136,7 @@ export const copy = {
   graph: 'Graph',
   columns: 'Columns',
   selectFields: 'Select fields',
+  columnPrefsLoadError: "Couldn't load saved view, showing defaults",
   groupBy: 'Group',
   filter: 'Filter',
   filterBy: 'Filter by',

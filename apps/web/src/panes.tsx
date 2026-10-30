@@ -156,6 +156,7 @@ export function ObjectTable({
   const [selected, setSelected] = useState<string[]>([])
   const [hidden, setHidden] = useState<string[]>([])
   const [prefsReady, setPrefsReady] = useState(false)
+  const [prefsLoadFailed, setPrefsLoadFailed] = useState(false)
   // Single current row. Click and arrows both write this; the detail object follows it.
   const [active, setActive] = useState(-1)
   // The active cell's column, by key. Left and Right move it; the keyboard menu acts on it.
@@ -326,17 +327,8 @@ export function ObjectTable({
     if (prefsApplied.current && prefsAppliedAt.current === updatedAt) return
     prefsApplied.current = true
     prefsAppliedAt.current = updatedAt
-    const applied =
-      prefs.isSuccess
-        ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
-        : null
-    if (applied) {
-      setOrder(applied.order)
-      setHidden(applied.hidden)
-      // Align baseline so this apply does not schedule a PUT.
-      prefsSnapshot.current = JSON.stringify([applied.order, applied.hidden])
-    } else if (prefs.isSuccess && !prefs.data?.document) {
-      // No saved prefs row: defaults only after load (never as a flash).
+    const seedDefaults = () => {
+      // Same defaults as an empty prefs document (never flash before prefsReady).
       const viewOrder = (view.state as { table?: { order?: unknown } } | undefined)?.table?.order
       if (Array.isArray(viewOrder)) {
         const orderIds = viewOrder.map(String)
@@ -358,8 +350,27 @@ export function ObjectTable({
         prefsSnapshot.current = JSON.stringify([builtinIds, []])
       }
     }
+    const applied =
+      prefs.isSuccess
+        ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
+        : null
+    if (applied) {
+      setPrefsLoadFailed(false)
+      setOrder(applied.order)
+      setHidden(applied.hidden)
+      // Align baseline so this apply does not schedule a PUT.
+      prefsSnapshot.current = JSON.stringify([applied.order, applied.hidden])
+    } else if (prefs.isSuccess && !prefs.data?.document) {
+      // No saved prefs row: defaults only after load (never as a flash).
+      setPrefsLoadFailed(false)
+      seedDefaults()
+    } else if (prefs.isError) {
+      // Failed GET: seed defaults so Fields › / drag mutate a real order, not [].
+      setPrefsLoadFailed(true)
+      seedDefaults()
+    }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isFetching, prefs.isSuccess, prefs.data, prefs.dataUpdatedAt, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id, queryClient])
+  }, [prefs.isPending, prefs.isFetching, prefs.isSuccess, prefs.isError, prefs.data, prefs.dataUpdatedAt, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id, queryClient])
 
   // Other tabs' saves: when this tab becomes visible again and is clean, drop the
   // one-shot latch and invalidate so React Query refetches and apply can run.
@@ -1089,11 +1100,13 @@ export function ObjectTable({
   const showField = (path: string) => {
     // Completing a Fields qualify/specific path must never hide — only ensure visible + last.
     // Drop unit-siblings (e.g. First@g when showing First@kg) so one logical hop column remains.
-    setOrder((current) => [...current.filter((id) => !isUnitSibling(id, path)), path])
+    // orderBase: never mutate from [] when display fell back to builtins (prefs error).
+    setOrder((current) => [...orderBase(current).filter((id) => !isUnitSibling(id, path)), path])
     setHidden((current) => current.filter((id) => !isUnitSibling(id, path)))
   }
   const toggleField = (path: string) => {
-    const shownNow = order.includes(path) && !hidden.includes(path)
+    const base = orderBase(order)
+    const shownNow = base.includes(path) && !hidden.includes(path)
     if (shownNow) {
       setHidden((current) => [...new Set([...current, path])])
       return
@@ -1103,7 +1116,8 @@ export function ObjectTable({
   }
   const moveField = (path: string, delta: number) => {
     setOrder((current) => {
-      const next = current.includes(path) ? [...current] : [...current, path]
+      const base = orderBase(current)
+      const next = base.includes(path) ? [...base] : [...base, path]
       const at = next.indexOf(path)
       const to = Math.min(next.length - 1, Math.max(0, at + delta))
       if (at === to) return next
@@ -1158,12 +1172,13 @@ export function ObjectTable({
       },
       onReplaceColumn: (previousId, next) => {
         setOrder((current) => {
-          const prevAt = current.indexOf(previousId)
+          const base = orderBase(current)
+          const prevAt = base.indexOf(previousId)
           // Exact or unit-sibling of next already present: drop the edited one and
           // upgrade the sibling slot to next.id (e.g. First@g → First@kg).
-          const siblingAt = current.findIndex((id) => id !== previousId && isUnitSibling(id, next.id))
+          const siblingAt = base.findIndex((id) => id !== previousId && isUnitSibling(id, next.id))
           if (siblingAt >= 0 && previousId !== next.id) {
-            const withoutPrev = current.filter((id) => id !== previousId)
+            const withoutPrev = base.filter((id) => id !== previousId)
             const at = withoutPrev.findIndex((id) => isUnitSibling(id, next.id))
             if (at < 0) return withoutPrev
             const copy = [...withoutPrev]
@@ -1171,12 +1186,12 @@ export function ObjectTable({
             return copy.filter((id, index) => id !== next.id || index === at)
           }
           if (prevAt >= 0) {
-            const copy = [...current]
+            const copy = [...base]
             copy[prevAt] = next.id
             // Drop other unit-siblings of next; keep the replaced slot.
             return copy.filter((id, index) => index === prevAt || !isUnitSibling(id, next.id))
           }
-          return [...current.filter((id) => !isUnitSibling(id, next.id)), next.id]
+          return [...base.filter((id) => !isUnitSibling(id, next.id)), next.id]
         })
         setHidden((current) => current.filter((id) => id !== previousId && !isUnitSibling(id, next.id)))
       },
@@ -1222,10 +1237,11 @@ export function ObjectTable({
     const from = String(active.id)
     const to = String(over.id)
     setOrder((current) => {
-      const oldIndex = current.indexOf(from)
-      const newIndex = current.indexOf(to)
+      const next = orderBase(current)
+      const oldIndex = next.indexOf(from)
+      const newIndex = next.indexOf(to)
       if (oldIndex < 0 || newIndex < 0) return current
-      return arrayMove(current, oldIndex, newIndex)
+      return arrayMove(next, oldIndex, newIndex)
     })
   }
 
@@ -1263,6 +1279,11 @@ export function ObjectTable({
       filterValue={filter}
       onFilterChange={setFilter}
     >
+      {prefsLoadFailed ? (
+        <p className="warn" data-testid="column-prefs-load-error" role="status">
+          {copy.columnPrefsLoadError}
+        </p>
+      ) : null}
       <NewObject session={session} typeKey={typeKey} singular={bound?.singular} trigger="event" />
       <div
         className="toolbar-actions standard-table-filters"
