@@ -36,6 +36,7 @@ import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns
 import { columnPrefsMutationKey, columnPrefsQueryKey, useSaveColumnPrefs } from './column-prefs-mutation'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { cellPathValues, fetchPathValues } from './path-values'
+import { shouldHoldTablePaint } from './table-live-paint'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
@@ -440,6 +441,7 @@ export function ObjectTable({
   const probe = useQuery({
     queryKey: ['objects', queryText, filterBy, sortBy, groupField, 1],
     queryFn: () => loadPage(queryText, filterBy, sortBy, groupField, 1),
+    placeholderData: (previous) => previous,
   })
   const found = Number(probe.data?.found ?? 0)
   const virtualizer = useVirtualizer({
@@ -456,6 +458,7 @@ export function ObjectTable({
     queries: pages.map((page) => ({
       queryKey: ['objects', queryText, filterBy, sortBy, groupField, page],
       queryFn: () => loadPage(queryText, filterBy, sortBy, groupField, page),
+      placeholderData: (previous: Awaited<ReturnType<typeof loadPage>> | undefined) => previous,
     })),
   })
   const byIndex = new Map<number, ObjRow>()
@@ -955,7 +958,35 @@ export function ObjectTable({
     queryKey: ['path-values', typeKey, pathValueColumns, pageRowIds],
     queryFn: () => fetchPathValues({ ids: pageRowIds, paths: pathValueColumns, typeKey }),
     enabled: pathValueColumns.length > 0 && pageRowIds.length > 0 && Boolean(typeKey),
+    // Keep the last page of hop/localized cells while a live refresh refetches,
+    // so Description and Version can swap together instead of flashing '—'.
+    placeholderData: (previous) => previous,
   })
+  const pathValuesPending = pathValueColumns.length > 0 && pathValues.isPending && !pathValues.data
+  const objectsFetching = probe.isFetching || windows.some((result) => result.isFetching)
+  const pathBusy = pathValueColumns.length > 0 && pathValues.isFetching
+  // Hold Typesense hits and pathValues until both refreshes settle so a live
+  // edit does not paint Description a frame before Version (or the reverse).
+  const tableBusy = shouldHoldTablePaint({
+    hasPaintedData: Boolean(pathValues.data) || byIndex.size > 0,
+    objectsFetching,
+    pathBusy,
+  })
+  const stableTableRef = useRef<{
+    pathValues: typeof pathValues.data
+    byIndex: Map<number, ObjRow>
+    groupedRows: ObjRow[]
+  } | null>(null)
+  if (!tableBusy || !stableTableRef.current) {
+    stableTableRef.current = {
+      pathValues: pathValues.data,
+      byIndex: new Map(byIndex),
+      groupedRows: [...groupedRows],
+    }
+  }
+  const paintPathValues = tableBusy ? stableTableRef.current.pathValues : pathValues.data
+  const rowAtPainted = (index: number) =>
+    groupBy ? stableTableRef.current!.groupedRows[index] : stableTableRef.current!.byIndex.get(index)
   const isEditableColumn = (id: string) => {
     if (isHopPath(id)) return false
     const path = parseColumnId(id).path
@@ -967,7 +998,7 @@ export function ObjectTable({
   const cellDisplayText = (row: ObjRow, id: string) => {
     const apiPath = parseColumnId(id).path
     if (columnNeedsPathValues(id)) {
-      const values = cellPathValues(pathValues.data?.values?.[row.id], id)
+      const values = cellPathValues(paintPathValues?.values?.[row.id], id)
       return summarizePathValues(values).text
     }
     return readPathFromDoc(row.doc, defs.data, apiPath)
@@ -1051,10 +1082,10 @@ export function ObjectTable({
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
     if (columnNeedsPathValues(id)) {
-      const values = cellPathValues(pathValues.data?.values?.[row.id], id)
+      const values = cellPathValues(paintPathValues?.values?.[row.id], id)
       const summary = summarizePathValues(values)
       const testId = isHopPath(id) ? `hop-cell-${id}` : `path-cell-${id}`
-      const entries = cellPathValues(pathValues.data?.entries?.[row.id], id)
+      const entries = cellPathValues(paintPathValues?.entries?.[row.id], id)
       if (summary.text && entries?.some((e: { raw?: boolean }) => e.raw)) {
         return (
           <span data-testid={testId} title={`${summary.title} (unit not converted)`}>
@@ -1063,6 +1094,19 @@ export function ObjectTable({
         )
       }
       if (!summary.text) {
+        if (pathValuesPending) {
+          return (
+            <span
+              className="cell-loading"
+              data-testid={testId}
+              data-loading="true"
+              aria-busy="true"
+              aria-label={copy.loading}
+            >
+              …
+            </span>
+          )
+        }
         return (
           <span className="muted" data-testid={testId}>
             {EMPTY_CELL}
@@ -1343,6 +1387,7 @@ export function ObjectTable({
                     width={width}
                     header={column.header}
                     sortable={Boolean(column.sort)}
+                    active={activeColumn === id}
                     sortState={
                       column.sort && sort === `${column.sort}:asc`
                         ? 'asc'
@@ -1425,7 +1470,7 @@ export function ObjectTable({
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative', flex: 'none' }}>
             {visible.map((item) => {
-              const row = byIndex.get(item.index)
+              const row = rowAtPainted(item.index)
               if (!row) {
                 // No blank trailing row while a page is still loading.
                 return null
