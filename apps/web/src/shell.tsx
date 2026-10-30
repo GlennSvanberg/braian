@@ -41,6 +41,7 @@ import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
 import { healDataModelWorkspace, isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
+import { persistWorkspaceMigration } from './workspace-migration-persist'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
@@ -716,7 +717,11 @@ export function Shell() {
     }
     migratedRef.current.add(current.id)
     if (!patch.changed) return
-    void persistWorkspaceMigration(current, patch)
+    void persistWorkspaceMigration(current, patch, {
+      postView: (body) => api.post('/v1/views', { body }),
+      postWorkspace: (body) => api.post('/v1/workspaces', { body }),
+      freeObject,
+    })
       .then(async () => {
         await queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
         await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
@@ -1513,54 +1518,6 @@ function singularFromLive(raw: string, defs: Json | undefined) {
     return undefined
   }
 }
-
-async function persistWorkspaceMigration(
-  workspace: Workspace,
-  patch: {
-    name?: string
-    views: Array<{ id: string; title: string; state: Json; type?: string }>
-    create?: Array<{ id: string; type: string; title: string; state: Json; pane?: string; position?: number }>
-    layout?: unknown
-  },
-) {
-  // Create / update views before writing layout so a failed create cannot leave
-  // dangling view ids in the saved workspace layout (demo "Data model 8").
-  for (const view of patch.create ?? []) {
-    await api.post('/v1/views', { body: {
-        id: view.id,
-        workspace_id: workspace.id,
-        type: view.type,
-        title: view.title,
-        pane: view.pane ?? 'main',
-        position: view.position ?? 0,
-        state: freeObject(view.state),
-      } })
-  }
-  for (const view of patch.views) {
-    const full = viewRows(workspace.views).find((item) => item.id === view.id)
-    if (!full) continue
-    await api.post('/v1/views', { body: {
-        id: full.id,
-        workspace_id: workspace.id,
-        type: view.type ?? full.type,
-        title: view.title,
-        pane: full.pane ?? 'center',
-        position: full.position ?? 0,
-        state: freeObject(view.state),
-      } })
-  }
-  const layout = patch.layout ?? workspace.layout ?? { tabs: [] }
-  if ((patch.name && patch.name !== workspace.name) || patch.layout) {
-    await api.post('/v1/workspaces', { body: {
-        id: workspace.id,
-        name: patch.name ?? workspace.name,
-        locked: workspace.locked,
-        share_token: workspace.share_token,
-        layout: freeObject(layout && typeof layout === 'object' ? layout : { tabs: [] }),
-      } })
-  }
-}
-
 
 function Help({ onClose, placeholder }: { onClose: () => void; placeholder: string }) {
   return (
