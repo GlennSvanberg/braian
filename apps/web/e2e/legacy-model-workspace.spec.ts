@@ -38,7 +38,7 @@ async function seedLegacyModelWorkspace(page: Page, name: string) {
       layout,
     },
   })
-  expect(created.ok()).toBeTruthy()
+  expect(created.ok(), `create workspace ${created.status()}`).toBeTruthy()
   const views = [
     { id: modelId, type: 'data_model', title: 'Model', pane: 'main', position: 0, state: { mode: 'tree' } },
     { id: attrsId, type: 'data_model', title: 'Attributes', pane: 'main', position: 1, state: { mode: 'classes' } },
@@ -48,8 +48,12 @@ async function seedLegacyModelWorkspace(page: Page, name: string) {
     const response = await page.request.post('/v1/views', {
       data: { ...view, workspace_id: workspaceId },
     })
-    expect(response.ok()).toBeTruthy()
+    expect(response.ok(), `create view ${view.title} ${response.status()}`).toBeTruthy()
   }
+  const listed = await page.request.get('/v1/workspaces')
+  expect(listed.ok()).toBeTruthy()
+  const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
+  expect(body.workspaces.some((row) => row.id === workspaceId)).toBe(true)
   return workspaceId
 }
 
@@ -58,7 +62,9 @@ async function openWorkspace(page: Page, name: string) {
   await page.reload()
   await expect(page.getByTestId('dock')).toBeVisible()
   await page.evaluate(() => sessionStorage.removeItem('braian.layout.suppressFlush'))
-  await page.getByTestId('dock').getByRole('button', { name }).click()
+  const tab = page.locator('nav.tabs').getByRole('button', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })
+  await expect(tab).toBeVisible({ timeout: 30_000 })
+  await tab.click()
 }
 
 test('legacy Data model workspace resets to the standard template once', async ({ page }) => {
@@ -81,8 +87,8 @@ test('legacy Data model workspace resets to the standard template once', async (
   await expect(paneTabs.filter({ hasText: 'Value lists' })).toBeVisible()
   await expect(paneTabs.filter({ hasText: 'Units' })).toBeVisible()
   await expect(paneTabs.filter({ hasText: 'Type attributes' })).toBeVisible()
-  await expect(paneTabs.filter({ hasText: 'Model' })).toHaveCount(0)
-  await expect(paneTabs.filter({ hasText: 'Preview' })).toHaveCount(0)
+  await expect(paneTabs.filter({ hasText: /^Model$/ })).toHaveCount(0)
+  await expect(paneTabs.filter({ hasText: /^Preview$/ })).toHaveCount(0)
   await expect.poll(() => firstWrites.length).toBeGreaterThan(0)
   page.off('request', onFirst)
 
