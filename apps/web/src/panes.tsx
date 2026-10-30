@@ -1235,6 +1235,23 @@ export function ObjectTable({
   }
 
   const newRowLabel = newObjectLabel(bound?.singular)
+  // Mount object-table only after prefs apply so e2e waiting on that testid
+  // never asserts columns during the flash-free skeleton window.
+  if (!prefsReady) {
+    return (
+      <div className="table-wrap" data-testid="column-prefs-skeleton" aria-busy="true">
+        <div className="grid">
+          <div className="head head-skeleton">
+            {[280, 160, 160, 128, 72].map((width, index) => (
+              <div key={index} className="cell" style={{ width, minWidth: width, maxWidth: width }}>
+                …
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <StandardTableChrome
       testId="object-table"
@@ -1300,15 +1317,6 @@ export function ObjectTable({
           openMenuFromKeyboard(event.target)
         }}
       >
-        {!prefsReady ? (
-          <div className="head head-skeleton" data-testid="column-prefs-skeleton" aria-busy="true">
-            {[280, 160, 160, 128, 72].map((width, index) => (
-              <div key={index} className="cell" style={{ width, minWidth: width, maxWidth: width }}>
-                …
-              </div>
-            ))}
-          </div>
-        ) : (
         <DndContext sensors={columnSensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
           <SortableContext items={shown} strategy={horizontalListSortingStrategy}>
             <div className="head">
@@ -1360,7 +1368,6 @@ export function ObjectTable({
             </div>
           </SortableContext>
         </DndContext>
-        )}
         {groupBy ? (
           <div style={{ flex: 'none' }}>
             {(() => {

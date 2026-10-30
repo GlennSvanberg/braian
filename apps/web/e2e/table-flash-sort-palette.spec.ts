@@ -49,7 +49,8 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
         ],
       },
     }
-    await page.route('**/column-prefs**', async (route: Route) => {
+    // Match only the API — never /assets/column-prefs-*.js (that hung login).
+    await page.route('**/v1/views/**/column-prefs**', async (route: Route) => {
       if (route.request().method() !== 'GET') {
         await route.continue()
         return
@@ -64,10 +65,10 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
 
     await login(page)
     await page.locator('nav.tabs').getByRole('button', { name: /^Products/ }).click()
-    await expect(page.getByTestId('object-table')).toBeVisible()
 
-    // While prefs are held: skeleton (or empty head) — never Type/Status/Version.
+    // object-table mounts only after prefs; while held we show the skeleton shell.
     await expect(page.getByTestId('column-prefs-skeleton')).toBeVisible()
+    await expect(page.getByTestId('object-table')).toHaveCount(0)
     await expect(page.locator('.head [data-testid="col-type"]')).toHaveCount(0)
     await expect(page.locator('.head [data-testid="col-status"]')).toHaveCount(0)
     await expect(page.locator('.head [data-testid="col-version"]')).toHaveCount(0)
@@ -76,6 +77,7 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
     release()
 
     await expect(page.getByTestId('column-prefs-skeleton')).toHaveCount(0)
+    await expect(page.getByTestId('object-table')).toBeVisible()
     await expect(page.locator('.head [data-testid="col-number"]')).toBeVisible()
     await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
     await expect(page.locator('.head [data-testid="col-brand"]')).toBeVisible()
