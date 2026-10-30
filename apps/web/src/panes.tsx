@@ -163,6 +163,8 @@ export function ObjectTable({
   const queryClient = useQueryClient()
   const parent = useRef<HTMLDivElement>(null)
   const prefsApplied = useRef(false)
+  /** dataUpdatedAt we last applied; re-apply when invalidate lands a newer fetch. */
+  const prefsAppliedAt = useRef(0)
   const prefsSnapshot = useRef<string | null>(null)
   const latestPrefsDocument = useRef<ColumnPrefsDocument | null>(null)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -193,7 +195,10 @@ export function ObjectTable({
       { document },
       {
         onSuccess: () => {
-          if (prefsSaveGen.current === gen) prefsDirtyRef.current = false
+          if (prefsSaveGen.current !== gen) return
+          prefsDirtyRef.current = false
+          // dataUpdatedAt latch in the apply effect re-applies after onSettled's
+          // invalidate (isMutating === 1), including other tabs' writes.
         },
       },
     )
@@ -304,13 +309,17 @@ export function ObjectTable({
 
 
   useEffect(() => {
-    if (prefsApplied.current || prefs.isPending) return
+    if (prefs.isPending || prefs.isFetching) return
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
     // Local edits and in-flight saves win over a refetch that landed mid-edit.
     if (prefsDirtyRef.current) return
     if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
+    const updatedAt = prefs.dataUpdatedAt ?? 0
+    // Same snapshot we already applied (unless onVisible/onSuccess cleared the latch).
+    if (prefsApplied.current && prefsAppliedAt.current === updatedAt) return
     prefsApplied.current = true
+    prefsAppliedAt.current = updatedAt
     const applied =
       prefs.isSuccess
         ? prefsToOrderHidden(prefs.data, systemColumns, typeKey, defs.data)
@@ -332,7 +341,7 @@ export function ObjectTable({
       }
     }
     setPrefsReady(true)
-  }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
+  }, [prefs.isPending, prefs.isFetching, prefs.isSuccess, prefs.data, prefs.dataUpdatedAt, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id, queryClient])
 
   // Other tabs' saves: when this tab becomes visible again and is clean, drop the
   // one-shot latch and invalidate so React Query refetches and apply can run.
@@ -340,7 +349,13 @@ export function ObjectTable({
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
-      if (prefsDirtyRef.current) return
+      // Hidden before the mutate timer: only keepalive ran and dirty stayed true, so
+      // we would never sync other tabs. Finish via TanStack mutate (clears dirty on
+      // success; onSettled still invalidates when isMutating === 1).
+      if (prefsDirtyRef.current) {
+        flushPrefsRef.current()
+        return
+      }
       if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
       prefsApplied.current = false
       void queryClient.invalidateQueries({ queryKey: columnPrefsQueryKey(view.id) })
