@@ -1,4 +1,4 @@
-import { ApiError, api } from '../api'
+import { ApiError, api, jsonRecord, type Schemas } from '../api'
 import {
   acceptsFile,
   firstDroppedFile,
@@ -169,7 +169,7 @@ function abandonImport() {
   forgetImport()
   patch({ ...initial })
   if (session && session.id !== 'fixture') {
-    void api(`/v1/imports/${session.id}`, { method: 'DELETE' }).catch(() => undefined)
+    void api.delete('/v1/imports/{id}', { params: { path: { id: session.id } } }).catch(() => undefined)
   }
 }
 
@@ -196,17 +196,17 @@ export function setImportType(typeKey: string) {
   patch({ typeKey })
   const id = state.session?.id
   if (!id) return
-  void api<ImportSession>(`/v1/imports/${id}/remap`, {
-    method: 'POST',
-    body: JSON.stringify({
+  void api.post('/v1/imports/{id}/remap', {
+    params: { path: { id } },
+    body: {
       type: typeKey,
       id_column: state.idColumn,
       columns: state.columns.filter((column) => column.source === 'manual').map((column) => ({
         col: column.col,
         target: column.target,
       })),
-    }),
-  }).then(adopt).catch((error: unknown) => {
+    },
+  }).then((session) => adopt(sessionFromApi(session))).catch((error: unknown) => {
     patch({ error: error instanceof Error ? error.message : 'The mapping could not be updated.' })
   })
 }
@@ -276,15 +276,12 @@ export async function approveImport() {
   const session = state.session
   if (!session) return
   const idColumn = state.idColumn.startsWith('col:') ? Number(state.idColumn.slice(4)) : null
-  await api(`/v1/imports/${session.id}/mapping`, {
-    method: 'PUT',
-    body: JSON.stringify({
+  await api.put('/v1/imports/{id}/mapping', { params: { path: { id: session.id } }, body: {
       type: state.typeKey,
       id_column: idColumn,
       columns: state.columns.map((column) => ({ col: column.col, target: column.target })),
-    }),
-  })
-  await api(`/v1/imports/${session.id}/approve`, { method: 'POST', body: '{}' })
+    } })
+  await api.post('/v1/imports/{id}/approve', { params: { path: { id: session.id } } })
   patch({ phase: 'preview', dirty: false, filter: 'all' })
   await refresh(session.id)
 }
@@ -293,9 +290,9 @@ export async function saveImport() {
   const session = state.session
   if (!session) return
   const failed = Number(session.counters.failed ?? 0)
-  const body = await api<{ job_id: string }>(`/v1/imports/${session.id}/save`, {
-    method: 'POST',
-    body: JSON.stringify({ skip_failed: failed > 0 }),
+  const body = await api.post('/v1/imports/{id}/save', {
+    params: { path: { id: session.id } },
+    body: { skip_failed: failed > 0 },
   })
   patch({ phase: 'saving', session: { ...session, job_id: body.job_id, status: 'saving' } })
 }
@@ -309,6 +306,138 @@ export async function resumeImport(id: string) {
       phase: 'error',
       error: error instanceof Error ? error.message : 'That import does not exist.',
     })
+  }
+}
+
+function sessionFromApi(raw: Schemas['ImportSessionView']): ImportSession {
+  return {
+    id: raw.id,
+    status: raw.status,
+    types: raw.types,
+    file_name: raw.file_name,
+    file_kind: raw.file_kind,
+    sheets: sheetsFrom(raw.sheets),
+    sheet_index: raw.sheet_index,
+    headers: headersFrom(raw.headers),
+    sample: sampleFrom(raw.sample),
+    rows_parsed: raw.rows_parsed,
+    parse_done: raw.parse_done,
+    targets: raw.targets,
+    proposal: proposalFrom(raw.proposal),
+    mapping: mappingFrom(raw.mapping),
+    counters: countersFrom(raw.counters),
+    job_id: raw.job_id ?? null,
+    error: raw.error ?? null,
+  }
+}
+
+function sheetsFrom(value: unknown): ImportSession['sheets'] {
+  if (!Array.isArray(value)) return []
+  const sheets: ImportSession['sheets'] = []
+  for (const item of value) {
+    const row = jsonRecord(item)
+    if (!row || typeof row.name !== 'string') continue
+    sheets.push({
+      index: Number(row.index ?? 0),
+      name: row.name,
+      ...(typeof row.empty === 'boolean' ? { empty: row.empty } : {}),
+      ...(typeof row.rows_estimate === 'number' ? { rows_estimate: row.rows_estimate } : {}),
+    })
+  }
+  return sheets
+}
+
+function headersFrom(value: unknown): ImportHeader[] {
+  if (!Array.isArray(value)) return []
+  const headers: ImportHeader[] = []
+  for (const item of value) {
+    const row = jsonRecord(item)
+    if (!row) continue
+    headers.push({
+      index: Number(row.index ?? 0),
+      raw: String(row.raw ?? ''),
+      name: String(row.name ?? ''),
+      empty_ratio: Number(row.empty_ratio ?? 0),
+      duplicate_of: typeof row.duplicate_of === 'number' ? row.duplicate_of : null,
+    })
+  }
+  return headers
+}
+
+function sampleFrom(value: unknown): string[][] {
+  if (!Array.isArray(value)) return []
+  return value.map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : []))
+}
+
+function countersFrom(value: unknown): Record<string, number> {
+  const record = jsonRecord(value)
+  const counters: Record<string, number> = {}
+  if (!record) return counters
+  for (const [key, item] of Object.entries(record)) {
+    if (typeof item === 'number') counters[key] = item
+  }
+  return counters
+}
+
+function proposalFrom(value: unknown): ImportSession['proposal'] {
+  const record = jsonRecord(value)
+  if (!record) return null
+  const type = jsonRecord(record.type)
+  const idColumn = jsonRecord(record.id_column)
+  return {
+    ...(typeof record.ai === 'string' ? { ai: record.ai } : {}),
+    ...(type
+      ? {
+          type: {
+            value: type.value == null ? null : String(type.value),
+            ...(typeof type.confidence === 'number' ? { confidence: type.confidence } : {}),
+          },
+        }
+      : {}),
+    ...(idColumn
+      ? {
+          id_column: {
+            value: idColumn.value == null ? null : String(idColumn.value),
+            ...(typeof idColumn.confidence === 'number' ? { confidence: idColumn.confidence } : {}),
+          },
+        }
+      : {}),
+    columns: columnLinesFrom(record.columns),
+  }
+}
+
+function columnLinesFrom(value: unknown): ColumnLine[] {
+  if (!Array.isArray(value)) return []
+  const columns: ColumnLine[] = []
+  for (const item of value) {
+    const row = jsonRecord(item)
+    if (!row || typeof row.target !== 'string') continue
+    columns.push({
+      col: Number(row.col ?? 0),
+      target: row.target,
+      confidence: typeof row.confidence === 'number' ? row.confidence : 0,
+      source: typeof row.source === 'string' ? row.source : '',
+      ...(typeof row.low === 'boolean' ? { low: row.low } : {}),
+      ...(row.reason == null || typeof row.reason === 'string' ? { reason: row.reason ?? null } : {}),
+    })
+  }
+  return columns
+}
+
+function mappingFrom(value: unknown): ImportSession['mapping'] {
+  const record = jsonRecord(value)
+  if (!record) return null
+  const columns = Array.isArray(record.columns)
+    ? record.columns.flatMap((item) => {
+        const column = jsonRecord(item)
+        if (!column || typeof column.col !== 'number' || typeof column.target !== 'string') return []
+        return [{ col: column.col, target: column.target }]
+      })
+    : undefined
+  return {
+    ...(typeof record.type === 'string' ? { type: record.type } : {}),
+    id_column: typeof record.id_column === 'number' ? record.id_column : null,
+    ...(columns ? { columns } : {}),
   }
 }
 
@@ -341,9 +470,9 @@ function adopt(session: ImportSession) {
 
 async function refresh(id: string) {
   const ticket = generation
-  const session = await api<ImportSession>(`/v1/imports/${id}`)
+  const session = await api.get('/v1/imports/{id}', { params: { path: { id: id } } })
   if (ticket !== generation) return
-  adopt(session)
+  adopt(sessionFromApi(session))
 }
 
 function startPoll(id: string) {
@@ -386,7 +515,7 @@ function beginUpload(file: File) {
   uploadFile(file, (upload) => patch({ upload }))
     .then(async (created) => {
       if (ticket !== generation) {
-        void api(`/v1/imports/${created.id}`, { method: 'DELETE' }).catch(() => undefined)
+        void api.delete('/v1/imports/{id}', { params: { path: { id: created.id } } }).catch(() => undefined)
         return
       }
       patch({ phase: 'mapping' })

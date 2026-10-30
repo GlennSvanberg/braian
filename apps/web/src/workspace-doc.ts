@@ -5,7 +5,10 @@ export const LAYOUT_ENVIRONMENT = 'default'
 
 export type StoredLayout = { document: LayoutDoc; savedAt: number }
 
-export type ServerLayout = { document: LayoutDoc | null; updated_at: string | null }
+export type ServerLayout = {
+  document?: LayoutDoc | { [key: string]: unknown } | null
+  updated_at?: string | null
+}
 
 export function layoutStorageKey(userId: string, workspaceId: string) {
   return `braian.layout.${userId}.${LAYOUT_ENVIRONMENT}.${workspaceId}`
@@ -42,12 +45,15 @@ export function canonicalDoc(workspace: { id: string; name: string; layout: unkn
   }
 }
 
-export function migrateDoc(document: LayoutDoc): LayoutDoc {
+export function migrateDoc(document: LayoutDoc | { [key: string]: unknown }): LayoutDoc {
+  const id = typeof document.id === 'string' ? document.id : ''
+  const title = typeof document.title === 'string' ? document.title : ''
   const layout = migrateLayout(document.layout)
   const open = views(layout)
-  const focus = document.focus && open.includes(document.focus) ? document.focus : open[0]
-  const zoom = document.zoom && open.includes(document.zoom) ? document.zoom : undefined
-  return { ...document, layout, focus, zoom }
+  const focus = typeof document.focus === 'string' && open.includes(document.focus) ? document.focus : open[0]
+  const zoom = typeof document.zoom === 'string' && open.includes(document.zoom) ? document.zoom : undefined
+  const createdBy = typeof document.createdBy === 'string' ? document.createdBy : undefined
+  return { id, title, layout, focus, zoom, ...(createdBy ? { createdBy } : {}) }
 }
 
 /** Paint local first. A newer server document replaces it; otherwise the canonical workspace layout is the default. */

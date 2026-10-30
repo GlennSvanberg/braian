@@ -29,7 +29,44 @@
           "platform"
         ],
         "summary": "MCP endpoint over the operation registry",
-        "responses": {}
+        "operationId": "mcp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/agent": {
@@ -38,7 +75,49 @@
           "platform"
         ],
         "summary": "Proxy a chat completion when a model key is set",
-        "responses": {}
+        "operationId": "agent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "JSON reply, or a text event stream when stream is true",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentReply"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/assortments": {
@@ -47,14 +126,88 @@
           "platform"
         ],
         "summary": "List selections. Optional type is an id or a key.",
-        "responses": {}
+        "operationId": "list_assortments",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Selections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssortmentList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Save a selection. type is an id or a key and is not stored in query.",
-        "responses": {}
+        "operationId": "save_assortment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssortmentBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved selection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssortmentRow"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/assortments/{id}": {
@@ -63,7 +216,54 @@
           "platform"
         ],
         "summary": "Read one selection. type must be that selection's type.",
-        "responses": {}
+        "operationId": "get_assortment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Selection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One selection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssortmentRow"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/attributes": {
@@ -324,7 +524,44 @@
           "platform"
         ],
         "summary": "Write many objects as one job",
-        "responses": {}
+        "operationId": "bulk_write",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Bulk job accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunningJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/definitions": {
@@ -433,7 +670,55 @@
           "platform"
         ],
         "summary": "Export the current view as an xlsx file. Large exports run as a job.",
-        "responses": {}
+        "operationId": "export_xlsx",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Inline workbook when the row count is small",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Export job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/exports/{id}": {
@@ -442,7 +727,47 @@
           "platform"
         ],
         "summary": "Download a finished xlsx export",
-        "responses": {}
+        "operationId": "download_export",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Export job id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Finished workbook",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/feedback": {
@@ -451,7 +776,37 @@
           "platform"
         ],
         "summary": "Send in-app feedback. Admins only, and only when a webhook URL is configured.",
-        "responses": {}
+        "operationId": "submit_feedback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Feedback delivered"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/frecency": {
@@ -460,14 +815,78 @@
           "platform"
         ],
         "summary": "Command frecency for the signed-in person",
-        "responses": {}
+        "operationId": "get_frecency",
+        "responses": {
+          "200": {
+            "description": "Use counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrecencyList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Record one use of a command for the signed-in person",
-        "responses": {}
+        "operationId": "post_frecency",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrecencyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrecencyTouch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/history": {
@@ -476,7 +895,54 @@
           "platform"
         ],
         "summary": "Recent changes across objects",
-        "responses": {}
+        "operationId": "history",
+        "parameters": [
+          {
+            "name": "object",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Change rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/impact": {
@@ -485,7 +951,44 @@
           "platform"
         ],
         "summary": "Affected objects and jobs for a breaking definition change",
-        "responses": {}
+        "operationId": "impact",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImpactBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Impact of the described change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports": {
@@ -494,7 +997,57 @@
           "platform"
         ],
         "summary": "Upload a spreadsheet import",
-        "responses": {}
+        "operationId": "import_upload",
+        "parameters": [
+          {
+            "name": "X-File-Name",
+            "in": "header",
+            "description": "Original file name, percent-encoded. Used to choose csv, xls or xlsx.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Raw spreadsheet bytes. The file name is the X-File-Name header.",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Import created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCreated"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}": {
@@ -503,14 +1056,85 @@
           "platform"
         ],
         "summary": "Read an import session",
-        "responses": {}
+        "operationId": "import_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Import session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSessionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "delete": {
         "tags": [
           "platform"
         ],
         "summary": "Discard an import",
-        "responses": {}
+        "operationId": "import_discard",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Import discarded"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/approve": {
@@ -519,7 +1143,46 @@
           "platform"
         ],
         "summary": "Build the import preview",
-        "responses": {}
+        "operationId": "import_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Preview started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/failed.xlsx": {
@@ -528,7 +1191,47 @@
           "platform"
         ],
         "summary": "Download failing rows",
-        "responses": {}
+        "operationId": "import_failed_xlsx",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spreadsheet of rows that failed the preview",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/mapping": {
@@ -537,7 +1240,49 @@
           "platform"
         ],
         "summary": "Save the column mapping",
-        "responses": {}
+        "operationId": "import_mapping",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportMappingBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Mapping saved"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/remap": {
@@ -546,7 +1291,56 @@
           "platform"
         ],
         "summary": "Re-run column mapping for a type",
-        "responses": {}
+        "operationId": "import_remap",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemapBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session after remapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSessionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/rows": {
@@ -555,7 +1349,72 @@
           "platform"
         ],
         "summary": "Read preview rows",
-        "responses": {}
+        "operationId": "import_rows",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preview page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPreviewPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/save": {
@@ -564,7 +1423,56 @@
           "platform"
         ],
         "summary": "Save the import",
-        "responses": {}
+        "operationId": "import_save",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportSaveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Save job accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/imports/{id}/sheet": {
@@ -573,7 +1481,56 @@
           "platform"
         ],
         "summary": "Switch the imported sheet",
-        "responses": {}
+        "operationId": "import_sheet",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SheetBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session after the sheet change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSessionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/job-types": {
@@ -582,14 +1539,71 @@
           "platform"
         ],
         "summary": "List job types",
-        "responses": {}
+        "operationId": "list_job_types",
+        "responses": {
+          "200": {
+            "description": "Job types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobTypeList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Register a job type",
-        "responses": {}
+        "operationId": "register_job_type",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobTypeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Job type registered"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/job-types/{key}/runs": {
@@ -598,7 +1612,45 @@
           "platform"
         ],
         "summary": "Runs for one job type",
-        "responses": {}
+        "operationId": "job_runs",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Job type key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRunList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/jobs/{id}": {
@@ -607,7 +1659,46 @@
           "platform"
         ],
         "summary": "One job run",
-        "responses": {}
+        "operationId": "job_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Job id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/languages": {
@@ -1039,7 +2130,29 @@
           "platform"
         ],
         "summary": "Start a cookie session",
-        "responses": {}
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Cookie session started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionUser"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/logout": {
@@ -1048,7 +2161,12 @@
           "platform"
         ],
         "summary": "Clear the cookie session",
-        "responses": {}
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Session cookie cleared"
+          }
+        }
       }
     },
     "/v1/me": {
@@ -1072,6 +2190,207 @@
             "description": "Missing or unknown token",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/model/draft": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read the signed-in person's model draft",
+        "operationId": "get_model_draft",
+        "responses": {
+          "200": {
+            "description": "Draft, or an empty draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Discard the model draft",
+        "operationId": "discard_model_draft",
+        "responses": {
+          "204": {
+            "description": "Draft discarded"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/model/draft/rebase": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Rebase the draft onto the current model",
+        "operationId": "rebase_model_draft",
+        "responses": {
+          "200": {
+            "description": "Rebased draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/model/draft/save": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save the model draft as one revision",
+        "operationId": "save_model_draft",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dry run or applied revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSaveResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/model/draft/steps": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Append, replace or remove model-draft steps",
+        "operationId": "post_model_draft_steps",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Draft after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
@@ -1148,7 +2467,70 @@
           "platform"
         ],
         "summary": "List object heads. type and q run in SQL before limit; cursor pages the rest",
-        "responses": {}
+        "operationId": "list_objects",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque `next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of object heads",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -1220,7 +2602,44 @@
           "platform"
         ],
         "summary": "Display names for a batch of objects",
-        "responses": {}
+        "operationId": "object_names",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NamesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Names in request order, skipping missing ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedObjectList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/objects/{id}": {
@@ -1470,7 +2889,55 @@
           "platform"
         ],
         "summary": "Object values as of a sequence",
-        "responses": {}
+        "operationId": "object_as_of",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Values replayed up to seq",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsOfView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/objects/{id}/changes": {
@@ -1519,7 +2986,46 @@
           "platform"
         ],
         "summary": "Links and where each attribute comes from",
-        "responses": {}
+        "operationId": "object_graph",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Graph for one object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectGraph"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/objects/{id}/rollback": {
@@ -1528,7 +3034,56 @@
           "platform"
         ],
         "summary": "Propose a rollback to a sequence",
-        "responses": {}
+        "operationId": "object_rollback",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rollback proposal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/objects:batchGet": {
@@ -1650,7 +3205,34 @@
           "platform"
         ],
         "summary": "List operations the caller may run",
-        "responses": {}
+        "operationId": "list_operations",
+        "responses": {
+          "200": {
+            "description": "Operations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/operations/{name}": {
@@ -1659,7 +3241,55 @@
           "platform"
         ],
         "summary": "Run one operation. Agents receive a proposal.",
-        "responses": {}
+        "operationId": "call_operation",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Operation name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Operation result. The shape depends on the operation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/proposals": {
@@ -1668,14 +3298,78 @@
           "platform"
         ],
         "summary": "List proposals",
-        "responses": {}
+        "operationId": "list_proposals",
+        "responses": {
+          "200": {
+            "description": "Recent proposals and the pending summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Create a proposal",
-        "responses": {}
+        "operationId": "create_proposal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposalBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created proposal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/proposals/{id}": {
@@ -1684,7 +3378,46 @@
           "platform"
         ],
         "summary": "Read a proposal",
-        "responses": {}
+        "operationId": "get_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Proposal id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proposal and its rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/proposals/{id}/accept": {
@@ -1693,7 +3426,66 @@
           "platform"
         ],
         "summary": "Accept a proposal in full or by row",
-        "responses": {}
+        "operationId": "accept_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Proposal id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted and failed rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Large accept running as a job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunningJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/proposals/{id}/discard": {
@@ -1702,7 +3494,39 @@
           "platform"
         ],
         "summary": "Discard a proposal",
-        "responses": {}
+        "operationId": "discard_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Proposal id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Proposal discarded"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/resolve/{kind}/{id_or_key}": {
@@ -1775,7 +3599,105 @@
           "platform"
         ],
         "summary": "Search the index. Supports filter, sort, group and page",
-        "responses": {}
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "wait_seq",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/share/{token}": {
@@ -1784,7 +3706,45 @@
           "platform"
         ],
         "summary": "Open a workspace by share token",
-        "responses": {}
+        "operationId": "open_share",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Share token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shared workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceRow"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/stats": {
@@ -1793,7 +3753,34 @@
           "platform"
         ],
         "summary": "Object counts by type",
-        "responses": {}
+        "operationId": "stats",
+        "responses": {
+          "200": {
+            "description": "Counts by type key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/stream": {
@@ -1802,7 +3789,34 @@
           "platform"
         ],
         "summary": "Server-sent events for committed changes",
-        "responses": {}
+        "operationId": "change_stream",
+        "responses": {
+          "200": {
+            "description": "Event stream. Each event's data is a JSON object.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/structures": {
@@ -2174,21 +4188,18 @@
           },
           {
             "name": "move_to",
-            "in": "path",
+            "in": "query",
             "description": "Group key that receives objects from the deleted group and its descendants.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "dry_run",
-            "in": "path",
+            "in": "query",
             "description": "When true, count what the delete would remove and change nothing.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
@@ -2546,7 +4557,44 @@
           "platform"
         ],
         "summary": "Create an API token for a person",
-        "responses": {}
+        "operationId": "create_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token created once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedToken"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/types": {
@@ -3283,14 +5331,71 @@
           "platform"
         ],
         "summary": "List view types",
-        "responses": {}
+        "operationId": "list_view_types",
+        "responses": {
+          "200": {
+            "description": "Registered view types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewTypeList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Register a view type",
-        "responses": {}
+        "operationId": "register_view_type",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewTypeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "View type registered"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/views": {
@@ -3299,7 +5404,44 @@
           "platform"
         ],
         "summary": "Create or update a view, including table state",
-        "responses": {}
+        "operationId": "save_view",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved view id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/views/{view_id}/column-prefs": {
@@ -3307,22 +5449,167 @@
         "tags": [
           "platform"
         ],
-        "summary": "Read own column preferences for a view. Stale paths are flagged, never a 500.",
-        "responses": {}
+        "operationId": "get_column_prefs",
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "description": "View id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "Layout environment, default `default`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Own column preferences. Stale paths are flagged, never a 500.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "put": {
         "tags": [
           "platform"
         ],
-        "summary": "Save own column preferences for a view",
-        "responses": {}
+        "operationId": "put_column_prefs",
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "description": "View id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrefsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved own column preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnPrefsSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid document, unknown path, duplicate, or too large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "delete": {
         "tags": [
           "platform"
         ],
-        "summary": "Clear own column preferences for a view",
-        "responses": {}
+        "operationId": "delete_column_prefs",
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "description": "View id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "Layout environment, default `default`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Own column preferences removed"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/webhooks": {
@@ -3331,14 +5618,78 @@
           "platform"
         ],
         "summary": "List webhooks",
-        "responses": {}
+        "operationId": "list_webhooks",
+        "responses": {
+          "200": {
+            "description": "Webhooks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Create a webhook",
-        "responses": {}
+        "operationId": "create_webhook",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook id and secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedWebhook"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/workspaces": {
@@ -3347,14 +5698,78 @@
           "platform"
         ],
         "summary": "List workspaces",
-        "responses": {}
+        "operationId": "list_workspaces",
+        "responses": {
+          "200": {
+            "description": "Workspaces the caller can open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "platform"
         ],
         "summary": "Create or update a workspace layout",
-        "responses": {}
+        "operationId": "save_workspace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved workspace id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/workspaces/{id}": {
@@ -3363,7 +5778,46 @@
           "platform"
         ],
         "summary": "Workspace with views and layout",
-        "responses": {}
+        "operationId": "get_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace and its views",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceRow"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/workspaces/{id}/assign": {
@@ -3372,7 +5826,49 @@
           "platform"
         ],
         "summary": "Assign a workspace to a person",
-        "responses": {}
+        "operationId": "assign_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Assignment saved"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/workspaces/{id}/state": {
@@ -3381,26 +5877,369 @@
           "platform"
         ],
         "summary": "Personal workspace layout for the signed-in person and environment",
-        "responses": {}
+        "operationId": "get_workspace_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Personal layout, or a null document when none is saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "put": {
         "tags": [
           "platform"
         ],
         "summary": "Save the personal workspace layout",
-        "responses": {}
+        "operationId": "put_workspace_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved layout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceStateSaved"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       },
       "delete": {
         "tags": [
           "platform"
         ],
         "summary": "Delete the personal workspace layout",
-        "responses": {}
+        "operationId": "delete_workspace_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Personal layout removed"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     }
   },
   "components": {
     "schemas": {
+      "AcceptBody": {
+        "type": "object",
+        "properties": {
+          "patches": {
+            "$ref": "#/components/schemas/FreeObject",
+            "description": "Replacement patches keyed by proposal row. An empty `values` object rejects that row."
+          },
+          "rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "AcceptResult": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "failed"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          }
+        }
+      },
+      "AgentBody": {
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/FreeObject",
+            "description": "Compact screen snapshot from the browser. Included in the system\nprompt on every turn and returned by `ui.get_context`."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FreeObject"
+            }
+          },
+          "stream": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentReply": {
+        "type": "object",
+        "required": [
+          "available",
+          "model",
+          "reply",
+          "tools"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reply": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentTool"
+            }
+          }
+        }
+      },
+      "AgentTool": {
+        "type": "object",
+        "required": [
+          "name",
+          "result"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "result": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        }
+      },
+      "AsOfView": {
+        "type": "object",
+        "required": [
+          "seq",
+          "deleted",
+          "values"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "values": {
+            "$ref": "#/components/schemas/FreeObject"
+          }
+        }
+      },
+      "AssignBody": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        }
+      },
+      "AssortmentBody": {
+        "type": "object",
+        "required": [
+          "name",
+          "query"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Type id or key. Absent until validation so an agent still gets 403 first."
+          }
+        }
+      },
+      "AssortmentList": {
+        "type": "object",
+        "required": [
+          "assortments"
+        ],
+        "properties": {
+          "assortments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssortmentRow"
+            }
+          }
+        }
+      },
+      "AssortmentRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type_id",
+          "query"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "Attribute": {
         "type": "object",
         "description": "One attribute in the global pool, identified by `key`.\n\nRules live only here. A type or a structure node decides that the attribute\napplies; it does not add a second definition. When the same key arrives from\nseveral places the object still has the attribute once. A different type or\nunit for that key is rejected when the attribute is added.",
@@ -3675,7 +6514,7 @@
         ],
         "properties": {
           "id": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           },
           "label": {
             "type": "string"
@@ -3764,6 +6603,20 @@
           }
         }
       },
+      "BulkBody": {
+        "type": "object",
+        "required": [
+          "objects"
+        ],
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreateObject"
+            }
+          }
+        }
+      },
       "Cardinality": {
         "type": "string",
         "description": "How many links one object may have on this side of a link type.",
@@ -3788,7 +6641,7 @@
             "type": "string"
           },
           "diff": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           },
           "on_behalf_of": {
             "type": [
@@ -3864,6 +6717,75 @@
         "format": "uuid",
         "description": "Id of a class. A class belongs to exactly one group."
       },
+      "ColumnBody": {
+        "type": "object",
+        "required": [
+          "col",
+          "target"
+        ],
+        "properties": {
+          "col": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "ColumnPrefsSaved": {
+        "type": "object",
+        "required": [
+          "environment",
+          "document",
+          "updated_at"
+        ],
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ColumnPrefsView": {
+        "type": "object",
+        "required": [
+          "environment",
+          "stale_paths"
+        ],
+        "properties": {
+          "document": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            ]
+          },
+          "environment": {
+            "type": "string"
+          },
+          "stale_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ConflictBody": {
         "type": "object",
         "description": "One overlapping edit, named with keys where the model still has them.",
@@ -3882,7 +6804,7 @@
             ]
           },
           "current": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           },
           "language": {
             "type": [
@@ -3982,7 +6904,7 @@
             "type": "string"
           },
           "values": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           }
         }
       },
@@ -4012,7 +6934,46 @@
             "type": "string"
           },
           "values": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
+          }
+        }
+      },
+      "CreatedToken": {
+        "type": "object",
+        "required": [
+          "token",
+          "kind",
+          "name",
+          "owner"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "CreatedWebhook": {
+        "type": "object",
+        "required": [
+          "id",
+          "secret"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "secret": {
+            "type": "string"
           }
         }
       },
@@ -4109,6 +7070,215 @@
           }
         }
       },
+      "DraftBody": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            ]
+          },
+          "operation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Operation name from the registry. Converted with the same mapping as a proposal."
+          },
+          "remove": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Drops the step at this index. Cannot be combined with `steps`.",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelStep"
+            }
+          }
+        }
+      },
+      "DraftConsequence": {
+        "type": "object",
+        "required": [
+          "lines",
+          "warnings",
+          "fields",
+          "affected_objects",
+          "samples",
+          "jobs",
+          "objects",
+          "links",
+          "values",
+          "selections",
+          "destructive",
+          "confirm_name",
+          "sentence",
+          "detail"
+        ],
+        "properties": {
+          "affected_objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "confirm_name": {
+            "type": "string"
+          },
+          "destructive": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobTouch"
+            }
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SampleRef"
+            }
+          },
+          "selections": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sentence": {
+            "type": "string"
+          },
+          "values": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DraftView": {
+        "type": "object",
+        "required": [
+          "count",
+          "steps",
+          "current_revision",
+          "conflict"
+        ],
+        "properties": {
+          "base_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "conflict": {
+            "type": "boolean"
+          },
+          "consequence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DraftConsequence"
+              }
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "current_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "definitions": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DefinitionSet"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lines": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelStep"
+            }
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ErrorCode": {
         "type": "string",
         "description": "Machine-readable validation failure.\n\nMessages are for people. Callers branch on `code`, together with the\nattribute, language and list index that locate the value.",
@@ -4137,6 +7307,331 @@
           "missing_key_attribute",
           "missing_required"
         ]
+      },
+      "ExportBody": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportColumn"
+            }
+          },
+          "filter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "lang": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ExportColumn": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "attribute": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "header": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Column in an export request: a path string, or an id with a header."
+      },
+      "ExportJob": {
+        "type": "object",
+        "required": [
+          "mode",
+          "id",
+          "status",
+          "total"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "FeedbackBody": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "log": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "screenshot": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FrecencyBody": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "FrecencyEntry": {
+        "type": "object",
+        "required": [
+          "uses",
+          "last"
+        ],
+        "properties": {
+          "last": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uses": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "FrecencyList": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FrecencyEntry"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "FrecencyTouch": {
+        "type": "object",
+        "required": [
+          "id",
+          "uses",
+          "last"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "last": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uses": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "FreeObject": {
+        "type": "object",
+        "description": "JSON object. Keys depend on the stored document.",
+        "additionalProperties": true
+      },
+      "GraphAttribute": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "sources"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphSource"
+            }
+          }
+        }
+      },
+      "GraphLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "link_type",
+          "label",
+          "object_id",
+          "key",
+          "type_id",
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "link_type": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "GraphSource": {
+        "type": "object",
+        "required": [
+          "from",
+          "inherited"
+        ],
+        "properties": {
+          "class": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string"
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inherited": {
+            "type": "boolean"
+          },
+          "structure": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "Group": {
         "type": "object",
@@ -4239,6 +7734,518 @@
           }
         }
       },
+      "HistoryChange": {
+        "type": "object",
+        "required": [
+          "seq",
+          "at",
+          "batch_id",
+          "op",
+          "source",
+          "kind",
+          "actor",
+          "via"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "diff": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "on_behalf_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "op": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "via": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryList": {
+        "type": "object",
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryChange"
+            }
+          }
+        }
+      },
+      "IdBody": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ImpactBody": {
+        "type": "object",
+        "properties": {
+          "attribute": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AttributeKind"
+              }
+            ]
+          },
+          "remove_attribute": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remove_class": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImpactReport": {
+        "type": "object",
+        "required": [
+          "affected_objects",
+          "sampled_objects",
+          "samples",
+          "invalid_objects",
+          "jobs",
+          "definition_errors"
+        ],
+        "properties": {
+          "affected_objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "definition_errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "invalid_objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobTouch"
+            }
+          },
+          "sampled_objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SampleRef"
+            }
+          }
+        }
+      },
+      "ImportCreated": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "file_name",
+          "file_kind"
+        ],
+        "properties": {
+          "file_kind": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportJob": {
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ImportMappingBody": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ImportMappingColumn"
+            }
+          },
+          "id_column": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportMappingColumn": {
+        "type": "object",
+        "required": [
+          "col",
+          "target"
+        ],
+        "properties": {
+          "col": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportPreviewPage": {
+        "type": "object",
+        "required": [
+          "total",
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportPreviewRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ImportPreviewRow": {
+        "type": "object",
+        "required": [
+          "row_no",
+          "status",
+          "cells",
+          "errors"
+        ],
+        "properties": {
+          "cells": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "errors": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "object_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "row_no": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportSaveBody": {
+        "type": "object",
+        "properties": {
+          "skip_failed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ImportSessionView": {
+        "type": "object",
+        "required": [
+          "types",
+          "id",
+          "status",
+          "file_name",
+          "file_kind",
+          "sheets",
+          "sheet_index",
+          "headers",
+          "sample",
+          "rows_parsed",
+          "parse_done",
+          "model_revision",
+          "targets",
+          "counters"
+        ],
+        "properties": {
+          "counters": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file_kind": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "headers": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "mapping": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              }
+            ]
+          },
+          "model_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "parse_done": {
+            "type": "boolean"
+          },
+          "proposal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              }
+            ]
+          },
+          "rows_parsed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sample": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "sheet_index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sheets": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "status": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportTarget"
+            }
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportTypeOption"
+            }
+          }
+        }
+      },
+      "ImportStatus": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportTarget": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "key",
+          "source"
+        ],
+        "properties": {
+          "attribute_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "structure_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportTypeOption": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "IndexFlags": {
         "type": "object",
         "description": "Which parts of the attribute are copied into the search index.",
@@ -4259,6 +8266,164 @@
           }
         },
         "additionalProperties": false
+      },
+      "JobRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "type_key",
+          "status",
+          "progress_done",
+          "progress_total",
+          "log",
+          "errors",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "errors": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "log": {
+            "type": "string"
+          },
+          "progress_done": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "progress_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          },
+          "type_key": {
+            "type": "string"
+          }
+        }
+      },
+      "JobRunList": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobRun"
+            }
+          }
+        }
+      },
+      "JobTouch": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "reads_fields"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "reads_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "JobTypeBody": {
+        "type": "object",
+        "required": [
+          "key",
+          "title"
+        ],
+        "properties": {
+          "assortment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "reads_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "JobTypeList": {
+        "type": "object",
+        "required": [
+          "job_types"
+        ],
+        "properties": {
+          "job_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobTypeRow"
+            }
+          }
+        }
+      },
+      "JobTypeRow": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "reads_fields"
+        ],
+        "properties": {
+          "assortment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "reads_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "JsonValue": {
+        "description": "Any JSON value."
       },
       "KeyRenameBody": {
         "type": "object",
@@ -4573,6 +8738,21 @@
           }
         }
       },
+      "LoginBody": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
       "Me": {
         "type": "object",
         "required": [
@@ -4606,6 +8786,229 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "ModelSaveResult": {
+        "type": "object",
+        "required": [
+          "applied",
+          "source"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "consequence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DraftConsequence"
+              }
+            ]
+          },
+          "lines": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "model_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "proposal": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          },
+          "undone": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "warnings": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ModelStep": {
+        "type": "object",
+        "description": "One model change. `op` is the step name; remaining fields depend on `op`.",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "NamedObject": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "type",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "NamedObjectList": {
+        "type": "object",
+        "required": [
+          "objects"
+        ],
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedObject"
+            }
+          }
+        }
+      },
+      "NamesBody": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ObjectGraph": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "type",
+          "groups",
+          "links",
+          "attributes"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphAttribute"
+            }
+          },
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphLink"
+            }
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "ObjectHead": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ObjectList": {
+        "type": "object",
+        "required": [
+          "objects"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectHead"
+            }
           }
         }
       },
@@ -4676,7 +9079,7 @@
             ]
           },
           "values": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           },
           "version": {
             "type": "integer",
@@ -4784,6 +9187,43 @@
         },
         "additionalProperties": false
       },
+      "OperationInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "title",
+          "permission",
+          "needs_approval"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "needs_approval": {
+            "type": "boolean"
+          },
+          "permission": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "OperationList": {
+        "type": "object",
+        "required": [
+          "operations"
+        ],
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperationInfo"
+            }
+          }
+        }
+      },
       "PatchLink": {
         "type": "object",
         "properties": {
@@ -4802,7 +9242,7 @@
             "format": "uuid"
           },
           "values": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           }
         }
       },
@@ -4822,7 +9262,7 @@
             }
           },
           "values": {
-            "type": "object"
+            "$ref": "#/components/schemas/FreeObject"
           }
         }
       },
@@ -4977,6 +9417,42 @@
           }
         }
       },
+      "PendingObject": {
+        "type": "object",
+        "required": [
+          "object_id",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PendingSummary": {
+        "type": "object",
+        "required": [
+          "total",
+          "objects"
+        ],
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingObject"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "PlacementCount": {
         "type": "object",
         "required": [
@@ -4988,6 +9464,23 @@
             "format": "int64",
             "description": "Live objects in the group and its descendants, or in the whole structure.",
             "minimum": 0
+          }
+        }
+      },
+      "PrefsBody": {
+        "type": "object",
+        "required": [
+          "document"
+        ],
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -5062,6 +9555,284 @@
           }
         }
       },
+      "ProposalBody": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalRowBody"
+            }
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ignored. `source` is taken from the authenticated principal.\nThe field stays so a client can send it and the value is discarded."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ProposalList": {
+        "type": "object",
+        "required": [
+          "proposals",
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "$ref": "#/components/schemas/PendingSummary"
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalListItem"
+            }
+          }
+        }
+      },
+      "ProposalListItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "source",
+          "status",
+          "conflict",
+          "created_at"
+        ],
+        "properties": {
+          "conflict": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ProposalRowBody": {
+        "type": "object",
+        "required": [
+          "patch"
+        ],
+        "properties": {
+          "base_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "conflict": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "object_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "patch": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "type_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProposalRowView": {
+        "type": "object",
+        "required": [
+          "id",
+          "patch",
+          "status",
+          "conflict",
+          "position"
+        ],
+        "properties": {
+          "base_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "conflict": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "object_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "patch": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          },
+          "type_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProposalView": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "source",
+          "status",
+          "conflict",
+          "actor",
+          "created_at",
+          "rows"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "behalf_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conflict": {
+            "type": "boolean"
+          },
+          "consequence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DraftConsequence"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "on_behalf_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalRowView"
+            }
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "RemapBody": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ColumnBody"
+            }
+          },
+          "id_column": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
       "ResolvedBody": {
         "type": "object",
         "required": [
@@ -5078,6 +9849,164 @@
           },
           "label": {
             "type": "string"
+          }
+        }
+      },
+      "RollbackBody": {
+        "type": "object",
+        "required": [
+          "seq"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RunningJob": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "total"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SampleRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "key"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          }
+        }
+      },
+      "SaveBody": {
+        "type": "object",
+        "properties": {
+          "confirm_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SearchGroup": {
+        "type": "object",
+        "required": [
+          "key",
+          "found",
+          "hits"
+        ],
+        "properties": {
+          "found": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "key": {
+            "type": "string"
+          }
+        }
+      },
+      "SearchHit": {
+        "type": "object",
+        "required": [
+          "id",
+          "document"
+        ],
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "required": [
+          "found",
+          "hits",
+          "groups",
+          "indexed_seq"
+        ],
+        "properties": {
+          "found": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchGroup"
+            }
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "indexed_seq": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SessionUser": {
+        "type": "object",
+        "required": [
+          "email",
+          "role",
+          "display_name",
+          "user_id"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -5114,6 +10043,54 @@
           }
         },
         "additionalProperties": false
+      },
+      "SheetBody": {
+        "type": "object",
+        "required": [
+          "sheet_index"
+        ],
+        "properties": {
+          "sheet_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "StateBody": {
+        "type": "object",
+        "required": [
+          "document"
+        ],
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "required": [
+          "objects",
+          "by_type"
+        ],
+        "properties": {
+          "by_type": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeCount"
+            }
+          },
+          "objects": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       },
       "Structure": {
         "type": "object",
@@ -5332,6 +10309,36 @@
           "long"
         ]
       },
+      "TokenBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TypeCount": {
+        "type": "object",
+        "required": [
+          "type",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
       "TypeId": {
         "type": "string",
         "format": "uuid",
@@ -5533,6 +10540,354 @@
           }
         },
         "additionalProperties": false
+      },
+      "ViewBody": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "type",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "pane": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ViewTypeBody": {
+        "type": "object",
+        "required": [
+          "key",
+          "title"
+        ],
+        "properties": {
+          "embed_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ViewTypeList": {
+        "type": "object",
+        "required": [
+          "view_types"
+        ],
+        "properties": {
+          "view_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ViewTypeRow"
+            }
+          }
+        }
+      },
+      "ViewTypeRow": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "builtin"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean"
+          },
+          "embed_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "WebhookBody": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "assortment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "WebhookList": {
+        "type": "object",
+        "required": [
+          "webhooks"
+        ],
+        "properties": {
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookRow"
+            }
+          }
+        }
+      },
+      "WebhookRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "url",
+          "enabled"
+        ],
+        "properties": {
+          "assortment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "layout": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            ]
+          },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "share_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WorkspaceList": {
+        "type": "object",
+        "required": [
+          "workspaces"
+        ],
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRow"
+            }
+          }
+        }
+      },
+      "WorkspaceRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "locked",
+          "layout",
+          "owner_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "share_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "views": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceView"
+            }
+          }
+        }
+      },
+      "WorkspaceState": {
+        "type": "object",
+        "required": [
+          "environment"
+        ],
+        "properties": {
+          "document": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FreeObject"
+              }
+            ]
+          },
+          "environment": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WorkspaceStateSaved": {
+        "type": "object",
+        "required": [
+          "environment",
+          "updated_at"
+        ],
+        "properties": {
+          "environment": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceView": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "title",
+          "pane",
+          "position",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FreeObject"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
       }
     },
     "securitySchemes": {

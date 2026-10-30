@@ -6,11 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Json } from './api'
 import { ProposalView, type PanesSession } from './panes'
 
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 const proposal: Json = {
@@ -43,21 +50,21 @@ function Host({ push }: { push: (line: string) => void }) {
 }
 
 function calls(path: string) {
-  return api.mock.calls.filter((call) => String(call[0]) === path).length
+  return mock.calls().filter((call) => String(call[0]) === path).length
+}
+
+function proposalApi(path: string) {
+  if (path === '/v1/proposals') return Promise.resolve({ proposals: [proposal] })
+  if (path === '/v1/proposals/{id}') return Promise.resolve(proposal)
+  if (path === '/v1/definitions') return Promise.resolve({ languages: ['en'], types: [], attributes: [], structures: [] })
+  if (path.endsWith('/accept')) return Promise.reject(new Error('this proposal is no longer pending'))
+  if (path.endsWith('/discard')) return Promise.reject(new Error('proposal p1 is already being applied'))
+  return Promise.resolve({})
 }
 
 describe('proposal mutation errors', () => {
   beforeEach(() => {
-    api.mockReset()
-    api.mockImplementation((path: string) => {
-      const url = String(path)
-      if (url === '/v1/proposals') return Promise.resolve({ proposals: [proposal] })
-      if (url === '/v1/proposals/p1') return Promise.resolve(proposal)
-      if (url === '/v1/definitions') return Promise.resolve({ languages: ['en'], types: [], attributes: [], structures: [] })
-      if (url.endsWith('/accept')) return Promise.reject(new Error('this proposal is no longer pending'))
-      if (url.endsWith('/discard')) return Promise.reject(new Error('proposal p1 is already being applied'))
-      return Promise.resolve({})
-    })
+    mock.use(proposalApi)
   })
 
   afterEach(() => {
@@ -74,7 +81,7 @@ describe('proposal mutation errors', () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith('this proposal is no longer pending'))
     expect(screen.getByTestId('proposal-error').textContent).toBe('this proposal is no longer pending')
     await waitFor(() => expect(calls('/v1/proposals')).toBeGreaterThan(1))
-    expect(calls('/v1/proposals/p1')).toBeGreaterThan(1)
+    expect(calls('/v1/proposals/{id}')).toBeGreaterThan(1)
   })
 
   it('shows a discard failure in the toolbar and pushes the message', async () => {
@@ -87,18 +94,17 @@ describe('proposal mutation errors', () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith('proposal p1 is already being applied'))
     expect(screen.getByTestId('proposal-error').textContent).toBe('proposal p1 is already being applied')
     await waitFor(() => expect(calls('/v1/proposals')).toBeGreaterThan(1))
-    expect(calls('/v1/proposals/p1')).toBeGreaterThan(1)
+    expect(calls('/v1/proposals/{id}')).toBeGreaterThan(1)
   })
 
   it('disables discard while accept is pending, and save while discard is pending', async () => {
     let finishAccept: (error: Error) => void = () => undefined
-    api.mockImplementation((path: string) => {
-      const url = String(path)
-      if (url === '/v1/proposals') return Promise.resolve({ proposals: [proposal] })
-      if (url === '/v1/proposals/p1') return Promise.resolve(proposal)
-      if (url === '/v1/definitions') return Promise.resolve({ languages: ['en'], types: [], attributes: [], structures: [] })
-      if (url.endsWith('/accept')) return new Promise((_, reject) => { finishAccept = reject })
-      if (url.endsWith('/discard')) return new Promise(() => undefined)
+    mock.use((path: string) => {
+      if (path === '/v1/proposals') return Promise.resolve({ proposals: [proposal] })
+      if (path === '/v1/proposals/{id}') return Promise.resolve(proposal)
+      if (path === '/v1/definitions') return Promise.resolve({ languages: ['en'], types: [], attributes: [], structures: [] })
+      if (path.endsWith('/accept')) return new Promise((_, reject) => { finishAccept = reject })
+      if (path.endsWith('/discard')) return new Promise(() => undefined)
       return Promise.resolve({})
     })
     const push = vi.fn()

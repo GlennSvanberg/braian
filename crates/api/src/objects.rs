@@ -30,7 +30,7 @@ pub struct CreateObject {
     #[serde(default)]
     pub groups: BTreeMap<String, String>,
     #[serde(default)]
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub values: BTreeMap<String, Value>,
 }
 
@@ -67,7 +67,7 @@ pub struct BatchGetResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PatchObject {
     #[serde(default)]
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub values: BTreeMap<String, Value>,
     #[serde(default)]
     pub groups: BTreeMap<String, Option<String>>,
@@ -79,7 +79,7 @@ pub struct ObjectResponse {
     #[serde(rename = "type")]
     pub object_type: String,
     pub groups: BTreeMap<String, String>,
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub values: BTreeMap<String, Value>,
     pub version: u64,
     pub seq: i64,
@@ -129,7 +129,7 @@ pub struct ChangeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub diff: Option<Value>,
 }
 

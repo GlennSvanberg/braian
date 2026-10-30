@@ -1060,7 +1060,7 @@ pub fn attribute_path_list(defs: &DefinitionSet, type_id: TypeId) -> Value {
 pub struct AttributePathRow {
     pub text: String,
     pub label: String,
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub id: Value,
 }
 

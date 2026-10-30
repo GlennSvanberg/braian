@@ -12,7 +12,7 @@ import {
 } from 'd3-force'
 import { ChevronDown, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
-import { api, catalogName, textValue, type Json } from './api'
+import { api, catalogName, searchQuery, textValue, type Json } from './api'
 import { MetaChip, typeLabel } from './chips'
 import {
   buildScene,
@@ -206,8 +206,8 @@ export function GraphMap({
       let extra: Scene = { nodes: [], edges: [] }
       if (node.kind === 'object' && node.objectId) {
         const [graph, object] = await Promise.all([
-          api<Json>(`/v1/objects/${node.objectId}/graph`),
-          api<Json>(`/v1/objects/${node.objectId}`),
+          api.get('/v1/objects/{id}/graph', { params: { path: { id: node.objectId } } }),
+          api.get('/v1/objects/{id}', { params: { path: { id: node.objectId } } }),
         ])
         const linkIds = ((graph.links as Json[]) ?? []).map((item) => String(item.object_id ?? '')).filter(Boolean)
         const nextKnown = await resolveNames([String(graph.id ?? node.objectId), ...linkIds], knownRef.current)
@@ -229,7 +229,7 @@ export function GraphMap({
             per_page: '40',
             lang: uiLanguage,
           })
-          const body = await api<Json>(`/v1/search?${params}`)
+          const body = await api.get('/v1/search', { params: { query: searchQuery(params) } })
           const hits = searchDocuments(body).map((doc) => {
             const name = catalogName(doc)
             return {
@@ -1378,10 +1378,7 @@ async function lookupNames(ids: string[]): Promise<Record<string, KnownObject>> 
   const found: Record<string, KnownObject> = {}
   for (let index = 0; index < unique.length; index += 400) {
     const slice = unique.slice(index, index + 400)
-    const body = await api<Json>('/v1/objects/names', {
-      method: 'POST',
-      body: JSON.stringify({ ids: slice }),
-    })
+    const body = await api.post('/v1/objects/names', { body: { ids: slice } })
     const rows = (body.objects as Json[] | undefined) ?? []
     for (const row of rows) {
       const id = String(row.id ?? '')

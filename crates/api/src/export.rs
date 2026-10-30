@@ -30,6 +30,7 @@ use rust_xlsxwriter::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::auth::{Auth, Identity, Role};
@@ -177,9 +178,10 @@ impl Progress {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct ExportBody {
     #[serde(default)]
+    #[schema(value_type = Vec<crate::http_schema::ExportColumn>)]
     columns: Vec<ColumnIn>,
     q: Option<String>,
     lang: Option<String>,

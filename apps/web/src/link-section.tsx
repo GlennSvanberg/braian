@@ -58,7 +58,7 @@ export function LinkSections({
       setTyped('')
       return
     }
-    void api(`/v1/links/${id}`, { method: 'DELETE' }).then(refresh).catch(() => undefined)
+    void api.delete('/v1/links/{id}', { params: { path: { id: id } } }).then(refresh).catch(() => undefined)
   }
   removeRef.current = remove
   const openLinkMenu = (link: LinkItem, x: number, y: number) => {
@@ -178,7 +178,7 @@ export function LinkSections({
             onSubmit={(event) => {
               event.preventDefault()
               if (typed.trim() !== confirm.peer) return
-              void api(`/v1/links/${confirm.id}`, { method: 'DELETE' }).then(() => {
+              void api.delete('/v1/links/{id}', { params: { path: { id: confirm.id } } }).then(() => {
                 setConfirm(null)
                 refresh()
               }).catch(() => undefined)
@@ -212,7 +212,7 @@ function LinkPicker({
   const [active, setActive] = useState(0)
   const found = useQuery({
     queryKey: ['link-search', query],
-    queryFn: () => api<Json>(`/v1/search?q=${encodeURIComponent(query)}&per_page=8&lang=${uiLanguage}`),
+    queryFn: () => api.get('/v1/search', { params: { query: { q: query, per_page: 8, lang: uiLanguage } } }),
     enabled: query.trim().length > 0,
   })
   const hits = (((found.data?.hits as Json[]) ?? [])
@@ -231,7 +231,7 @@ function LinkPicker({
     const body = section.direction === 'out'
       ? { type: section.link_type, from_id: objectId, to_id: peer, values: {} }
       : { type: section.link_type, from_id: peer, to_id: objectId, values: {} }
-    void api('/v1/links', { method: 'POST', body: JSON.stringify(body) }).then(onCreated).catch(() => undefined)
+    void api.post('/v1/links', { body: body }).then(onCreated).catch(() => undefined)
   }
   return (
     <div className="menu" role="dialog" aria-label={copy.addLink} data-testid="link-picker">

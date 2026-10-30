@@ -1,4 +1,4 @@
-import { api, type Json } from './api'
+import { api, jsonRecord, type Json } from './api'
 import { publishProposal } from './proposal-bus'
 
 export type ModelFocus =
@@ -39,18 +39,13 @@ export function modelDeletes(name: string) {
 /** A person's edit joins the draft. A delete opens the consequence dialog. */
 export async function stageModel(name: string, args: Json = {}) {
   if (modelDeletes(name)) {
-    const result = await api<Json>(`/v1/operations/${name}`, {
-      method: 'POST',
-      body: JSON.stringify(args),
-    })
-    const id = String(result.proposal_id ?? result.id ?? '')
+    const result = await api.post('/v1/operations/{name}', { params: { path: { name: name } }, body: args })
+    const record = jsonRecord(result)
+    const id = String(record?.proposal_id ?? record?.id ?? '')
     if (id) publishProposal(id)
     return result
   }
-  const draft = await api<Json>('/v1/model/draft/steps', {
-    method: 'POST',
-    body: JSON.stringify({ operation: name, args }),
-  })
+  const draft = await api.post('/v1/model/draft/steps', { body: { operation: name, args } })
   emitDraft()
   return draft
 }

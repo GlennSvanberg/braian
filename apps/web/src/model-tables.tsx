@@ -37,8 +37,8 @@ export function valueListOptions(defs: Json | undefined, listKey: string): Optio
 
 function useModelDefs() {
   const queryClient = useQueryClient()
-  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api<Json>('/v1/model/draft') })
+  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
+  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api.get('/v1/model/draft') })
   useEffect(() => onDraftChange(() => {
     void queryClient.invalidateQueries({ queryKey: ['model-draft'] })
   }), [queryClient])

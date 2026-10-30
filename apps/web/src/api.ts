@@ -1,50 +1,65 @@
-export class ApiError extends Error {
-  status: number
-  body: unknown
+import { del, get, patch, post, put } from './api/client'
+import type { components } from './api/schema'
 
-  constructor(status: number, detail: string, body: unknown) {
-    super(detail)
-    this.status = status
-    this.body = body
+export { ApiError, client, freeObject, keepaliveJsonPut } from './api/client'
+export type { components, paths } from './api/schema'
+export type Schemas = components['schemas']
+
+/** Typed client. Methods match the OpenAPI operations and throw `ApiError` on failure. */
+export const api = { get, post, put, patch, delete: del }
+
+/** Query object for `GET /v1/search` from the URL the tables already build. */
+export function searchQuery(params: URLSearchParams): {
+  q?: string
+  lang?: string
+  filter?: string
+  sort?: string
+  group?: string
+  page?: number
+  per_page?: number
+  wait_seq?: number
+} {
+  const text = (key: string) => {
+    const value = params.get(key)
+    return value == null || value === '' ? undefined : value
+  }
+  const num = (key: string) => {
+    const value = params.get(key)
+    if (value == null || value === '') return undefined
+    const parsed = Number(value)
+    return Number.isNaN(parsed) ? undefined : parsed
+  }
+  return {
+    q: text('q'),
+    lang: text('lang'),
+    filter: text('filter'),
+    sort: text('sort'),
+    group: text('group'),
+    page: num('page'),
+    per_page: num('per_page'),
+    wait_seq: num('wait_seq'),
   }
 }
 
-/** Fire-and-forget JSON PUT that survives tab close (same pattern as workspace flush). */
-export function keepaliveJsonPut(path: string, body: unknown): void {
-  void fetch(path, {
-    method: 'PUT',
-    credentials: 'include',
-    keepalive: true,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+/** A JSON object from an operation result whose shape depends on the operation. */
+export function jsonRecord(value: unknown): Json | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Json
+  return null
+}
+
+/** Proposal id from an operation whose payload depends on the operation name. */
+export function operationId(result: unknown): string {
+  const record = jsonRecord(result)
+  return String(record?.proposal_id ?? record?.id ?? '')
+}
+
+/** Rows an accept call failed. A running job has none. */
+export function failureLines(result: object): Json[] {
+  if (!('failed' in result) || !Array.isArray(result.failed)) return []
+  return result.failed.flatMap((item) => {
+    const row = jsonRecord(item)
+    return row ? [row] : []
   })
-}
-
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (init.body && !headers.has('content-type')) {
-    headers.set('content-type', 'application/json')
-  }
-  const method = (init.method ?? 'GET').toUpperCase()
-  const started = performance.now()
-  const response = await fetch(path, { ...init, headers, credentials: 'include' })
-  if (typeof window !== 'undefined') {
-    void import('./feedback-log').then(({ noteApiResponse }) => {
-      noteApiResponse(method, path, started, response)
-    })
-  }
-  if (response.status === 204) return undefined as T
-  const type = response.headers.get('content-type') ?? ''
-  if (!type.includes('json')) {
-    if (!response.ok) throw new ApiError(response.status, response.statusText, null)
-    return (await response.blob()) as T
-  }
-  const body = await response.json()
-  if (!response.ok) {
-    const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
-    throw new ApiError(response.status, detail, body)
-  }
-  return body as T
 }
 
 export type Json = Record<string, unknown>

@@ -10,7 +10,7 @@ type DialogKind = 'type' | 'list' | 'family' | 'tree' | 'link'
 
 export function ModelDraftHost() {
   const queryClient = useQueryClient()
-  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api<Json>('/v1/model/draft') })
+  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api.get('/v1/model/draft') })
   const [review, setReview] = useState(false)
   const [dialog, setDialog] = useState<DialogKind | null>(null)
   const [error, setError] = useState('')
@@ -36,7 +36,7 @@ export function ModelDraftHost() {
       }
     }
     const discard = () => {
-      void api('/v1/model/draft', { method: 'DELETE' }).then(() => {
+      void api.delete('/v1/model/draft').then(() => {
         void queryClient.invalidateQueries({ queryKey: ['model-draft'] })
       }).catch(() => undefined)
     }
@@ -67,7 +67,7 @@ export function ModelDraftHost() {
             <button
               type="button"
               onClick={() => {
-                void api('/v1/model/draft/rebase', { method: 'POST' }).then(refresh).catch((reason: unknown) => {
+                void api.post('/v1/model/draft/rebase').then(refresh).catch((reason: unknown) => {
                   setError(reason instanceof ApiError ? reason.message : copy.validation)
                 })
               }}
@@ -124,10 +124,7 @@ function ReviewDialog({ body, onClose, onSaved }: { body: Json; onClose: () => v
   }
   const save = () => {
     setBusy(true)
-    void api('/v1/model/draft/save', {
-      method: 'POST',
-      body: JSON.stringify(destructive ? { confirm_name: typed } : {}),
-    })
+    void api.post('/v1/model/draft/save', { body: destructive ? { confirm_name: typed } : {} })
       .then(() => onSaved())
       .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
       .finally(() => setBusy(false))
@@ -178,7 +175,7 @@ function CreateDialog({ kind, onClose }: { kind: DialogKind; onClose: () => void
   const [fromType, setFromType] = useState('')
   const [toType, setToType] = useState('')
   const [error, setError] = useState('')
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions'), enabled: kind === 'link' })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions'), enabled: kind === 'link' })
   const entities = ((defs.data?.types as Json[] | undefined) ?? [])
     .filter((item) => item.kind !== 'link')
     .map((item) => String(item.key ?? ''))

@@ -6,11 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AttributeDefinitions } from './attribute-definitions'
 import { SharedContextMenuHost } from './shared-context-menu'
 
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 const NUMBER = '018f0000-0000-7000-8000-000000000100'
@@ -83,12 +90,11 @@ function Host() {
 
 describe('attribute definitions view', () => {
   beforeEach(() => {
-    api.mockReset()
-    api.mockImplementation((path: string) => {
+    mock.use((path, init) => {
       if (path === '/v1/definitions') return Promise.resolve(definitions)
       if (path === '/v1/model/draft') return Promise.resolve({ count: 0, conflict: false, steps: [] })
-      if (String(path).includes('model.list_attribute_definitions')) return Promise.resolve(catalog)
-      if (String(path).includes('/v1/model/draft/steps')) return Promise.resolve({ count: 1, steps: [] })
+      if (path === '/v1/operations/{name}' && init?.params?.path?.name === 'model.list_attribute_definitions') return Promise.resolve(catalog)
+      if (path === '/v1/model/draft/steps') return Promise.resolve({ count: 1, steps: [] })
       return Promise.resolve({})
     })
   })
@@ -145,10 +151,8 @@ describe('attribute definitions view', () => {
     fireEvent.keyDown(picker, { key: 'Enter' })
 
     await waitFor(() => {
-      const posted = api.mock.calls.find((call) => String(call[0]).includes('/v1/model/draft/steps'))
-      expect(posted).toBeTruthy()
-      const body = JSON.parse(String((posted?.[1] as RequestInit).body))
-      expect(body).toEqual({
+      const posted = mock.methods.post.mock.calls.find((call) => call[0] === '/v1/model/draft/steps')
+      expect(posted?.[1]?.body).toEqual({
         operation: 'model.attach_attribute',
         args: { attribute: 'gross_weight', type: 'supplier' },
       })

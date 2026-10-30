@@ -21,7 +21,7 @@ pub struct ConflictBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_behalf_of: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Object)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     pub current: Option<serde_json::Value>,
 }
 

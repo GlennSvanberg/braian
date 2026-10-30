@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, catalogName, type Json } from './api'
+import { api, catalogName, operationId, searchQuery, type Json } from './api'
 import { formatCount } from './format'
 import {
   currentSelectionLabels,
@@ -47,7 +47,7 @@ function selectionQuery(session: SelectionSession): Json {
 }
 
 export function NewSelectionDialog({ session }: { session: SelectionSession }) {
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const types = typeNames(defs.data, uiLanguage)
   const firstType = types[0]?.key ?? ''
   const workspaceType = session.workspaceType || session.listType || ''
@@ -74,11 +74,8 @@ export function NewSelectionDialog({ session }: { session: SelectionSession }) {
     const title = name.trim()
     const chosen = typeKey || workspaceType
     if (!title || !chosen) return
-    const result = await api<Json>('/v1/operations/assortment.save', {
-      method: 'POST',
-      body: JSON.stringify({ name: title, type: chosen, query: selectionQuery(session) }),
-    })
-    const id = String(result.proposal_id ?? result.id ?? '')
+    const result = await api.post('/v1/operations/{name}', { params: { path: { name: "assortment.save" } }, body: { name: title, type: chosen, query: selectionQuery(session) } })
+    const id = operationId(result)
     if (id) {
       publishProposal(id)
       session.setProposalId(id)
@@ -131,11 +128,11 @@ export function NewSelectionDialog({ session }: { session: SelectionSession }) {
 
 export function AssortmentList({ session }: { session: SelectionSession }) {
   const typeKey = session.workspaceType || session.listType || ''
-  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
+  const defs = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
   const typeId = typeNames(defs.data, uiLanguage).find((type) => type.key === typeKey)?.id ?? ''
   const list = useQuery({
     queryKey: ['assortments', typeKey],
-    queryFn: () => api<{ assortments: Json[] }>(`/v1/assortments?type=${encodeURIComponent(typeKey)}`),
+    queryFn: () => api.get('/v1/assortments', { params: { query: { type: typeKey } } }),
     enabled: Boolean(typeKey),
   })
   const items = (list.data?.assortments ?? []).filter((item) => selectionMatchesType(item, typeKey, typeId))
@@ -145,7 +142,7 @@ export function AssortmentList({ session }: { session: SelectionSession }) {
   const filter = open ? assortmentSearchFilter(query, String(open.type ?? typeKey), defs.data) : ''
   const matches = useQuery({
     queryKey: ['assortment-matches', openId, filter],
-    queryFn: () => api<Json>(`/v1/search?${new URLSearchParams({ filter, per_page: '20' })}`),
+    queryFn: () => api.get('/v1/search', { params: { query: searchQuery(new URLSearchParams({ filter, per_page: '20' })) } }),
     enabled: Boolean(open && filter),
   })
   const hits = searchDocuments(matches.data ?? {})

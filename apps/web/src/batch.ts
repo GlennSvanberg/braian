@@ -1,4 +1,4 @@
-import { api, type Json } from './api'
+import { api } from './api'
 
 /** Matches `BATCH_GET_LIMIT` on `POST /v1/objects:batchGet`. */
 export const BATCH_GET_LIMIT = 200
@@ -16,27 +16,25 @@ export type LeanProjection = {
  * heads and groups only.
  */
 export function batchGetBody(ids: string[], projection: LeanProjection = {}) {
-  const body: Json = {
+  const parts = projection.parts && projection.parts.length > 0 ? projection.parts : undefined
+  const fields = projection.fields && projection.fields.length > 0 ? projection.fields : undefined
+  return {
     ids,
     groups: projection.groups ?? true,
+    ...(parts ? { parts } : {}),
+    ...(fields ? { fields } : {}),
+    ...(projection.languages && projection.languages.length > 0 ? { languages: projection.languages } : {}),
+    ...(projection.values === true && !parts && !fields ? { values: true } : {}),
   }
-  if (projection.parts && projection.parts.length > 0) body.parts = projection.parts
-  if (projection.fields && projection.fields.length > 0) body.fields = projection.fields
-  if (projection.languages && projection.languages.length > 0) body.languages = projection.languages
-  if (projection.values === true && !body.parts && !body.fields) body.values = true
-  return body
 }
 
 /** Loads many objects in chunks. The default projection is heads and groups. */
-export async function batchGetObjects(ids: string[], projection: LeanProjection = {}): Promise<Json[]> {
+export async function batchGetObjects(ids: string[], projection: LeanProjection = {}) {
   const unique = [...new Set(ids.filter((id) => id.length > 0))]
-  const objects: Json[] = []
+  const objects = []
   for (let index = 0; index < unique.length; index += BATCH_GET_LIMIT) {
     const slice = unique.slice(index, index + BATCH_GET_LIMIT)
-    const body = await api<{ objects?: Json[] }>('/v1/objects:batchGet', {
-      method: 'POST',
-      body: JSON.stringify(batchGetBody(slice, projection)),
-    })
+    const body = await api.post('/v1/objects:batchGet', { body: batchGetBody(slice, projection) })
     objects.push(...(body.objects ?? []))
   }
   return objects

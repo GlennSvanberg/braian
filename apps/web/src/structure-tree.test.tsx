@@ -6,11 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Json } from './api'
 import { StructureSection } from './structure-tree'
 
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 const defs: Json = {
@@ -64,8 +71,7 @@ async function chooseMenu(testId: string, name: string) {
 describe('model structure tree', () => {
   beforeEach(() => {
     installDom()
-    api.mockReset()
-    api.mockResolvedValue({})
+    mock.use(() => Promise.resolve({}))
   })
 
   afterEach(() => {
@@ -113,7 +119,7 @@ describe('model structure tree', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.queryByTestId('group-draft')).toBeNull()
     expect(within(outdoor).getByRole('button', { name: 'Dairy & eggs' })).toBeTruthy()
-    expect(api).not.toHaveBeenCalled()
+    expect(mock.calls()).toEqual([])
 
     await chooseMenu('group-menu-food-cheese', 'Add child')
     const tents = screen.getByTestId('group-cheese')
@@ -126,9 +132,9 @@ describe('model structure tree', () => {
     await waitFor(() => expect(document.activeElement).toBe(childInput))
     fireEvent.change(childInput, { target: { value: 'Canopy' } })
     fireEvent.keyDown(childInput, { key: 'Enter' })
-    await waitFor(() => expect(api).toHaveBeenCalledWith('/v1/structures/food/groups', {
-      method: 'POST',
-      body: JSON.stringify({ key: 'canopy', label: 'Canopy', parent: 'cheese' }),
+    await waitFor(() => expect(mock.methods.post).toHaveBeenCalledWith('/v1/structures/{id}/groups', {
+      params: { path: { id: 'food' } },
+      body: { key: 'canopy', label: 'Canopy', parent: 'cheese' },
     }))
   })
 
@@ -147,9 +153,9 @@ describe('model structure tree', () => {
     await waitFor(() => expect(document.activeElement).toBe(input))
     fireEvent.change(input, { target: { value: 'Campaigns' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(api).toHaveBeenCalledWith('/v1/structures/food/groups', {
-      method: 'POST',
-      body: JSON.stringify({ key: 'campaigns', label: 'Campaigns' }),
+    await waitFor(() => expect(mock.methods.post).toHaveBeenCalledWith('/v1/structures/{id}/groups', {
+      params: { path: { id: 'food' } },
+      body: { key: 'campaigns', label: 'Campaigns' },
     }))
   })
 })

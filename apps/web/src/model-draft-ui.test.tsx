@@ -5,11 +5,18 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModelDraftHost } from './model-draft-ui'
 
-const api = vi.hoisted(() => vi.fn())
+const mock = vi.hoisted(() => {
+  const methods = { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+  const use = (impl: (path: string, init?: { body?: unknown; params?: { path?: Record<string, string> } }) => unknown) => {
+    for (const fn of Object.values(methods)) fn.mockReset().mockImplementation(impl)
+  }
+  const calls = () => Object.values(methods).flatMap((fn) => fn.mock.calls)
+  return { methods, use, calls }
+})
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
-  return { ...actual, api }
+  return { ...actual, api: mock.methods }
 })
 
 const draft = {
@@ -32,8 +39,7 @@ function Host() {
 
 describe('review dialog', () => {
   beforeEach(() => {
-    api.mockReset()
-    api.mockImplementation((path: string) => {
+    mock.use((path) => {
       if (path === '/v1/model/draft') return Promise.resolve(draft)
       return Promise.resolve({})
     })
@@ -60,7 +66,7 @@ describe('review dialog', () => {
 
     await waitFor(() => expect(screen.queryByTestId('review-dialog')).toBeNull())
     expect(underneath).not.toHaveBeenCalled()
-    const saves = api.mock.calls.filter((call) => String(call[0]).includes('/v1/model/draft/save'))
+    const saves = mock.calls().filter((call) => String(call[0]).includes('/v1/model/draft/save'))
     expect(saves).toEqual([])
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })

@@ -13,6 +13,7 @@ use base64::Engine;
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::auth::{Auth, Role};
@@ -139,12 +140,14 @@ fn validate_header(name: &str, value: &str) -> Result<(), ConfigError> {
         .map_err(|_| ConfigError)
 }
 
-#[derive(Debug, Deserialize)]
-struct FeedbackBody {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct FeedbackBody {
     message: String,
     #[serde(default)]
+    #[schema(value_type = crate::http_schema::FreeObject)]
     context: Value,
     #[serde(default)]
+    #[schema(value_type = Option<crate::http_schema::JsonValue>)]
     log: Option<Value>,
     #[serde(default)]
     screenshot: Option<String>,

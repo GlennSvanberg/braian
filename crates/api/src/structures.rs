@@ -67,12 +67,14 @@ pub struct GroupMove {
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MoveToQuery {
     /// Group key that receives objects from the deleted group and its descendants.
     #[serde(default)]
     pub move_to: Option<String>,
     /// When true, count what the delete would remove and change nothing.
     #[serde(default)]
+    #[param(required = false)]
     pub dry_run: bool,
 }
 

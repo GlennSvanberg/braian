@@ -7,7 +7,7 @@ use utoipa::OpenApi;
         version = "0.0.0",
         description = "Write and read definitions and objects."
     ),
-    modifiers(&SecurityAddon, &PlatformPaths),
+    modifiers(&SecurityAddon, &DocumentedPaths),
     tags(
         (name = "meta", description = "Process and caller"),
         (name = "definitions", description = "Versioned model. One request is one revision."),
@@ -69,6 +69,9 @@ use utoipa::OpenApi;
         crate::objects::patch_object,
         crate::objects::delete_object,
         crate::objects::object_changes,
+        crate::column_prefs::get_column_prefs,
+        crate::column_prefs::put_column_prefs,
+        crate::column_prefs::delete_column_prefs,
     ),
     components(schemas(
         crate::problem::Problem,
@@ -108,6 +111,107 @@ use utoipa::OpenApi;
         braian_model::SharedValueList,
         braian_model::ValidationError,
         crate::model_draft::ValueListBody,
+        crate::http_schema::FreeObject,
+        crate::http_schema::JsonValue,
+        crate::http_schema::ModelStep,
+        crate::http_schema::IdBody,
+        crate::http_schema::SessionUser,
+        crate::http_schema::CreatedToken,
+        crate::http_schema::OperationInfo,
+        crate::http_schema::OperationList,
+        crate::http_schema::AgentTool,
+        crate::http_schema::AgentReply,
+        crate::http_schema::SearchHit,
+        crate::http_schema::SearchGroup,
+        crate::http_schema::SearchResponse,
+        crate::http_schema::ObjectHead,
+        crate::http_schema::ObjectList,
+        crate::http_schema::NamedObject,
+        crate::http_schema::NamedObjectList,
+        crate::http_schema::TypeCount,
+        crate::http_schema::StatsResponse,
+        crate::http_schema::WorkspaceView,
+        crate::http_schema::WorkspaceRow,
+        crate::http_schema::WorkspaceList,
+        crate::http_schema::WorkspaceState,
+        crate::http_schema::WorkspaceStateSaved,
+        crate::http_schema::ViewTypeRow,
+        crate::http_schema::ViewTypeList,
+        crate::http_schema::AssortmentRow,
+        crate::http_schema::AssortmentList,
+        crate::http_schema::JobTypeRow,
+        crate::http_schema::JobTypeList,
+        crate::http_schema::JobRun,
+        crate::http_schema::JobRunList,
+        crate::http_schema::RunningJob,
+        crate::http_schema::ExportJob,
+        crate::http_schema::ExportColumn,
+        crate::http_schema::FrecencyEntry,
+        crate::http_schema::FrecencyList,
+        crate::http_schema::FrecencyTouch,
+        crate::http_schema::PendingObject,
+        crate::http_schema::PendingSummary,
+        crate::http_schema::ProposalListItem,
+        crate::http_schema::ProposalList,
+        crate::http_schema::ProposalRowView,
+        crate::http_schema::SampleRef,
+        crate::http_schema::JobTouch,
+        crate::http_schema::DraftConsequence,
+        crate::http_schema::ProposalView,
+        crate::http_schema::AcceptResult,
+        crate::http_schema::HistoryChange,
+        crate::http_schema::HistoryList,
+        crate::http_schema::AsOfView,
+        crate::http_schema::GraphLink,
+        crate::http_schema::GraphSource,
+        crate::http_schema::GraphAttribute,
+        crate::http_schema::ObjectGraph,
+        crate::http_schema::ImpactReport,
+        crate::http_schema::WebhookRow,
+        crate::http_schema::WebhookList,
+        crate::http_schema::CreatedWebhook,
+        crate::http_schema::ColumnPrefsView,
+        crate::http_schema::ColumnPrefsSaved,
+        crate::http_schema::ImportTypeOption,
+        crate::http_schema::ImportTarget,
+        crate::http_schema::ImportCreated,
+        crate::http_schema::ImportSessionView,
+        crate::http_schema::ImportStatus,
+        crate::http_schema::ImportPreviewRow,
+        crate::http_schema::ImportPreviewPage,
+        crate::http_schema::ImportJob,
+        crate::http_schema::ImportMappingColumn,
+        crate::http_schema::ImportMappingBody,
+        crate::http_schema::DraftView,
+        crate::http_schema::ModelSaveResult,
+        crate::platform::LoginBody,
+        crate::platform::TokenBody,
+        crate::platform::AgentBody,
+        crate::platform::WorkspaceBody,
+        crate::platform::StateBody,
+        crate::platform::AssignBody,
+        crate::platform::ViewBody,
+        crate::platform::ViewTypeBody,
+        crate::platform::AssortmentBody,
+        crate::platform::JobTypeBody,
+        crate::platform::BulkBody,
+        crate::platform::ProposalBody,
+        crate::platform::ProposalRowBody,
+        crate::platform::AcceptBody,
+        crate::platform::RollbackBody,
+        crate::platform::NamesBody,
+        crate::platform::ImpactBody,
+        crate::platform::WebhookBody,
+        crate::platform::FrecencyBody,
+        crate::import::SheetBody,
+        crate::import::RemapBody,
+        crate::import::ColumnBody,
+        crate::import::SaveBody,
+        crate::model_draft::DraftBody,
+        crate::model_draft::SaveBody,
+        crate::feedback::FeedbackBody,
+        crate::export::ExportBody,
+        crate::column_prefs::PrefsBody,
     ))
 )]
 struct ApiDoc;
@@ -116,263 +220,11 @@ pub fn spec() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
 }
 
-struct PlatformPaths;
+struct DocumentedPaths;
 
-impl utoipa::Modify for PlatformPaths {
+impl utoipa::Modify for DocumentedPaths {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        use utoipa::openapi::path::{HttpMethod, OperationBuilder};
-        let routes = [
-            (HttpMethod::Post, "/v1/login", "Start a cookie session"),
-            (HttpMethod::Post, "/v1/logout", "Clear the cookie session"),
-            (
-                HttpMethod::Post,
-                "/v1/tokens",
-                "Create an API token for a person",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/operations",
-                "List operations the caller may run",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/operations/{name}",
-                "Run one operation. Agents receive a proposal.",
-            ),
-            (
-                HttpMethod::Post,
-                "/mcp",
-                "MCP endpoint over the operation registry",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/agent",
-                "Proxy a chat completion when a model key is set",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/feedback",
-                "Send in-app feedback. Admins only, and only when a webhook URL is configured.",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/stream",
-                "Server-sent events for committed changes",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/search",
-                "Search the index. Supports filter, sort, group and page",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/objects",
-                "List object heads. type and q run in SQL before limit; cursor pages the rest",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/objects/names",
-                "Display names for a batch of objects",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/export",
-                "Export the current view as an xlsx file. Large exports run as a job.",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/exports/{id}",
-                "Download a finished xlsx export",
-            ),
-            (HttpMethod::Get, "/v1/stats", "Object counts by type"),
-            (HttpMethod::Get, "/v1/workspaces", "List workspaces"),
-            (
-                HttpMethod::Post,
-                "/v1/workspaces",
-                "Create or update a workspace layout",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/workspaces/{id}",
-                "Workspace with views and layout",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/workspaces/{id}/assign",
-                "Assign a workspace to a person",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/share/{token}",
-                "Open a workspace by share token",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/views",
-                "Create or update a view, including table state",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/views/{view_id}/column-prefs",
-                "Read own column preferences for a view. Stale paths are flagged, never a 500.",
-            ),
-            (
-                HttpMethod::Put,
-                "/v1/views/{view_id}/column-prefs",
-                "Save own column preferences for a view",
-            ),
-            (
-                HttpMethod::Delete,
-                "/v1/views/{view_id}/column-prefs",
-                "Clear own column preferences for a view",
-            ),
-            (HttpMethod::Get, "/v1/view-types", "List view types"),
-            (HttpMethod::Post, "/v1/view-types", "Register a view type"),
-            (
-                HttpMethod::Get,
-                "/v1/assortments",
-                "List selections. Optional type is an id or a key.",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/assortments",
-                "Save a selection. type is an id or a key and is not stored in query.",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/assortments/{id}",
-                "Read one selection. type must be that selection's type.",
-            ),
-            (HttpMethod::Get, "/v1/job-types", "List job types"),
-            (HttpMethod::Post, "/v1/job-types", "Register a job type"),
-            (
-                HttpMethod::Get,
-                "/v1/job-types/{key}/runs",
-                "Runs for one job type",
-            ),
-            (HttpMethod::Get, "/v1/jobs/{id}", "One job run"),
-            (
-                HttpMethod::Post,
-                "/v1/bulk",
-                "Write many objects as one job",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/imports",
-                "Upload a spreadsheet import",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/imports/{id}",
-                "Read an import session",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/imports/{id}/sheet",
-                "Switch the imported sheet",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/imports/{id}/remap",
-                "Re-run column mapping for a type",
-            ),
-            (
-                HttpMethod::Put,
-                "/v1/imports/{id}/mapping",
-                "Save the column mapping",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/imports/{id}/approve",
-                "Build the import preview",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/imports/{id}/rows",
-                "Read preview rows",
-            ),
-            (HttpMethod::Post, "/v1/imports/{id}/save", "Save the import"),
-            (
-                HttpMethod::Get,
-                "/v1/imports/{id}/failed.xlsx",
-                "Download failing rows",
-            ),
-            (HttpMethod::Delete, "/v1/imports/{id}", "Discard an import"),
-            (HttpMethod::Get, "/v1/proposals", "List proposals"),
-            (HttpMethod::Post, "/v1/proposals", "Create a proposal"),
-            (HttpMethod::Get, "/v1/proposals/{id}", "Read a proposal"),
-            (
-                HttpMethod::Post,
-                "/v1/proposals/{id}/accept",
-                "Accept a proposal in full or by row",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/proposals/{id}/discard",
-                "Discard a proposal",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/history",
-                "Recent changes across objects",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/objects/{id}/as-of",
-                "Object values as of a sequence",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/objects/{id}/rollback",
-                "Propose a rollback to a sequence",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/objects/{id}/graph",
-                "Links and where each attribute comes from",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/impact",
-                "Affected objects and jobs for a breaking definition change",
-            ),
-            (HttpMethod::Get, "/v1/webhooks", "List webhooks"),
-            (HttpMethod::Post, "/v1/webhooks", "Create a webhook"),
-            (
-                HttpMethod::Get,
-                "/v1/frecency",
-                "Command frecency for the signed-in person",
-            ),
-            (
-                HttpMethod::Post,
-                "/v1/frecency",
-                "Record one use of a command for the signed-in person",
-            ),
-            (
-                HttpMethod::Get,
-                "/v1/workspaces/{id}/state",
-                "Personal workspace layout for the signed-in person and environment",
-            ),
-            (
-                HttpMethod::Put,
-                "/v1/workspaces/{id}/state",
-                "Save the personal workspace layout",
-            ),
-            (
-                HttpMethod::Delete,
-                "/v1/workspaces/{id}/state",
-                "Delete the personal workspace layout",
-            ),
-        ];
-        for (method, path, summary) in routes {
-            let operation = OperationBuilder::new()
-                .summary(Some(summary))
-                .tags(Some(["platform"]))
-                .build();
-            openapi
-                .paths
-                .add_path_operation(path, vec![method], operation);
-        }
+        crate::openapi_paths::apply(openapi);
     }
 }
 

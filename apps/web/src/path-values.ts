@@ -47,15 +47,12 @@ export function fetchPathValues(input: {
     }
     return item
   })
-  return api<PathValuesResponse>('/v1/objects:pathValues', {
-    method: 'POST',
-    body: JSON.stringify({
+  return api.post('/v1/objects:pathValues', { body: {
       ids: input.ids,
       paths,
       type: input.typeKey,
       lang: input.lang,
-    }),
-  })
+    } })
 }
 
 /** Prefer the full column id key; fall back to bare path for older servers. */

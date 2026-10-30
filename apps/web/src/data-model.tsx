@@ -49,8 +49,8 @@ async function propose(name: string, args: Json) {
 
 export function DataModel({ view }: { view: View }) {
   const queryClient = useQueryClient()
-  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api<Json>('/v1/definitions') })
-  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api<Json>('/v1/model/draft') })
+  const stored = useQuery({ queryKey: ['definitions'], queryFn: () => api.get('/v1/definitions') })
+  const draft = useQuery({ queryKey: ['model-draft'], queryFn: () => api.get('/v1/model/draft') })
   useEffect(() => onDraftChange(() => {
     void queryClient.invalidateQueries({ queryKey: ['model-draft'] })
   }), [queryClient])
@@ -567,10 +567,7 @@ function AllowedTrees({ defs, typeKey }: { defs: Json | undefined; typeKey: stri
   }, [])
   const save = (next: string[]) => {
     const id = String(raw?.id ?? typeKey)
-    void api<Json>(`/v1/types/${id}/structures`, {
-      method: 'PUT',
-      body: JSON.stringify({ structures: next }),
-    }).catch(() => undefined)
+    void api.put('/v1/types/{id}/structures', { params: { path: { id: id } }, body: { structures: next } }).catch(() => undefined)
   }
   return (
     <fieldset className="type-names" data-testid="allowed-trees">
@@ -707,7 +704,7 @@ function ImpactNote() {
         className="toolbar"
         onSubmit={(event) => {
           event.preventDefault()
-          void api<Json>('/v1/impact', { method: 'POST', body: JSON.stringify({ remove_attribute: attribute }) })
+          void api.post('/v1/impact', { body: { remove_attribute: attribute } })
             .then((body) => {
               setResult(body)
               void queryClient.invalidateQueries({ queryKey: ['definitions'] })
