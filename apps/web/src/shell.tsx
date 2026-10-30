@@ -716,14 +716,30 @@ export function Shell() {
     migratedRef.current.add(current.id)
     if (!patch.changed) return
     void persistWorkspaceMigration(current, patch)
-      .then(() => {
-        void queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
-        void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      .then(async () => {
+        await queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
+        await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+        // Template reset replaces the layout; drop any personal/local doc so tabs
+        // show the new Structures / Object types set instead of Model / Preview.
+        if (patch.layout && userId) {
+          const next = canonicalDoc({
+            id: current.id,
+            name: current.name,
+            layout: patch.layout,
+            owner_id: current.owner_id,
+          })
+          writeLayoutStore(layoutStorageKey(userId, current.id), next)
+          docRef.current = next
+          dirtyRef.current = false
+          setDoc(next)
+          canonicalRef.current = next.layout
+          loadedFor.current = `${userId}:${current.id}`
+        }
       })
       .catch(() => {
         // Migration is best-effort; never surface as an unhandled page error.
       })
-  }, [workspace.data, defs.data, queryClient])
+  }, [workspace.data, defs.data, queryClient, userId])
 
   const session: Session = {
     group,
