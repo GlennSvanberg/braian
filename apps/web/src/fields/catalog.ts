@@ -9,6 +9,7 @@
  */
 import type { Json } from '../api'
 import type { FieldDef, FieldValueShape } from './qualifiers'
+export type { FieldDef }
 
 export type DefsJson = Json
 
