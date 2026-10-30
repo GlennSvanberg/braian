@@ -5,6 +5,7 @@ import { ViewGlyph } from './chips'
 import { Kbd } from './components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
 import { viewDisplayTitle } from './demo-labels'
+import { looksLikeRawViewId } from './model-workspace-migrate'
 import { copy } from './i18n'
 import { openSharedContextMenu } from './shared-context-menu'
 import {
@@ -430,7 +431,7 @@ function Pane({ frame, leaf }: { frame: Frame; leaf: Leaf }) {
         </div>
       </div>
       <div className="pane-body">
-        {activeId ? frame.renderView(frame.viewList.find((view) => view.id === activeId) ?? { id: activeId, title: activeId, type: '' }) : <p>{copy.empty}</p>}
+        {activeId ? frame.renderView(frame.viewList.find((view) => view.id === activeId) ?? { id: activeId, title: copy.missingViewTab, type: '' }) : <p>{copy.empty}</p>}
       </div>
       {preview ? (
         <div className="dock-preview" data-testid="drop-overlay" data-zone={preview} style={previewStyle(preview)}>
@@ -508,7 +509,11 @@ function activateDoc(doc: LayoutDoc, view: string): LayoutDoc {
 }
 
 function titleOf(list: DockView[], id: string) {
-  return viewDisplayTitle(list.find((view) => view.id === id)?.title ?? id)
+  const found = list.find((view) => view.id === id)
+  if (!found) return copy.missingViewTab
+  const title = found.title.trim()
+  if (!title || looksLikeRawViewId(title)) return copy.missingViewTab
+  return viewDisplayTitle(title)
 }
 
 function zoneLabel(zone: Zone) {

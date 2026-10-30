@@ -40,7 +40,7 @@ import { registerCommandRunner, runCommand } from './command-registry'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
-import { isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
+import { healDataModelWorkspace, isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
@@ -705,7 +705,8 @@ export function Shell() {
       types.length > 0
         ? migrateSavedWorkspace(current, viewRows(current.views), types)
         : { changed: false as const, name: undefined, views: [] as Array<{ id: string; title: string; state: Json; type?: string }> }
-    const modelPatch = migrateLegacyModelViews(current, viewRows(current.views))
+    const listed = viewRows(current.views)
+    const modelPatch = healDataModelWorkspace(current, listed, migrateLayout(current.layout))
     const patch = {
       changed: objectPatch.changed || modelPatch.changed,
       name: objectPatch.name,
@@ -1521,14 +1522,17 @@ async function persistWorkspaceMigration(
     layout?: unknown
   },
 ) {
-  const layout = patch.layout ?? workspace.layout ?? { tabs: [] }
-  if ((patch.name && patch.name !== workspace.name) || patch.layout) {
-    await api.post('/v1/workspaces', { body: {
-        id: workspace.id,
-        name: patch.name ?? workspace.name,
-        locked: workspace.locked,
-        share_token: workspace.share_token,
-        layout: freeObject(layout && typeof layout === 'object' ? layout : { tabs: [] }),
+  // Create / update views before writing layout so a failed create cannot leave
+  // dangling view ids in the saved workspace layout (demo "Data model 8").
+  for (const view of patch.create ?? []) {
+    await api.post('/v1/views', { body: {
+        id: view.id,
+        workspace_id: workspace.id,
+        type: view.type,
+        title: view.title,
+        pane: view.pane ?? 'main',
+        position: view.position ?? 0,
+        state: freeObject(view.state),
       } })
   }
   for (const view of patch.views) {
@@ -1544,15 +1548,14 @@ async function persistWorkspaceMigration(
         state: freeObject(view.state),
       } })
   }
-  for (const view of patch.create ?? []) {
-    await api.post('/v1/views', { body: {
-        id: view.id,
-        workspace_id: workspace.id,
-        type: view.type,
-        title: view.title,
-        pane: view.pane ?? 'main',
-        position: view.position ?? 0,
-        state: freeObject(view.state),
+  const layout = patch.layout ?? workspace.layout ?? { tabs: [] }
+  if ((patch.name && patch.name !== workspace.name) || patch.layout) {
+    await api.post('/v1/workspaces', { body: {
+        id: workspace.id,
+        name: patch.name ?? workspace.name,
+        locked: workspace.locked,
+        share_token: workspace.share_token,
+        layout: freeObject(layout && typeof layout === 'object' ? layout : { tabs: [] }),
       } })
   }
 }

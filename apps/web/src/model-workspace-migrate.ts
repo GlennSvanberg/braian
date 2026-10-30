@@ -1,5 +1,5 @@
 import type { Json } from './api'
-import { splitPair, tabGroup, type Node } from './layout'
+import { remove, splitPair, tabGroup, views as layoutViews, type Node } from './layout'
 import type { SavedView, WorkspaceMigration } from './type-labels'
 
 /** View specs for the Data model workspace, matching `templates.ts` id `model`. */
@@ -90,22 +90,74 @@ export function needsLegacyModelMigration(
   return false
 }
 
+/** Data model workspaces: seeded share token, name, or model table / tree panes. */
+export function isDataModelWorkspace(
+  workspace: { share_token?: string | null; name?: string },
+  views: SavedView[],
+): boolean {
+  if (workspace.share_token === 'braian-model') return true
+  if (/^data model\b/i.test(String(workspace.name ?? '').trim())) return true
+  if (views.some((view) => view.type === 'data_model')) return true
+  return views.some((view) =>
+    view.type === 'object_types'
+    || view.type === 'link_types'
+    || view.type === 'value_lists'
+    || view.type === 'units'
+    || view.type === 'attribute_definitions',
+  )
+}
+
+export function hasFullModelTemplate(views: SavedView[]): boolean {
+  for (const spec of MODEL_WORKSPACE_VIEW_SPECS) {
+    if (spec.type === 'data_model' && spec.state.mode === 'tree') {
+      const ok = views.some(
+        (view) =>
+          view.type === 'data_model'
+          && !isLegacyPreviewView(view)
+          && !isTypeAttributesView(view)
+          && (modeOf(view) === 'tree' || titleOf(view) === 'structures' || titleOf(view) === 'model' || modeOf(view) === ''),
+      )
+      if (!ok) return false
+      continue
+    }
+    if (spec.type === 'data_model' && spec.state.mode === 'classes') {
+      if (!views.some(isTypeAttributesView)) return false
+      continue
+    }
+    if (!views.some((view) => view.type === spec.type)) return false
+  }
+  return true
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** True when a tab label would paint as a raw id. */
+export function looksLikeRawViewId(title: string) {
+  return UUID_RE.test(title.trim())
+}
+
+export function pruneMissingViewIds(layout: Node, existingIds: Set<string>): { layout: Node; removed: string[] } {
+  const open = viewsFromLayout(layout)
+  const removed = open.filter((id) => !existingIds.has(id))
+  let next = layout
+  for (const id of removed) next = remove(next, id)
+  return { layout: next, removed }
+}
+
+function viewsFromLayout(layout: Node): string[] {
+  return layoutViews(layout)
+}
+
 type ModelMigration = Pick<WorkspaceMigration, 'changed' | 'views' | 'create' | 'layout'>
 
 /**
- * Reset a pre-#99 Data model workspace onto the current standard template.
- * Remaps Model/Preview/Attributes onto template slots and creates any missing
- * tables; personal panes are not kept. Idempotent once `object_types` exists.
+ * Reset / rebuild onto the current standard Data model template.
+ * Remaps existing panes onto template slots and creates any missing tables.
  */
-export function migrateLegacyModelViews(
-  workspace: { share_token?: string | null; name?: string },
+export function buildModelTemplateMigration(
   views: SavedView[],
   options?: { newId?: () => string },
 ): ModelMigration {
-  if (!needsLegacyModelMigration(workspace, views)) {
-    return { changed: false, views: [], create: [], layout: undefined }
-  }
-
   const newId = options?.newId ?? (() => crypto.randomUUID())
   const updates: WorkspaceMigration['views'] = []
   const create: NonNullable<WorkspaceMigration['create']> = []
@@ -188,5 +240,56 @@ export function migrateLegacyModelViews(
     views: updates,
     create,
     layout: modelWorkspaceLayout(orderedIds),
+  }
+}
+
+/**
+ * Reset a pre-#99 Data model workspace onto the current standard template.
+ * Idempotent once `object_types` exists (unless healDataModelWorkspace takes over).
+ */
+export function migrateLegacyModelViews(
+  workspace: { share_token?: string | null; name?: string },
+  views: SavedView[],
+  options?: { newId?: () => string },
+): ModelMigration {
+  if (!needsLegacyModelMigration(workspace, views)) {
+    return { changed: false, views: [], create: [], layout: undefined }
+  }
+  return buildModelTemplateMigration(views, options)
+}
+
+export type HealResult = ModelMigration & { removed: string[] }
+
+/**
+ * Drop layout entries that point at missing views. If this is a Data model
+ * workspace that still lacks the standard tables, rebuild the template.
+ * Idempotent when the layout is already clean and the template is complete.
+ */
+export function healDataModelWorkspace(
+  workspace: { share_token?: string | null; name?: string },
+  views: SavedView[],
+  layout: Node | undefined,
+  options?: { newId?: () => string },
+): HealResult {
+  const existingIds = new Set(views.map((view) => view.id))
+  const baseLayout = layout ?? tabGroup([])
+  const pruned = pruneMissingViewIds(baseLayout, existingIds)
+  const incomplete = isDataModelWorkspace(workspace, views) && !hasFullModelTemplate(views)
+
+  if (incomplete || needsLegacyModelMigration(workspace, views)) {
+    const rebuilt = buildModelTemplateMigration(views, options)
+    return { ...rebuilt, removed: pruned.removed }
+  }
+
+  if (pruned.removed.length === 0) {
+    return { changed: false, views: [], create: [], layout: undefined, removed: [] }
+  }
+
+  return {
+    changed: true,
+    views: [],
+    create: [],
+    layout: pruned.layout,
+    removed: pruned.removed,
   }
 }

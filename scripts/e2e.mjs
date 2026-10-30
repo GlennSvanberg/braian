@@ -97,7 +97,7 @@ let code = 1
 try {
   await waitFor('http://127.0.0.1:8095/healthz')
   await waitFor('http://127.0.0.1:3010/')
-  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts', 'e2e/drag.spec.ts', 'e2e/layout.spec.ts', 'e2e/graph.spec.ts', 'e2e/history.spec.ts', 'e2e/import.spec.ts', 'e2e/structure.spec.ts', 'e2e/group-filter.spec.ts', 'e2e/type-workspace.spec.ts', 'e2e/pane-scroll.spec.ts', 'e2e/model-tree.spec.ts', 'e2e/change-flow.spec.ts', 'e2e/record.spec.ts', 'e2e/field-picker.spec.ts', 'e2e/column-prefs-multitab.spec.ts', 'e2e/column-drag-and-system-fields.spec.ts', 'e2e/table-flash-sort-palette.spec.ts', 'e2e/move-col-flash-sse.spec.ts', 'e2e/palette-root-focus.spec.ts', 'e2e/legacy-model-workspace.spec.ts'], {
+  execFileSync(pnpm, ['--dir', 'apps/web', 'exec', 'playwright', 'test', 'e2e/smoke.spec.ts', 'e2e/drag.spec.ts', 'e2e/layout.spec.ts', 'e2e/graph.spec.ts', 'e2e/history.spec.ts', 'e2e/import.spec.ts', 'e2e/structure.spec.ts', 'e2e/group-filter.spec.ts', 'e2e/type-workspace.spec.ts', 'e2e/pane-scroll.spec.ts', 'e2e/model-tree.spec.ts', 'e2e/change-flow.spec.ts', 'e2e/record.spec.ts', 'e2e/field-picker.spec.ts', 'e2e/column-prefs-multitab.spec.ts', 'e2e/column-drag-and-system-fields.spec.ts', 'e2e/table-flash-sort-palette.spec.ts', 'e2e/move-col-flash-sse.spec.ts', 'e2e/palette-root-focus.spec.ts', 'e2e/legacy-model-workspace.spec.ts', 'e2e/dangling-model-workspace.spec.ts'], {
     cwd: root,
     stdio: 'inherit',
     shell: windows,

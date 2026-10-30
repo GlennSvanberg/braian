@@ -348,6 +348,7 @@ export const copy = {
   noAttributesMatch: 'No attributes match.',
   kindAll: 'Kind',
   pickModel: 'Select an object type or a group.',
+  missingViewTab: 'Unavailable',
   unknownView: 'This view is no longer available.',
   unknownViewDetail: 'It was removed or replaced. Open another view from the workspace tabs.',
   conflictAttribute: 'That name already exists with a different type or unit.',
