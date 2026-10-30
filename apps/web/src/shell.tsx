@@ -356,7 +356,10 @@ export function Shell() {
     const source = new EventSource('/v1/stream', { withCredentials: true })
     const refresh = new SearchRefresh(
       () => {
+        // One sweep: Typesense hits (Version) and pathValues (Description / hops)
+        // must invalidate together or the row paints in two steps.
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
+        void queryClient.invalidateQueries({ queryKey: ['path-values'] })
       },
       (id) => {
         void queryClient.invalidateQueries({ queryKey: ['object', id] })

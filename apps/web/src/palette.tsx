@@ -1117,16 +1117,16 @@ function columnEntries(columns: UiColumn[], activeColumn: string | null): Palett
       {
         id: 'column:move-left',
         group: 'views',
-        title: copy.moveColumnLeft,
+        title: `${copy.moveColumnLeft} · ${header}`,
         subtitle: header,
-        keywords: ['column', 'move', 'left', 'reorder'],
+        keywords: ['column', 'move', 'left', 'reorder', header],
       },
       {
         id: 'column:move-right',
         group: 'views',
-        title: copy.moveColumnRight,
+        title: `${copy.moveColumnRight} · ${header}`,
         subtitle: header,
-        keywords: ['column', 'move', 'right', 'reorder'],
+        keywords: ['column', 'move', 'right', 'reorder', header],
       },
     )
   }

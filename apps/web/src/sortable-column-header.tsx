@@ -16,6 +16,8 @@ type Props = {
   /** Typesense can sort this column. */
   sortable: boolean
   sortState: HeaderSortState
+  /** Last header/cell the user activated (Move column left/right target). */
+  active?: boolean
   onActivate: () => void
   onSort: () => void
   onContextMenu: (event: ReactMouseEvent<HTMLElement>) => void
@@ -28,6 +30,7 @@ export function SortableColumnHeader({
   header,
   sortable,
   sortState,
+  active = false,
   onActivate,
   onSort,
   onContextMenu,
@@ -51,10 +54,11 @@ export function SortableColumnHeader({
   return (
     <div
       ref={setNodeRef}
-      className={`cell${sortable ? '' : ' column-not-sortable'}`}
+      className={`cell${sortable ? '' : ' column-not-sortable'}${active ? ' column-active' : ''}`}
       style={style}
       data-testid={`col-${id}`}
       data-column={id}
+      data-active-column={active ? 'true' : undefined}
       data-sortable={sortable ? 'true' : 'false'}
       aria-sort={
         sortState === 'asc' ? 'ascending' : sortState === 'desc' ? 'descending' : 'none'
@@ -75,6 +79,7 @@ export function SortableColumnHeader({
           if (!sortable) return
           onSort()
         }}
+        onFocus={onActivate}
       >
         {header}
         {sortable && indicator ? (
