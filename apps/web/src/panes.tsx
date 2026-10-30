@@ -23,7 +23,7 @@ import { columnTitle, defaultColumnIdsForType, makeViewColumn, parseColumnId, ty
 import { EMPTY_CELL } from './fields/qualifiers'
 import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns,
   prefsToOrderHidden, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
-import { useSaveColumnPrefs } from './column-prefs-mutation'
+import { columnPrefsMutationKey, columnPrefsQueryKey, useSaveColumnPrefs } from './column-prefs-mutation'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
 import { cellPathValues, fetchPathValues } from './path-values'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
@@ -156,22 +156,37 @@ export function ObjectTable({
   const prefsSnapshot = useRef<string | null>(null)
   const latestPrefsDocument = useRef<ColumnPrefsDocument | null>(null)
   const prefsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Unsaved local column-pref edits in this tab (shell.tsx dirtyRef pattern). */
+  const prefsDirtyRef = useRef(false)
+  const prefsSaveGen = useRef(0)
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<{ user_id?: string }>('/v1/me'), retry: false })
   const prefsMutation = useSaveColumnPrefs(view.id, me.data?.user_id ?? '')
   const flushPrefsRef = useRef<(opts?: { keepalive?: boolean }) => void>(() => undefined)
   flushPrefsRef.current = (opts) => {
     const document = latestPrefsDocument.current
     if (!document || document.columns.length === 0) return
+    // Never replay a settled snapshot on tab hide — that overwrites other tabs.
+    if (!prefsDirtyRef.current) return
     if (prefsSaveTimer.current != null) {
       clearTimeout(prefsSaveTimer.current)
       prefsSaveTimer.current = null
     }
     if (opts?.keepalive) {
-      // Survive reload: same pattern as workspace layout flush.
+      // Unload-safe sync PUT, dirty-gated like workspace layout flush in shell.tsx.
+      // Do not clear dirty here (shell.tsx does not): a visibility flicker must not
+      // look "clean" to onVisible while the keepalive/mutation is still in flight.
       saveColumnPrefsKeepalive(view.id, document)
       return
     }
-    prefsMutation.mutate({ document })
+    const gen = prefsSaveGen.current
+    prefsMutation.mutate(
+      { document },
+      {
+        onSuccess: () => {
+          if (prefsSaveGen.current === gen) prefsDirtyRef.current = false
+        },
+      },
+    )
   }
 
   const virtualizerRef = useRef<{ scrollToIndex: (index: number) => void }>({ scrollToIndex: () => {} })
@@ -282,6 +297,9 @@ export function ObjectTable({
     if (prefsApplied.current || prefs.isPending) return
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
+    // Local edits and in-flight saves win over a refetch that landed mid-edit.
+    if (prefsDirtyRef.current) return
+    if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
     prefsApplied.current = true
     const applied =
       prefs.isSuccess
@@ -290,6 +308,8 @@ export function ObjectTable({
     if (applied) {
       setOrder(applied.order)
       setHidden(applied.hidden)
+      // Align baseline so this apply does not schedule a PUT.
+      prefsSnapshot.current = JSON.stringify([applied.order, applied.hidden])
     } else if (prefs.isSuccess && typeKey && !prefs.data?.document) {
       // No saved prefs row: start from sensible defaults for this type.
       const defaults = defaultColumnIdsForType(typeKey, defs.data)
@@ -298,10 +318,26 @@ export function ObjectTable({
       if (!Array.isArray((view.state as { table?: { order?: unknown } } | undefined)?.table?.order)) {
         setOrder(ensured.order)
         setHidden(ensured.hidden)
+        prefsSnapshot.current = JSON.stringify([ensured.order, ensured.hidden])
       }
     }
     setPrefsReady(true)
   }, [prefs.isPending, prefs.isSuccess, prefs.data, typeKey, attributePaths.isPending, systemColumns, defs.data, view.state, view.id])
+
+  // Other tabs' saves: when this tab becomes visible again and is clean, drop the
+  // one-shot latch and invalidate so React Query refetches and apply can run.
+  // Do not listen to window focus — that fires on ordinary clicks and races saves.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (prefsDirtyRef.current) return
+      if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
+      prefsApplied.current = false
+      void queryClient.invalidateQueries({ queryKey: columnPrefsQueryKey(view.id) })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [queryClient, view.id])
   useLayoutEffect(() => {
     if (!prefsReady) return
     const snapshot = JSON.stringify([order, hidden])
@@ -319,6 +355,8 @@ export function ObjectTable({
     )
     if (document.columns.length === 0) return
     latestPrefsDocument.current = document
+    prefsDirtyRef.current = true
+    prefsSaveGen.current += 1
     prefsSnapshot.current = snapshot
     if (prefsSaveTimer.current != null) clearTimeout(prefsSaveTimer.current)
     prefsSaveTimer.current = setTimeout(() => {

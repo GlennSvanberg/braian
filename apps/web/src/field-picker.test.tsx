@@ -364,6 +364,38 @@ describe('ObjectTable column prefs', () => {
     })
   })
 
+
+  it('does not keepalive-PUT on hide when this tab has no unsaved prefs', async () => {
+    render(<PrefsTable />)
+    await waitFor(() =>
+      expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
+    )
+    const putsBefore = vi.mocked(fetch).mock.calls.filter(
+      ([input, init]) => String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+    ).length
+    const previous = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    })
+    try {
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      // Give microtasks a turn; still no PUT from a clean tab.
+      await act(async () => {
+        await Promise.resolve()
+      })
+      const putsAfter = vi.mocked(fetch).mock.calls.filter(
+        ([input, init]) => String(input).includes('/column-prefs') && (init?.method ?? 'GET').toUpperCase() === 'PUT',
+      ).length
+      expect(putsAfter).toBe(putsBefore)
+    } finally {
+      if (previous) Object.defineProperty(document, 'visibilityState', previous)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    }
+  })
+
   it('flushes with keepalive when the tab becomes hidden', async () => {
     render(<PrefsTable />)
     await waitFor(() =>

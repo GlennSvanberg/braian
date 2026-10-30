@@ -718,7 +718,12 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       setActive(optionIndex >= 0 ? optionIndex : 0)
       return
     }
-    onShowColumn(col)
+    // Language: toggle (hide if already shown). Other finals still ensure-visible+last.
+    if (frame.step.kind === 'language') {
+      onToggleColumn(col)
+    } else {
+      onShowColumn(col)
+    }
     setQuery('')
     // After a language pick, return to the fields list so fields-check-${fieldId} shows.
     // Unit/cardinality finals stay put — hop add/Edit field flows rely on that.
