@@ -170,6 +170,8 @@ export const copy = {
   newTab: 'New tab',
   hideColumn: 'Hide column',
   showColumn: 'Show column',
+  moveColumnLeft: 'Move column left',
+  moveColumnRight: 'Move column right',
   show: 'Show',
   lockWorkspace: 'Lock workspace',
   unlockWorkspace: 'Unlock workspace',

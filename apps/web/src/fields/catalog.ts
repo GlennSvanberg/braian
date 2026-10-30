@@ -162,8 +162,6 @@ export function fieldCatalogForType(defs: DefsJson, typeKey: string): FieldDef[]
   for (const attr of attributesForType(defs, typeObj)) {
     const key = String(attr.key)
     if (seen.has(key)) continue
-    // Skip system bookkeeping attributes that are not useful as picker leaves
-    if (['created_at', 'updated_at', 'updated_by'].includes(key)) continue
     seen.add(key)
     fields.push(attributeField(defs, attr))
   }
@@ -190,7 +188,7 @@ export function fieldCatalogForType(defs: DefsJson, typeKey: string): FieldDef[]
         if (!peer) continue
         for (const attr of attributesForType(defs, peer)) {
           const key = String(attr.key)
-          if (peerSeen.has(key) || ['created_at', 'updated_at', 'updated_by'].includes(key)) continue
+          if (peerSeen.has(key)) continue
           peerSeen.add(key)
           peerFields.push(attributeField(defs, attr))
         }
@@ -219,7 +217,7 @@ export function fieldCatalogForType(defs: DefsJson, typeKey: string): FieldDef[]
         if (!peer) continue
         for (const attr of attributesForType(defs, peer)) {
           const key = String(attr.key)
-          if (peerSeen.has(key) || ['created_at', 'updated_at', 'updated_by'].includes(key)) continue
+          if (peerSeen.has(key)) continue
           peerSeen.add(key)
           peerFields.push(attributeField(defs, attr))
         }
@@ -246,3 +244,26 @@ export function leafAttributeKey(fieldId: string): string {
 }
 
 export { attrByKey, typeByKey, factorsForFamily, labelOf }
+
+/** Merge pathless system view columns (type, version) into the Fields › list as ordinary fields. */
+export function withSystemViewFields(
+  fields: FieldDef[],
+  systemColumns: Array<{ key: string; label: string; default_index?: number }> = [],
+): FieldDef[] {
+  if (systemColumns.length === 0) return fields
+  const out = [...fields]
+  const seen = new Set(out.map((field) => field.id))
+  for (const system of systemColumns) {
+    if (seen.has(system.key)) continue
+    const field: FieldDef = {
+      id: system.key,
+      name: system.label,
+      typeLabel: 'text',
+      shape: 'text',
+    }
+    const at = Math.min(system.default_index ?? out.length, out.length)
+    out.splice(at, 0, field)
+    seen.add(system.key)
+  }
+  return out
+}

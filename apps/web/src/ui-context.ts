@@ -13,6 +13,8 @@ export type UiContextSnapshot = {
   filter: string
   sort: string
   columns: UiColumn[]
+  /** Header the user last clicked in the focused table (for Move column left/right). */
+  activeColumn: string | null
   language: string
 }
 
@@ -29,6 +31,7 @@ let frame: Frame = blankFrame()
 let markedId: string | null = null
 const tables = new Map<string, { filter: string; sort: string }>()
 const tableColumns = new Map<string, UiColumn[]>()
+const activeColumns = new Map<string, string>()
 const selections = new Map<string, SelectedObject[]>()
 const enriched = new Map<string, SelectedObject>()
 
@@ -37,6 +40,7 @@ export function resetUiContext() {
   markedId = null
   tables.clear()
   tableColumns.clear()
+  activeColumns.clear()
   selections.clear()
   enriched.clear()
 }
@@ -67,6 +71,11 @@ export function publishTable(viewId: string, filter: string, sort: string) {
 
 export function publishColumns(viewId: string, columns: UiColumn[]) {
   tableColumns.set(viewId, columns)
+}
+
+export function publishActiveColumn(viewId: string, columnId: string | null) {
+  if (!columnId) activeColumns.delete(viewId)
+  else activeColumns.set(viewId, columnId)
 }
 
 export function publishSelection(viewId: string, rows: SelectedObject[]) {
@@ -104,6 +113,8 @@ export function readUiContext(): UiContextSnapshot {
   const focused = frame.focused
   const table = (focused && tables.get(focused)) || [...tables.values()][0]
   const columns = (focused && tableColumns.get(focused)) || [...tableColumns.values()][0] || []
+  const activeColumn =
+    (focused && activeColumns.get(focused)) || [...activeColumns.values()][0] || null
   const chosen = (focused && selections.get(focused)) || [...selections.values()].find((rows) => rows.length > 0) || []
   let selection = chosen.map(mergeObject)
   if (selection.length === 0 && markedId) {
@@ -119,6 +130,7 @@ export function readUiContext(): UiContextSnapshot {
     filter: table?.filter ?? '',
     sort: table?.sort ?? '',
     columns: columns.map((column) => ({ ...column })),
+    activeColumn,
     language: frame.language || 'en',
   }
 }

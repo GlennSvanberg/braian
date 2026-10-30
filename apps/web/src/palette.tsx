@@ -173,7 +173,7 @@ export function CommandPalette({
         subtitle: copy.assortments,
         keywords: ['assortment', 'selection'],
       },
-      ...columnEntries(tableColumns),
+      ...columnEntries(tableColumns, readUiContext().activeColumn),
       ...(session.group
         ? [{
             id: 'model:delete-group',
@@ -343,6 +343,17 @@ export function CommandPalette({
     if (id.startsWith('column:hide:') || id.startsWith('column:show:')) {
       const column = id.slice('column:hide:'.length)
       dispatchUi(id.startsWith('column:hide:') ? 'ui.hide_column' : 'ui.show_column', { column })
+      onClose()
+      return
+    }
+    if (id === 'column:move-left' || id === 'column:move-right') {
+      const column = readUiContext().activeColumn
+      if (column) {
+        dispatchUi('ui.move_column', {
+          column,
+          direction: id === 'column:move-left' ? 'left' : 'right',
+        })
+      }
       onClose()
       return
     }
@@ -1094,7 +1105,7 @@ function buildCatalog(
 }
 
 // Field and column commands for the open table.
-function columnEntries(columns: UiColumn[]): PaletteItem[] {
+function columnEntries(columns: UiColumn[], activeColumn: string | null): PaletteItem[] {
   const items: PaletteItem[] = [
     { id: 'fields:select', group: 'views', title: `${copy.selectFields} ›`, subtitle: 'Choose and reorder columns', keywords: ['field', 'column', 'select', 'show', 'hide', 'reorder'] },
     { id: 'filter:by', group: 'views', title: `${copy.filterBy} ›`, subtitle: 'Attribute, part or link', keywords: ['filter', 'path', 'unit'] },
@@ -1102,6 +1113,28 @@ function columnEntries(columns: UiColumn[]): PaletteItem[] {
   ]
   if (columns.some((column) => !column.hidden)) {
     items.push({ id: 'columns:hide', group: 'views', title: `${copy.hideColumn} ›`, subtitle: 'Pick a column in the open table', keywords: ['column'] })
+  }
+  const active = activeColumn && columns.some((column) => column.id === activeColumn && !column.hidden)
+    ? activeColumn
+    : null
+  if (active) {
+    const header = columns.find((column) => column.id === active)?.header ?? active
+    items.push(
+      {
+        id: 'column:move-left',
+        group: 'views',
+        title: copy.moveColumnLeft,
+        subtitle: header,
+        keywords: ['column', 'move', 'left', 'reorder'],
+      },
+      {
+        id: 'column:move-right',
+        group: 'views',
+        title: copy.moveColumnRight,
+        subtitle: header,
+        keywords: ['column', 'move', 'right', 'reorder'],
+      },
+    )
   }
   return items
 }
