@@ -733,7 +733,14 @@ export function Shell() {
           dirtyRef.current = false
           setDoc(next)
           canonicalRef.current = next.layout
-          if (userId) loadedFor.current = `${userId}:${current.id}`
+          if (userId) {
+            loadedFor.current = `${userId}:${current.id}`
+            // Keep personal layout state in sync so a reload does not PUT a divergent doc.
+            void api.put('/v1/workspaces/{id}/state', {
+              params: { path: { id: current.id } },
+              body: { environment: LAYOUT_ENVIRONMENT, document: freeObject(next) },
+            })
+          }
         }
       })
       .catch(() => {
