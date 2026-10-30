@@ -33,12 +33,14 @@ import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
 import { CommandPalette } from './palette'
 import { SharedContextMenuHost } from './shared-context-menu'
+import { StateNote } from './states'
 import { requestNewSelection } from './assortment-filter'
 import { dispatchUi } from './ui-bus'
 import { registerCommandRunner, runCommand } from './command-registry'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
+import { isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
@@ -699,15 +701,52 @@ export function Shell() {
     const current = workspace.data
     if (!current || !defs.data || migratedRef.current.has(current.id)) return
     const types = typeNames(defs.data)
-    if (types.length === 0) return
-    const patch = migrateSavedWorkspace(current, viewRows(current.views), types)
+    const objectPatch =
+      types.length > 0
+        ? migrateSavedWorkspace(current, viewRows(current.views), types)
+        : { changed: false as const, name: undefined, views: [] as Array<{ id: string; title: string; state: Json; type?: string }> }
+    const modelPatch = migrateLegacyModelViews(current, viewRows(current.views))
+    const patch = {
+      changed: objectPatch.changed || modelPatch.changed,
+      name: objectPatch.name,
+      views: [...objectPatch.views, ...modelPatch.views],
+      create: modelPatch.create,
+      layout: modelPatch.layout,
+    }
     migratedRef.current.add(current.id)
     if (!patch.changed) return
-    void persistWorkspaceMigration(current, patch).then(() => {
-      void queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
-      void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
-    })
-  }, [workspace.data, defs.data, queryClient])
+    void persistWorkspaceMigration(current, patch)
+      .then(async () => {
+        await queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
+        await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+        // Template reset replaces the layout; drop any personal/local doc so tabs
+        // show the new Structures / Object types set instead of Model / Preview.
+        if (patch.layout) {
+          const next = canonicalDoc({
+            id: current.id,
+            name: current.name,
+            layout: patch.layout,
+            owner_id: current.owner_id,
+          })
+          if (userId) writeLayoutStore(layoutStorageKey(userId, current.id), next)
+          docRef.current = next
+          dirtyRef.current = false
+          setDoc(next)
+          canonicalRef.current = next.layout
+          if (userId) {
+            loadedFor.current = `${userId}:${current.id}`
+            // Keep personal layout state in sync so a reload does not PUT a divergent doc.
+            void api.put('/v1/workspaces/{id}/state', {
+              params: { path: { id: current.id } },
+              body: { environment: LAYOUT_ENVIRONMENT, document: freeObject(next) },
+            })
+          }
+        }
+      })
+      .catch(() => {
+        // Migration is best-effort; never surface as an unhandled page error.
+      })
+  }, [workspace.data, defs.data, queryClient, userId])
 
   const session: Session = {
     group,
@@ -1061,7 +1100,11 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'batch_log') return <BatchLog />
   if (view.type === 'job_history') return <JobHistory view={view} />
   if (view.type === 'embed') return <EmbedView session={session} view={view} />
-  return <p>{view.title}</p>
+  // Dropped / unknown types must never paint a removed pane (e.g. old ModelNav/Preview).
+  if (!isKnownViewType(view.type)) {
+    return <StateNote tone="empty" title={copy.unknownView} detail={copy.unknownViewDetail} />
+  }
+  return <StateNote tone="empty" title={copy.unknownView} detail={copy.unknownViewDetail} />
 }
 
 function treeRowDomId(structureKey: string, key: string) {
@@ -1471,15 +1514,21 @@ function singularFromLive(raw: string, defs: Json | undefined) {
 
 async function persistWorkspaceMigration(
   workspace: Workspace,
-  patch: { name?: string; views: Array<{ id: string; title: string; state: Json }> },
+  patch: {
+    name?: string
+    views: Array<{ id: string; title: string; state: Json; type?: string }>
+    create?: Array<{ id: string; type: string; title: string; state: Json; pane?: string; position?: number }>
+    layout?: unknown
+  },
 ) {
-  if (patch.name && patch.name !== workspace.name) {
+  const layout = patch.layout ?? workspace.layout ?? { tabs: [] }
+  if ((patch.name && patch.name !== workspace.name) || patch.layout) {
     await api.post('/v1/workspaces', { body: {
         id: workspace.id,
-        name: patch.name,
+        name: patch.name ?? workspace.name,
         locked: workspace.locked,
         share_token: workspace.share_token,
-        layout: freeObject(workspace.layout ?? { tabs: [] }),
+        layout: freeObject(layout && typeof layout === 'object' ? layout : { tabs: [] }),
       } })
   }
   for (const view of patch.views) {
@@ -1488,14 +1537,26 @@ async function persistWorkspaceMigration(
     await api.post('/v1/views', { body: {
         id: full.id,
         workspace_id: workspace.id,
-        type: full.type,
+        type: view.type ?? full.type,
         title: view.title,
         pane: full.pane ?? 'center',
         position: full.position ?? 0,
         state: freeObject(view.state),
       } })
   }
+  for (const view of patch.create ?? []) {
+    await api.post('/v1/views', { body: {
+        id: view.id,
+        workspace_id: workspace.id,
+        type: view.type,
+        title: view.title,
+        pane: view.pane ?? 'main',
+        position: view.position ?? 0,
+        state: freeObject(view.state),
+      } })
+  }
 }
+
 
 function Help({ onClose, placeholder }: { onClose: () => void; placeholder: string }) {
   return (
