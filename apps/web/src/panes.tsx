@@ -1066,11 +1066,10 @@ export function ObjectTable({
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
     if (columnNeedsPathValues(id)) {
-      const typed = row as ObjectTableRow
       const values = cellPathValues((row.doc as Json).__pathValues as Record<string, string[]> | undefined, id)
-      const summary = typed.pathText?.[id]
-        ? { text: typed.pathText[id] ?? '', title: typed.pathText[id] ?? '' }
-        : summarizePathValues(values)
+      const summary = values !== undefined
+        ? summarizePathValues(values)
+        : { text: (row as ObjectTableRow).pathText?.[id] ?? '', title: (row as ObjectTableRow).pathText?.[id] ?? '' }
       const testId = isHopPath(id) ? `hop-cell-${id}` : `path-cell-${id}`
       const entries = cellPathValues(
         (row.doc as Json).__pathEntries as Record<string, Array<{ raw?: boolean }>> | undefined,
