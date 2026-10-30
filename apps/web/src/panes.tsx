@@ -35,8 +35,17 @@ import { fetchColumnPrefs, isHopPath, orderHiddenToDocument, ensureSystemColumns
   prefsToOrderHidden, saveColumnPrefsKeepalive, type ColumnPrefsDocument, type SystemViewColumn } from './column-prefs'
 import { columnPrefsMutationKey, columnPrefsQueryKey, useSaveColumnPrefs } from './column-prefs-mutation'
 import { readPathFromDoc, summarizePathValues } from './path-cell'
-import { cellPathValues, fetchPathValues } from './path-values'
-import { shouldHoldTablePaint } from './table-live-paint'
+import { cellPathValues } from './path-values'
+import {
+  OBJECT_TABLE_ROWS_KEY,
+  commitObjectTableCellEdit,
+  loadSearchPage,
+  objectTablePageSize,
+  toObjRow,
+  useObjectTableRows,
+  type ObjRow,
+  type ObjectTableRow,
+} from './object-table-rows'
 import { searchPeerArticles, type PeerPickOption } from './peer-search'
 import { FieldDiff } from './field-diff-view'
 import { copy, uiLanguage } from './i18n'
@@ -88,8 +97,6 @@ export type PanesView = {
 
 export type PanesWorkspace = { id: string; locked?: boolean }
 
-type ObjRow = { id: string; key: string; type: string; version: string; name: string; status: string; doc: Json }
-
 const columns = [
   { id: 'key', header: 'Number', size: 160, sort: 'a_number' },
   { id: 'name', header: 'Name', size: 280, sort: 'a_name__en' },
@@ -97,8 +104,6 @@ const columns = [
   { id: 'status', header: 'Status', size: 128, sort: 'a_status' },
   { id: 'version', header: 'Version', size: 72, sort: 'version' },
 ]
-
-const pageSize = 100
 
 /** Prefs not applied yet: mutate against builtin chrome, not []. */
 function orderBase(current: string[]) {
@@ -120,17 +125,6 @@ function objectRowId(id: string) {
   return `object-row-${id}`
 }
 
-function toRow(doc: Json, defs?: Json): ObjRow {
-  return {
-    id: String(doc.id ?? ''),
-    key: String(doc.key ?? ''),
-    type: String(doc.type_key ?? ''),
-    version: String(doc.version ?? ''),
-    name: catalogName(doc, defs),
-    status: readIndexed(doc, defs, 'status'),
-    doc,
-  }
-}
 
 export function ObjectTable({
   session,
@@ -440,7 +434,7 @@ export function ObjectTable({
   const groupField = groupBy ? indexSort(groupBy, defs.data) : groupBy
   const probe = useQuery({
     queryKey: ['objects', queryText, filterBy, sortBy, groupField, 1],
-    queryFn: () => loadPage(queryText, filterBy, sortBy, groupField, 1),
+    queryFn: () => loadSearchPage(queryText, filterBy, sortBy, groupField, 1),
     placeholderData: (previous) => previous,
   })
   const found = Number(probe.data?.found ?? 0)
@@ -453,37 +447,75 @@ export function ObjectTable({
   const visible = virtualizer.getVirtualItems()
   const start = visible[0]?.index ?? 0
   const end = visible.at(-1)?.index ?? start
-  const pages = groupBy ? [] : [...new Set([Math.floor(start / pageSize) + 1, Math.floor(end / pageSize) + 1])]
-  const windows = useQueries({
-    queries: pages.map((page) => ({
-      queryKey: ['objects', queryText, filterBy, sortBy, groupField, page],
-      queryFn: () => loadPage(queryText, filterBy, sortBy, groupField, page),
-      placeholderData: (previous: Awaited<ReturnType<typeof loadPage>> | undefined) => previous,
-    })),
-  })
-  const byIndex = new Map<number, ObjRow>()
-  const rowsRef = useRef(byIndex)
-  for (const result of windows) {
-    const page = Number(result.data?.page ?? 0)
-    const hits = (result.data?.hits as Json[] | undefined) ?? []
-    hits.forEach((hit, offset) => {
-      const doc = (hit.document as Json) ?? hit
-      byIndex.set((page - 1) * pageSize + offset, toRow(doc, defs.data))
-    })
-  }
-  const groups = ((probe.data?.groups as Json[] | undefined) ?? []).map((group) => ({
+  const pages = groupBy
+    ? []
+    : [...new Set([Math.floor(start / objectTablePageSize) + 1, Math.floor(end / objectTablePageSize) + 1])]
+  // Probe keeps `found` + groups. Visible rows come from the TanStack DB collection
+  // (Typesense hits + pathValues in one queryFn) so live refresh is one sweep.
+  const groupsMeta = ((probe.data?.groups as Json[] | undefined) ?? []).map((group) => ({
     key: String(group.key ?? ''),
     found: Number(group.found ?? 0),
-    hits: ((group.hits as Json[]) ?? []).map((hit) => toRow((hit.document as Json) ?? hit, defs.data)),
+    hits: ((group.hits as Json[]) ?? []),
   }))
-  const groupedRows = groups.flatMap((group) => group.hits)
-  const listCount = groupBy ? groupedRows.length : found
-  const rowAt = (index: number) => (groupBy ? groupedRows[index] : byIndex.get(index))
+  const groupedHits = groupsMeta.flatMap((group) => group.hits)
+
+  // `shown` is needed before the collection hook; prefs already live in state.
+  const ordered = order.filter(Boolean)
+  const all = !prefsReady
+    ? []
+    : ordered.length > 0
+      ? ordered
+      : columns.map((column) => column.id)
+  const shown = all.filter((id) => !hidden.includes(id))
+  const columnNeedsPathValues = (id: string) => {
+    if (isHopPath(id)) return true
+    const { path, qualifiers } = parseColumnId(id)
+    if (qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality')) return true
+    if (path.includes('@')) return true
+    const key = (path.split('.')[0] ?? path).split('@')[0] ?? path
+    if (key === 'number' || key === 'name' || key === 'key' || key === 'type' || key === 'version' || key === 'status') {
+      return false
+    }
+    const attr = attributeByKey(defs.data, key)
+    if (!attr) return false
+    if (attr.language_dependent) return true
+    const index = attr.index as { filterable?: boolean; sortable?: boolean } | undefined
+    if (index && !index.filterable && !index.sortable) return true
+    return false
+  }
+  const pathValueColumns = shown.filter(columnNeedsPathValues)
+
+  const tableRows = useObjectTableRows({
+    viewId: view.id,
+    queryText,
+    filterBy,
+    sortBy,
+    groupField: groupField || '',
+    pages,
+    pathValueColumns: pathValueColumns,
+    typeKey,
+    groupHits: groupBy ? groupedHits : undefined,
+    defs: defs.data,
+  })
+  const byIndex = tableRows.byIndex
+  const rowsRef = useRef(byIndex)
+  const groupedRows = groupBy ? tableRows.rows : []
+  const groups = groupsMeta.map((group) => ({
+    key: group.key,
+    found: group.found,
+    hits: group.hits.map((hit) => toObjRow((hit.document as Json) ?? hit, defs.data)),
+  }))
+  // Prefer collection rows for grouped paint when loaded; fall back to probe mapping.
+  const groupedRowsPaint = groupedRows.length > 0
+    ? groupedRows
+    : groups.flatMap((group) => group.hits)
+  const listCount = groupBy ? groupedRowsPaint.length : found
+  const rowAt = (index: number) => (groupBy ? groupedRowsPaint[index] : byIndex.get(index))
   const activeRow = active >= 0 ? rowAt(active) : undefined
   const activeRowId = activeRow?.id
   virtualizerRef.current = virtualizer
   locateRef.current = (id: string) => {
-    if (groupBy) return groupedRows.findIndex((row) => row.id === id)
+    if (groupBy) return groupedRowsPaint.findIndex((row) => row.id === id)
     for (const [index, row] of byIndex) if (row.id === id) return index
     return -1
   }
@@ -540,11 +572,7 @@ export function ObjectTable({
       .filter((path) => !columns.some((column) => column.id === path.text))
       .map((path) => ({ id: path.text, header: path.label, size: 160, sort: '' })),
   ]
-  const ordered = order.filter(Boolean)
-  // Before prefsReady, render no real columns (skeleton instead). After load, empty
-  // order means defaults were applied in the prefs effect — still never flash builtins early.
-  const all = !prefsReady ? [] : ordered.length > 0 ? ordered : columns.map((column) => column.id)
-  const shown = all.filter((id) => !hidden.includes(id))
+  // `ordered` / `all` / `shown` computed before the object-table collection hook.
   const cellColumn = shown.includes(activeColumn) ? activeColumn : shown[0] ?? ''
   const columnHeader = (id: string) => columnFor(id).header
   const columnStamp = all.map((id) => `${id}:${hidden.includes(id) ? 1 : 0}`).join('|')
@@ -933,60 +961,14 @@ export function ObjectTable({
     queryFn: () => api.get('/v1/proposals'),
   })
   const suggestionCounts = suggestionIndex(suggestions.data)
-  /** Columns that Typesense hits do not carry (hops, units, searchable-only / language text). */
-  const columnNeedsPathValues = (id: string) => {
-    if (isHopPath(id)) return true
-    const { path, qualifiers } = parseColumnId(id)
-    if (qualifiers.some((q) => q.kind === 'unit' || q.kind === 'cardinality')) return true
-    if (path.includes('@')) return true
-    const key = (path.split('.')[0] ?? path).split('@')[0] ?? path
-    if (key === 'number' || key === 'name' || key === 'key' || key === 'type' || key === 'version' || key === 'status') {
-      return false
-    }
-    const attr = attributeByKey(defs.data, key)
-    if (!attr) return false
-    if (attr.language_dependent) return true
-    const index = attr.index as { filterable?: boolean; sortable?: boolean } | undefined
-    // Searchable-only fields live in search_{lang}, not a_<id> — grid must use pathValues.
-    if (index && !index.filterable && !index.sortable) return true
-    return false
-  }
-  const pathValueColumns = shown.filter(columnNeedsPathValues)
-  // When Status/Type grouping is on, rows live in groupedRows — byIndex stays empty.
-  const pageRowIds = (groupBy ? groupedRows : Array.from(byIndex.values())).map((row) => row.id)
-  const pathValues = useQuery({
-    queryKey: ['path-values', typeKey, pathValueColumns, pageRowIds],
-    queryFn: () => fetchPathValues({ ids: pageRowIds, paths: pathValueColumns, typeKey }),
-    enabled: pathValueColumns.length > 0 && pageRowIds.length > 0 && Boolean(typeKey),
-    // Keep the last page of hop/localized cells while a live refresh refetches,
-    // so Description and Version can swap together instead of flashing '—'.
-    placeholderData: (previous) => previous,
-  })
-  const pathValuesPending = pathValueColumns.length > 0 && pathValues.isPending && !pathValues.data
-  const objectsFetching = probe.isFetching || windows.some((result) => result.isFetching)
-  const pathBusy = pathValueColumns.length > 0 && pathValues.isFetching
-  // Hold Typesense hits and pathValues until both refreshes settle so a live
-  // edit does not paint Description a frame before Version (or the reverse).
-  const tableBusy = shouldHoldTablePaint({
-    hasPaintedData: Boolean(pathValues.data) || byIndex.size > 0,
-    objectsFetching,
-    pathBusy,
-  })
-  const stableTableRef = useRef<{
-    pathValues: typeof pathValues.data
-    byIndex: Map<number, ObjRow>
-    groupedRows: ObjRow[]
-  } | null>(null)
-  if (!tableBusy || !stableTableRef.current) {
-    stableTableRef.current = {
-      pathValues: pathValues.data,
-      byIndex: new Map(byIndex),
-      groupedRows: [...groupedRows],
-    }
-  }
-  const paintPathValues = tableBusy ? stableTableRef.current.pathValues : pathValues.data
-  const rowAtPainted = (index: number) =>
-    groupBy ? stableTableRef.current!.groupedRows[index] : stableTableRef.current!.byIndex.get(index)
+    // Collection queryFn loads hits + pathValues together; pending covers the old flash.
+  // First paint may land Typesense-only rows (prefs not ready → no path columns).
+  // While a later fetch fills pathText, keep the loading placeholder instead of '—'.
+  const pathValuesPending =
+    pathValueColumns.length > 0 &&
+    (tableRows.pathValuesBusy ||
+      tableRows.rows.some((row) => pathValueColumns.some((columnId) => !(columnId in row.pathText))))
+  const rowAtPainted = (index: number) => rowAt(index)
   const isEditableColumn = (id: string) => {
     if (isHopPath(id)) return false
     const path = parseColumnId(id).path
@@ -998,7 +980,9 @@ export function ObjectTable({
   const cellDisplayText = (row: ObjRow, id: string) => {
     const apiPath = parseColumnId(id).path
     if (columnNeedsPathValues(id)) {
-      const values = cellPathValues(paintPathValues?.values?.[row.id], id)
+      const typed = row as ObjectTableRow
+      if (typed.pathText && id in typed.pathText) return typed.pathText[id] ?? ''
+      const values = cellPathValues((row.doc as Json).__pathValues as Record<string, string[]> | undefined, id)
       return summarizePathValues(values).text
     }
     return readPathFromDoc(row.doc, defs.data, apiPath)
@@ -1010,24 +994,24 @@ export function ObjectTable({
     setEditingCell(null)
     const original = editingOriginalRef.current
     if (!cellEditShouldPatch(original, nextText)) return
-    const path = parseColumnId(columnId).path
-    const langMatch = path.includes('@') ? path.split('@') : null
-    const attrKey = (langMatch ? langMatch[0]! : path).split('.')[0] ?? path
-    const language = langMatch?.[1]
-    const bodyValues: Json = language
-      ? { [attrKey]: { [language]: nextText } }
-      : { [attrKey]: nextText }
-    void api.patch('/v1/objects/{id}', { params: { path: { id: row.id }, header: { 'If-Match': Number(row.version ?? 0) } }, body: { values: freeObject(bodyValues) } })
-      .then(() => {
+    const tx = commitObjectTableCellEdit(
+      tableRows.collection,
+      row as ObjectTableRow,
+      columnId,
+      nextText,
+      original,
+    )
+    if (!tx) return
+    void tx.when('settled').then(
+      () => {
         session.push(copy.saved)
-        void queryClient.invalidateQueries({ queryKey: ['objects'] })
         void queryClient.invalidateQueries({ queryKey: ['object', row.id] })
-        void queryClient.invalidateQueries({ queryKey: ['path-values'] })
-      })
-      .catch((reason: unknown) => {
+      },
+      (reason: unknown) => {
         const message = reason instanceof ApiError ? reason.message : copy.validation
         session.push(message)
-      })
+      },
+    )
   }
 
   const cancelCellEdit = () => {
@@ -1082,10 +1066,16 @@ export function ObjectTable({
     if (id === 'status') return <MetaChip tone={statusTone(row.status)}>{optionLabel(defs.data, 'status', row.status, uiLanguage)}</MetaChip>
     if (id === 'version') return <MetaChip>{row.version}</MetaChip>
     if (columnNeedsPathValues(id)) {
-      const values = cellPathValues(paintPathValues?.values?.[row.id], id)
-      const summary = summarizePathValues(values)
+      const typed = row as ObjectTableRow
+      const values = cellPathValues((row.doc as Json).__pathValues as Record<string, string[]> | undefined, id)
+      const summary = typed.pathText?.[id]
+        ? { text: typed.pathText[id] ?? '', title: typed.pathText[id] ?? '' }
+        : summarizePathValues(values)
       const testId = isHopPath(id) ? `hop-cell-${id}` : `path-cell-${id}`
-      const entries = cellPathValues(paintPathValues?.entries?.[row.id], id)
+      const entries = cellPathValues(
+        (row.doc as Json).__pathEntries as Record<string, Array<{ raw?: boolean }>> | undefined,
+        id,
+      )
       if (summary.text && entries?.some((e: { raw?: boolean }) => e.raw)) {
         return (
           <span data-testid={testId} title={`${summary.title} (unit not converted)`}>
@@ -1235,10 +1225,10 @@ export function ObjectTable({
         const needle = query.trim().toLowerCase()
         const options: PeerPickOption[] = []
         const seen = new Set<string>()
-        const visibleRows = groupBy ? groupedRows : Array.from(byIndex.values())
+        const visibleRows = groupBy ? groupedRowsPaint : Array.from(byIndex.values())
         // Prefer articles already linked to rows in the current view.
         for (const row of visibleRows) {
-          const byPath = pathValues.data?.entries?.[row.id] ?? {}
+          const byPath = ((row.doc as Json).__pathEntries as Record<string, Array<{ text?: string; peer_id?: string }>> | undefined) ?? {}
           for (const [pathKey, list] of Object.entries(byPath)) {
             if (!pathKey.includes(leafId) && !parseColumnId(pathKey).path.includes(leafId)) continue
             for (const entry of list as Array<{ text?: string; peer_id?: string }>) {
@@ -1262,7 +1252,7 @@ export function ObjectTable({
       searchPeersForField: async (_leafId, query) => searchPeerArticles(query, defs.data),
     })
     return () => publishFieldsHost(null)
-  }, [typeKey, catalog, viewColumns, byIndex, groupedRows, groupBy, pathValues.data, defs.data])
+  }, [typeKey, catalog, viewColumns, byIndex, groupedRowsPaint, groupBy, defs.data])
 
   const columnSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1327,7 +1317,7 @@ export function ObjectTable({
         onMouseDown={() => {
           if (!editingCell) return
           // Same rules as #107: blur/commit only when the draft changed.
-          const row = (groupBy ? groupedRows : Array.from(byIndex.values())).find((item) => item.id === editingCell.rowId)
+          const row = (groupBy ? groupedRowsPaint : Array.from(byIndex.values())).find((item) => item.id === editingCell.rowId)
           if (!row) {
             cancelCellEdit()
             return
@@ -1555,8 +1545,8 @@ export function ObjectTable({
           onMoved={() => {
             setMoving(null)
             session.push(copy.saved)
+            void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
-            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
           }}
         />
       ) : null}
@@ -1726,18 +1716,6 @@ function Row({
   )
 }
 
-// The table reads search documents. Those already carry the columns on screen,
-// so a list does not load full objects from Postgres.
-async function loadPage(q: string, filter: string, sort: string, groupBy: string, page: number) {
-  const params = new URLSearchParams({ page: String(page), per_page: String(pageSize) })
-  if (q) params.set('q', q)
-  params.set('lang', uiLanguage)
-  if (filter) params.set('filter', filter)
-  if (sort) params.set('sort', sort)
-  if (groupBy) params.set('group', groupBy)
-  const body = await api.get('/v1/search', { params: { query: searchQuery(params) } })
-  return { ...body, page }
-}
 
 function TableFilters({
   groupBy,
@@ -1870,8 +1848,8 @@ function NewObject({
             setOpen(false)
             if ('id' in created) session.setObjectId(String(created.id))
             session.push(`${copy.saved} ${number}`)
+            void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
             void queryClient.invalidateQueries({ queryKey: ['objects'] })
-            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
           })
           .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
       }}
@@ -1998,8 +1976,8 @@ export function ObjectDetail({ session }: { session: PanesSession }) {
         setError('')
         session.push(`${copy.saved} ${label}`)
         void queryClient.invalidateQueries({ queryKey: ['object', session.objectId] })
-        void queryClient.invalidateQueries({ queryKey: ['objects'] })
-            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
+        void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
+            void queryClient.invalidateQueries({ queryKey: ['objects'] })
       })
       .catch((reason: unknown) => setError(reason instanceof ApiError ? reason.message : copy.validation))
   }
@@ -2707,8 +2685,8 @@ export function ProposalView({ session }: { session: PanesSession }) {
       void queryClient.invalidateQueries({ queryKey: ['proposals'] })
       void queryClient.invalidateQueries({ queryKey: ['proposal'] })
       void queryClient.invalidateQueries({ queryKey: ['object'] })
-      void queryClient.invalidateQueries({ queryKey: ['objects'] })
-            void queryClient.invalidateQueries({ queryKey: ['path-values'] })
+      void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
+            void queryClient.invalidateQueries({ queryKey: ['objects'] })
     },
     onError: (reason: unknown) => {
       const message = reason instanceof Error ? reason.message : copy.validation

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { OBJECT_TABLE_ROWS_KEY } from './object-table-rows'
 import { api, failureLines, type Json } from './api'
 import { copy } from './i18n'
 import { formatCount } from './format'
@@ -93,9 +94,10 @@ export function ConsequenceHost({ session }: { session: HostSession }) {
         void queryClient.invalidateQueries({ queryKey: ['definitions'] })
         void queryClient.invalidateQueries({ queryKey: ['proposals'] })
         void queryClient.invalidateQueries({ queryKey: ['proposal', id] })
+        void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
         void queryClient.invalidateQueries({ queryKey: ['object'] })
-        void queryClient.invalidateQueries({ queryKey: ['path-values'] })
+        void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
         void queryClient.invalidateQueries({ queryKey: ['history'] })
         close()
       })

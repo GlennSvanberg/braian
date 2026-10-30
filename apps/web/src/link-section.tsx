@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { OBJECT_TABLE_ROWS_KEY } from './object-table-rows'
 import { api, textValue, type Json } from './api'
 import { formatCount } from './format'
 import { copy, uiLanguage } from './i18n'
@@ -50,7 +51,8 @@ export function LinkSections({
   const removeRef = useRef<(id: string, peer: string, hasValues: boolean) => void>(() => undefined)
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['object', objectId] })
-    void queryClient.invalidateQueries({ queryKey: ['objects'] })
+    void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
+        void queryClient.invalidateQueries({ queryKey: ['objects'] })
   }
   const remove = (id: string, peer: string, hasValues: boolean) => {
     if (hasValues) {

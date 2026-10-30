@@ -8,6 +8,7 @@ import { ImportScreen } from './import/view'
 import { dropImportFiles, onImportLive, openImport, resumeImport, setImportDrag } from './import/controller'
 import { importRefreshesObjects, isFileDrag } from './import/model'
 import { SearchRefresh } from './live-refresh'
+import { OBJECT_TABLE_ROWS_KEY } from './object-table-rows'
 import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
 import { Kbd } from './components/ui/kbd'
@@ -358,8 +359,8 @@ export function Shell() {
       () => {
         // One sweep: Typesense hits (Version) and pathValues (Description / hops)
         // must invalidate together or the row paints in two steps.
+        void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
-        void queryClient.invalidateQueries({ queryKey: ['path-values'] })
       },
       (id) => {
         void queryClient.invalidateQueries({ queryKey: ['object', id] })
@@ -376,6 +377,7 @@ export function Shell() {
       const sentence = humanizeLive(event.data, singularFromLive(event.data, queryClient.getQueryData<Json>(['definitions'])))
       if (sentence) push(sentence)
       if (importRefreshesObjects(event.data)) {
+        void queryClient.invalidateQueries({ queryKey: [OBJECT_TABLE_ROWS_KEY] })
         void queryClient.invalidateQueries({ queryKey: ['objects'] })
       }
       refresh.onEvent(event.data)
