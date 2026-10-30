@@ -326,6 +326,7 @@ export const copy = {
   searchable: 'Searchable',
   filterable: 'Filterable',
   sortable: 'Sortable',
+  columnNotSortable: 'Not sortable',
   more: 'More',
   filterRows: 'Filter',
   sortByName: 'Sort by name',

@@ -3,7 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, recordNumber, recordTitle, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
-import { attributeByKey, indexSort, readIndexed } from './index-fields'
+import { attributeByKey, indexSort, readIndexed, sortKeyForColumnId } from './index-fields'
 import { cellEditShouldPatch } from './cell-edit'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
@@ -145,7 +145,8 @@ export function ObjectTable({
   const [queryText, setQueryText] = useState(initial.filter)
   const [sort, setSort] = useState(initial.sort)
   const [groupBy, setGroupBy] = useState(initial.groupBy)
-  const [order, setOrder] = useState(initial.order)
+  // Empty until prefs resolve — never flash builtin defaults over a saved layout.
+  const [order, setOrder] = useState<string[]>([])
   const [sizes, setSizes] = useState<Record<string, number>>(initial.sizes)
   const [selected, setSelected] = useState<string[]>([])
   const [hidden, setHidden] = useState<string[]>([])
@@ -330,11 +331,17 @@ export function ObjectTable({
       // Align baseline so this apply does not schedule a PUT.
       prefsSnapshot.current = JSON.stringify([applied.order, applied.hidden])
     } else if (prefs.isSuccess && typeKey && !prefs.data?.document) {
-      // No saved prefs row: start from sensible defaults for this type.
-      const defaults = defaultColumnIdsForType(typeKey, defs.data)
-      const ensured = ensureSystemColumns(defaults, [], systemColumns)
-      // Keep an explicit view.state.table.order when the test/harness provided one.
-      if (!Array.isArray((view.state as { table?: { order?: unknown } } | undefined)?.table?.order)) {
+      // No saved prefs row: defaults only after load (never as a flash).
+      const viewOrder = (view.state as { table?: { order?: unknown } } | undefined)?.table?.order
+      if (Array.isArray(viewOrder)) {
+        const orderIds = viewOrder.map(String)
+        const ensured = ensureSystemColumns(orderIds, [], systemColumns)
+        setOrder(ensured.order)
+        setHidden(ensured.hidden)
+        prefsSnapshot.current = JSON.stringify([ensured.order, ensured.hidden])
+      } else {
+        const defaults = defaultColumnIdsForType(typeKey, defs.data)
+        const ensured = ensureSystemColumns(defaults, [], systemColumns)
         setOrder(ensured.order)
         setHidden(ensured.hidden)
         prefsSnapshot.current = JSON.stringify([ensured.order, ensured.hidden])
@@ -486,8 +493,13 @@ export function ObjectTable({
 
   const pathList = attributePaths.data?.paths ?? []
   const columnFor = (id: string) => {
+    const sort = sortKeyForColumnId(id, defs.data)
     const builtin = columns.find((column) => column.id === id)
-    if (builtin) return builtin
+    if (builtin) return { ...builtin, sort: sort || builtin.sort }
+    // Prefs use `number`; the legacy builtin id is `key`.
+    if (id === 'number' || parseColumnId(id).path === 'number') {
+      return { id, header: 'Number', size: 160, sort: sort || 'a_number' }
+    }
     const { path, qualifiers } = parseColumnId(id)
     const pathLabel =
       systemColumns.find((column) => column.key === id || column.key === path)?.label
@@ -500,7 +512,7 @@ export function ObjectTable({
     const rebuilt = makeViewColumn(fieldPath, qualifiers, fieldCatalogForType(defs.data ?? {}, typeKey))
     const header = rebuilt ? columnTitle(rebuilt) : pathLabel
     const wide = path.includes('>') || qualifiers.length > 0
-    return { id, header, size: wide ? 260 : 160, sort: '' }
+    return { id, header, size: wide ? 260 : 160, sort }
   }
   const columnDefs = [
     ...columns,
@@ -509,7 +521,9 @@ export function ObjectTable({
       .map((path) => ({ id: path.text, header: path.label, size: 160, sort: '' })),
   ]
   const ordered = order.filter(Boolean)
-  const all = ordered.length > 0 ? ordered : columns.map((column) => column.id)
+  // Before prefsReady, render no real columns (skeleton instead). After load, empty
+  // order means defaults were applied in the prefs effect — still never flash builtins early.
+  const all = !prefsReady ? [] : ordered.length > 0 ? ordered : columns.map((column) => column.id)
   const shown = all.filter((id) => !hidden.includes(id))
   const cellColumn = shown.includes(activeColumn) ? activeColumn : shown[0] ?? ''
   const columnHeader = (id: string) => columnFor(id).header
@@ -1274,6 +1288,15 @@ export function ObjectTable({
           openMenuFromKeyboard(event.target)
         }}
       >
+        {!prefsReady ? (
+          <div className="head head-skeleton" data-testid="column-prefs-skeleton" aria-busy="true">
+            {[280, 160, 160, 128, 72].map((width, index) => (
+              <div key={index} className="cell" style={{ width, minWidth: width, maxWidth: width }}>
+                …
+              </div>
+            ))}
+          </div>
+        ) : (
         <DndContext sensors={columnSensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
           <SortableContext items={shown} strategy={horizontalListSortingStrategy}>
             <div className="head">
@@ -1287,11 +1310,21 @@ export function ObjectTable({
                     width={width}
                     header={column.header}
                     sortable={Boolean(column.sort)}
+                    sortState={
+                      column.sort && sort === `${column.sort}:asc`
+                        ? 'asc'
+                        : column.sort && sort === `${column.sort}:desc`
+                          ? 'desc'
+                          : false
+                    }
                     onActivate={() => setActiveColumn(id)}
                     onSort={() => {
                       if (!column.sort) return
-                      const desc = sort === `${column.sort}:asc` ? 'desc' : 'asc'
-                      setSort(`${column.sort}:${desc}`)
+                      // Three states (TanStack enableSortingRemoval equivalent):
+                      // none → asc → desc → none.
+                      if (sort === `${column.sort}:asc`) setSort(`${column.sort}:desc`)
+                      else if (sort === `${column.sort}:desc`) setSort('')
+                      else setSort(`${column.sort}:asc`)
                     }}
                     onContextMenu={(event) => onHeaderMenu(id, event)}
                     onResizeStart={(event) => {
@@ -1315,6 +1348,7 @@ export function ObjectTable({
             </div>
           </SortableContext>
         </DndContext>
+        )}
         {groupBy ? (
           <div style={{ flex: 'none' }}>
             {(() => {

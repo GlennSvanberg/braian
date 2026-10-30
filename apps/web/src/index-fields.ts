@@ -47,3 +47,37 @@ export function indexSort(field: string, defs: Json | undefined) {
   const next = language ? attributeIndexField(id, language.replaceAll('_', '-')) : attributeIndexField(id)
   return `${next}${direction}`
 }
+
+/**
+ * Typesense sort field for a column id (prefs path / builtin).
+ * Empty string means the column is not sortable in the index.
+ */
+export function sortKeyForColumnId(columnId: string, defs: Json | undefined): string {
+  const raw = columnId.includes('#') ? columnId.slice(0, columnId.indexOf('#')) : columnId
+  // Hop columns are not a single Typesense field.
+  if (raw.includes('>')) return ''
+  const key = (raw.split('.')[0] ?? raw).split('@')[0] ?? raw
+  if (key === 'key' || key === 'number') return 'a_number'
+  if (key === 'type') return 'type_key'
+  if (key === 'version') return 'version'
+  if (key === 'name') {
+    const attr = attributeByKey(defs, 'name')
+    const id = String(attr?.id ?? '')
+    return id ? attributeIndexField(id, 'en') : 'a_name__en'
+  }
+  if (key === 'status') {
+    const attr = attributeByKey(defs, 'status')
+    const id = String(attr?.id ?? '')
+    return id ? attributeIndexField(id) : 'a_status'
+  }
+  const attr = attributeByKey(defs, key)
+  if (!attr) return ''
+  const index = attr.index as { filterable?: boolean; sortable?: boolean } | undefined
+  // Searchable-only (no filter/sort) lives in search_{lang}, not a sort field.
+  if (index && index.sortable === false) return ''
+  if (index && !index.filterable && !index.sortable) return ''
+  const id = String(attr.id ?? '')
+  if (!id) return ''
+  if (attr.language_dependent) return attributeIndexField(id, 'en')
+  return attributeIndexField(id)
+}
