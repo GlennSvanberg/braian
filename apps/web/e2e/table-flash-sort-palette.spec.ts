@@ -206,4 +206,40 @@ test.describe('table flash, sort cycle, fields palette filter', () => {
     await expect(page.getByTestId('column-prefs-load-error')).toBeVisible()
   })
 
+
+  test('nested Nutri-Score › Label toggles off/on and keeps filter', async ({ page }) => {
+    await login(page)
+    await openProducts(page)
+    await openFieldsPalette(page)
+
+    const input = page.getByTestId('fields-mode-input')
+    await input.fill('nutri')
+    const nutri = page.getByTestId('fields-row-nutriscore')
+    await expect(nutri).toBeVisible()
+    await nutri.hover()
+    await expect(nutri).toHaveAttribute('data-active', 'true')
+    await page.keyboard.press('Enter')
+
+    // Nested qualify list: Label / Code — filter must survive the Label toggle.
+    await input.fill('lab')
+    const label = page.getByTestId('fields-row-label')
+    await expect(label).toBeVisible()
+    await label.hover()
+    await expect(label).toHaveAttribute('data-active', 'true')
+    await page.keyboard.press('Enter')
+
+    await expect(input).toHaveValue('lab')
+    await expect(label).toHaveAttribute('data-active', 'true')
+    await expect(page.getByTestId('fields-check-label')).toBeVisible()
+    // Column visible behind the palette
+    await expect(page.locator('.head [data-testid^="col-nutriscore.label"]')).toBeVisible()
+
+    // Enter again: hide + uncheck; filter stays
+    await page.keyboard.press('Enter')
+    await expect(input).toHaveValue('lab')
+    await expect(label).toHaveAttribute('data-active', 'true')
+    await expect(page.getByTestId('fields-check-label')).toHaveCount(0)
+    await expect(page.locator('.head [data-testid^="col-nutriscore.label"]')).toHaveCount(0)
+  })
+
 })

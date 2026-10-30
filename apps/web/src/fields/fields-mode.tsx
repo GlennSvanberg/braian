@@ -724,16 +724,14 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       setActive(optionIndex >= 0 ? optionIndex : 0)
       return
     }
-    // Language: toggle (hide if already shown). Other finals still ensure-visible+last.
-    if (frame.step.kind === 'language') {
-      onToggleColumn(col)
-    } else {
-      onShowColumn(col)
-    }
-    setQuery('')
+    // Always toggle (not show-only): Enter, Enter must turn nested hops and
+    // composites (value_list Label/Code, unit, range, language) off again.
+    // Root cause of "Label stuck on": onShowColumn never hid; isChecked stayed true.
+    onToggleColumn(col)
     // After a language pick, return to the fields list so fields-check-${fieldId} shows.
-    // Unit/cardinality finals stay put — hop add/Edit field flows rely on that.
+    // Keep filter when staying on this qualify list (value_list / unit / …).
     if (frame.step.kind === 'language') {
+      setQuery('')
       const fieldId = frame.pendingLeaf.id
       let fieldsFrame: Extract<(typeof stack)[number], { kind: 'fields' }> | null = null
       let cut = -1
@@ -752,8 +750,13 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
       }
       return
     }
-    const optionIndex = frame.step.options.findIndex((item) => item.id === option.id)
-    setActive(optionIndex >= 0 ? optionIndex : 0)
+    // Keep filter + highlight so Enter, Enter toggles the same nested option.
+    const needle = query.trim().toLowerCase()
+    const filtered = frame.step.options.filter(
+      (item) => !needle || item.label.toLowerCase().includes(needle),
+    )
+    const at = filtered.findIndex((item) => item.id === option.id)
+    setActive(at >= 0 ? at : 0)
   }
 
   function activateSpecific(value: string, label: string, frame: SpecificFrame) {
@@ -798,11 +801,20 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
     if (editingColumn) {
       onReplaceColumn(editingColumn.id, col)
       setEditingColumn(col)
-    } else {
-      onShowColumn(col)
+      setQuery('')
+      setActive(optionIndex >= 0 ? optionIndex : 0)
+      return
     }
-    setQuery('')
-    setActive(optionIndex >= 0 ? optionIndex : 0)
+    // Nested Specific… finals toggle both ways; keep filter for Enter, Enter.
+    onToggleColumn(col)
+    const needle = query.trim().toLowerCase()
+    const filtered = frame.options.filter(
+      (item) =>
+        !needle ||
+        `${item.label} ${item.subtitle ?? ''}`.toLowerCase().includes(needle),
+    )
+    const at = filtered.findIndex((item) => item.pickValue === value || item.id === value)
+    setActive(at >= 0 ? at : optionIndex >= 0 ? optionIndex : 0)
   }
 
   function runActive() {
