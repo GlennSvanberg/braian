@@ -173,8 +173,9 @@ export function ObjectTable({
     }
     if (opts?.keepalive) {
       // Unload-safe sync PUT, dirty-gated like workspace layout flush in shell.tsx.
+      // Do not clear dirty here (shell.tsx does not): a visibility flicker must not
+      // look "clean" to onVisible while the keepalive/mutation is still in flight.
       saveColumnPrefsKeepalive(view.id, document)
-      prefsDirtyRef.current = false
       return
     }
     const gen = prefsSaveGen.current
@@ -296,6 +297,9 @@ export function ObjectTable({
     if (prefsApplied.current || prefs.isPending) return
     // Wait for system_columns when the type is known so injection uses the API allowlist.
     if (typeKey && attributePaths.isPending) return
+    // Local edits and in-flight saves win over a refetch that landed mid-edit.
+    if (prefsDirtyRef.current) return
+    if (queryClient.isMutating({ mutationKey: columnPrefsMutationKey(view.id) }) > 0) return
     prefsApplied.current = true
     const applied =
       prefs.isSuccess
