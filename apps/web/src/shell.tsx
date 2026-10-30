@@ -745,7 +745,8 @@ export function Shell() {
         }
       })
       .catch(() => {
-        // Migration is best-effort; never surface as an unhandled page error.
+        // Allow a later open/reload to retry; never surface as an unhandled page error.
+        migratedRef.current.delete(current.id)
       })
   }, [workspace.data, defs.data, queryClient, userId])
 

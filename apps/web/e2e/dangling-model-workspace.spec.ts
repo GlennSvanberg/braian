@@ -13,14 +13,28 @@ async function login(page: Page) {
   await expect(page.getByTestId('dock')).toBeVisible()
 }
 
-function isWorkspaceWrite(request: Request) {
+/** Only count writes that touch this workspace (body id / workspace_id or URL). */
+function isWorkspaceWrite(request: Request, workspaceId: string) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())) return false
-  return /\/v1\/(workspaces|views)(\/|$|\?)/.test(request.url())
+  const url = request.url()
+  if (!/\/v1\/(workspaces|views)(\/|$|\?)/.test(url)) return false
+  if (url.includes(workspaceId)) return true
+  try {
+    const data = request.postDataJSON() as { id?: string; workspace_id?: string } | null
+    if (data && (data.id === workspaceId || data.workspace_id === workspaceId)) return true
+  } catch {
+    /* ignore non-JSON bodies */
+  }
+  return false
 }
 
 /**
  * Reconstructs the demo "Data model 8" failure: layout references view ids that
  * were never persisted (create failed after layout write), so tabs paint as UUIDs.
+ *
+ * Name must NOT contain the substring "Data model" — Playwright's getByRole name
+ * match is substring-based and would break other e2e specs that open that tab.
+ * Detection still works via the Structures `data_model` view.
  */
 async function seedDanglingModelWorkspace(page: Page, name: string) {
   const workspaceId = crypto.randomUUID()
@@ -76,20 +90,41 @@ async function openWorkspace(page: Page, name: string) {
   await page.reload()
   await expect(page.getByTestId('dock')).toBeVisible()
   await page.evaluate(() => sessionStorage.removeItem('braian.layout.suppressFlush'))
-  const tab = page.locator('nav.tabs').getByRole('button', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const tab = page.locator('nav.tabs').getByRole('button', { name: new RegExp(`^${escaped}$`) })
   await expect(tab).toBeVisible({ timeout: 30_000 })
   await tab.click()
+}
+
+async function waitForWritesToSettle(writes: string[], quietMs = 1200) {
+  let last = writes.length
+  let quietSince = Date.now()
+  await expect
+    .poll(
+      () => {
+        if (writes.length !== last) {
+          last = writes.length
+          quietSince = Date.now()
+        }
+        return Date.now() - quietSince >= quietMs ? 'quiet' : 'busy'
+      },
+      { timeout: 60_000 },
+    )
+    .toBe('quiet')
 }
 
 test('dangling Data model panes heal to the standard template without UUID tabs', async ({ page }) => {
   test.setTimeout(180_000)
   await login(page)
-  const name = `Data model dangling ${Date.now()}`
-  const { ghostLeft, ghostMid, ghostRight } = await seedDanglingModelWorkspace(page, name)
+  // Avoid the substring "Data model" so other specs' getByRole({ name: 'Data model' }) stay unique.
+  const name = `Heal dangling panes ${Date.now()}`
+  const { workspaceId, ghostLeft, ghostMid, ghostRight } = await seedDanglingModelWorkspace(page, name)
 
   const firstWrites: string[] = []
   const onFirst = (request: Request) => {
-    if (isWorkspaceWrite(request)) firstWrites.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    if (isWorkspaceWrite(request, workspaceId)) {
+      firstWrites.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    }
   }
   page.on('request', onFirst)
   await openWorkspace(page, name)
@@ -106,16 +141,19 @@ test('dangling Data model panes heal to the standard template without UUID tabs'
   }
   await expect(paneTabs.filter({ hasText: /[0-9a-f]{8}-[0-9a-f]{4}-/i })).toHaveCount(0)
   await expect.poll(() => firstWrites.length).toBeGreaterThan(0)
+  await waitForWritesToSettle(firstWrites)
   page.off('request', onFirst)
 
   const secondWrites: string[] = []
   const onSecond = (request: Request) => {
-    if (isWorkspaceWrite(request)) secondWrites.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    if (isWorkspaceWrite(request, workspaceId)) {
+      secondWrites.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    }
   }
   page.on('request', onSecond)
   await openWorkspace(page, name)
   await expect(paneTabs.filter({ hasText: 'Structures' })).toBeVisible()
   await expect(paneTabs.filter({ hasText: 'Object types' })).toHaveCount(1)
-  await page.waitForTimeout(1500)
+  await waitForWritesToSettle(secondWrites, 1500)
   expect(secondWrites, `unexpected writes on reload: ${secondWrites.join(', ')}`).toEqual([])
 })
