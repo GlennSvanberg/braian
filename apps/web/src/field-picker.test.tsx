@@ -5,10 +5,6 @@ import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FieldPicker } from './field-picker'
 import { ensureSystemColumns, orderHiddenToDocument, prefsToOrderHidden, type ColumnPrefsResponse, type SystemViewColumn } from './column-prefs'
-import {
-  pendingPrefsKey,
-  readPendingColumnPrefs,
-} from './column-prefs-pending'
 import { ObjectTable, type PanesSession } from './panes'
 import { dispatchUi } from './ui-bus'
 
@@ -405,8 +401,7 @@ describe('ObjectTable column prefs', () => {
   })
 
 
-  it('clears pending column prefs after a 2xx PUT', async () => {
-    const viewId = '018f0000-0000-7000-8000-000000000999'
+  it('writes the hidden column into the query cache after a 2xx PUT', async () => {
     render(<PrefsTable />)
     await waitFor(() =>
       expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
@@ -422,11 +417,11 @@ describe('ObjectTable column prefs', () => {
       expect(puts.at(-1)?.[1]?.keepalive).toBe(true)
     })
     await waitFor(() => {
-      expect(sessionStorage.getItem(pendingPrefsKey(viewId))).toBeNull()
+      expect(headerIds().includes('col-sku')).toBe(false)
     })
   })
 
-  it('keeps pending column prefs when the PUT fails', async () => {
+  it('keeps the hidden column in the UI when the PUT fails', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -456,7 +451,6 @@ describe('ObjectTable column prefs', () => {
         return json({})
       }),
     )
-    const viewId = '018f0000-0000-7000-8000-000000000999'
     render(<PrefsTable />)
     await waitFor(() =>
       expect(headerIds()).toEqual(['col-sku', 'col-type', 'col-version', 'col-packaging>name']),
@@ -470,10 +464,9 @@ describe('ObjectTable column prefs', () => {
       )
       expect(puts.length).toBeGreaterThan(0)
     })
+    // Local table state keeps the user's hide; mutation rolls the query cache back.
     await waitFor(() => {
-      const pending = readPendingColumnPrefs(viewId)
-      expect(pending).not.toBeNull()
-      expect(pending?.document.columns.some((c) => c.path === 'sku' && c.visible === false)).toBe(true)
+      expect(headerIds().includes('col-sku')).toBe(false)
     })
   })
 

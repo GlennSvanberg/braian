@@ -983,19 +983,6 @@ function Login({ onDone }: { onDone: () => void }) {
       <form
         onSubmit={(event) => {
           event.preventDefault()
-          try {
-            for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
-              const key = sessionStorage.key(i)
-              if (
-                key?.startsWith('braian:column-prefs-pending:') ||
-                key?.startsWith('braian:column-prefs:')
-              ) {
-                sessionStorage.removeItem(key)
-              }
-            }
-          } catch {
-            /* private mode */
-          }
           void api('/v1/login', { method: 'POST', body: JSON.stringify({ email, password }) })
             .then(onDone)
             .catch(() => setError(copy.loginFailed))

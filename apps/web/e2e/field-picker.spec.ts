@@ -424,116 +424,45 @@ test.describe('field picker on Products', () => {
     // Editor present means Detail-only reopen did not win the double-click.
   })
 
-  test('hidden hops stay hidden after Articles round-trip', async ({ page }) => {
-    let productsViewId = ''
-    await page.route('**/column-prefs**', async (route) => {
-      const url = route.request().url()
-      const m = url.match(/\/v1\/views\/([^/]+)\/column-prefs/)
-      if (m) productsViewId = decodeURIComponent(m[1])
-      await route.continue()
-    })
-
+  test('column hide survives Articles round-trip without waiting', async ({ page }) => {
     await login(page)
     await openProducts(page)
     await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
-    async function addHop(card: 'all' | 'specific' | 'first') {
-      await openFieldsPalette(page)
-      await drillRight(page, 'fields-row-articles')
-      if (card === 'specific') {
-        await enterOn(page, 'fields-row-specific')
-        await enterOn(page, 'fields-row-net_weight')
-        await page.getByTestId('fields-mode-input').fill('ART-CHED-200')
-        const peer = page.locator('[data-testid^="fields-row-"]').filter({ hasText: /ART-CHED-200/i }).first()
-        await expect(peer).toBeVisible({ timeout: 20_000 })
-        const id = await peer.getAttribute('data-testid')
-        if (!id) throw new Error('peer')
-        await enterOn(page, id)
-        await enterOn(page, 'fields-row-kg')
-      } else {
-        await enterOn(page, `fields-row-${card}`)
-        await enterOn(page, 'fields-row-net_weight')
-        await enterOn(page, 'fields-row-kg')
-      }
-      await page.keyboard.press('Escape')
-    }
-
-    for (const card of ['all', 'specific', 'first'] as const) {
-      await addHop(card)
-    }
-    const hopHeaders = () => page.locator('[data-testid^="col-articles>net_weight"]')
-    await expect.poll(async () => hopHeaders().count()).toBeGreaterThanOrEqual(3)
-
-    for (let i = 0; i < 5 && (await hopHeaders().count()) > 0; i += 1) {
-      await hopHeaders().first().click({ button: 'right' })
-      const menu = page.getByTestId('context-menu')
-      await expect(menu).toBeVisible()
-      await menu.getByRole('menuitem', { name: 'Hide column' }).click()
-      await expect(menu).toHaveCount(0)
-    }
-    await expect(hopHeaders()).toHaveCount(0)
-
-    await page.reload()
-    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
-    await expect(hopHeaders()).toHaveCount(0)
-    await expect(page.locator('.head [data-testid="col-number"]')).toBeVisible()
-    await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
-    await expect(page.locator('.head [data-testid="col-status"]')).toBeVisible()
+    const headCols = () => page.locator('.head [data-testid^="col-"]')
     await expect(page.locator('.head [data-testid="col-brand"]')).toBeVisible()
-    const afterReload = await page.locator('.head [data-testid^="col-"]').evaluateAll((nodes) =>
+
+    // Column change: hide Brand, then switch tabs immediately (no wait for PUT).
+    await page.locator('.head [data-testid="col-brand"]').click({ button: 'right' })
+    const menu = page.getByTestId('context-menu')
+    await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Hide column' }).click()
+    await expect(menu).toHaveCount(0)
+    await expect(page.locator('.head [data-testid="col-brand"]')).toHaveCount(0)
+
+    const expected = await headCols().evaluateAll((nodes) =>
       nodes.map((n) => n.getAttribute('data-testid')),
     )
-    expect(afterReload.some((id) => id?.startsWith('col-articles>net_weight'))).toBe(false)
-    expect(productsViewId).toBeTruthy()
-
-    // Stale pending that still claims hops are visible (older than the server ack).
-    await page.evaluate((viewId) => {
-      const stale = {
-        viewId,
-        seq: 1,
-        basisUpdatedAt: '2000-01-01T00:00:00.000Z',
-        document: {
-          version: 2,
-          columns: [
-            { path: 'number', visible: true },
-            { path: 'name', visible: true },
-            { path: 'status', visible: true },
-            { path: 'brand', visible: true },
-            {
-              path: 'articles>net_weight',
-              visible: true,
-              qualifiers: [{ kind: 'cardinality', optionId: 'all', label: 'All' }],
-            },
-            {
-              path: 'articles>net_weight',
-              visible: true,
-              qualifiers: [{ kind: 'cardinality', optionId: 'specific', label: 'ART-CHED-200', value: 'ART-CHED-200' }],
-            },
-            {
-              path: 'articles>net_weight',
-              visible: true,
-              qualifiers: [{ kind: 'cardinality', optionId: 'first', label: 'First' }],
-            },
-          ],
-        },
-      }
-      sessionStorage.setItem(`braian:column-prefs-pending:${viewId}`, JSON.stringify(stale))
-    }, productsViewId)
+    expect(expected).toContain('col-number')
+    expect(expected).toContain('col-name')
+    expect(expected).toContain('col-status')
+    expect(expected).not.toContain('col-brand')
 
     await page.locator('nav.tabs').getByRole('button', { name: /^Articles/ }).click()
     await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible({ timeout: 30_000 })
     await openProducts(page)
     await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
-    await expect(hopHeaders()).toHaveCount(0)
-    await expect(page.locator('.head [data-testid="col-number"]')).toBeVisible()
-    await expect(page.locator('.head [data-testid="col-name"]')).toBeVisible()
-    await expect(page.locator('.head [data-testid="col-status"]')).toBeVisible()
-    await expect(page.locator('.head [data-testid="col-brand"]')).toBeVisible()
-    const afterRoundTrip = await page.locator('.head [data-testid^="col-"]').evaluateAll((nodes) =>
-      nodes.map((n) => n.getAttribute('data-testid')),
-    )
-    expect(afterRoundTrip).toEqual(afterReload)
+    await expect.poll(async () =>
+      headCols().evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid'))),
+    ).toEqual(expected)
+
+    await page.reload()
+    await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+    await expect.poll(async () =>
+      headCols().evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid'))),
+    ).toEqual(expected)
   })
 
   test('right-click header with palette open closes palette then shows Hide column', async ({ page }) => {
