@@ -2,8 +2,12 @@ name: CI
 
 on:
   pull_request:
+  # Push to main fills the caches a new PR is allowed to read. Pull-request
+  # caches are not visible to other PRs, so without this every new PR is cold.
+  push:
+    branches: [main]
 
-# A new push to the same PR cancels the run that is already in progress.
+# A new push to the same ref cancels the run that is already in progress.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,12 +17,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Classify CI diffs
+        run: bash scripts/ci-changes.test.sh
       # Heavy steps stay in this job so a required check still completes green
       # when the diff is docs, markdown, the landing page, or web-only.
       # Web-only diffs do not compile Rust; stack still runs e2e on a cached binary.
       - name: Detect code changes
         id: changes
         run: |
+          # A push to main builds and saves caches. There is no PR diff.
+          if [ "${{ github.event_name }}" = push ]; then
+            echo "mode=full" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - name: Stabilize Rust source mtimes
@@ -26,19 +37,30 @@ jobs:
         run: find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
+      - name: Check Rust cache
+        id: rust-cache-lookup
+        if: steps.changes.outputs.mode == 'full'
+        uses: Swatinem/rust-cache@v2
+        with:
+          lookup-only: "true"
+          # One key per job. Parallel jobs build different profiles, and a
+          # GitHub cache entry cannot be updated once saved. v2 is the
+          # generation that contains profile.ci artifacts.
+          prefix-key: v2-rust-ci
+          shared-key: ${{ github.job }}
+          cache-all-crates: "true"
+          cache-workspace-crates: "true"
       - uses: Swatinem/rust-cache@v2
         if: steps.changes.outputs.mode == 'full'
         with:
-          # Job name, not one key shared by every job: parallel jobs build
-          # different profiles and a GitHub cache key cannot be updated once saved.
-          # prefix-key starts a new immutable entry. The v0 entry was saved
-          # before source mtimes were pinned, and GitHub will not update it.
-          # v1 is populated by the first full run after this line landed.
-          prefix-key: v1-rust-mtime
+          prefix-key: v2-rust-ci
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
           cache-workspace-crates: "true"
           cache-on-failure: "true"
+          # Restore order is this ref, then the PR base, then main. An exact
+          # hit is not uploaded again, so a PR does not copy main's cache.
+          save-if: ${{ steps.rust-cache-lookup.outputs.cache-hit != 'true' }}
       - name: Start Postgres
         if: steps.changes.outputs.mode == 'full'
         run: |
@@ -93,6 +115,11 @@ jobs:
       - name: Detect code changes
         id: changes
         run: |
+          # A push to main builds and saves caches. There is no PR diff.
+          if [ "${{ github.event_name }}" = push ]; then
+            echo "mode=full" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - name: Stabilize Rust source mtimes
@@ -100,14 +127,27 @@ jobs:
         run: find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
+      - name: Check Rust cache
+        id: rust-cache-lookup
+        if: steps.changes.outputs.mode == 'full'
+        uses: Swatinem/rust-cache@v2
+        with:
+          lookup-only: "true"
+          prefix-key: v2-rust-ci
+          shared-key: ${{ github.job }}
+          cache-all-crates: "true"
+          cache-workspace-crates: "true"
       - uses: Swatinem/rust-cache@v2
         if: steps.changes.outputs.mode == 'full'
         with:
-          prefix-key: v1-rust-mtime
+          prefix-key: v2-rust-ci
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
           cache-workspace-crates: "true"
           cache-on-failure: "true"
+          # Restore order is this ref, then the PR base, then main. An exact
+          # hit is not uploaded again, so a PR does not copy main's cache.
+          save-if: ${{ steps.rust-cache-lookup.outputs.cache-hit != 'true' }}
       - uses: actions/setup-node@v4
         if: steps.changes.outputs.mode == 'full'
         with:
@@ -121,10 +161,10 @@ jobs:
       - run: just test-wasm
         if: steps.changes.outputs.mode == 'full'
 
-  # Phase 2, phase 3, release-profile store/indexer tests, and Playwright.
-  # One release build feeds demo-2, demo-3 and e2e. `cargo test` defaults to the
-  # separate `test` profile, which does not reuse `release` artifacts, so the
-  # store and indexer tests pass `--profile release`.
+  # Phase 2, phase 3, profile.ci store/indexer tests, and Playwright.
+  # One `ci` build feeds demo-2, demo-3 and e2e. `cargo test` defaults to the
+  # separate `test` profile, so the store and indexer tests pass `--profile ci`
+  # and reuse that build. profile.ci keeps debug assertions and overflow checks.
   stack:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -133,6 +173,11 @@ jobs:
       - name: Detect code changes
         id: changes
         run: |
+          # A push to main builds and saves caches. There is no PR diff.
+          if [ "${{ github.event_name }}" = push ]; then
+            echo "mode=full" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - name: Restore release binaries
@@ -141,7 +186,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/ci-bins
-          # Exact key only. A prefix restore would replay a binary from older Rust.
+          # Exact key only. No restore-keys: a prefix match would replay a
+          # binary from older Rust. actions/cache looks up this ref, then the
+          # PR base, then main.
           key: braian-bins-v1-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/**', 'testdata/**') }}
       - name: Plan Rust build
         id: plan
@@ -168,14 +215,27 @@ jobs:
           find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
+      - name: Check Rust cache
+        id: rust-cache-lookup
+        if: steps.changes.outputs.mode == 'full'
+        uses: Swatinem/rust-cache@v2
+        with:
+          lookup-only: "true"
+          prefix-key: v2-rust-ci
+          shared-key: ${{ github.job }}
+          cache-all-crates: "true"
+          cache-workspace-crates: "true"
       - uses: Swatinem/rust-cache@v2
         if: steps.changes.outputs.mode == 'full'
         with:
-          prefix-key: v1-rust-mtime
+          prefix-key: v2-rust-ci
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
           cache-workspace-crates: "true"
           cache-on-failure: "true"
+          # Restore order is this ref, then the PR base, then main. An exact
+          # hit is not uploaded again, so a PR does not copy main's cache.
+          save-if: ${{ steps.rust-cache-lookup.outputs.cache-hit != 'true' }}
       - name: Services and release build
         if: steps.changes.outputs.mode != 'skip'
         run: |
@@ -211,9 +271,9 @@ jobs:
             hurl_pid=$!
           fi
           if [ "${{ steps.plan.outputs.compile }}" = true ]; then
-            cargo build --release --locked -p braian-bench -p braian-server
+            cargo build --profile ci --locked -p braian-bench -p braian-server
             mkdir -p "${RUNNER_TEMP}/ci-bins"
-            cp -a target/release/braian target/release/braian-bench "${RUNNER_TEMP}/ci-bins/"
+            cp -a target/ci/braian target/ci/braian-bench "${RUNNER_TEMP}/ci-bins/"
             test -x "${RUNNER_TEMP}/ci-bins/braian"
             test -x "${RUNNER_TEMP}/ci-bins/braian-bench"
           fi
@@ -243,14 +303,14 @@ jobs:
       - name: Change log resumes, coalesces and wakes listeners
         if: steps.changes.outputs.mode == 'full'
         run: |
-          cargo test --profile release --locked -p braian-store -p braian-api --test change_log -- --test-threads=1
-          cargo test --profile release --locked -p braian-indexer -p braian-api --test log -- --test-threads=1
+          cargo test --profile ci --locked -p braian-store -p braian-api --test change_log -- --test-threads=1
+          cargo test --profile ci --locked -p braian-indexer -p braian-api --test log -- --test-threads=1
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
       - name: Indexer converges and reindex swaps the alias
         if: steps.changes.outputs.mode == 'full'
-        run: cargo test --profile release --locked -p braian-indexer -p braian-api --test converge -- --test-threads=1
+        run: cargo test --profile ci --locked -p braian-indexer -p braian-api --test converge -- --test-threads=1
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian

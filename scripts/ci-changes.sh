@@ -4,7 +4,7 @@
 #
 # skip: docs, markdown, landing page. The job still reports success.
 # web:  web, packages, or the e2e runner only. Stack runs Playwright against
-#       a cached release binary and does not compile Rust when that cache hits.
+#       a cached profile.ci binary and does not compile Rust when that cache hits.
 # full: anything else, including Rust, SQL, workflows, and docs/api.
 set -euo pipefail
 

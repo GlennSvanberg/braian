@@ -1,7 +1,7 @@
 // Playwright against its own Postgres database and Typesense alias.
 // The demo database used by `just dev` is not written.
 //
-// BRAIAN_BIN, when set, is the server binary. CI points it at the release
+// BRAIAN_BIN, when set, is the server binary. CI points it at the profile.ci
 // binary built for Phase 2 so this script does not compile.
 // BRAIAN_E2E_WORKERS (default 1) starts one database, API and Vite per worker
 // and runs that worker's files against only that server. Workers stay at 1
