@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -71,7 +72,7 @@ test('structure tree proposes group changes and assortments are saved queries', 
   await expect(open.locator('.row').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/assortments-dark.png` })
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await page.screenshot({ path: `${shots}/assortments-light.png` })
 })

@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -61,8 +62,8 @@ test('each object type has its own workspace and class attributes', async ({ pag
   await expect(classes).toContainText('Article')
   await page.screenshot({ path: `${shots}/articles-dark.png` })
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await page.screenshot({ path: `${shots}/articles-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 })

@@ -17,3 +17,11 @@ export function DropdownMenuContent({ className, sideOffset = 6, ...props }: Com
 export function DropdownMenuItem({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Item>) {
   return <DropdownMenuPrimitive.Item className={cn('menu-item', className)} {...props} />
 }
+
+export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Label>) {
+  return <DropdownMenuPrimitive.Label className={cn('menu-label', className)} {...props} />
+}
+
+export function DropdownMenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
+  return <DropdownMenuPrimitive.Separator className={cn('menu-sep', className)} {...props} />
+}

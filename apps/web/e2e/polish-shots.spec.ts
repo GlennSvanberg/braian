@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -61,17 +62,17 @@ test('polish screenshots', async ({ page }) => {
 
   await login(page)
   await page.screenshot({ path: `${shots}/enrich-dark.png` })
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/enrich-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await page.getByTestId('object-row').first().click()
   await expect(page.getByTestId('object-detail')).toBeVisible()
   await expect(page.locator('.field-card').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/detail-dark.png` })
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/detail-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await page.getByTestId('object-row').nth(1).click({ button: 'right' })
   await expect(page.getByTestId('context-menu')).toBeVisible()
@@ -88,12 +89,12 @@ test('polish screenshots', async ({ page }) => {
   await expect(page.getByTestId('graph-full')).toBeVisible()
   await page.screenshot({ path: `${shots}/graph-full-dark.png` })
   await page.getByRole('button', { name: 'Close full size' }).click()
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.getByRole('button', { name: 'Open full size' }).click()
   await expect(page.getByTestId('graph-full')).toBeVisible()
   await page.screenshot({ path: `${shots}/graph-full-light.png` })
   await page.getByRole('button', { name: 'Close full size' }).click()
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await page.keyboard.press('Control+k')
   await expect(page.getByTestId('command-palette')).toBeVisible()
@@ -112,9 +113,9 @@ test('polish screenshots', async ({ page }) => {
   await page.getByTestId('group-dairy').locator('.twist').click()
   await expect(page.getByTestId('group-yoghurt')).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-dark.png` })
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/data-model-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
   await page.getByTestId('group-yoghurt').locator('.model-node').click()
   await expect(page.getByTestId('attribute-table')).toContainText('from Dairy')
   await page.screenshot({ path: `${shots}/class-card-dark.png` })

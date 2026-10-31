@@ -2,7 +2,10 @@ import createClient from 'openapi-fetch'
 import type { FetchResponse, MaybeOptionalInit } from 'openapi-fetch'
 import type { paths } from './schema'
 
+import { isWrite, writeSettled, writeStarted } from '../write-status'
+
 const started = new WeakMap<Request, number>()
+const tracked = new WeakSet<Request>()
 
 /**
  * Same-origin requests stay relative (`/v1/...`) so cookie credentials and the
@@ -36,9 +39,17 @@ export const client = createClient<paths>({
 client.use({
   onRequest({ request }) {
     started.set(request, performance.now())
+    if (isWrite(request.method)) {
+      tracked.add(request)
+      writeStarted()
+    }
     return request
   },
+  onError({ request, error }) {
+    if (tracked.delete(request)) writeSettled(error instanceof Error ? error.message : 'Network error')
+  },
   onResponse({ request, response }) {
+    if (tracked.delete(request)) writeSettled(response.ok ? undefined : `${response.status} ${response.statusText}`.trim())
     if (typeof window !== 'undefined') {
       const url = new URL(request.url)
       const path = `${url.pathname}${url.search}`

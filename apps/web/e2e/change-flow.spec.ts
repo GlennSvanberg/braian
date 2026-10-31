@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -134,9 +135,9 @@ test('a person saves directly and reviews an agent draft field by field', async 
   await englishLine.getByTestId('reject-field').click()
   await expect(englishLine.getByTestId('reject-field')).toHaveAttribute('aria-pressed', 'true')
   await page.screenshot({ path: `${shots}/review-dark.png` })
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/review-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await review.getByTestId('save-all').click()
   await expect(page.getByTestId('activity-log')).toContainText('Saved')
