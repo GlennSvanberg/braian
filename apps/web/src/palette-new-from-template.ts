@@ -1,7 +1,9 @@
 import { copy } from './i18n'
 import type { PaletteItem } from './palette-model'
-import { workspaceTemplates, type WorkspaceTemplate } from './templates'
+import { canonicalShareToken, workspaceTemplates, type WorkspaceTemplate } from './templates'
 import type { TypeName } from './type-labels'
+
+export type ListedTemplateWorkspace = { id: string; name: string; share_token?: string | null }
 
 /** Palette root row that opens the New from template submenu. */
 export function newFromTemplateRootItem(): PaletteItem {
@@ -15,17 +17,26 @@ export function newFromTemplateRootItem(): PaletteItem {
 }
 
 /** Rows listed under "New from template ›". */
-export function newFromTemplateSubmenuRows(types: TypeName[]): PaletteItem[] {
-  return workspaceTemplates(types).map((template) => templatePaletteItem(template))
+export function newFromTemplateSubmenuRows(
+  types: TypeName[],
+  workspaces: ListedTemplateWorkspace[] = [],
+): PaletteItem[] {
+  return workspaceTemplates(types).map((template) => templatePaletteItem(template, workspaces))
 }
 
-export function templatePaletteItem(template: WorkspaceTemplate): PaletteItem {
+export function templatePaletteItem(
+  template: WorkspaceTemplate,
+  workspaces: ListedTemplateWorkspace[] = [],
+): PaletteItem {
+  const token = canonicalShareToken(template)
+  const open = token ? workspaces.some((row) => row.share_token === token) : false
+  const summary = template.summary
   return {
     id: `template:${template.id}`,
     group: 'views',
     title: template.name,
-    subtitle: `Template · ${template.summary}`,
-    keywords: ['template', template.id, template.name],
+    subtitle: open ? `Open existing · ${summary}` : `Create · ${summary}`,
+    keywords: ['template', template.id, template.name, open ? 'open' : 'create'],
   }
 }
 

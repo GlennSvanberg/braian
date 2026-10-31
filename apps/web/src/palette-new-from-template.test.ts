@@ -5,7 +5,9 @@ import {
   isNewFromTemplateRoot,
   newFromTemplateRootItem,
   newFromTemplateSubmenuRows,
+  templatePaletteItem,
 } from './palette-new-from-template'
+import { workspaceTemplates } from './templates'
 import type { TypeName } from './type-labels'
 
 const types: TypeName[] = [
@@ -38,5 +40,21 @@ describe('new from template palette helpers', () => {
   it('filters submenu rows so Enter can pick Review by query', () => {
     const rows = newFromTemplateSubmenuRows(types)
     expect(filterPaletteRows(rows, 'Review').map((row) => row.title)).toEqual(['Review'])
+  })
+
+  it('marks Create vs Open existing from share_token presence', () => {
+    const review = workspaceTemplates(types).find((item) => item.id === 'review')
+    expect(review).toBeTruthy()
+    expect(templatePaletteItem(review!).subtitle).toMatch(/^Create · /)
+    expect(
+      templatePaletteItem(review!, [{ id: 'w1', name: 'Review', share_token: 'braian-review' }]).subtitle,
+    ).toMatch(/^Open existing · /)
+    const rows = newFromTemplateSubmenuRows(types, [
+      { id: 'w1', name: 'Review', share_token: 'braian-review' },
+    ])
+    const reviewRow = rows.find((row) => row.id === 'template:review')
+    expect(reviewRow?.subtitle).toMatch(/^Open existing · /)
+    const modelRow = rows.find((row) => row.id === 'template:model')
+    expect(modelRow?.subtitle).toMatch(/^Create · /)
   })
 })

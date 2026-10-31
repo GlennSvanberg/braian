@@ -261,7 +261,7 @@ export function CommandPalette({
     if (!startNewFromTemplate) return
     setStack([{
       label: `${copy.newWorkspace} ›`,
-      rows: newFromTemplateSubmenuRows(types),
+      rows: newFromTemplateSubmenuRows(types, workspaces),
     }])
     setActive(0)
     // Mount-only: tab menu "New from template" opens the submenu immediately.
@@ -302,7 +302,7 @@ export function CommandPalette({
     if (isNewFromTemplateRoot(id)) {
       setStack((current) => [...current, {
         label: item.title,
-        rows: newFromTemplateSubmenuRows(types),
+        rows: newFromTemplateSubmenuRows(types, workspaces),
       }])
       setQuery('')
       setActive(0)
