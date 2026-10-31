@@ -2,13 +2,11 @@
 
 #[test]
 fn openapi_spec_matches_the_committed_file() {
-    let path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/api/openapi.json");
-    let committed: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display())),
-    )
-    .expect("docs/api/openapi.json is json");
+    // include_str so the file is a compile input: rust-cache / mtime tricks cannot
+    // pair a freshly linked openapi_spec() with a stale runtime read of the JSON.
+    let committed: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/api/openapi.json"))
+            .expect("docs/api/openapi.json is json");
     let generated = serde_json::to_value(braian_api::openapi_spec()).expect("spec serializes");
     assert_eq!(
         committed, generated,
