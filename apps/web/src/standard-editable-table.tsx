@@ -259,6 +259,20 @@ export function StandardEditableTable<T extends { id: string }>({
       return
     }
     if (editing) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const index = filtered.findIndex((item) => item.id === row.id)
+      if (index < 0) return
+      const next = filtered[index + (event.key === 'ArrowDown' ? 1 : -1)]
+      if (!next) return
+      event.preventDefault()
+      onActivateRow?.(next)
+      const grid = event.currentTarget.parentElement
+      queueMicrotask(() => {
+        const el = grid?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(next.id)}"]`)
+        el?.focus()
+      })
+      return
+    }
     if (event.key === 'Enter' || event.key === 'F2') {
       const column = editableColumnsFor(row)[0]
       if (!column) {
