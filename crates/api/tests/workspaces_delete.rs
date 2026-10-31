@@ -44,7 +44,7 @@ async fn call(
     cookie: Option<&str>,
     body: Option<&str>,
 ) -> (StatusCode, Value) {
-    let builder = Request::builder().method(method).uri(path);
+    let mut builder = Request::builder().method(method).uri(path);
     if let Some(cookie) = cookie {
         builder = builder.header("cookie", cookie);
     }
@@ -75,7 +75,7 @@ async fn call_bearer(
     token: &str,
     body: Option<&str>,
 ) -> (StatusCode, Value) {
-    let builder = Request::builder()
+    let mut builder = Request::builder()
         .method(method)
         .uri(path)
         .header("authorization", format!("Bearer {token}"));
