@@ -50,9 +50,17 @@ async function reviewDraft() {
   window.dispatchEvent(new Event('braian-review-save'))
 }
 
+
+/** Local active row for StandardEditableTable selection chrome (same pattern as Attribute definitions). */
+function useActiveRowId() {
+  const [activeRowId, setActiveRowId] = useState<string | null>(null)
+  return { activeRowId, setActiveRowId }
+}
+
 export function ObjectTypesTable() {
   const { stored, defs } = useModelDefs()
   const [filter, setFilter] = useState('')
+  const { activeRowId, setActiveRowId } = useActiveRowId()
   const [draftRows, setDraftRows] = useState<Record<string, TypeRow>>({})
   const rows = useMemo(() => {
     const raw = ((defs?.types as Json[]) ?? []).filter((item) => item.kind !== 'link')
@@ -110,10 +118,15 @@ export function ObjectTypesTable() {
       })}
       newRowLabel={copy.objectTypes}
       filterValue={filter}
-      onFilterChange={setFilter}
+      onFilterChange={(value) => {
+        setFilter(value)
+        setActiveRowId(null)
+      }}
+      activeRowId={activeRowId}
       menuContext={(row) => (row?.key ? 'model-type' : 'model')}
       getMenuTarget={(row) => ({ typeKey: row?.key || undefined })}
       onActivateRow={(row) => {
+        setActiveRowId(row.id)
         if (!row.key) return
         chooseModelSelection({ kind: 'type', typeKey: row.key })
         setModelFocus({ kind: 'type', key: row.key })
@@ -148,6 +161,7 @@ export function ObjectTypesTable() {
 export function LinkTypesTable() {
   const { stored, defs } = useModelDefs()
   const [filter, setFilter] = useState('')
+  const { activeRowId, setActiveRowId } = useActiveRowId()
   const [draftRows, setDraftRows] = useState<Record<string, TypeRow>>({})
   const rows = useMemo(() => {
     const raw = ((defs?.types as Json[]) ?? []).filter((item) => item.kind === 'link')
@@ -205,10 +219,15 @@ export function LinkTypesTable() {
       })}
       newRowLabel={copy.linkTypes}
       filterValue={filter}
-      onFilterChange={setFilter}
+      onFilterChange={(value) => {
+        setFilter(value)
+        setActiveRowId(null)
+      }}
+      activeRowId={activeRowId}
       menuContext={(row) => (row?.key ? 'model-link' : 'model')}
       getMenuTarget={(row) => ({ typeKey: row?.key || undefined })}
       onActivateRow={(row) => {
+        setActiveRowId(row.id)
         if (!row.key) return
         setModelFocus({ kind: 'type', key: row.key })
       }}
@@ -241,6 +260,7 @@ export function LinkTypesTable() {
 export function ValueListsTable({ onOpenList }: { onOpenList?: (key: string) => void }) {
   const { stored, defs } = useModelDefs()
   const [filter, setFilter] = useState('')
+  const { activeRowId, setActiveRowId } = useActiveRowId()
   const [draftRows, setDraftRows] = useState<Record<string, ListRow>>({})
   const rows = useMemo<ListRow[]>(
     () =>
@@ -293,10 +313,15 @@ export function ValueListsTable({ onOpenList }: { onOpenList?: (key: string) => 
       createDraftRow={() => ({ id: `new-${crypto.randomUUID()}`, key: '', label: '', optionCount: 0 })}
       newRowLabel={copy.valueLists}
       filterValue={filter}
-      onFilterChange={setFilter}
+      onFilterChange={(value) => {
+        setFilter(value)
+        setActiveRowId(null)
+      }}
+      activeRowId={activeRowId}
       menuContext={(row) => (row?.key ? 'model-list' : 'model')}
       getMenuTarget={(row) => ({ listKey: row?.key || undefined })}
       onActivateRow={(row) => {
+        setActiveRowId(row.id)
         if (!row.key) return
         setModelFocus({ kind: 'value_list', key: row.key })
         onOpenList?.(row.key)
@@ -403,6 +428,7 @@ export function ValueListValuesTable({ listKey }: { listKey: string }) {
 export function UnitsTable() {
   const { stored, defs } = useModelDefs()
   const [filter, setFilter] = useState('')
+  const { activeRowId, setActiveRowId } = useActiveRowId()
   const [draftRows, setDraftRows] = useState<Record<string, UnitRow>>({})
   const rows = useMemo<UnitRow[]>(() => {
     const out: UnitRow[] = []
@@ -467,7 +493,12 @@ export function UnitsTable() {
       })}
       newRowLabel={copy.unitsView}
       filterValue={filter}
-      onFilterChange={setFilter}
+      onFilterChange={(value) => {
+        setFilter(value)
+        setActiveRowId(null)
+      }}
+      activeRowId={activeRowId}
+      onActivateRow={(row) => setActiveRowId(row.id)}
       menuContext={(row) => {
         if (row?.code) return 'model-unit'
         if (row?.family) return 'model-family'

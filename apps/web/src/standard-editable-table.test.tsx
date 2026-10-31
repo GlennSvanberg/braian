@@ -113,6 +113,75 @@ describe('standard editable table', () => {
     expect(screen.getByText('Value list')).toBeTruthy()
     expect(screen.queryByText('value_list')).toBeNull()
   })
+
+  it('marks the active row with class on when activeRowId is set', () => {
+    render(
+      <StandardEditableTable
+        columns={columns}
+        rows={[
+          { id: '1', name: 'Colour', kind: 'value_list' },
+          { id: '2', name: 'Size', kind: 'text' },
+        ]}
+        activeRowId="2"
+        editable={false}
+      />,
+    )
+    const rows = screen.getAllByTestId('standard-grid-row')
+    expect(rows[0].className).not.toContain(' on')
+    expect(rows[0].classList.contains('on')).toBe(false)
+    expect(rows[1].classList.contains('on')).toBe(true)
+  })
+
+  it('ArrowDown and ArrowUp activate the neighbour row when not editing', () => {
+    const onActivate = vi.fn()
+    const { rerender } = render(
+      <StandardEditableTable
+        columns={columns}
+        rows={[
+          { id: '1', name: 'Colour', kind: 'value_list' },
+          { id: '2', name: 'Size', kind: 'text' },
+          { id: '3', name: 'Weight', kind: 'text' },
+        ]}
+        activeRowId="1"
+        onActivateRow={onActivate}
+        editable={false}
+      />,
+    )
+    const rows = screen.getAllByTestId('standard-grid-row')
+    fireEvent.keyDown(rows[0], { key: 'ArrowDown' })
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    rerender(
+      <StandardEditableTable
+        columns={columns}
+        rows={[
+          { id: '1', name: 'Colour', kind: 'value_list' },
+          { id: '2', name: 'Size', kind: 'text' },
+          { id: '3', name: 'Weight', kind: 'text' },
+        ]}
+        activeRowId="2"
+        onActivateRow={onActivate}
+        editable={false}
+      />,
+    )
+    const mid = screen.getAllByTestId('standard-grid-row')[1]
+    fireEvent.keyDown(mid, { key: 'ArrowUp' })
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }))
+  })
+
+  it('click calls onActivateRow for selection', () => {
+    const onActivate = vi.fn()
+    render(
+      <StandardEditableTable
+        columns={columns}
+        rows={[{ id: '1', name: 'Colour', kind: 'value_list' }]}
+        onActivateRow={onActivate}
+        editable={false}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('standard-grid-row'))
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }))
+  })
+
 })
 
 describe('value list master detail helpers', () => {
