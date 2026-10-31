@@ -67,18 +67,33 @@ test('Ctrl+K Open agent opens the agent panel', async ({ page }) => {
   await expect(page.getByTestId('palette-input')).toBeFocused()
 })
 
+async function setBrowserOnline(page: Page, online: boolean) {
+  await page.evaluate((next) => {
+    window.dispatchEvent(new Event(next ? 'online' : 'offline'))
+  }, online)
+}
+
 test('the status bar is empty when normal and shows offline while disconnected', async ({ page, context }) => {
   await login(page)
   await expect(page.getByTestId('activity-log')).toHaveAttribute('data-live', /open|message/, { timeout: 20_000 })
   const bar = page.getByTestId('status-bar')
   const bottom = page.locator('.bottom-bar')
+  await expect(bar).toHaveAttribute('data-kind', '')
   await expect(bar).toHaveText('')
   await expect(bottom).not.toContainText(/connected|admin/i)
 
   await context.setOffline(true)
-  await expect(bar).toContainText('Offline / reconnecting')
+  await page.waitForFunction(() => !navigator.onLine)
+  await setBrowserOnline(page, false)
+  await expect(bar).toHaveAttribute('data-kind', 'offline', { timeout: 20_000 })
+  await expect(bar).toContainText(/Offline.*reconnecting/i)
+
   await context.setOffline(false)
-  await expect(bar).toHaveText('', { timeout: 20_000 })
+  await page.waitForFunction(() => navigator.onLine)
+  await setBrowserOnline(page, true)
+  await expect(page.getByTestId('activity-log')).toHaveAttribute('data-live', /open|message/, { timeout: 20_000 })
+  await expect(bar).toHaveAttribute('data-kind', '', { timeout: 20_000 })
+  await expect(bar).toHaveText('')
 })
 
 test('Ctrl+K Sign out returns to the login form', async ({ page }) => {
