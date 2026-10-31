@@ -15,8 +15,23 @@ async function openProducts(page: Page) {
   await expect(page.getByTestId('object-table')).toBeVisible()
 }
 
-function cheddarRow(page: Page) {
-  return page.locator('[data-testid="object-row"]').filter({ hasText: /Mature cheddar|Aged cheddar e2e/ }).first()
+function rowByName(page: Page, name: RegExp | string) {
+  return page.locator('[data-testid="object-row"]').filter({ hasText: name }).first()
+}
+
+/** Commit a Name cell to `text` (used to restore seed data for later specs). */
+async function setNameCell(page: Page, row: ReturnType<Page['locator']>, text: string) {
+  await row.locator('[data-column="name"]').first().dblclick()
+  const editor = page.getByTestId('cell-editor-name')
+  await expect(editor).toBeVisible()
+  await editor.fill(text)
+  await editor.press('Enter')
+  await expect(page.getByTestId('cell-editor-name')).toHaveCount(0)
+  await expect
+    .poll(async () => (await rowByName(page, text).locator('[data-column="name"]').textContent())?.trim() ?? '', {
+      timeout: 30_000,
+    })
+    .toBe(text)
 }
 
 test('inline Name cell edit keeps caret and persists after Enter', async ({ page }) => {
@@ -24,67 +39,75 @@ test('inline Name cell edit keeps caret and persists after Enter', async ({ page
   await login(page)
   await openProducts(page)
 
-  const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
+  const original = 'Mature cheddar'
+  const edited = 'Aged cheddar e2e'
+  const row = rowByName(page, original)
   await expect(row).toBeVisible({ timeout: 60_000 })
-  // Pin by DOM id — after fill() the name cell no longer contains "Mature cheddar".
-  // object-row-<uuid> needs no CSS.escape (CSS is browser-only; Playwright runs in Node).
+  // Pin by DOM id — after fill() the name cell no longer contains the original text.
   const rowId = await row.getAttribute('id')
   expect(rowId).toMatch(/^object-row-/)
   const stableRow = page.locator(`[id="${rowId}"]`)
 
-  const nameCell = stableRow.locator('[data-column="name"]').first()
-  // Activate the Name column so .active-cell is present before we edit.
-  await nameCell.click()
-  await expect(stableRow.locator('.active-cell')).toHaveAttribute('data-column', 'name')
-  const activeBefore = await stableRow.locator('.active-cell').getAttribute('data-column')
+  // Always restore seed Name so later specs (move-col, palette, …) still find Mature cheddar
+  // even if Playwright runs this file mid-suite.
+  try {
+    const nameCell = stableRow.locator('[data-column="name"]').first()
+    await nameCell.click()
+    await expect(stableRow.locator('.active-cell')).toHaveAttribute('data-column', 'name')
+    const activeBefore = await stableRow.locator('.active-cell').getAttribute('data-column')
 
-  await nameCell.dblclick()
-  const editor = page.getByTestId('cell-editor-name')
-  await expect(editor).toBeVisible()
+    await nameCell.dblclick()
+    const editor = page.getByTestId('cell-editor-name')
+    await expect(editor).toBeVisible()
 
-  // Replace the value with a unique suffix so we can assert persistence.
-  await editor.fill('Aged cheddar e2e')
-  await expect(editor).toHaveValue('Aged cheddar e2e')
+    await editor.fill(edited)
+    await expect(editor).toHaveValue(edited)
 
-  // Move caret to end, then ArrowLeft must move caret — not the active column.
-  await editor.evaluate((el: HTMLInputElement) => {
-    const end = el.value.length
-    el.setSelectionRange(end, end)
-  })
-  const caretBefore = await editor.evaluate((el: HTMLInputElement) => el.selectionStart)
-  expect(caretBefore).toBe('Aged cheddar e2e'.length)
-
-  await editor.press('ArrowLeft')
-  const caretAfter = await editor.evaluate((el: HTMLInputElement) => el.selectionStart)
-  expect(caretAfter, 'ArrowLeft should move caret left by one').toBe((caretBefore ?? 0) - 1)
-  await expect(editor).toBeVisible()
-  const activeAfter = await stableRow.locator('.active-cell').getAttribute('data-column')
-  expect(activeAfter, 'active column must stay on name while editing').toBe(activeBefore ?? 'name')
-
-  // Enter commits; value must stick after settle (and not snap back to Mature cheddar).
-  await editor.press('Enter')
-  await expect(page.getByTestId('cell-editor-name')).toHaveCount(0)
-  await expect
-    .poll(async () => (await cheddarRow(page).locator('[data-column="name"]').textContent())?.trim() ?? '', {
-      timeout: 30_000,
+    await editor.evaluate((el: HTMLInputElement) => {
+      const end = el.value.length
+      el.setSelectionRange(end, end)
     })
-    .toBe('Aged cheddar e2e')
+    const caretBefore = await editor.evaluate((el: HTMLInputElement) => el.selectionStart)
+    expect(caretBefore).toBe(edited.length)
 
-  // Reload — persisted name must remain (language_dependent map shape).
-  await page.reload()
-  await expect(page.getByTestId('dock')).toBeVisible()
-  await openProducts(page)
-  await expect(cheddarRow(page).locator('[data-column="name"]')).toContainText('Aged cheddar e2e', {
-    timeout: 60_000,
-  })
+    await editor.press('ArrowLeft')
+    const caretAfter = await editor.evaluate((el: HTMLInputElement) => el.selectionStart)
+    expect(caretAfter, 'ArrowLeft should move caret left by one').toBe((caretBefore ?? 0) - 1)
+    await expect(editor).toBeVisible()
+    const activeAfter = await stableRow.locator('.active-cell').getAttribute('data-column')
+    expect(activeAfter, 'active column must stay on name while editing').toBe(activeBefore ?? 'name')
 
-  // Esc cancels without saving.
-  const row2 = cheddarRow(page)
-  await row2.locator('[data-column="name"]').first().dblclick()
-  const editor2 = page.getByTestId('cell-editor-name')
-  await expect(editor2).toBeVisible()
-  await editor2.fill('Should not stick')
-  await editor2.press('Escape')
-  await expect(page.getByTestId('cell-editor-name')).toHaveCount(0)
-  await expect(cheddarRow(page).locator('[data-column="name"]')).toContainText('Aged cheddar e2e')
+    await editor.press('Enter')
+    await expect(page.getByTestId('cell-editor-name')).toHaveCount(0)
+    await expect
+      .poll(async () => (await rowByName(page, edited).locator('[data-column="name"]').textContent())?.trim() ?? '', {
+        timeout: 30_000,
+      })
+      .toBe(edited)
+
+    await page.reload()
+    await expect(page.getByTestId('dock')).toBeVisible()
+    await openProducts(page)
+    await expect(rowByName(page, edited).locator('[data-column="name"]')).toContainText(edited, {
+      timeout: 60_000,
+    })
+
+    const row2 = rowByName(page, edited)
+    await row2.locator('[data-column="name"]').first().dblclick()
+    const editor2 = page.getByTestId('cell-editor-name')
+    await expect(editor2).toBeVisible()
+    await editor2.fill('Should not stick')
+    await editor2.press('Escape')
+    await expect(page.getByTestId('cell-editor-name')).toHaveCount(0)
+    await expect(rowByName(page, edited).locator('[data-column="name"]')).toContainText(edited)
+  } finally {
+    await openProducts(page)
+    const current = rowByName(page, new RegExp(`${original}|${edited}|Should not stick`))
+    if (await current.count()) {
+      const name = (await current.locator('[data-column="name"]').textContent())?.trim() ?? ''
+      if (name !== original) {
+        await setNameCell(page, current, original)
+      }
+    }
+  }
 })
