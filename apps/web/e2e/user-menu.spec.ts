@@ -85,6 +85,7 @@ test('the status bar is empty when normal and shows offline while disconnected',
   await context.setOffline(true)
   await page.waitForFunction(() => !navigator.onLine)
   await setBrowserOnline(page, false)
+  await expect(page.getByTestId('workspace')).toBeVisible()
   await expect(bar).toHaveAttribute('data-kind', 'offline', { timeout: 20_000 })
   await expect(bar).toContainText(/Offline.*reconnecting/i)
 

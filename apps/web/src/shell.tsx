@@ -966,13 +966,16 @@ export function Shell() {
 
 
   if (!booted || me.isLoading) return <p className="pane-body">{copy.loading}</p>
-  if (me.isError || !me.data) {
-    return (
-      <>
-        <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
-        <ImportScreen />
-      </>
-    )
+  if (!me.data) {
+    if (me.isError) {
+      return (
+        <>
+          <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+          <ImportScreen />
+        </>
+      )
+    }
+    return <p className="pane-body">{copy.loading}</p>
   }
   const user = me.data
   const signOut = () => void api.post('/v1/logout').then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))
