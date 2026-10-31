@@ -119,8 +119,59 @@ async fn until(app: &axum::Router, id: &str, want: &[&str]) -> Value {
 }
 
 fn csv() -> Vec<u8> {
-    b"sku,name,action\nNEW-1,Chair,\nOLD-1,Updated,\nOLD-2,Keep,delete\nBAD-1,WayTooLongX,\n"
-        .to_vec()
+    b"sku,name\nNEW-1,Chair\nOLD-1,Updated\nOLD-2,Keep\nBAD-1,WayTooLongX\n".to_vec()
+}
+
+/// The open draft of an import session, as the staging area lists it.
+async fn draft_of(app: &axum::Router, session: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        let (status, list) = call(
+            app,
+            "GET",
+            "/v1/proposals?status=open&source=import",
+            HUMAN,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        last = list.clone();
+        if let Some(draft) = list["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["session_id"] == session)
+        {
+            return draft.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    panic!("no open draft for {session}: {last}");
+}
+
+async fn accept_draft(
+    app: &axum::Router,
+    token: &str,
+    draft: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    call(
+        app,
+        "POST",
+        &format!("/v1/proposals/{draft}/accept"),
+        token,
+        &[("content-type", "application/json")],
+        Some(body.to_string().into_bytes()),
+    )
+    .await
+}
+
+async fn object_name(app: &axum::Router, id: &str) -> Value {
+    let (status, object) = call(app, "GET", &format!("/v1/objects/{id}"), HUMAN, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{object}");
+    object["values"]["name"]["sv"].clone()
 }
 
 async fn create_object(app: &axum::Router, sku: &str) -> String {
@@ -149,7 +200,7 @@ async fn create_object(app: &axum::Router, sku: &str) -> String {
 async fn upload_maps_diffs_and_saves_with_progress_events() {
     let (_db, _state, app, mut live) = harness().await;
     let old_changed = create_object(&app, "OLD-1").await;
-    let old_deleted = create_object(&app, "OLD-2").await;
+    let old_excluded = create_object(&app, "OLD-2").await;
     let (status, uploaded) = call(
         &app,
         "POST",
@@ -166,15 +217,21 @@ async fn upload_maps_diffs_and_saves_with_progress_events() {
     let id = uploaded["id"].as_str().unwrap().to_owned();
     let ready = until(&app, &id, &["ready"]).await;
     assert!(ready["parse_done"].as_bool().unwrap_or(false));
-    assert!(ready["counters"].get("delete").is_some());
-    assert!(ready["counters"].get("deleted").is_none());
+    assert!(ready["counters"].get("delete").is_none());
+    assert!(
+        !ready["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|target| target["id"] == "action"),
+        "imports never delete, so there is no action target"
+    );
     let mapping = json!({
         "type": "item",
         "id_column": 0,
         "columns": [
             { "col": 0, "target": "type:sku" },
-            { "col": 1, "target": "type:name" },
-            { "col": 2, "target": "action" }
+            { "col": 1, "target": "type:name" }
         ]
     });
     let (status, body) = call(
@@ -200,8 +257,28 @@ async fn upload_maps_diffs_and_saves_with_progress_events() {
     let preview = until(&app, &id, &["previewed"]).await;
     assert!(preview["counters"]["new"].as_u64().unwrap_or(0) >= 1);
     assert!(preview["counters"]["changed"].as_u64().unwrap_or(0) >= 1);
-    assert!(preview["counters"]["delete"].as_u64().unwrap_or(0) >= 1);
+    assert!(preview["counters"].get("delete").is_none());
     assert!(preview["counters"]["failed"].as_u64().unwrap_or(0) >= 1);
+    // The preview is a draft in the staging area. Nothing is written yet.
+    let draft = draft_of(&app, &id).await;
+    let draft_id = draft["id"].as_str().unwrap().to_owned();
+    assert_eq!(draft["source"], "import");
+    assert_eq!(draft["counters"]["new"], preview["counters"]["new"]);
+    assert_eq!(object_name(&app, &old_changed).await, "Old");
+    let (status, page) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{draft_id}/rows?limit=2&offset=1"),
+        HUMAN,
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["kind"], "import");
+    assert_eq!(page["rows"].as_array().unwrap().len(), 2);
+    assert!(page["total"].as_i64().unwrap() >= 4);
+    assert_eq!(page["columns"].as_array().unwrap().len(), 2);
     let (status, rows) = call(
         &app,
         "GET",
@@ -225,47 +302,30 @@ async fn upload_maps_diffs_and_saves_with_progress_events() {
         .collect();
     assert_eq!(statuses.get("NEW-1").map(String::as_str), Some("new"));
     assert_eq!(statuses.get("OLD-1").map(String::as_str), Some("changed"));
-    assert_eq!(statuses.get("OLD-2").map(String::as_str), Some("delete"));
-    let (status, denied) = call(
-        &app,
-        "POST",
-        &format!("/v1/imports/{id}/save"),
-        HUMAN,
-        &[("content-type", "application/json")],
-        Some(br#"{"skip_failed":false}"#.to_vec()),
-    )
-    .await;
+    assert_eq!(statuses.get("OLD-2").map(String::as_str), Some("changed"));
+    let excluded_row = rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["object_key"] == "OLD-2")
+        .map(|row| row["row_no"].as_i64().unwrap())
+        .unwrap();
+    let (status, denied) = accept_draft(&app, HUMAN, &draft_id, json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{denied}");
     assert_eq!(denied["code"], "has_failures");
-    let (status, forbidden) = call(
+    for token in [AGENT, "token-import"] {
+        let (status, forbidden) =
+            accept_draft(&app, token, &draft_id, json!({ "skip_failed": true })).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token} {forbidden}");
+        assert_eq!(forbidden["code"], "agent_cannot_accept");
+    }
+    // Nothing was written by the refused attempts.
+    assert_eq!(object_name(&app, &old_changed).await, "Old");
+    let (status, saved) = accept_draft(
         &app,
-        "POST",
-        &format!("/v1/imports/{id}/save"),
-        AGENT,
-        &[("content-type", "application/json")],
-        Some(br#"{"skip_failed":true}"#.to_vec()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{forbidden}");
-    assert_eq!(forbidden["code"], "needs_approval");
-    let (status, forbidden) = call(
-        &app,
-        "POST",
-        &format!("/v1/imports/{id}/save"),
-        "token-import",
-        &[("content-type", "application/json")],
-        Some(br#"{"skip_failed":true}"#.to_vec()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{forbidden}");
-    assert_eq!(forbidden["code"], "needs_approval");
-    let (status, saved) = call(
-        &app,
-        "POST",
-        &format!("/v1/imports/{id}/save"),
         HUMAN,
-        &[("content-type", "application/json")],
-        Some(br#"{"skip_failed":true}"#.to_vec()),
+        &draft_id,
+        json!({ "skip_failed": true, "exclude_rows": [excluded_row] }),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{saved}");
@@ -286,6 +346,18 @@ async fn upload_maps_diffs_and_saves_with_progress_events() {
     assert!(job["progress_done"].as_i64().unwrap_or(0) >= 1);
     let done = until(&app, &id, &["saved"]).await;
     assert_eq!(done["status"], "saved");
+    assert_eq!(done["counters"]["excluded"], 1);
+    let (status, closed) = call(
+        &app,
+        "GET",
+        &format!("/v1/proposals/{draft_id}"),
+        HUMAN,
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert_eq!(closed["status"], "accepted");
     let (status, created) = call(
         &app,
         "GET",
@@ -309,27 +381,9 @@ async fn upload_maps_diffs_and_saves_with_progress_events() {
     assert_eq!(status, StatusCode::OK, "{object}");
     assert_eq!(object["values"]["sku"], "NEW-1");
     assert_eq!(object["values"]["name"]["sv"], "Chair");
-    let (status, changed) = call(
-        &app,
-        "GET",
-        &format!("/v1/objects/{old_changed}"),
-        HUMAN,
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{changed}");
-    assert_eq!(changed["values"]["name"]["sv"], "Updated");
-    let (status, deleted) = call(
-        &app,
-        "GET",
-        &format!("/v1/objects/{old_deleted}"),
-        HUMAN,
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::GONE, "{deleted}");
+    assert_eq!(object_name(&app, &old_changed).await, "Updated");
+    // The deselected row stays as it was, and an import never deletes.
+    assert_eq!(object_name(&app, &old_excluded).await, "Old");
 
     let mut saw_import = false;
     let mut saw_job = false;
@@ -447,7 +501,7 @@ async fn approve_restarts_when_the_mapping_changes() {
     assert_eq!(restarted["status"], "diffing");
     let next = until(&app, id, &["previewed"]).await;
     assert_eq!(next["counters"]["failed"].as_u64().unwrap_or(1), 0);
-    assert!(next["counters"]["delete"].as_u64().unwrap_or(0) >= 1);
+    assert!(next["counters"]["unchanged"].as_u64().unwrap_or(0) >= 2);
     let (status, rows) = call(
         &app,
         "GET",
@@ -515,12 +569,9 @@ async fn approve(app: &axum::Router, id: &str) -> (StatusCode, Value) {
 }
 
 async fn put_mapping(app: &axum::Router, id: &str, with_name: bool) {
-    let mut columns = vec![
-        json!({ "col": 0, "target": "type:sku" }),
-        json!({ "col": 2, "target": "action" }),
-    ];
+    let mut columns = vec![json!({ "col": 0, "target": "type:sku" })];
     if with_name {
-        columns.insert(1, json!({ "col": 1, "target": "type:name" }));
+        columns.push(json!({ "col": 1, "target": "type:name" }));
     }
     let (status, body) = call(
         app,
@@ -607,21 +658,168 @@ async fn saving_again_while_a_save_is_running_is_already_saving() {
     let uuid = uuid::Uuid::parse_str(id).unwrap();
     // Mapping keeps writing status until it is ready. Set saving only after that.
     let _ = until(&app, id, &["ready"]).await;
+    let draft = state
+        .store
+        .upsert_import_proposal(uuid, "Import items.csv", &json!({ "new": 1, "failed": 0 }))
+        .await
+        .unwrap()
+        .unwrap();
     state
         .store
         .update_import_job(uuid, "saving", None, &json!({}), None)
         .await
         .unwrap();
-    let (status, body) = call(
-        &app,
-        "POST",
-        &format!("/v1/imports/{id}/save"),
-        HUMAN,
-        &[("content-type", "application/json")],
-        Some(b"{}".to_vec()),
-    )
-    .await;
+    let (status, body) = accept_draft(&app, HUMAN, &draft.to_string(), json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["code"], "already_saving");
     assert_eq!(body["detail"], "A save is already running.");
+}
+
+async fn upload_csv(app: &axum::Router, name: &str, body: &str) -> String {
+    let (status, uploaded) = call(
+        app,
+        "POST",
+        "/v1/imports",
+        HUMAN,
+        &[
+            ("content-type", "application/octet-stream"),
+            ("x-file-name", name),
+        ],
+        Some(body.as_bytes().to_vec()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{uploaded}");
+    uploaded["id"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn editing_a_failing_cell_rechecks_the_row_and_the_counters() {
+    let (_db, _state, app, _live) = harness().await;
+    let id = upload_csv(
+        &app,
+        "items.csv",
+        "sku,name\nNEW-1,Chair\nBAD-1,WayTooLongX\n",
+    )
+    .await;
+    until(&app, &id, &["ready"]).await;
+    put_mapping(&app, &id, true).await;
+    let (status, approved) = approve(&app, &id).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{approved}");
+    let preview = until(&app, &id, &["previewed"]).await;
+    assert_eq!(preview["counters"]["failed"], 1);
+    let (_, rows) = call(
+        &app,
+        "GET",
+        &format!("/v1/imports/{id}/rows?limit=20&status=failed"),
+        HUMAN,
+        &[],
+        None,
+    )
+    .await;
+    let row_no = rows["rows"][0]["row_no"].as_u64().expect("row_no");
+    let (status, edited) = call(
+        &app,
+        "PATCH",
+        &format!("/v1/imports/{id}/rows/{row_no}"),
+        HUMAN,
+        &[("content-type", "application/json")],
+        Some(
+            json!({ "col": 1, "value": "Short" })
+                .to_string()
+                .into_bytes(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["counters"]["failed"], 0);
+    assert_eq!(edited["row"]["status"], "new");
+    // The edit survives a new check of the whole file.
+    let (_, again) = approve(&app, &id).await;
+    assert_eq!(again["status"], "previewed");
+}
+
+#[tokio::test]
+async fn a_saved_mapping_is_reused_for_the_same_headers() {
+    let (_db, _state, app, _live) = harness().await;
+    let first = upload_csv(&app, "a.csv", "sku,name\nNEW-1,Chair\n").await;
+    until(&app, &first, &["ready"]).await;
+    put_mapping(&app, &first, true).await;
+    let (status, saved) = call(
+        &app,
+        "POST",
+        "/v1/import-mappings",
+        HUMAN,
+        &[("content-type", "application/json")],
+        Some(
+            json!({ "session_id": first, "name": "Items" })
+                .to_string()
+                .into_bytes(),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{saved}");
+    let second = upload_csv(&app, "b.csv", "sku,name\nNEW-2,Table\n").await;
+    let ready = until(&app, &second, &["ready"]).await;
+    assert_eq!(ready["proposal"]["ai"], "saved: Items");
+    assert!(ready["proposal"]["type"]["value"].is_string());
+}
+
+#[tokio::test]
+async fn a_model_sheet_becomes_one_revision_when_approved() {
+    let (_db, _state, app, _live) = harness().await;
+    let id = upload_csv(
+        &app,
+        "attributes.csv",
+        "key,label,kind,required\nmaterial,Material,text,yes\nweight_g,Weight,number,no\nBad Key,X,text,\n",
+    )
+    .await;
+    until(&app, &id, &["ready"]).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/v1/imports/{id}/mapping"),
+        HUMAN,
+        &[("content-type", "application/json")],
+        Some(
+            json!({
+                "type": "model:attribute",
+                "id_column": 0,
+                "columns": [
+                    { "col": 0, "target": "model:attribute:key" },
+                    { "col": 1, "target": "model:attribute:label" },
+                    { "col": 2, "target": "model:attribute:kind" },
+                    { "col": 3, "target": "model:attribute:required" },
+                ],
+            })
+            .to_string()
+            .into_bytes(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (_, revision_before) = call(&app, "GET", "/v1/definitions", HUMAN, &[], None).await;
+    let (status, approved) = approve(&app, &id).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{approved}");
+    let preview = until(&app, &id, &["previewed"]).await;
+    assert_eq!(preview["counters"]["new"], 2);
+    assert_eq!(preview["counters"]["failed"], 1);
+    let draft = draft_of(&app, &id).await;
+    let (status, accepted) = accept_draft(
+        &app,
+        HUMAN,
+        draft["id"].as_str().unwrap(),
+        json!({ "skip_failed": true }),
+    )
+    .await;
+    assert!(status.is_success(), "{accepted}");
+    let done = until(&app, &id, &["saved"]).await;
+    assert_eq!(done["status"], "saved");
+    let (_, after) = call(&app, "GET", "/v1/definitions", HUMAN, &[], None).await;
+    let text = after.to_string();
+    assert!(
+        text.contains("weight_g") && text.contains("material"),
+        "{text}"
+    );
+    let before = revision_before["model_revision"].as_i64().unwrap_or(0);
+    assert_eq!(after["model_revision"].as_i64().unwrap_or(0), before + 1);
 }

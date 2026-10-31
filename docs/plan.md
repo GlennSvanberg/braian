@@ -41,6 +41,29 @@ describe the relay; they are historical.
 - An agent is never a change type. The actor is a person; `via` is `agent` or `api`.
   Operations that need approval, and every agent write, become a proposal.
 
+## Decisions: import is a draft (2026-10-31, Glenn)
+
+- An import never writes to the catalog. It produces a draft in the same staging area as
+  agent proposals, reviewed in the standard table and approved in one sweep. A person can
+  leave the draft and come back. Agents, including background agents, use the same path.
+- Files are CSV or Excel. One entity per file or sheet. A workbook with several sheets is
+  several imports, one draft each.
+- Every entity can be imported: objects, links, attributes, types, structures, groups,
+  classes, value lists, unit families and languages. Data imports never change the model.
+  Unknown columns and values are flagged.
+- Imports never delete. The `delete` action column is gone. Deleting is a mass action in
+  the table.
+- Rows match on the type's `key_attribute`; model entities match on `key`.
+- An empty cell leaves the value unchanged. A mapping option makes empty cells clear it.
+- Values are not interpreted. "12 kg" in a number attribute is invalid.
+- Approval is all rows by default; a person can exclude rows. Any editor may approve,
+  including the person who started the import.
+- Mappings are saved, shared by everyone, and reused when the headers match. A view lists
+  and deletes them.
+- Column mapping uses saved mappings and deterministic matching first. The Decisions API
+  improves the rest. Manual remapping is drag and drop.
+- No performance targets for this work. Performance claims still need measured numbers.
+
 ## Phase 0 – Skeleton (done)
 
 Cargo workspace, compose stack (Postgres, Typesense),

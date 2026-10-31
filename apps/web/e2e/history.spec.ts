@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -60,7 +61,7 @@ test('history is a compact timeline of the fields that changed', async ({ page }
   await expect(history.locator('.asof')).toBeVisible()
   await page.screenshot({ path: `${shots}/time-travel-dark.png` })
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await history.getByTestId('time-travel').click()
   await expect(history.locator('.asof')).toHaveCount(0)
   await page.screenshot({ path: `${shots}/timeline-light.png` })

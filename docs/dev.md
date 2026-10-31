@@ -185,3 +185,11 @@ En kärna som inte finns gör att containern inte startar.
 
 `.cursor/mcp.json` startar Postgres MCP Pro i läsläge mot utvecklingsdatabasen,
 med rollen `braian_readonly` (`DATABASE_URI` i `.env`). Rollen skapas när Postgres-volymen initieras första gången.
+
+## Import: vad AI-mappningen får se
+
+Import skapar alltid ett förslag (draft) som granskas och godkänns; inget skrivs direkt. Mappningen av kolumner kan ta hjälp av en AI-modell (kräver `OPENAI_API_KEY`). `BRAIAN_IMPORT_AI` styr vad som lämnar servern:
+
+- `off`: ingen AI, bara regelbaserad mappning.
+- `headers`: bara kolumnrubriker och filnamn skickas, inga cellvärden (mappningen tappar värdebaserade ledtrådar).
+- `samples` (standard): rubriker plus några exempelvärden per kolumn.

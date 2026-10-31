@@ -1,0 +1,10 @@
+number,name,brand,description,Intern kommentar
+SYN-000001,Sourdough Loaf Deluxe,Harvest & Co,Renamed in this file so it shows up as changed,keep an eye on this
+SYN-000002,,Meadow Fresh,Name left empty so it should stay unchanged,
+SYN-000003,Rye Bread Classic,Meadow Fresh,Probably identical to what is already there,
+IMP-1001,Oat Cracker Original,Harvest & Co,Brand new product from the import,new
+IMP-1002,Seeded Crispbread,Nordic Mill,Another new product,new
+IMP-1003,This product name is far too long to be accepted as a valid name for an object in the catalog because it keeps going and going and going and going and going and going and going,Nordic Mill,Should fail on name length,
+,Row without an id,Nordic Mill,No key so it cannot be matched,
+SYN-000001,Duplicate of row 1,Harvest & Co,Same id as the first row so it should be flagged as duplicate,
+IMP-1004,Rice Wafer,Meadow Fresh,New product with an unmapped extra column,

@@ -60,7 +60,7 @@ export function ViewGlyph({ type }: { type: string }) {
   if (type === 'value_lists') return <ListOrdered {...props} />
   if (type === 'value_list_values') return <ListOrdered {...props} />
   if (type === 'units') return <Ruler {...props} />
-  if (type === 'proposal') return <ScrollText {...props} />
+  if (type === 'proposal' || type === 'proposal_list') return <ScrollText {...props} />
   if (type === 'batch_log') return <ScrollText {...props} />
   if (type === 'job_history') return <ListChecks {...props} />
   return <AppWindow {...props} />

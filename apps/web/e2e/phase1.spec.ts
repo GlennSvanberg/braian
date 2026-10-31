@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -33,11 +34,11 @@ test('phase 1 surfaces', async ({ page }) => {
     await page.screenshot({ path: `${shots}/${name.toLowerCase().replaceAll(' ', '-')}-dark.png` })
   }
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.locator('nav.tabs').getByRole('button', { name: 'Products' }).click()
   await expect(page.getByTestId('object-table')).toBeVisible()
   await page.screenshot({ path: `${shots}/enrich-objects-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await page.keyboard.press('Control+k')
   await expect(page.getByTestId('command-palette')).toBeVisible()

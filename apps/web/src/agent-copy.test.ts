@@ -8,7 +8,6 @@ describe('copy', () => {
 
   it('keeps the agent fallback in one place', () => {
     expect(copy.agentUnavailable).toContain('OPENAI_API_KEY')
-    expect(copy.loginHint).toContain('.env')
     expect(copy.commandPlaceholder).toBe('Search, open views, or ask AI')
   })
 

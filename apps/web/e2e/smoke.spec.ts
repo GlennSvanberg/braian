@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -32,9 +33,9 @@ test('login, edit, search, proposal, rollback and live update', async ({ page })
   await expect(page.getByTestId('object-detail').locator('input').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/workspace-dark.png` })
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/workspace-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await expect(page.getByTestId('object-detail')).toBeVisible()
   const nummer = page.locator('[data-testid=object-detail] .field', { hasText: 'Number' }).locator('input')

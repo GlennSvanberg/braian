@@ -140,8 +140,13 @@ test.describe('move column, pathValues flash, live row sweep', () => {
       await route.continue()
     })
 
+    const pathValuesRequest = page.waitForRequest(
+      (req) => req.url().includes('pathValues') && req.method() === 'POST',
+      { timeout: 60_000 },
+    )
     await page.reload()
     await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
+    await pathValuesRequest
 
     const gtinCell = page.getByTestId(/hop-cell-.*gtin/)
     await expect(gtinCell.first()).toHaveAttribute('data-loading', 'true', { timeout: 30_000 })

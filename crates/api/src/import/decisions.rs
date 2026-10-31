@@ -252,6 +252,32 @@ pub fn openai_base() -> String {
         .unwrap_or_else(|| "https://api.openai.com".to_owned())
 }
 
+/// What the AI mapper may see, from BRAIAN_IMPORT_AI: off (rules only),
+/// headers (column names only) or samples (names plus a few cell values, default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiMode {
+    Off,
+    Headers,
+    Samples,
+}
+
+impl AiMode {
+    pub fn parse(value: Option<&str>) -> Self {
+        match value
+            .map(|text| text.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("off") => Self::Off,
+            Some("headers") => Self::Headers,
+            _ => Self::Samples,
+        }
+    }
+
+    pub fn from_env() -> Self {
+        Self::parse(std::env::var("BRAIAN_IMPORT_AI").ok().as_deref())
+    }
+}
+
 pub fn openai_key() -> Option<String> {
     std::env::var("OPENAI_API_KEY")
         .ok()

@@ -450,15 +450,66 @@ fn operations() -> Vec<(HttpMethod, &'static str, Operation)> {
             "Preview page",
         ),
         call(
+            HttpMethod::Patch,
+            "/v1/imports/{id}/rows/{row_no}",
+            "import_row_edit",
+            "Edit one cell of a draft row",
+            vec![
+                path_uuid("id", "Import id"),
+                path_int("row_no", "Row number"),
+            ],
+            Some("ImportRowEdit"),
+            Some("ImportRowEdited"),
+            "200",
+            "The row after it was checked again",
+            true,
+        ),
+        call(
+            HttpMethod::Get,
+            "/v1/import-mappings",
+            "import_mappings_list",
+            "List saved import mappings",
+            vec![],
+            None,
+            Some("SavedMappingList"),
+            "200",
+            "Saved mappings",
+            true,
+        ),
+        call(
             HttpMethod::Post,
-            "/v1/imports/{id}/save",
-            "import_save",
-            "Save the import",
-            vec![path_uuid("id", "Import id")],
-            Some("ImportSaveBody"),
-            Some("ImportJob"),
-            "202",
-            "Save job accepted",
+            "/v1/import-mappings",
+            "import_mappings_create",
+            "Save the mapping of an import for reuse",
+            vec![],
+            Some("SavedMappingBody"),
+            Some("SavedMappingView"),
+            "201",
+            "Mapping saved",
+            true,
+        ),
+        call(
+            HttpMethod::Patch,
+            "/v1/import-mappings/{id}",
+            "import_mappings_rename",
+            "Rename a saved mapping",
+            vec![path_uuid("id", "Mapping id")],
+            Some("SavedMappingRename"),
+            None,
+            "204",
+            "Renamed",
+            true,
+        ),
+        call(
+            HttpMethod::Delete,
+            "/v1/import-mappings/{id}",
+            "import_mappings_delete",
+            "Delete a saved mapping",
+            vec![path_uuid("id", "Mapping id")],
+            None,
+            None,
+            "204",
+            "Deleted",
             true,
         ),
         import_failed(),
@@ -474,7 +525,7 @@ fn operations() -> Vec<(HttpMethod, &'static str, Operation)> {
             "Import discarded",
             true,
         ),
-        call(
+        query::<crate::platform::ProposalListParams>(
             HttpMethod::Get,
             "/v1/proposals",
             "list_proposals",
@@ -483,8 +534,18 @@ fn operations() -> Vec<(HttpMethod, &'static str, Operation)> {
             None,
             Some("ProposalList"),
             "200",
-            "Recent proposals and the pending summary",
-            true,
+            "A page of proposals and the pending summary",
+        ),
+        query::<crate::platform::ProposalRowsParams>(
+            HttpMethod::Get,
+            "/v1/proposals/{id}/rows",
+            "proposal_rows",
+            "Read one page of a draft's rows",
+            vec![path_uuid("id", "Proposal id")],
+            None,
+            Some("DraftRowsPage"),
+            "200",
+            "Rows of an import draft or an ordinary proposal",
         ),
         call(
             HttpMethod::Post,
@@ -864,6 +925,16 @@ fn schema_ref(name: &str) -> RefOr<Schema> {
 
 fn path_uuid(name: &'static str, description: &'static str) -> Parameter {
     path_param(name, description, uuid_schema())
+}
+
+fn path_int(name: &'static str, description: &'static str) -> Parameter {
+    path_param(
+        name,
+        description,
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new().schema_type(Type::Integer).build(),
+        )),
+    )
 }
 
 fn path_string(name: &'static str, description: &'static str) -> Parameter {

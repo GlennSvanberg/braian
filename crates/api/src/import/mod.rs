@@ -2,9 +2,11 @@
 
 pub mod decisions;
 mod diff;
+mod entity;
 mod mapping;
 mod parse;
 mod save;
+mod saved;
 mod session;
 
 use axum::Json;
@@ -27,6 +29,12 @@ use crate::state::AppState;
 
 use mapping::{Target, targets_for};
 use parse::FileKind;
+#[derive(Deserialize)]
+struct RowEdit {
+    col: i32,
+    value: String,
+}
+
 use session::{emit_import, manual_from_proposal, session_dir, spawn_diff, spawn_prepare};
 
 const XLS_LIMIT: u64 = 200 * 1024 * 1024;
@@ -39,8 +47,16 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/imports/{id}/mapping", axum::routing::put(put_mapping))
         .route("/v1/imports/{id}/approve", axum::routing::post(approve))
         .route("/v1/imports/{id}/rows", get(rows))
-        .route("/v1/imports/{id}/save", axum::routing::post(save_import))
+        .route(
+            "/v1/imports/{id}/rows/{row_no}",
+            axum::routing::patch(patch_row),
+        )
         .route("/v1/imports/{id}/failed.xlsx", get(failed_xlsx))
+        .route("/v1/import-mappings", get(saved::list).post(saved::create))
+        .route(
+            "/v1/import-mappings/{id}",
+            axum::routing::patch(saved::rename).delete(saved::remove),
+        )
 }
 
 pub async fn upload(
@@ -51,18 +67,6 @@ pub async fn upload(
 ) -> Result<(StatusCode, Json<Value>), Problem> {
     require(&identity, Role::Editor)?;
     let owner = identity.actor.actor.as_uuid();
-    let active = state
-        .store
-        .count_active_imports(owner)
-        .await
-        .map_err(store_status)?;
-    if active >= 3 {
-        return Err(Problem::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "too_many_imports",
-            "Three imports are already in progress.",
-        ));
-    }
     let file_name = headers
         .get("x-file-name")
         .and_then(|value| value.to_str().ok())
@@ -209,7 +213,14 @@ async fn show(
     let targets = type_key
         .map(|key| targets_for(&cached.defs, key))
         .unwrap_or_default();
-    Ok(Json(session_body(&session, &targets, &cached.defs)))
+    Ok(Json(
+        with_draft(
+            &state,
+            &session,
+            session_body(&session, &targets, &cached.defs),
+        )
+        .await,
+    ))
 }
 
 async fn sheet(
@@ -244,7 +255,14 @@ async fn sheet(
     let targets = type_key
         .map(|key| targets_for(&cached.defs, key))
         .unwrap_or_default();
-    Ok(Json(session_body(&session, &targets, &cached.defs)))
+    Ok(Json(
+        with_draft(
+            &state,
+            &session,
+            session_body(&session, &targets, &cached.defs),
+        )
+        .await,
+    ))
 }
 
 async fn remap(
@@ -291,11 +309,12 @@ async fn remap(
         emit_import(&state, &current);
     }
     let cached = state.models.get(&state.store).await?;
-    Ok(Json(session_body(
+    let body_json = session_body(
         &session,
         &targets_for(&cached.defs, &body.type_key),
         &cached.defs,
-    )))
+    );
+    Ok(Json(with_draft(&state, &session, body_json).await))
 }
 
 async fn put_mapping(
@@ -399,17 +418,34 @@ async fn rows(
     })))
 }
 
-async fn save_import(
-    State(state): State<AppState>,
-    Auth(identity): Auth,
-    Path(id): Path<Uuid>,
-    Json(body): Json<SaveBody>,
-) -> Result<(StatusCode, Json<Value>), Problem> {
-    require(&identity, Role::Editor)?;
-    crate::auth::require_commit(&identity)?;
-    let session = load(&state, &identity, id).await?;
-    ensure_revision(&state, &session).await?;
-    if let Some((code, detail)) = save_conflict(&session.status) {
+/// Approves an import draft. The rows were checked when the preview was made;
+/// this starts the background write on the bulk lane. `exclude` and `only` are
+/// row numbers from the preview, so a person can deselect thousands of rows
+/// without sending thousands of ids.
+pub(crate) async fn accept_import(
+    state: &AppState,
+    identity: &Identity,
+    session_id: Uuid,
+    body: &crate::platform::AcceptBody,
+) -> Result<Value, Problem> {
+    require(identity, Role::Editor)?;
+    crate::auth::require_commit(identity)?;
+    let session = state
+        .store
+        .import_session(session_id)
+        .await
+        .map_err(store_status)?
+        .ok_or_else(|| {
+            Problem::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "That import does not exist.",
+            )
+        })?;
+    refresh_if_model_changed(state, &session).await?;
+    if session.status != "previewed" {
+        let (code, detail) = save_conflict(&session.status)
+            .unwrap_or(("not_ready", "The preview is not ready yet."));
         return Err(Problem::new(StatusCode::CONFLICT, code, detail));
     }
     let failed = session
@@ -421,8 +457,17 @@ async fn save_import(
         return Err(Problem::new(
             StatusCode::CONFLICT,
             "has_failures",
-            format!("{failed} rows cannot be imported."),
+            format!("{failed} rows cannot be imported and will be skipped."),
         ));
+    }
+    let is_model = session
+        .mapping
+        .as_ref()
+        .and_then(|mapping| mapping.get("type"))
+        .and_then(Value::as_str)
+        .is_some_and(entity::is_model);
+    if is_model {
+        return accept_model(state, identity, &session, body).await;
     }
     let Some(reservation) = state.bulk.try_reserve() else {
         return Err(Problem::new(
@@ -437,24 +482,40 @@ async fn save_import(
         .await
         .map_err(store_status)?;
     let job_id = Uuid::now_v7();
-    let total = i32::try_from(
-        session
-            .counters
-            .get("new")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            + session
-                .counters
-                .get("changed")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-            + session
-                .counters
-                .get("delete")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-    )
-    .unwrap_or(i32::MAX);
+    let claimed = state
+        .store
+        .claim_import_save(session_id, job_id, &session.counters)
+        .await
+        .map_err(store_status)?;
+    if !claimed {
+        let current = state
+            .store
+            .import_session(session_id)
+            .await
+            .map_err(store_status)?
+            .map(|item| item.status)
+            .unwrap_or_default();
+        let (code, detail) =
+            save_conflict(&current).unwrap_or(("already_saving", "A save is already running."));
+        return Err(Problem::new(StatusCode::CONFLICT, code, detail));
+    }
+    let only = body.only_rows.as_deref();
+    let exclude = body.exclude_rows.as_deref().unwrap_or(&[]);
+    let remaining = state
+        .store
+        .exclude_import_rows(session_id, only, exclude)
+        .await
+        .map_err(store_status)?;
+    let counts = state
+        .store
+        .import_status_counts(session_id)
+        .await
+        .map_err(store_status)?;
+    let mut counters = session.counters.clone();
+    for key in ["new", "changed", "failed", "stale", "excluded"] {
+        counters[key] = json!(counts.get(key).copied().unwrap_or(0));
+    }
+    let total = i32::try_from(remaining).unwrap_or(i32::MAX);
     state
         .store
         .create_job_run(
@@ -467,39 +528,487 @@ async fn save_import(
         )
         .await
         .map_err(store_status)?;
-    let claimed = state
+    state
         .store
-        .claim_import_save(id, job_id, &session.counters)
+        .update_import_job(session_id, "saving", Some(job_id), &counters, None)
         .await
         .map_err(store_status)?;
-    if !claimed {
-        let _ = state
-            .store
-            .finish_job_run(job_id, "cancelled", 0, "already_saving", &json!([]))
-            .await;
-        let current = state
-            .store
-            .import_session(id)
-            .await
-            .map_err(store_status)?
-            .map(|item| item.status)
-            .unwrap_or_default();
-        let (code, detail) =
-            save_conflict(&current).unwrap_or(("already_saving", "A save is already running."));
-        return Err(Problem::new(StatusCode::CONFLICT, code, detail));
-    }
     let actor = identity.actor.clone();
     let job_state = state.clone();
     tokio::spawn(async move {
         reservation
-            .finish(save::run(job_state, id, job_id, actor))
+            .finish(save::run(job_state, session_id, job_id, actor))
             .await;
     });
-    if let Ok(Some(current)) = state.store.import_session(id).await {
-        emit_import(&state, &current);
+    if let Ok(Some(current)) = state.store.import_session(session_id).await {
+        emit_import(state, &current);
     }
-    emit_job(&state, job_id, "running", 0, total);
-    Ok((StatusCode::ACCEPTED, Json(json!({ "job_id": job_id }))))
+    emit_job(state, job_id, "running", 0, total);
+    Ok(json!({ "id": job_id, "job_id": job_id, "status": "running", "total": total }))
+}
+
+const AGENT_FILE_LIMIT: usize = 2 * 1024 * 1024;
+
+/// The import operations of the registry. An agent starts a draft, maps and previews it,
+/// and a person approves it in the changes view. There is no accept operation on purpose.
+pub(crate) async fn run_agent_op(
+    state: &AppState,
+    identity: &Identity,
+    name: &str,
+    args: &Value,
+) -> Result<Value, Problem> {
+    let id = || -> Result<Uuid, Problem> {
+        args.get("id")
+            .and_then(Value::as_str)
+            .and_then(|text| Uuid::parse_str(text).ok())
+            .ok_or_else(|| {
+                Problem::new(StatusCode::BAD_REQUEST, "invalid_id", "Give the import id.")
+            })
+    };
+    match name {
+        "import.start" => {
+            require(identity, Role::Editor)?;
+            let file_name = args
+                .get("file_name")
+                .and_then(Value::as_str)
+                .unwrap_or("agent.csv");
+            let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+            if content.is_empty() || content.len() > AGENT_FILE_LIMIT {
+                return Err(Problem::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_body",
+                    "Give the file as CSV text, at most 2 MB.",
+                ));
+            }
+            let kind = FileKind::parse(file_name)
+                .filter(|kind| *kind == FileKind::Csv)
+                .ok_or_else(|| {
+                    Problem::new(
+                        StatusCode::BAD_REQUEST,
+                        "unsupported_file",
+                        "An agent can start an import from a .csv text.",
+                    )
+                })?;
+            let owner = identity.actor.actor.as_uuid();
+            let revision = state
+                .store
+                .model_revision()
+                .await
+                .map_err(store_status)?
+                .unwrap_or(0);
+            let session_id = Uuid::now_v7();
+            state
+                .store
+                .insert_import_session(
+                    session_id,
+                    owner,
+                    identity.actor.on_behalf_of.map(|item| item.as_uuid()),
+                    file_name,
+                    kind.as_str(),
+                    revision as i64,
+                )
+                .await
+                .map_err(store_status)?;
+            let dir = session_dir(session_id);
+            let io = |error: std::io::Error| {
+                Problem::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "import",
+                    error.to_string(),
+                )
+            };
+            std::fs::create_dir_all(&dir).map_err(io)?;
+            let path = dir.join(format!("source.{}", kind.extension()));
+            std::fs::write(&path, content).map_err(io)?;
+            let check = path.clone();
+            let readable =
+                tokio::task::spawn_blocking(move || parse::ensure_has_rows(&check, kind))
+                    .await
+                    .map_err(|error| {
+                        Problem::new(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "import",
+                            error.to_string(),
+                        )
+                    })?;
+            if let Err(error) = readable {
+                let _ = state.store.delete_import_session(session_id).await;
+                let _ = std::fs::remove_dir_all(&dir);
+                return Err(Problem::new(
+                    StatusCode::BAD_REQUEST,
+                    "unreadable_file",
+                    error.message,
+                ));
+            }
+            state
+                .store
+                .update_import_upload(session_id, content.len() as i64, "mapping", None)
+                .await
+                .map_err(store_status)?;
+            spawn_prepare(state.clone(), session_id, kind, None);
+            Ok(json!({ "id": session_id, "status": "mapping", "file_name": file_name }))
+        }
+        "import.status" => {
+            let Json(body) =
+                show(State(state.clone()), Auth(identity.clone()), Path(id()?)).await?;
+            Ok(body)
+        }
+        "import.map" => {
+            let mapping = args.get("mapping").cloned().ok_or_else(|| {
+                Problem::new(StatusCode::BAD_REQUEST, "invalid_body", "Give the mapping.")
+            })?;
+            put_mapping(
+                State(state.clone()),
+                Auth(identity.clone()),
+                Path(id()?),
+                Json(mapping),
+            )
+            .await?;
+            Ok(json!({ "status": "mapped" }))
+        }
+        "import.preview" => {
+            let (_, Json(body)) =
+                approve(State(state.clone()), Auth(identity.clone()), Path(id()?)).await?;
+            Ok(body)
+        }
+        "import.discard" => {
+            require(identity, Role::Editor)?;
+            let id = id()?;
+            load(state, identity, id).await?;
+            discard_import(state, id).await?;
+            Ok(json!({ "status": "discarded" }))
+        }
+        "import.mappings.list" => {
+            let Json(body) = saved::list(State(state.clone()), Auth(identity.clone())).await?;
+            Ok(body)
+        }
+        "import.mappings.rename" => {
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            saved::rename(
+                State(state.clone()),
+                Auth(identity.clone()),
+                Path(id()?),
+                Json(saved::RenameBody { name }),
+            )
+            .await?;
+            Ok(json!({ "status": "renamed" }))
+        }
+        "import.mappings.delete" => {
+            saved::remove(State(state.clone()), Auth(identity.clone()), Path(id()?)).await?;
+            Ok(json!({ "status": "deleted" }))
+        }
+        _ => Err(Problem::new(
+            StatusCode::NOT_FOUND,
+            "unknown_operation",
+            name,
+        )),
+    }
+}
+
+/// Approves a data model sheet: every selected row becomes a model change, all in one revision.
+async fn accept_model(
+    state: &AppState,
+    identity: &Identity,
+    session: &braian_store::ImportSession,
+    body: &crate::platform::AcceptBody,
+) -> Result<Value, Problem> {
+    let session_id = session.id;
+    let only = body.only_rows.as_deref();
+    let exclude = body.exclude_rows.as_deref().unwrap_or(&[]);
+    state
+        .store
+        .exclude_import_rows(session_id, only, exclude)
+        .await
+        .map_err(store_status)?;
+    let mut rows = Vec::new();
+    for status in ["new", "changed"] {
+        let mut after = 0;
+        loop {
+            let page = state
+                .store
+                .scan_import_rows(session_id, status, after, 500)
+                .await
+                .map_err(store_status)?;
+            let Some(last) = page.last() else { break };
+            after = last.row_no;
+            rows.extend(page);
+        }
+    }
+    rows.sort_by_key(|row| row.row_no);
+    let mut steps = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let patch = row.patch.clone().unwrap_or(Value::Null);
+        let step = serde_json::from_value::<braian_model::ModelChange>(patch).map_err(|error| {
+            Problem::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_row",
+                format!("Row {} is not a valid model change: {error}", row.row_no),
+            )
+        })?;
+        steps.push(step);
+    }
+    let reply =
+        crate::model_draft::commit_steps(state, &identity.actor, &steps, false, None).await?;
+    let counts = state
+        .store
+        .import_status_counts(session_id)
+        .await
+        .map_err(store_status)?;
+    let mut counters = session.counters.clone();
+    for key in ["new", "changed", "failed", "stale", "excluded"] {
+        counters[key] = json!(counts.get(key).copied().unwrap_or(0));
+    }
+    counters["saved"] = json!(steps.len());
+    state
+        .store
+        .update_import_job(session_id, "saved", None, &counters, None)
+        .await
+        .map_err(store_status)?;
+    state
+        .store
+        .close_import_proposal(session_id, "accepted", Some(&counters))
+        .await
+        .map_err(store_status)?;
+    if let Ok(Some(current)) = state.store.import_session(session_id).await {
+        emit_import(state, &current);
+    }
+    state.emit(json!({ "op": "proposal", "session": session_id }));
+    Ok(json!({ "status": "saved", "total": steps.len(), "revision": reply }))
+}
+
+/// Throws an import draft away: the rows, the spooled file and the proposal.
+pub(crate) async fn discard_import(state: &AppState, session_id: Uuid) -> Result<(), Problem> {
+    let Some(session) = state
+        .store
+        .import_session(session_id)
+        .await
+        .map_err(store_status)?
+    else {
+        state
+            .store
+            .close_import_proposal(session_id, "discarded", None)
+            .await
+            .map_err(store_status)?;
+        return Ok(());
+    };
+    if session.status == "saving" {
+        return Err(Problem::new(
+            StatusCode::CONFLICT,
+            "saving",
+            "The draft is being written. It cannot be discarded now.",
+        ));
+    }
+    state
+        .store
+        .close_import_proposal(session_id, "discarded", None)
+        .await
+        .map_err(store_status)?;
+    state
+        .store
+        .delete_import_session(session_id)
+        .await
+        .map_err(store_status)?;
+    let _ = std::fs::remove_dir_all(session_dir(session_id));
+    state.emit(json!({ "op": "proposal", "session": session_id }));
+    Ok(())
+}
+
+/// One page of an import draft, in the shape the review table renders: the
+/// mapped columns once, then rows keyed by file column index.
+pub(crate) async fn draft_rows(
+    state: &AppState,
+    session_id: Uuid,
+    status: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> Result<Value, Problem> {
+    let session = state
+        .store
+        .import_session(session_id)
+        .await
+        .map_err(store_status)?
+        .ok_or_else(|| {
+            Problem::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "That import does not exist.",
+            )
+        })?;
+    let cached = state.models.get(&state.store).await?;
+    let mut mapping = session.mapping.clone().unwrap_or(Value::Null);
+    braian_model::translate_import_mapping(&mut mapping, &cached.defs);
+    let type_key = mapping
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let targets = targets_for(&cached.defs, &type_key);
+    let headers = session.headers.as_array().cloned().unwrap_or_default();
+    let columns: Vec<Value> = mapping
+        .get("columns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|column| {
+            let col = column.get("col").and_then(Value::as_u64)?;
+            let target = column.get("target").and_then(Value::as_str)?;
+            if target == "unmapped" || target == "action" {
+                return None;
+            }
+            let header = headers
+                .iter()
+                .find(|item| item.get("index").and_then(Value::as_u64) == Some(col))
+                .and_then(|item| item.get("raw").and_then(Value::as_str))
+                .unwrap_or_default();
+            let label = mapping::find_target(&targets, target)
+                .map(|item| item.label.clone())
+                .unwrap_or_else(|| target.to_owned());
+            let options = mapping::find_target(&targets, target)
+                .filter(|item| item.kind == "value_list")
+                .and_then(|item| item.attribute_id.as_deref())
+                .map(|id| value_list_options(&cached.defs, id));
+            Some(json!({
+                "col": col,
+                "header": header,
+                "target": target,
+                "label": label,
+                "options": options,
+            }))
+        })
+        .collect();
+    let total = state
+        .store
+        .count_import_rows(session_id, status)
+        .await
+        .map_err(store_status)?;
+    let rows = state
+        .store
+        .list_import_rows(session_id, status, offset, limit)
+        .await
+        .map_err(store_status)?;
+    Ok(json!({
+        "kind": "import",
+        "total": total,
+        "session_id": session_id,
+        "session_status": session.status,
+        "skip_invalid": mapping.get("skip_invalid").and_then(Value::as_bool).unwrap_or(false),
+        "type": type_key,
+        "columns": columns,
+        "counters": session.counters,
+        "rows": rows.into_iter().map(|row| json!({
+            "row_no": row.row_no,
+            "status": row.status,
+            "object_id": row.object_id,
+            "object_key": row.object_key,
+            "cells": row.cells,
+            "errors": row.errors,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+/// The choices of a value list attribute: shared list first, then inline options.
+/// The label is what the cell shows and what an edit sends back.
+fn value_list_options(defs: &braian_model::DefinitionSet, attribute_id: &str) -> Vec<Value> {
+    let Some(attribute) = defs.attributes.iter().find(|item| {
+        item.id
+            .as_uuid()
+            .to_string()
+            .eq_ignore_ascii_case(attribute_id)
+    }) else {
+        return Vec::new();
+    };
+    let braian_model::AttributeKind::ValueList { options, list } = &attribute.kind else {
+        return Vec::new();
+    };
+    let shared = list
+        .as_deref()
+        .and_then(|key| defs.value_lists.iter().find(|item| item.key == key))
+        .map(|item| item.options.iter().collect::<Vec<_>>())
+        .unwrap_or_default();
+    shared
+        .into_iter()
+        .chain(options.iter())
+        .map(|option| {
+            let label = option
+                .labels
+                .iter()
+                .find(|(tag, _)| tag.as_str() == "en")
+                .or_else(|| option.labels.iter().next())
+                .map(|(_, text)| text.clone())
+                .unwrap_or_else(|| option.code.clone());
+            json!({ "value": label, "label": label, "code": option.code })
+        })
+        .collect()
+}
+
+async fn patch_row(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path((id, row_no)): Path<(Uuid, i32)>,
+    Json(body): Json<RowEdit>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Editor)?;
+    let _ = load(&state, &identity, id).await?;
+    if row_no < 0 || body.col < 0 {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_row",
+            "That row or column does not exist.",
+        ));
+    }
+    let (row, counters) =
+        session::edit_cell(&state, id, row_no as u32, body.col as usize, &body.value)
+            .await
+            .map_err(|detail| Problem::new(StatusCode::CONFLICT, "cannot_edit", detail))?;
+    Ok(Json(json!({
+        "counters": counters,
+        "row": row.map(|row| json!({
+            "row_no": row.row_no,
+            "status": row.status,
+            "object_id": row.object_id,
+            "object_key": row.object_key,
+            "cells": row.cells,
+            "errors": row.errors,
+        })),
+    })))
+}
+/// When the model moved on since the preview, check the rows again against the
+/// current model instead of writing rows that were validated against an old one.
+async fn refresh_if_model_changed(
+    state: &AppState,
+    session: &braian_store::ImportSession,
+) -> Result<(), Problem> {
+    let current = state
+        .store
+        .model_revision()
+        .await
+        .map_err(store_status)?
+        .unwrap_or(0) as i64;
+    if session.model_revision == current {
+        return Ok(());
+    }
+    state
+        .store
+        .set_import_model_revision(session.id, current)
+        .await
+        .map_err(store_status)?;
+    if session.mapping.is_some() && session.status == "previewed" {
+        let generation = state
+            .store
+            .restart_import_diff(session.id)
+            .await
+            .map_err(store_status)?;
+        session::spawn_diff(state.clone(), session.id, generation);
+    }
+    Err(Problem::new(
+        StatusCode::CONFLICT,
+        "model_changed",
+        "The data model changed. Re-checked against the current model; review it again.",
+    ))
 }
 
 async fn failed_xlsx(
@@ -570,11 +1079,27 @@ async fn remove(
     }
     state
         .store
+        .close_import_proposal(id, "discarded", None)
+        .await
+        .map_err(store_status)?;
+    state
+        .store
         .delete_import_session(id)
         .await
         .map_err(store_status)?;
     let _ = std::fs::remove_dir_all(session_dir(id));
+    state.emit(json!({ "op": "proposal", "session": id }));
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn with_draft(
+    state: &AppState,
+    session: &braian_store::ImportSession,
+    mut body: Value,
+) -> Value {
+    let draft = state.store.session_draft(session.id).await.ok().flatten();
+    body["draft_id"] = json!(draft);
+    body
 }
 
 fn session_body(
@@ -592,6 +1117,11 @@ fn session_body(
                 "label": object_type.singular_label("en"),
             })
         })
+        .chain(
+            entity::options()
+                .into_iter()
+                .map(|(token, label)| json!({ "id": token, "key": token, "label": label })),
+        )
         .collect::<Vec<_>>();
     let mut mapping = session.mapping.clone();
     if let Some(mapping) = mapping.as_mut() {
@@ -630,14 +1160,14 @@ fn validate_mapping(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let mut action = 0;
     for column in &columns {
         let target = column.get("target").and_then(Value::as_str).unwrap_or("");
         if target == "unmapped" {
             continue;
         }
         if target == "action" {
-            action += 1;
+            // Old saved mappings may still carry the action column. Imports
+            // never delete, so the column is ignored.
             continue;
         }
         if mapping::find_target(targets, target).is_none() {
@@ -654,13 +1184,6 @@ fn validate_mapping(
                 format!("{target} is mapped twice."),
             ));
         }
-    }
-    if action > 1 {
-        return Err(Problem::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_mapping",
-            "Only one action column is allowed.",
-        ));
     }
     if let Some(index) = body.get("id_column").and_then(Value::as_u64) {
         let mapped = columns
@@ -835,13 +1358,6 @@ pub(crate) struct RowQuery {
     offset: Option<i64>,
     limit: Option<i64>,
     status: Option<String>,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[schema(as = ImportSaveBody)]
-pub(crate) struct SaveBody {
-    #[serde(default)]
-    skip_failed: bool,
 }
 
 #[derive(Deserialize)]

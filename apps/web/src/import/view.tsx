@@ -7,6 +7,8 @@ import { copy } from '../i18n'
 import { handleAppContextMenu } from '../app-context-menu'
 import {
   approveImport,
+  attachImport,
+  detachImport,
   assignImportTarget,
   backToMapping,
   confirmImport,
@@ -18,6 +20,8 @@ import {
   requestCloseImport,
   discardImport,
   saveImport,
+  setImportEmptyClears,
+  saveImportMapping,
   selectColumn,
   setImportFilter,
   setImportIdColumn,
@@ -26,8 +30,10 @@ import {
   subscribeImport,
   undoImport,
   type ImportSession,
+  type ImportTarget,
 } from './controller'
-import { TargetMenu } from './target-menu'
+import { TargetPicker } from './target-picker'
+import { DraftTable } from '../drafts/draft-table'
 import {
   alternativeChoices,
   ariaMap,
@@ -40,6 +46,7 @@ import {
   matchSummary,
   rowClass,
   cellClass,
+  importCellText,
   saveLabel,
   showTypeConfidence,
   stepIndex,
@@ -49,7 +56,7 @@ type PreviewRow = {
   row_no: number
   status: string
   object_key?: string | null
-  cells: Record<string, { value?: string; before?: string; state?: string; error?: { message?: string } }>
+  cells: Record<string, { value?: unknown; before?: unknown; state?: string; error?: { message?: string } }>
   errors?: Array<{ message?: string }>
 }
 
@@ -72,8 +79,8 @@ function cellsFrom(value: unknown): PreviewRow['cells'] {
     if (!cell) continue
     const error = jsonRecord(cell.error)
     cells[key] = {
-      ...(typeof cell.value === 'string' ? { value: cell.value } : {}),
-      ...(typeof cell.before === 'string' ? { before: cell.before } : {}),
+      ...(cell.value != null && cell.value !== '' ? { value: cell.value } : {}),
+      ...(cell.before != null && cell.before !== '' ? { before: cell.before } : {}),
       ...(typeof cell.state === 'string' ? { state: cell.state } : {}),
       ...(error ? { error: { ...(typeof error.message === 'string' ? { message: error.message } : {}) } } : {}),
     }
@@ -105,7 +112,6 @@ const fixtureRows: PreviewRow[] = [
     cells: { '0': { value: 'A-300', state: 'same' }, '1': { value: '??', state: 'error', error: { message: 'Not a number' } } },
     errors: [{ message: 'Not a number' }],
   },
-  { row_no: 5, status: 'delete', object_key: 'A-400', cells: { '0': { value: 'A-400', state: 'same' }, '1': { value: 'Old', state: 'same' } } },
 ]
 
 export function ImportScreen() {
@@ -161,6 +167,12 @@ export function ImportScreen() {
           {snap.phase === 'empty' || snap.phase === 'error' ? <Empty snap={snap} /> : null}
           {snap.phase === 'uploading' ? <Uploading name={snap.fileName} ratio={snap.upload} /> : null}
           {snap.phase === 'mapping' && snap.session ? <Mapping /> : null}
+          {snap.phase === 'mapping' && !snap.session ? (
+            <div className="import-preparing" role="status" data-testid="import-ai-pending">
+              <span className="import-spinner" aria-hidden="true" />
+              <span>{copy.importPreparing}</span>
+            </div>
+          ) : null}
           {(snap.phase === 'preview' || snap.phase === 'saving' || snap.phase === 'done') && snap.session ? <Preview /> : null}
           {snap.confirm ? (
             <div className="import-confirm" role="dialog">
@@ -172,6 +184,56 @@ export function ImportScreen() {
         </section>
       ) : null}
     </>
+  )
+}
+
+/**
+ * One import draft worked through in a workspace pane: the same Map and Check steps as
+ * the import dialog, without the dialog chrome. `onChanged` fires when the draft was saved,
+ * `onGone` when it was discarded.
+ */
+export function ImportWorkspace({ sessionId, onChanged, onGone }: { sessionId: string; onChanged: () => void; onGone: () => void }) {
+  const snap = useSyncExternalStore(subscribeImport, getImportSnapshot, getImportSnapshot)
+  const seen = useRef(false)
+  useEffect(() => {
+    seen.current = false
+    void attachImport(sessionId)
+    return () => detachImport()
+  }, [sessionId])
+  useEffect(() => {
+    if (snap.session?.id === sessionId) seen.current = true
+    else if (seen.current && !snap.session && !snap.embedded) {
+      seen.current = false
+      onGone()
+    }
+  }, [snap.session, snap.embedded, sessionId, onGone])
+  useEffect(() => {
+    if (snap.embedded && snap.phase === 'done') onChanged()
+  }, [snap.embedded, snap.phase, onChanged])
+
+  if (snap.open && !snap.embedded) {
+    return <p className="muted" data-testid="import-workspace-busy">Another import is open. Finish or close it first.</p>
+  }
+  return (
+    <section className="import-screen import-embedded" data-testid="import-workspace" aria-label={copy.importFile}>
+      <header className="import-top">
+        <div>
+          <strong>{snap.fileName || copy.importFile}</strong>
+        </div>
+        <Steps phase={snap.phase} />
+        <span />
+      </header>
+      {snap.notice ? <p className="import-notice">{snap.notice}</p> : null}
+      {snap.phase === 'error' ? <p className="error" role="alert">{snap.error || 'That import could not be opened.'}</p> : null}
+      {snap.phase === 'mapping' && snap.session ? <Mapping /> : null}
+      {(snap.phase === 'preview' || snap.phase === 'saving' || snap.phase === 'done') && snap.session ? <Preview /> : null}
+      {!snap.session && snap.phase !== 'error' ? (
+        <div className="import-preparing" role="status">
+          <span className="import-spinner" aria-hidden="true" />
+          <span>{copy.importPreparing}</span>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -241,11 +303,20 @@ function Mapping() {
   const suggested = session.proposal?.type?.value
   const typeConfidence = showTypeConfidence(snap.typeKey, suggested, session.proposal?.type?.confidence)
   const [menu, setMenu] = useState<number | null>(null)
+  const waiting = session.status === 'mapping' && (!session.proposal || session.proposal.ai === 'pending')
+  if (waiting) {
+    return (
+      <div className="import-preparing" role="status" data-testid="import-ai-pending">
+        <span className="import-spinner" aria-hidden="true" />
+        <span>{copy.importPreparing}</span>
+      </div>
+    )
+  }
 
   return (
     <div className="import-map" data-testid="import-mapping">
       <p className="import-banner" data-testid="import-banner">
-        {matchSummary(snap.columns)}
+        {' '}{matchSummary(snap.columns)}
         {snap.idColumn === 'none' ? ` ${copy.importNoId}` : ''}
       </p>
       <div className="import-map-bar">
@@ -271,6 +342,10 @@ function Mapping() {
           </select>
         </label>
       </div>
+      <label className="import-empty-clears">
+        <input type="checkbox" data-testid="import-empty-clears" checked={snap.emptyClears} onChange={(event) => setImportEmptyClears(event.target.checked)} />
+        {' '}{copy.importEmptyClears}
+      </label>
       <div className="import-map-head">
         <span>{copy.importFileColumn}</span>
         <span>{copy.importAttribute}</span>
@@ -317,8 +392,9 @@ function Mapping() {
                   {column.target !== 'unmapped' ? labelOf(column.target) : copy.importChooseField}
                 </button>
                 {menu === header.index ? (
-                  <TargetMenu
+                  <TargetPicker
                     targets={choices}
+                    current={column.target}
                     onPick={(target) => {
                       assignImportTarget(header.index, target)
                       setMenu(null)
@@ -349,12 +425,24 @@ function Mapping() {
       <footer className="import-actions">
         <button
           type="button"
+          data-testid="import-save-mapping"
+          disabled={mappedLines(snap.columns).length === 0 || !snap.typeKey}
+          onClick={() => {
+            const name = window.prompt(copy.importSaveMappingAs, session.file_name.replace(/\.[^.]+$/, ''))
+            if (!name?.trim()) return
+            void saveImportMapping(name.trim()).then(() => toast(copy.importMappingSaved)).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
+          }}
+        >
+          {copy.importSaveMappingAs}
+        </button>
+        <button
+          type="button"
           className="primary"
           data-testid="import-approve"
-          disabled={mappedLines(snap.columns).length === 0 || !snap.typeKey}
+          disabled={waiting && !session.proposal || mappedLines(snap.columns).length === 0 || !snap.typeKey}
           onClick={() => void approveImport().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Approve failed'))}
         >
-          {copy.importApprove}
+          {copy.importNext}
         </button>
       </footer>
     </div>
@@ -366,12 +454,13 @@ function Preview() {
   const session = snap.session!
   const counters = session.counters ?? {}
   const failed = Number(counters.failed ?? 0)
-  const changes = Number(counters.new ?? 0) + Number(counters.changed ?? 0) + Number(counters.delete ?? 0)
+  const changes = Number(counters.new ?? 0) + Number(counters.changed ?? 0)
   const parent = useRef<HTMLDivElement>(null)
+  const [excluded, setExcluded] = useState<number[]>([])
   const fixture = session.id === 'fixture'
   const localRows = fixtureRows.filter((row) => snap.filter === 'all' || row.status === snap.filter)
   const probe = useQuery({
-    queryKey: ['import-rows', session.id, snap.filter, 'count'],
+    queryKey: ['import-rows', session.id, snap.filter, 'count', session.status, counters.processed ?? 0],
     queryFn: () => api.get('/v1/imports/{id}/rows', { params: { path: { id: session.id }, query: { offset: 0, limit: 1, status: snap.filter } } }),
     enabled: !fixture,
   })
@@ -386,7 +475,7 @@ function Preview() {
   const pages = fixture ? [] : [...new Set(visible.map((item) => Math.floor(item.index / 100)))]
   const windows = useQueries({
     queries: pages.map((page) => ({
-      queryKey: ['import-rows', session.id, snap.filter, page],
+      queryKey: ['import-rows', session.id, snap.filter, page, session.status, total],
       queryFn: () => api.get('/v1/imports/{id}/rows', { params: { path: { id: session.id }, query: { offset: Number(page * 100), limit: 100, status: snap.filter } } }),
     })),
   })
@@ -408,16 +497,21 @@ function Preview() {
 
   return (
     <div className="import-preview" data-testid="import-preview">
-      <span className="chip" data-testid="source-badge">{copy.importJob}</span>
-      <div className="import-counters">
-        {chip('new', copy.importNew, counters.new, 'ok')}
-        {chip('changed', copy.importChanged, counters.changed, 'warn')}
-        {chip('delete', copy.importDelete, counters.delete, 'danger')}
-        {chip('failed', copy.importErrors, counters.failed, 'danger')}
-        {chip('all', copy.importUnchanged, counters.unchanged, 'neutral')}
-      </div>
       {session.status === 'diffing' ? <p>{copy.importChecking} {percent}%</p> : null}
       {session.status === 'saving' ? <p>{copy.importChecking}</p> : null}
+      {!fixture ? (
+        session.draft_id && session.status !== 'diffing' ? (
+          <DraftTable
+            proposalId={session.draft_id}
+            version={`${session.status}:${JSON.stringify(counters)}`}
+            excluded={excluded}
+            onExcludedChange={setExcluded}
+            editable={session.status === 'previewed'}
+          />
+        ) : (
+          <div className="import-table" role="status" data-testid="import-checking" />
+        )
+      ) : (
       <div className="import-table" ref={parent}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((item) => {
@@ -431,7 +525,7 @@ function Preview() {
                 style={{ position: 'absolute', top: 0, transform: `translateY(${item.start}px)`, height: 28 }}
               >
                 <span>{row.row_no}</span>
-                <span>{row.status === 'delete' ? '🗑' : row.status === 'failed' ? '⛔' : row.status === 'new' ? '＋' : '•'}</span>
+                <span>{row.status === 'failed' ? '⛔' : row.status === 'new' ? '＋' : '•'}</span>
                 {headers.map((header) => {
                   const cell = row.cells[String(header.index)]
                   const title = cellTitle(cell)
@@ -439,11 +533,11 @@ function Preview() {
                     <span key={header.index} className={cellClass(cell?.state ?? 'same')} title={title}>
                       {cell?.state === 'changed' && cell.before ? (
                         <>
-                          <span className="diff-old">{cell.before}</span>
+                          <span className="diff-old">{importCellText(cell.before)}</span>
                           <span className="diff-arrow">{' -> '}</span>
-                          <span className="diff-new">{cell.value ?? ''}</span>
+                          <span className="diff-new">{importCellText(cell.value)}</span>
                         </>
-                      ) : cell?.value ?? ''}
+                      ) : importCellText(cell?.value)}
                     </span>
                   )
                 })}
@@ -452,17 +546,21 @@ function Preview() {
           })}
         </div>
       </div>
+      )}
       <footer className="import-actions">
-        <button type="button" onClick={backToMapping}>{copy.importBack}</button>
-        {failed > 0 ? (
-          <a href={fixture ? undefined : `/v1/imports/${session.id}/failed.xlsx`}>{copy.importFailedDownload}</a>
-        ) : null}
+        <div className="import-actions-start">
+          <button type="button" className="btn-ghost" onClick={backToMapping}>{copy.importBack}</button>
+          {failed > 0 ? (
+            <a className="import-link" href={fixture ? undefined : `/v1/imports/${session.id}/failed.xlsx`}>{copy.importFailedDownload}</a>
+          ) : null}
+        </div>
         {snap.phase === 'done' ? (
-          <p>
-            Imported {counters.new ?? 0} · Updated {counters.changed ?? 0} · Deleted {counters.delete ?? 0} · Skipped {failed}
+          <p className="import-note">
+            Imported {counters.new ?? 0} · Updated {counters.changed ?? 0} · Skipped {failed}
           </p>
         ) : (
-          <>
+          <div className="import-actions-end">
+            {failed > 0 ? <span className="import-note">{failed} with errors will be skipped</span> : null}
             <button type="button" data-testid="import-discard" onClick={discardImport}>{copy.discard}</button>
             <button
               type="button"
@@ -470,27 +568,15 @@ function Preview() {
               data-testid="import-save"
               disabled={fixture || session.status !== 'previewed'}
               onClick={() => {
-                if (Number(counters.delete ?? 0) > 0) {
-                  const ok = window.confirm(`${copy.importDeleteObjects} ${counters.delete} ${copy.importObjectsWord}`)
-                  if (!ok) return
-                }
-                void saveImport().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
+                void saveImport(excluded).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
               }}
             >
               {saveLabel(failed, changes)}
             </button>
-          </>
+          </div>
         )}
       </footer>
     </div>
-  )
-}
-
-function chip(filter: string, label: string, value: number | undefined, tone: string) {
-  return (
-    <button type="button" className={`meta-chip ${tone}`} onClick={() => setImportFilter(filter === 'all' ? 'all' : filter)}>
-      {label} {value ?? 0}
-    </button>
   )
 }
 
@@ -502,10 +588,12 @@ function sampleOf(session: ImportSession, index: number) {
     .join(' · ')
 }
 
-function cellTitle(cell: { before?: string; state?: string; error?: { message?: string } } | undefined) {
+function cellTitle(cell: { before?: unknown; state?: string; error?: { message?: string } } | undefined) {
   if (!cell) return undefined
   const parts: string[] = []
-  if (cell.before && cell.state !== 'same' && cell.state !== 'new') parts.push(`was: ${cell.before}`)
+  if (cell.before != null && cell.before !== '' && cell.state !== 'same' && cell.state !== 'new') {
+    parts.push(`was: ${importCellText(cell.before)}`)
+  }
   if (cell.error?.message) parts.push(cell.error.message)
   return parts.join(' · ') || undefined
 }

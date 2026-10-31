@@ -79,10 +79,14 @@ test.describe('cell editor unloaded path-values (Notion 111)', () => {
       await route.continue()
     })
 
+    const pathValuesRequest = page.waitForRequest(
+      (req) => req.url().includes('pathValues') && req.method() === 'POST',
+      { timeout: 60_000 },
+    )
     await page.reload()
     await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
-    // Same pattern as move-col-flash-sse: do not wait on Name text while pathValues is gated;
-    // the path-cell loading marker proves the column is mounted and still pending.
+    await pathValuesRequest
+
     const loading = page.locator('[data-testid^="path-cell-description"][data-loading="true"]').first()
     await expect(loading).toBeVisible({ timeout: 60_000 })
 

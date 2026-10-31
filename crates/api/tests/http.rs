@@ -730,7 +730,7 @@ async fn an_agent_or_import_cannot_commit_and_a_person_save_still_does() {
         let (status, _, body) = call(
             &app,
             "POST",
-            "/v1/imports/018f1000-0000-7000-8000-000000000099/save",
+            "/v1/proposals/018f1000-0000-7000-8000-000000000099/accept",
             Some(token),
             &[("content-type", "application/json")],
             Some(r#"{"skip_failed":true}"#),
