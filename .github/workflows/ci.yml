@@ -34,7 +34,7 @@ jobs:
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - name: Stabilize Rust source mtimes
         if: steps.changes.outputs.mode == 'full'
-        run: find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
+        run: find crates docs/api testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
       - name: Check Rust cache
@@ -125,7 +125,7 @@ jobs:
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - name: Stabilize Rust source mtimes
         if: steps.changes.outputs.mode == 'full'
-        run: find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
+        run: find crates docs/api testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
       - name: Check Rust cache
@@ -213,7 +213,7 @@ jobs:
           # Cargo fingerprints local crates by mtime. A fresh checkout is newer
           # than the cached fingerprints, so workspace crates recompile on every
           # hit. Pin the mtimes before restore and before the build.
-          find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
+          find crates docs/api testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
       - name: Check Rust cache
