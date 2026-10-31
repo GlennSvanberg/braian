@@ -20,6 +20,8 @@ export function stepText(op: string, args: Json = {}, typeName?: { singular?: st
     case 'ui.open_workspace':
     case 'ui.open_template':
       return 'Opening the workspace…'
+    case 'ui.open_changes':
+      return 'Opening the changes…'
     case 'ui.open_view':
     case 'ui.place':
     case 'open_view':

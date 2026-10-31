@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { demoCredentials } from './demo'
 
@@ -426,8 +427,8 @@ test('dock overlay matches the pane fraction and the window edge', async ({ page
   await clearPersonal(page, workspace.id)
   if (process.env.BRAIAN_DOCK_SHOTS === '1') {
     await page.screenshot({ path: '/opt/cursor/artifacts/final/multi-split-dark.png' })
-    await page.getByRole('button', { name: 'Light' }).click()
+    await setTheme(page, 'light')
     await page.screenshot({ path: '/opt/cursor/artifacts/final/multi-split-light.png' })
-    await page.getByRole('button', { name: 'Dark' }).click()
+    await setTheme(page, 'dark')
   }
 })

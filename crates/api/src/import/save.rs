@@ -38,8 +38,7 @@ pub async fn run(state: AppState, session_id: Uuid, job_id: Uuid, mut actor: Act
         return;
     };
     let counters = session.counters.clone();
-    let total =
-        counter(&counters, "new") + counter(&counters, "changed") + counter(&counters, "delete");
+    let total = counter(&counters, "new") + counter(&counters, "changed");
     let total_i = i32::try_from(total).unwrap_or(i32::MAX);
     emit_job(&state, job_id, "running", 0, total_i);
     let batch = match store.open_batch(&actor).await {
@@ -96,23 +95,6 @@ pub async fn run(state: AppState, session_id: Uuid, job_id: Uuid, mut actor: Act
     {
         return;
     }
-    if !write_status(
-        &state,
-        &store,
-        session_id,
-        job_id,
-        batch,
-        &actor,
-        "delete",
-        CHANGE_CHUNK,
-        &mut done,
-        total_i,
-        &mut errors,
-    )
-    .await
-    {
-        return;
-    }
     let status = if cancelled(&state, session_id).await {
         "cancelled"
     } else {
@@ -133,13 +115,39 @@ pub async fn run(state: AppState, session_id: Uuid, job_id: Uuid, mut actor: Act
         )
         .await;
     emit_job(&state, job_id, status, done, total_i);
+    let mut final_counters = counters.clone();
+    if let Ok(counts) = state.store.import_status_counts(session_id).await {
+        for key in ["new", "changed", "failed", "stale", "excluded"] {
+            final_counters[key] = json!(counts.get(key).copied().unwrap_or(0));
+        }
+        final_counters["written"] = json!(done);
+    }
     let _ = state
         .store
-        .update_import_job(session_id, session_status, Some(job_id), &counters, None)
+        .update_import_job(
+            session_id,
+            session_status,
+            Some(job_id),
+            &final_counters,
+            None,
+        )
+        .await;
+    let _ = state
+        .store
+        .close_import_proposal(
+            session_id,
+            if status == "cancelled" {
+                "discarded"
+            } else {
+                "accepted"
+            },
+            Some(&final_counters),
+        )
         .await;
     if let Ok(Some(session)) = state.store.import_session(session_id).await {
         emit_import(&state, &session);
     }
+    state.emit(json!({ "op": "proposal", "session": session_id }));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -201,10 +209,7 @@ async fn write_status(
         if status == "new" {
             write_new(state, store, session_id, batch, actor, &rows, errors).await;
         } else {
-            write_ops(
-                state, store, session_id, batch, actor, &rows, status, errors,
-            )
-            .await;
+            write_ops(state, store, session_id, batch, actor, &rows, errors).await;
         }
         *done += i32::try_from(rows.len()).unwrap_or(0);
         let _ = store
@@ -274,7 +279,6 @@ async fn write_new(
     apply_imported_links(state, store, batch, actor, rows, errors).await;
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn write_ops(
     state: &AppState,
     store: &braian_store::Store,
@@ -282,12 +286,11 @@ async fn write_ops(
     batch: braian_store::BatchId,
     actor: &Actor,
     rows: &[ImportRowOut],
-    status: &str,
     errors: &mut Vec<Value>,
 ) {
     let mut ops = Vec::new();
     for row in rows {
-        match op_for(row, status) {
+        match op_for(row) {
             Some(op) => ops.push((row.row_no, op)),
             None if row
                 .cells
@@ -319,7 +322,7 @@ async fn write_ops(
                             .mark_import_row(
                                 session_id,
                                 row_no,
-                                "failed",
+                                if code == "stale" { "stale" } else { "failed" },
                                 &json!([{ "code": code, "message": error.to_string() }]),
                             )
                             .await;
@@ -332,16 +335,8 @@ async fn write_ops(
     apply_imported_links(state, store, batch, actor, rows, errors).await;
 }
 
-fn op_for(row: &ImportRowOut, status: &str) -> Option<ObjectOp> {
+fn op_for(row: &ImportRowOut) -> Option<ObjectOp> {
     let id = ObjectId::from_uuid(row.object_id?);
-    if status == "delete" {
-        return Some(ObjectOp::Delete {
-            id,
-            base_version: row
-                .base_version
-                .and_then(|version| u64::try_from(version).ok()),
-        });
-    }
     let patch = serde_json::from_value::<ObjectPatch>(row.patch.clone()?).ok()?;
     let version = u64::try_from(row.base_version?).ok()?;
     Some(ObjectOp::Update {
@@ -395,6 +390,10 @@ async fn finish(
     let _ = state
         .store
         .update_import_job(session_id, "failed", Some(job_id), &json!({}), Some(log))
+        .await;
+    let _ = state
+        .store
+        .close_import_proposal(session_id, "discarded", None)
         .await;
     if let Ok(Some(session)) = state.store.import_session(session_id).await {
         emit_import(state, &session);

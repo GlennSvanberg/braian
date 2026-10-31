@@ -7,7 +7,7 @@ Generated from `apps/web/src/shortcuts.ts`. Do not edit by hand — run `node ap
 | Chord | Action |
 | --- | --- |
 | Ctrl+K | Open the command palette |
-| Ctrl+J | Open the AI palette |
+| Ctrl+J | Open the agent palette |
 | Ctrl+S | Save review drafts |
 | Ctrl+Shift+B | Send feedback |
 | F1 | Show keyboard shortcuts |

@@ -58,3 +58,13 @@ describe('shortcut registry', () => {
     expect(left?.hotkeys.some((key) => key.includes('meta'))).toBe(false)
   })
 })
+
+  it('maps #141 Ctrl+K commands into the registry without chord conflicts', () => {
+    expect(chordForCommand('agent:open')).toBe('Ctrl+J')
+    expect(chordForCommand('theme:toggle')).toBeUndefined()
+    expect(chordForCommand('session:sign-out')).toBeUndefined()
+    const commandIds = shortcuts.map((item) => item.commandId).filter(Boolean)
+    expect(commandIds.filter((id) => id === 'agent:open')).toHaveLength(1)
+    expect(findShortcutConflicts(shortcuts)).toEqual([])
+  })
+

@@ -360,12 +360,45 @@ pub struct ProposalListItem {
     pub status: String,
     pub conflict: bool,
     pub created_at: String,
+    /// Set for import drafts: the import session that holds the rows.
+    pub session_id: Option<Uuid>,
+    /// Import drafts: new, changed, failed, stale and excluded row counts.
+    pub counters: Option<JsonValue>,
+    pub actor_name: Option<String>,
+    pub behalf_name: Option<String>,
+    /// Rows stored in `proposal_rows`. Import drafts keep theirs elsewhere.
+    pub row_count: i64,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct ProposalList {
     pub proposals: Vec<ProposalListItem>,
+    /// Proposals that match the filter, not only this page.
+    pub total: i64,
     pub pending: PendingSummary,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DraftColumn {
+    pub col: u64,
+    pub header: String,
+    pub target: String,
+    pub label: String,
+}
+
+/// One page of a draft. Import drafts add the mapped columns and counters.
+#[derive(Serialize, ToSchema)]
+pub struct DraftRowsPage {
+    /// `import` or `rows`.
+    pub kind: String,
+    pub total: i64,
+    pub rows: Vec<JsonValue>,
+    pub session_id: Option<Uuid>,
+    pub session_status: Option<String>,
+    #[serde(rename = "type")]
+    pub object_type: Option<String>,
+    pub columns: Option<Vec<DraftColumn>>,
+    pub counters: Option<JsonValue>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -424,6 +457,8 @@ pub struct ProposalView {
     pub actor_name: Option<String>,
     pub behalf_name: Option<String>,
     pub created_at: String,
+    pub session_id: Option<Uuid>,
+    pub counters: Option<JsonValue>,
     pub rows: Vec<ProposalRowView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consequence: Option<DraftConsequence>,
@@ -599,6 +634,8 @@ pub struct ImportSessionView {
     pub counters: JsonValue,
     pub job_id: Option<Uuid>,
     pub error: Option<String>,
+    /// The open draft (proposal) of this import, once it is previewed.
+    pub draft_id: Option<Uuid>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -620,6 +657,45 @@ pub struct ImportPreviewRow {
 pub struct ImportPreviewPage {
     pub total: i64,
     pub rows: Vec<ImportPreviewRow>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ImportRowEdit {
+    pub col: i32,
+    pub value: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ImportRowEdited {
+    pub counters: JsonValue,
+    pub row: Option<ImportPreviewRow>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SavedMappingBody {
+    pub session_id: Uuid,
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SavedMappingRename {
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SavedMappingView {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub object_type: String,
+    pub headers: JsonValue,
+    pub columns: JsonValue,
+    pub empty_clears: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SavedMappingList {
+    pub mappings: Vec<SavedMappingView>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -654,6 +730,12 @@ pub struct ImportMappingBody {
     pub object_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_column: Option<u64>,
+    /// An empty cell removes the stored value instead of leaving it as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub empty_clears: Option<bool>,
+    /// A cell that does not validate is left out instead of failing its row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_invalid: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<ImportMappingColumn>>,
 }

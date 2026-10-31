@@ -1052,6 +1052,106 @@ impl Store {
             .collect())
     }
 
+    /// One page of proposals, newest first. `status` and `source` filter when set.
+    /// Returns the total that matches, so a table can size its scroll area.
+    pub async fn list_proposals_page(
+        &self,
+        status: Option<&str>,
+        source: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(i64, Vec<Value>), Error> {
+        let client = self.pool().get().await?;
+        let total: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM proposals
+                 WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR source = $2)",
+                &[&status, &source],
+            )
+            .await?
+            .get(0);
+        let rows = client
+            .query(
+                "SELECT p.id, p.title, p.source, p.status, p.conflict, p.created_at,
+                        p.session_id, p.counters, p.on_behalf_of,
+                        a.name AS actor_name, b.name AS behalf_name,
+                        (SELECT count(*)::bigint FROM proposal_rows r WHERE r.proposal_id = p.id) AS row_count
+                 FROM proposals p
+                 LEFT JOIN principals a ON a.id = p.actor
+                 LEFT JOIN principals b ON b.id = p.on_behalf_of
+                 WHERE ($1::text IS NULL OR p.status = $1) AND ($2::text IS NULL OR p.source = $2)
+                 ORDER BY p.created_at DESC
+                 OFFSET $3 LIMIT $4",
+                &[&status, &source, &offset, &limit],
+            )
+            .await?;
+        let items = rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "id": row.get::<_, Uuid>("id"),
+                    "title": row.get::<_, String>("title"),
+                    "source": row.get::<_, String>("source"),
+                    "status": row.get::<_, String>("status"),
+                    "conflict": row.get::<_, bool>("conflict"),
+                    "created_at": row.get::<_, DateTime<Utc>>("created_at"),
+                    "session_id": row.get::<_, Option<Uuid>>("session_id"),
+                    "counters": row.get::<_, Option<Value>>("counters"),
+                    "actor_name": row.get::<_, Option<String>>("actor_name"),
+                    "behalf_name": row.get::<_, Option<String>>("behalf_name"),
+                    "row_count": row.get::<_, i64>("row_count"),
+                })
+            })
+            .collect();
+        Ok((total, items))
+    }
+
+    /// One page of a proposal's own rows, in position order.
+    pub async fn proposal_rows_page(
+        &self,
+        id: Uuid,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(i64, Vec<Value>), Error> {
+        let client = self.pool().get().await?;
+        let total: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM proposal_rows
+                 WHERE proposal_id = $1 AND ($2::text IS NULL OR status = $2)",
+                &[&id, &status],
+            )
+            .await?
+            .get(0);
+        let rows = client
+            .query(
+                "SELECT id, object_id, object_key, type_key, base_version, patch, status, conflict, position
+                 FROM proposal_rows
+                 WHERE proposal_id = $1 AND ($2::text IS NULL OR status = $2)
+                 ORDER BY position
+                 OFFSET $3 LIMIT $4",
+                &[&id, &status, &offset, &limit],
+            )
+            .await?;
+        let items = rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "id": row.get::<_, Uuid>("id"),
+                    "object_id": row.get::<_, Option<Uuid>>("object_id"),
+                    "object_key": row.get::<_, Option<String>>("object_key"),
+                    "type_key": row.get::<_, Option<String>>("type_key"),
+                    "base_version": row.get::<_, Option<i64>>("base_version"),
+                    "patch": row.get::<_, Value>("patch"),
+                    "status": row.get::<_, String>("status"),
+                    "conflict": row.get::<_, bool>("conflict"),
+                    "position": row.get::<_, i32>("position"),
+                })
+            })
+            .collect();
+        Ok((total, items))
+    }
+
     /// Open proposals still waiting for a person: a total, and a count per object.
     pub async fn pending_summary(&self) -> Result<Value, Error> {
         let client = self.pool().get().await?;
@@ -1141,6 +1241,7 @@ impl Store {
         let Some(row) = client
             .query_opt(
                 "SELECT p.id, p.title, p.source, p.status, p.conflict, p.actor, p.on_behalf_of, p.created_at,
+                        p.session_id, p.counters,
                         a.name AS actor_name, b.name AS behalf_name
                  FROM proposals p
                  LEFT JOIN principals a ON a.id = p.actor
@@ -1170,6 +1271,8 @@ impl Store {
             "actor_name": row.get::<_, Option<String>>("actor_name"),
             "behalf_name": row.get::<_, Option<String>>("behalf_name"),
             "created_at": row.get::<_, DateTime<Utc>>("created_at"),
+            "session_id": row.get::<_, Option<Uuid>>("session_id"),
+            "counters": row.get::<_, Option<Value>>("counters"),
         });
         let items = rows
             .iter()

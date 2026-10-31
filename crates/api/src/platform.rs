@@ -85,6 +85,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/bulk", post(bulk))
         .route("/v1/proposals", get(list_proposals).post(create_proposal))
         .route("/v1/proposals/{id}", get(get_proposal))
+        .route("/v1/proposals/{id}/rows", get(proposal_rows_page))
         .route("/v1/proposals/{id}/accept", post(accept_proposal))
         .route("/v1/proposals/{id}/discard", post(discard_proposal))
         .route("/v1/frecency", get(get_frecency).post(post_frecency))
@@ -184,6 +185,54 @@ fn registry() -> &'static [Operation] {
             needs_approval: false,
         },
         Operation {
+            name: "import.start",
+            title: "Start import draft",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.status",
+            title: "Import status",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.map",
+            title: "Set import mapping",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.preview",
+            title: "Preview import draft",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.discard",
+            title: "Discard import draft",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.mappings.list",
+            title: "List saved import mappings",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.mappings.rename",
+            title: "Rename saved import mapping",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
+            name: "import.mappings.delete",
+            title: "Delete saved import mapping",
+            permission: Role::Editor,
+            needs_approval: false,
+        },
+        Operation {
             name: "ui.open_view",
             title: "Open view",
             permission: Role::Viewer,
@@ -192,6 +241,12 @@ fn registry() -> &'static [Operation] {
         Operation {
             name: "ui.open_template",
             title: "Open workspace template",
+            permission: Role::Viewer,
+            needs_approval: false,
+        },
+        Operation {
+            name: "ui.open_changes",
+            title: "Open changes",
             permission: Role::Viewer,
             needs_approval: false,
         },
@@ -852,6 +907,8 @@ const AGENT_COMMIT_EXCLUDED: &[&str] = &[
     "accept_proposal",
     "discard_proposal",
     "delete_object",
+    "import.discard",
+    "import.mappings.delete",
     "model.delete_attribute",
     "model.delete_group",
     "model.delete_structure",
@@ -3157,15 +3214,91 @@ async fn post_frecency(
     ))
 }
 
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ProposalListParams {
+    offset: Option<i64>,
+    limit: Option<i64>,
+    /// `open`, `accepted` or `discarded`.
+    status: Option<String>,
+    /// `user`, `agent` or `import`.
+    source: Option<String>,
+}
+
 async fn list_proposals(
     State(state): State<AppState>,
     Auth(identity): Auth,
+    Query(query): Query<ProposalListParams>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
+    let status = query.status.as_deref().filter(|item| *item != "all");
+    let source = query.source.as_deref().filter(|item| *item != "all");
+    let (total, proposals) = state
+        .store
+        .list_proposals_page(
+            status,
+            source,
+            query.offset.unwrap_or(0).max(0),
+            query.limit.unwrap_or(50).clamp(1, 200),
+        )
+        .await
+        .map_err(store_status)?;
     Ok(Json(json!({
-        "proposals": state.store.list_proposals().await.map_err(store_status)?,
+        "proposals": proposals,
+        "total": total,
         "pending": state.store.pending_summary().await.map_err(store_status)?,
     })))
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ProposalRowsParams {
+    offset: Option<i64>,
+    limit: Option<i64>,
+    /// Row status filter. Import drafts: `new`, `changed`, `failed`, `stale`, `excluded`.
+    /// Other proposals: `pending`, `accepted`, `rejected`.
+    status: Option<String>,
+}
+
+/// One page of a draft's rows. Import drafts and ordinary proposals share the
+/// row shape, so one table can show both.
+async fn proposal_rows_page(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ProposalRowsParams>,
+) -> Result<Json<Value>, Problem> {
+    require(&identity, Role::Viewer)?;
+    let offset = query.offset.unwrap_or(0).max(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let status = query.status.as_deref().filter(|item| *item != "all");
+    if let Some(session_id) = state
+        .store
+        .proposal_session(id)
+        .await
+        .map_err(store_status)?
+    {
+        return Ok(Json(
+            crate::import::draft_rows(&state, session_id, status, offset, limit).await?,
+        ));
+    }
+    if state
+        .store
+        .proposal(id)
+        .await
+        .map_err(store_status)?
+        .is_none()
+    {
+        return Err(Problem::new(StatusCode::NOT_FOUND, "not_found", "proposal"));
+    }
+    let (total, rows) = state
+        .store
+        .proposal_rows_page(id, status, offset, limit)
+        .await
+        .map_err(store_status)?;
+    Ok(Json(
+        json!({ "total": total, "rows": rows, "kind": "rows" }),
+    ))
 }
 
 async fn create_proposal(
@@ -3283,6 +3416,34 @@ async fn accept_proposal(
             "agent_cannot_accept",
             "an agent or import proposes; a person accepts",
         ));
+    }
+    // An import draft keeps its rows in the import session, not in proposal_rows.
+    if let Some(session_id) = state
+        .store
+        .proposal_session(id)
+        .await
+        .map_err(store_status)?
+    {
+        let open = state
+            .store
+            .proposal(id)
+            .await
+            .map_err(store_status)?
+            .and_then(|proposal| {
+                proposal
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        if open.as_deref() != Some("open") {
+            return Err(Problem::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "this proposal is no longer pending",
+            ));
+        }
+        let value = crate::import::accept_import(&state, &identity, session_id, &body).await?;
+        return Ok(AcceptReply::Job(value));
     }
     let proposal = state
         .store
@@ -4171,6 +4332,15 @@ async fn discard_proposal(
     require(&identity, Role::Editor)?;
     if !identity.may_commit() {
         return Err(agent_cannot_discard());
+    }
+    if let Some(session_id) = state
+        .store
+        .proposal_session(id)
+        .await
+        .map_err(store_status)?
+    {
+        crate::import::discard_import(&state, session_id).await?;
+        return Ok(StatusCode::NO_CONTENT);
     }
     let lock = state.store.claim_proposal(id).await.map_err(store_status)?;
     let closed = state
@@ -5369,6 +5539,9 @@ async fn run_operation(
         "export" => Ok(
             json!({ "hint": "POST /v1/export returns the xlsx file, or a job when the view is large" }),
         ),
+        name if name.starts_with("import.") => {
+            crate::import::run_agent_op(state, identity, name, args).await
+        }
         "get_layout" => {
             let id = args
                 .get("workspace")
@@ -5448,6 +5621,9 @@ async fn run_operation(
                     Json(AcceptBody {
                         rows: Some(rows),
                         patches: BTreeMap::new(),
+                        skip_failed: false,
+                        only_rows: None,
+                        exclude_rows: None,
                     }),
                 )
                 .await?
@@ -6013,6 +6189,16 @@ pub(crate) struct ProposalRowBody {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AcceptBody {
     rows: Option<Vec<Uuid>>,
+    /// Import drafts only. Write the rows that cannot be imported as skipped
+    /// instead of refusing the approval.
+    #[serde(default)]
+    pub(crate) skip_failed: bool,
+    /// Import drafts only. Write just these preview row numbers.
+    #[serde(default)]
+    pub(crate) only_rows: Option<Vec<i32>>,
+    /// Import drafts only. Leave these preview row numbers out.
+    #[serde(default)]
+    pub(crate) exclude_rows: Option<Vec<i32>>,
     /// Replacement patches keyed by proposal row. An empty `values` object rejects that row.
     #[serde(default)]
     #[schema(value_type = crate::http_schema::FreeObject)]
@@ -6754,6 +6940,7 @@ mod tests {
         "ui.open_view",
         "ui.open_template",
         "ui.open_workspace",
+        "ui.open_changes",
         "ui.place",
         "ui.link",
         "ui.filter",

@@ -54,7 +54,7 @@ export function SortableColumnHeader({
   return (
     <div
       ref={setNodeRef}
-      className={`cell${sortable ? '' : ' column-not-sortable'}${active ? ' column-active' : ''}`}
+      className={`cell column-header-cell${sortable ? '' : ' column-not-sortable'}${active ? ' column-active' : ''}`}
       style={style}
       data-testid={`col-${id}`}
       data-column={id}
@@ -89,12 +89,13 @@ export function SortableColumnHeader({
         ) : null}
       </button>
       <span
-        className="icon-btn"
+        className="column-resize-handle"
         data-testid={`resize-${id}`}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize ${header} column`}
         onMouseDown={onResizeStart}
-      >
-        |
-      </span>
+      />
     </div>
   )
 }

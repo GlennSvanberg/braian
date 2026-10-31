@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -130,13 +131,13 @@ test('force-directed graph', async ({ page }) => {
   await expect(page.locator('canvas[data-testid=graph]')).toHaveAttribute('data-settled', 'true')
 
   await page.getByRole('button', { name: 'Close full size' }).click()
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await page.getByRole('button', { name: 'Open full size' }).click()
   await expect(page.getByTestId('graph-full')).toBeVisible()
   if (process.env.BRAIAN_GRAPH_SHOTS) await page.screenshot({ path: `${shots}/light.png` })
   await page.getByRole('button', { name: 'Close full size' }).click()
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
   const filters = page.getByTestId('quick-filter')
   for (let index = 0; index < (await filters.count()); index += 1) await filters.nth(index).fill('')
   await page.locator('[data-view-type="object_detail"]').first().click()

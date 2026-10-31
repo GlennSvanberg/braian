@@ -43,6 +43,7 @@ import { copy, uiLanguage } from './i18n'
 import { handleAppContextMenu } from './app-context-menu'
 import { openSharedContextMenu } from './shared-context-menu'
 import { StandardTableChrome } from './standard-table'
+import { StandardEditableTable, type StandardColumn } from './standard-editable-table'
 import { registerCommandRunner } from './command-registry'
 import {
   emptyDetail,
@@ -54,6 +55,7 @@ import {
   typeOfView,
 } from './type-labels'
 import { publishProposal } from './proposal-bus'
+import { ImportWorkspace } from './import/view'
 import { rollbackTargetSeq } from './history-rollback'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
@@ -963,7 +965,10 @@ export function ObjectTable({
     // so Description and Version can swap together instead of flashing '—'.
     placeholderData: (previous) => previous,
   })
-  const pathValuesPending = pathValueColumns.length > 0 && pathValues.isPending && !pathValues.data
+  const pathValuesPending =
+    pathValueColumns.length > 0 &&
+    !pathValues.data &&
+    (pathValues.isPending || pathValues.isFetching)
   const objectsFetching = probe.isFetching || windows.some((result) => result.isFetching)
   const pathBusy = pathValueColumns.length > 0 && pathValues.isFetching
   // Hold Typesense hits and pathValues until both refreshes settle so a live
@@ -2811,16 +2816,29 @@ export function ProposalView({ session }: { session: PanesSession }) {
       void queryClient.invalidateQueries({ queryKey: ['proposal'] })
     },
   })
-  const proposals = (list.data?.proposals as Json[] | undefined) ?? []
   if (!session.proposalId) {
     return (
       <div data-testid="proposal">
-        {proposals.map((row) => (
-          <button key={String(row.id)} onClick={() => session.setProposalId(String(row.id))}>
-            {String(row.title)} · <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip> · {sourceLabel(row)}
-          </button>
-        ))}
-        {proposals.length === 0 ? <p>{copy.proposals}</p> : null}
+        <p className="muted">{(list.data?.proposals as Json[] | undefined)?.length ? 'Select a proposal in the Proposals list.' : 'No proposals yet.'}</p>
+      </div>
+    )
+  }
+  if (proposal.data?.session_id) {
+    return (
+      <div data-testid="proposal">
+        <ImportWorkspace
+          sessionId={String(proposal.data.session_id)}
+          onChanged={() => {
+            session.push(copy.saved)
+            void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+            void queryClient.invalidateQueries({ queryKey: ['proposal'] })
+            void queryClient.invalidateQueries({ queryKey: ['objects'] })
+          }}
+          onGone={() => {
+            session.setProposalId(null)
+            void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+          }}
+        />
       </div>
     )
   }
@@ -2831,16 +2849,9 @@ export function ProposalView({ session }: { session: PanesSession }) {
   }
   return (
     <div data-testid="proposal">
-      <div className="proposal-switch">
-        {proposals.map((row) => (
-          <button key={String(row.id)} type="button" className={String(row.id) === session.proposalId ? 'primary' : ''} onClick={() => session.setProposalId(String(row.id))}>
-            {String(row.title)}
-          </button>
-        ))}
-      </div>
       <div className="toolbar">
         <strong>{String(proposal.data?.title ?? '')}</strong>
-        {proposal.data ? <span className="chip" data-testid="source-badge">{sourceLabel(proposal.data)}</span> : null}
+        {proposal.data ? <span className="meta-chip neutral" data-testid="source-badge">{sourceLabel(proposal.data)}</span> : null}
         {proposal.data?.status ? <MetaChip tone={statusTone(String(proposal.data.status))}>{String(proposal.data.status)}</MetaChip> : null}
         <button type="button" data-testid="save-all" disabled={loadingObjects || accept.isPending || discard.isPending} onClick={saveAll}>{copy.saveAll}</button>
         <button type="button" data-testid="discard-all" disabled={accept.isPending || discard.isPending} onClick={() => discard.mutate()}>{copy.discardAll}</button>
@@ -2874,6 +2885,55 @@ export function ProposalView({ session }: { session: PanesSession }) {
   )
 }
 
+type ProposalRow = { id: string; title: string; source: string; status: string; changes: string; by: string; created: string }
+
+/** Every proposal in the standard table. Picking a row opens it in the Proposal view. */
+export function ProposalListView({ session }: { session: PanesSession }) {
+  const [filter, setFilter] = useState('')
+  const list = useQuery({ queryKey: ['proposals'], queryFn: () => api.get('/v1/proposals') })
+  const rows: ProposalRow[] = ((list.data?.proposals as Json[] | undefined) ?? []).map((row) => {
+    const counters = row.counters as Json | undefined
+    return {
+      id: String(row.id),
+      title: String(row.title),
+      source: sourceLabel(row),
+      status: String(row.status),
+      changes: counters
+        ? `${Number(counters.new ?? 0)} new, ${Number(counters.changed ?? 0)} changed, ${Number(counters.failed ?? 0)} errors`
+        : row.row_count != null ? `${Number(row.row_count)} rows` : '',
+      by: String(row.actor_name ?? ''),
+      created: row.created_at ? relativeTime(String(row.created_at)) : '',
+    }
+  })
+  const columns: Array<StandardColumn<ProposalRow>> = [
+    { id: 'title', header: 'Proposal', type: 'readonly', truncate: true, read: (row) => row.title },
+    { id: 'source', header: 'Source', type: 'readonly', truncate: true, width: 90, read: (row) => row.source },
+    {
+      id: 'status',
+      header: 'Status',
+      type: 'readonly',
+      width: 90,
+      read: (row) => row.status,
+      display: (row) => <MetaChip tone={statusTone(row.status)}>{row.status}</MetaChip>,
+    },
+    { id: 'changes', header: 'Changes', type: 'readonly', truncate: true, width: 190, read: (row) => row.changes },
+    { id: 'by', header: 'By', type: 'readonly', truncate: true, width: 110, read: (row) => row.by },
+    { id: 'created', header: 'Created', type: 'readonly', truncate: true, width: 110, read: (row) => row.created },
+  ]
+  return (
+    <StandardEditableTable
+      testId="proposal-list"
+      columns={columns}
+      rows={rows}
+      editable={false}
+      filterValue={filter}
+      onFilterChange={setFilter}
+      activeRowId={session.proposalId}
+      onActivateRow={(row) => session.setProposalId(row.id)}
+      getRowTestId={(row) => `proposal-row-${row.id}`}
+    />
+  )
+}
 function SuggestionCard({
   row,
   current,

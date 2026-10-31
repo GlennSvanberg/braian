@@ -19,6 +19,10 @@ pub const DIFF_CHUNK: usize = 2_000;
 pub struct MappedColumn {
     pub index: usize,
     pub target: String,
+    /// An empty cell removes the stored value instead of leaving it alone.
+    pub clear_empty: bool,
+    /// A cell that does not validate is left out (and marked) instead of failing the row.
+    pub skip_invalid: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +79,8 @@ pub fn classify_row(
     let mut languages: BTreeMap<AttributeId, BTreeMap<LanguageTag, Value>> = BTreeMap::new();
     let mut groups = BTreeMap::new();
     let mut link_plans: Vec<Value> = Vec::new();
-    let mut action = String::new();
+    let mut clears: BTreeSet<usize> = BTreeSet::new();
+    let skip_invalid = columns.iter().any(|column| column.skip_invalid);
     for column in columns {
         if column.target == "unmapped" {
             continue;
@@ -89,30 +94,19 @@ pub fn classify_row(
             errors.push(json!({ "code": "unknown_target", "message": "That field is not in the data model." }));
             continue;
         };
-        if target.id == "action" {
-            action = raw.clone().unwrap_or_default().trim().to_lowercase();
-            cell_view.insert(
-                column.index.to_string(),
-                json!({ "value": raw.clone().unwrap_or_default(), "state": "same" }),
-            );
-            continue;
-        }
         let Some(text) = raw else {
+            if column.clear_empty
+                && target.attribute_key.is_some()
+                && !target.id.starts_with("link:")
+            {
+                clears.insert(column.index);
+            }
             cell_view.insert(
                 column.index.to_string(),
                 json!({ "value": "", "state": "same" }),
             );
             continue;
         };
-        if text == "#CLEAR" {
-            let error = json!({ "code": "unsupported_clear", "message": "Clearing a value is not supported." });
-            cell_view.insert(
-                column.index.to_string(),
-                json!({ "value": text, "state": "error", "error": error }),
-            );
-            errors.push(error);
-            continue;
-        }
         match apply_cell(
             model,
             defs,
@@ -135,25 +129,27 @@ pub fn classify_row(
                     column.index.to_string(),
                     json!({ "value": text, "state": "error", "error": error }),
                 );
-                errors.push(error);
+                if !skip_invalid {
+                    errors.push(error);
+                }
             }
         }
     }
     merge_languages(&mut values, languages);
+    let dropped = drop_not_applicable(
+        model,
+        type_id,
+        &groups,
+        existing,
+        &mut values,
+        &mut cell_view,
+        columns,
+        targets,
+    );
     if !link_plans.is_empty() {
         cell_view.insert("links".into(), Value::Array(link_plans.clone()));
     }
     let links_changed = links_differ(&link_plans, current_links);
-    if !action.is_empty()
-        && action != "upsert"
-        && action != "update"
-        && action != "create"
-        && action != "delete"
-    {
-        errors.push(
-            json!({ "code": "invalid_action", "message": format!("Unknown action {action}.") }),
-        );
-    }
     if let Some(existing) = existing {
         paint_changes(
             &mut cell_view,
@@ -162,7 +158,9 @@ pub fn classify_row(
             targets,
             &existing.object.values,
             &values,
+            &clears,
         );
+        mark_not_applicable(&mut cell_view, model, columns, targets, &dropped);
     }
     let key = id_column.and_then(|index| {
         cells
@@ -171,7 +169,7 @@ pub fn classify_row(
             .map(|text| text.trim().to_owned())
             .filter(|text| !text.is_empty())
     });
-    if !errors.is_empty() && action != "delete" {
+    if !errors.is_empty() {
         return Classified {
             key: key.clone(),
             outcome: RowOutcome {
@@ -179,28 +177,6 @@ pub fn classify_row(
                 object_id: existing.map(|item| item.object.id.as_uuid()),
                 object_key: key,
                 base_version: existing.map(|item| item.version as i64),
-                cells: Value::Object(cell_view),
-                patch: None,
-                errors: Value::Array(errors),
-            },
-        };
-    }
-    if action == "delete" {
-        let Some(existing) = existing else {
-            return failed_row(
-                row_no,
-                cells,
-                "delete_not_found",
-                "Delete needs an existing object.",
-            );
-        };
-        return Classified {
-            key: key.clone(),
-            outcome: RowOutcome {
-                status: "delete".into(),
-                object_id: Some(existing.object.id.as_uuid()),
-                object_key: key.or(Some(existing.key.clone())),
-                base_version: Some(existing.version as i64),
                 cells: Value::Object(cell_view),
                 patch: None,
                 errors: Value::Array(errors),
@@ -215,6 +191,12 @@ pub fn classify_row(
             &groups,
             &existing.object.groups,
         );
+        let mut patch = patch;
+        for id in clear_ids(model, columns, targets, &clears) {
+            if existing.object.values.contains_key(&id) && !values.contains_key(&id) {
+                patch.values.attributes.insert(id, AttributePatch::Remove);
+            }
+        }
         if patch.is_empty() && !links_changed {
             return Classified {
                 key,
@@ -229,7 +211,39 @@ pub fn classify_row(
                 },
             };
         }
-        let report = model.validate_patch(&existing.object, &patch);
+        let mut report = model.validate_patch(&existing.object, &patch);
+        if skip_invalid {
+            for _ in 0..8 {
+                if report.errors.is_empty() || report.errors.iter().any(|e| e.attribute.is_none()) {
+                    break;
+                }
+                attach_validation(&mut cell_view, model, columns, targets, &report.errors);
+                let mut removed = false;
+                for error in &report.errors {
+                    if let Some(id) = error.attribute {
+                        removed |= patch.values.attributes.remove(&id).is_some();
+                    }
+                }
+                if !removed {
+                    break;
+                }
+                report = model.validate_patch(&existing.object, &patch);
+            }
+            if report.errors.is_empty() && patch.is_empty() && !links_changed {
+                return Classified {
+                    key: key.or(Some(existing.key.clone())),
+                    outcome: RowOutcome {
+                        status: "unchanged".into(),
+                        object_id: Some(existing.object.id.as_uuid()),
+                        object_key: Some(existing.key.clone()),
+                        base_version: Some(existing.version as i64),
+                        cells: Value::Object(cell_view),
+                        patch: None,
+                        errors: Value::Array(Vec::new()),
+                    },
+                };
+            }
+        }
         if !report.errors.is_empty() {
             attach_validation(&mut cell_view, model, columns, targets, &report.errors);
             return Classified {
@@ -262,14 +276,32 @@ pub fn classify_row(
             },
         };
     }
-    let object = Object {
+    let mut object = Object {
         id: ObjectId::from_uuid(Uuid::now_v7()),
         type_id,
         model_revision: defs.model_revision,
         groups,
         values,
     };
-    let validation = model.validate(&object);
+    let mut validation = model.validate(&object);
+    if skip_invalid {
+        for _ in 0..8 {
+            if validation.is_empty() || validation.iter().any(|e| e.attribute.is_none()) {
+                break;
+            }
+            attach_validation(&mut cell_view, model, columns, targets, &validation);
+            let mut removed = false;
+            for error in &validation {
+                if let Some(id) = error.attribute {
+                    removed |= object.values.remove(&id).is_some();
+                }
+            }
+            if !removed {
+                break;
+            }
+            validation = model.validate(&object);
+        }
+    }
     if !validation.is_empty() {
         attach_validation(&mut cell_view, model, columns, targets, &validation);
         return Classified {
@@ -507,11 +539,8 @@ fn apply_part(
             object.insert("unit".into(), Value::String(text.trim().to_owned()));
         }
         "value" | "min" | "max" => {
-            let (number, unit) = parse_number_text(text)?;
+            let number = parse_plain_number(text)?;
             object.insert(part.into(), Value::String(number));
-            if let Some(unit) = unit {
-                object.insert("unit".into(), Value::String(unit));
-            }
         }
         _ => {
             return Err(err(
@@ -576,8 +605,8 @@ fn parse_scalar(
         AttributeKind::Boolean => parse_bool(text).map(Value::Bool),
         AttributeKind::Date => parse_date(text).map(Value::String),
         AttributeKind::Number { unit_family, .. } => {
-            let (number, unit) = parse_number_text(text)?;
-            let unit = match (unit, unit_family) {
+            let number = parse_plain_number(text)?;
+            let unit = match (None::<String>, unit_family) {
                 (Some(unit), Some(_)) => Some(unit),
                 (None, Some(family)) => defs
                     .unit_families
@@ -611,6 +640,14 @@ fn parse_scalar(
                 None => Err(err("invalid_object_ref", "That object was not found.")),
             }
         }
+    }
+}
+
+/// A bare number only. 12 kg is not a number here: units come from a unit column or the default.
+pub fn parse_plain_number(text: &str) -> Result<String, Value> {
+    match parse_number_text(text)? {
+        (number, None) => Ok(number),
+        _ => Err(err("invalid_decimal", "Not a number")),
     }
 }
 
@@ -916,6 +953,7 @@ fn paint_changes(
     targets: &[Target],
     current: &BTreeMap<AttributeId, Value>,
     next: &BTreeMap<AttributeId, Value>,
+    clears: &BTreeSet<usize>,
 ) {
     for column in columns {
         let Some(target) = find_target(targets, &column.target) else {
@@ -930,6 +968,10 @@ fn paint_changes(
         let Some(entry) = cells.get_mut(&column.index.to_string()) else {
             continue;
         };
+        if entry.get("value").and_then(Value::as_str) == Some("") && !clears.contains(&column.index)
+        {
+            continue;
+        }
         let before = current.get(&attribute.id);
         if entry.get("state").and_then(Value::as_str) == Some("error") {
             if let Some(before) = before
@@ -1047,6 +1089,92 @@ pub fn seen_key(seen: &mut HashMap<String, u32>, key: &str, row_no: u32) -> Opti
     }
 }
 
+/// Attribute ids of the columns whose empty cell should clear the value.
+fn clear_ids(
+    model: &CompiledModel,
+    columns: &[MappedColumn],
+    targets: &[Target],
+    clears: &BTreeSet<usize>,
+) -> Vec<AttributeId> {
+    columns
+        .iter()
+        .filter(|column| clears.contains(&column.index))
+        .filter_map(|column| {
+            let target = find_target(targets, &column.target)?;
+            let key = target.attribute_key.as_deref()?;
+            Some(model.attribute_by_key(key)?.id)
+        })
+        .collect()
+}
+
+/// Values for attributes that do not apply to the row's groups are dropped with a warning
+/// on the cell, instead of failing the whole row.
+#[allow(clippy::too_many_arguments)]
+fn drop_not_applicable(
+    model: &CompiledModel,
+    type_id: TypeId,
+    groups: &BTreeMap<braian_model::StructureId, braian_model::GroupId>,
+    existing: Option<&StoredObject>,
+    values: &mut BTreeMap<AttributeId, Value>,
+    _cell_view: &mut Map<String, Value>,
+    _columns: &[MappedColumn],
+    _targets: &[Target],
+) -> BTreeSet<AttributeId> {
+    let mut placed = existing
+        .map(|item| item.object.groups.clone())
+        .unwrap_or_default();
+    placed.extend(groups.iter().map(|(structure, group)| (*structure, *group)));
+    let Some(applicable) = model.applicable_ids(type_id, &placed) else {
+        return BTreeSet::new();
+    };
+    let applicable: BTreeSet<AttributeId> = applicable.into_iter().collect();
+    let dropped: BTreeSet<AttributeId> = values
+        .keys()
+        .filter(|id| !applicable.contains(id))
+        .copied()
+        .collect();
+    for id in &dropped {
+        values.remove(id);
+    }
+    dropped
+}
+
+fn mark_not_applicable(
+    cells: &mut Map<String, Value>,
+    model: &CompiledModel,
+    columns: &[MappedColumn],
+    targets: &[Target],
+    dropped: &BTreeSet<AttributeId>,
+) {
+    if dropped.is_empty() {
+        return;
+    }
+    for column in columns {
+        let Some(target) = find_target(targets, &column.target) else {
+            continue;
+        };
+        let Some(attribute) = target
+            .attribute_key
+            .as_deref()
+            .and_then(|key| model.attribute_by_key(key))
+        else {
+            continue;
+        };
+        if !dropped.contains(&attribute.id) {
+            continue;
+        }
+        if let Some(object) = cells
+            .get_mut(&column.index.to_string())
+            .and_then(Value::as_object_mut)
+        {
+            object.insert("state".into(), Value::String("warning".into()));
+            object.insert(
+                "warning".into(),
+                json!({ "code": "not_applicable", "message": "This field does not apply to the row's group, so the value is not imported." }),
+            );
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
 
@@ -1222,21 +1350,27 @@ mod tests {
     }
 
     #[test]
-    fn classifies_new_changed_unchanged_delete_and_duplicates() {
+    fn classifies_new_changed_unchanged_and_duplicates() {
         let (model, defs) = model();
         let targets = super::super::mapping::targets_for(&defs, "item");
         let columns = vec![
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 0,
                 target: "type:sku".into(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 1,
                 target: "type:name".into(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 2,
-                target: "action".into(),
+                target: "unmapped".into(),
             },
         ];
         let mut resolve = |_type: &str, _key: &str| None;
@@ -1325,38 +1459,6 @@ mod tests {
             &BTreeMap::new(),
         );
         assert_eq!(empty.outcome.status, "unchanged");
-        let deleted = classify_row(
-            &model,
-            &defs,
-            &targets,
-            "item",
-            &columns,
-            Some(0),
-            7,
-            &[Some("A-1".into()), None, Some("delete".into())],
-            Some(&existing),
-            None,
-            &mut resolve,
-            &BTreeMap::new(),
-        );
-        assert_eq!(deleted.outcome.status, "delete");
-        let missing = classify_row(
-            &model,
-            &defs,
-            &targets,
-            "item",
-            &columns,
-            Some(0),
-            8,
-            &[Some("B-9".into()), None, Some("delete".into())],
-            None,
-            None,
-            &mut resolve,
-            &BTreeMap::new(),
-        );
-        assert_eq!(missing.outcome.errors[0]["code"], "delete_not_found");
-        assert_ne!(deleted.outcome.cells["0"]["state"], "new");
-        assert_eq!(deleted.outcome.cells["0"]["state"], "same");
     }
 
     #[test]
@@ -1365,18 +1467,26 @@ mod tests {
         let targets = super::super::mapping::targets_for(&defs, "item");
         let columns = vec![
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 0,
                 target: "type:sku".into(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 1,
                 target: "type:name".into(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 2,
                 target: "type:made".into(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 3,
                 target: "type:active".into(),
             },
@@ -1484,14 +1594,20 @@ mod tests {
         assert_eq!(supplier.id, "link:supplier_articles:in");
         let columns = vec![
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 0,
                 target: "type:number".into(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 1,
                 target: product.id.clone(),
             },
             MappedColumn {
+                clear_empty: false,
+                skip_invalid: false,
                 index: 2,
                 target: supplier.id.clone(),
             },

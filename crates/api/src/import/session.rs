@@ -15,6 +15,7 @@ use crate::state::AppState;
 
 use super::decisions::{self, HttpDecider};
 use super::diff::{self, MappedColumn, classify_row};
+use super::entity;
 use super::mapping::{self, HeaderInput, ManualLine, Proposal};
 use super::parse::{self, FileKind, HeaderCol, ParseOutcome, RowCursor};
 
@@ -171,14 +172,65 @@ async fn prepare(
         .get(&state.store)
         .await
         .map_err(|problem| problem.detail)?;
-    let headers = HeaderInput::from_parsed(&outcome.headers, &outcome.sample);
+    let mut headers = HeaderInput::from_parsed(&outcome.headers, &outcome.sample);
+    hide_samples_for_ai(&mut headers);
     let sheet_name = outcome
         .sheets
         .iter()
         .find(|sheet| sheet.index == outcome.sheet_index)
         .map(|sheet| sheet.name.clone())
         .unwrap_or_else(|| "Sheet".into());
+    if let Some(reuse) = super::saved::find_for(state, &headers_json(&outcome.headers)).await {
+        let (mut proposal, usage) = mapping::propose::<HttpDecider>(
+            None,
+            &cached.defs,
+            &headers,
+            &session.file_name,
+            &sheet_name,
+            session.owner,
+            Some(&reuse.type_key),
+            reuse.id_column,
+            &reuse.lines,
+        )
+        .await;
+        proposal.ai = format!("saved: {}", reuse.name);
+        let proposal_json = serde_json::to_value(&proposal).map_err(|error| error.to_string())?;
+        state
+            .store
+            .update_import_proposal(id, &proposal_json, &usage, "ready")
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Ok(Some(updated)) = state.store.import_session(id).await {
+            emit_import(state, &updated);
+        }
+        return Ok(());
+    }
     let decider = decider_from_env();
+    if decider.is_some() {
+        // Rules first: the user sees a usable mapping at once while the AI works.
+        let (mut quick, usage) = mapping::propose::<HttpDecider>(
+            None,
+            &cached.defs,
+            &headers,
+            &session.file_name,
+            &sheet_name,
+            session.owner,
+            None,
+            None,
+            &[],
+        )
+        .await;
+        quick.ai = "pending".into();
+        let quick_json = serde_json::to_value(&quick).map_err(|error| error.to_string())?;
+        state
+            .store
+            .update_import_proposal(id, &quick_json, &usage, "mapping")
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Ok(Some(updated)) = state.store.import_session(id).await {
+            emit_import(state, &updated);
+        }
+    }
     let (proposal, usage) = mapping::propose(
         decider.as_ref(),
         &cached.defs,
@@ -203,7 +255,19 @@ async fn prepare(
     Ok(())
 }
 
+/// In headers mode no cell values leave the server, so they are not read at all.
+fn hide_samples_for_ai(headers: &mut [HeaderInput]) {
+    if decisions::AiMode::from_env() == decisions::AiMode::Headers {
+        for header in headers {
+            header.samples.clear();
+        }
+    }
+}
+
 fn decider_from_env() -> Option<HttpDecider> {
+    if decisions::AiMode::from_env() == decisions::AiMode::Off {
+        return None;
+    }
     let key = decisions::openai_key()?;
     Some(HttpDecider::new(
         decisions::openai_base(),
@@ -228,7 +292,8 @@ pub async fn remap(
         serde_json::from_value(session.headers.clone()).unwrap_or_default();
     let sample: Vec<Vec<String>> =
         serde_json::from_value(session.sample.clone()).unwrap_or_default();
-    let headers = HeaderInput::from_parsed(&headers, &sample);
+    let mut headers = HeaderInput::from_parsed(&headers, &sample);
+    hide_samples_for_ai(&mut headers);
     let sheet = session
         .sheets
         .as_array()
@@ -327,6 +392,18 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
         .get(&state.store)
         .await
         .map_err(|problem| problem.detail)?;
+    if entity::is_model(&type_token) {
+        return diff_model_session(
+            state,
+            id,
+            generation,
+            &session,
+            &cached.defs,
+            id_column,
+            &columns,
+        )
+        .await;
+    }
     let targets = mapping::targets_for(&cached.defs, &type_token);
     let object_type = cached
         .defs
@@ -344,6 +421,11 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
     // The saved mapping stores the type id. Classification looks the type up by key.
     let type_id = object_type.id;
     let type_key = object_type.key.clone();
+    let overrides = state
+        .store
+        .import_overrides(id)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut cursor = RowCursor::open(&session_dir(id)).map_err(|error| error.message)?;
     let mut seen = std::collections::HashMap::new();
     let mut counters = Counter::default();
@@ -369,6 +451,7 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
                 &mut seen,
                 &mut counters,
                 &mut last_emit,
+                &overrides,
             )
             .await?;
         }
@@ -389,10 +472,21 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
             &mut seen,
             &mut counters,
             &mut last_emit,
+            &overrides,
         )
         .await?;
     }
     let counters = counters.json(cursor.len() as u64);
+    finish_preview(state, id, generation, &session, counters).await
+}
+
+async fn finish_preview(
+    state: &AppState,
+    id: Uuid,
+    generation: i64,
+    session: &ImportSession,
+    counters: Value,
+) -> Result<(), DiffError> {
     let current = state
         .store
         .update_import_diff_if_current(id, generation, "previewed", &counters, None)
@@ -401,12 +495,92 @@ async fn diff_session(state: &AppState, id: Uuid, generation: i64) -> Result<(),
     if !current {
         return Err(DiffError::Superseded);
     }
+    // The draft exists as soon as the preview is ready. It stays in the staging
+    // area until someone approves or discards it.
+    let sheet = session
+        .sheets
+        .as_array()
+        .and_then(|sheets| {
+            sheets.iter().find(|sheet| {
+                sheet.get("index").and_then(Value::as_i64) == Some(i64::from(session.sheet_index))
+            })
+        })
+        .and_then(|sheet| sheet.get("name").and_then(Value::as_str))
+        .filter(|name| session.file_kind != "csv" && !name.is_empty());
+    let title = match sheet {
+        Some(name) => format!("Import {} ({name})", session.file_name),
+        None => format!("Import {}", session.file_name),
+    };
+    state
+        .store
+        .upsert_import_proposal(id, &title, &counters)
+        .await
+        .map_err(|error| error.to_string())?;
     if let Ok(Some(session)) = state.store.import_session(id).await {
         emit_import(state, &session);
     }
+    state.emit(json!({ "op": "proposal", "session": id }));
     Ok(())
 }
 
+/// Diff of a data model sheet: the rows become model changes. Model sheets are small, so the
+/// rows are held in memory and written in one go.
+async fn diff_model_session(
+    state: &AppState,
+    id: Uuid,
+    generation: i64,
+    session: &ImportSession,
+    defs: &braian_model::DefinitionSet,
+    id_column: Option<usize>,
+    columns: &[MappedColumn],
+) -> Result<(), DiffError> {
+    let overrides = state
+        .store
+        .import_overrides(id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut cursor = RowCursor::open(&session_dir(id)).map_err(|error| error.message)?;
+    let mut counters = Counter::default();
+    let mut rows = Vec::new();
+    while let Some((row_no, mut cells)) = cursor.next_row().map_err(|error| error.message)? {
+        apply_overrides(&overrides, row_no, &mut cells);
+        let outcome = entity::classify_attribute(defs, columns, id_column, &cells);
+        match outcome.status.as_str() {
+            "new" => counters.new += 1,
+            "changed" => counters.changed += 1,
+            "failed" => counters.failed += 1,
+            _ => counters.unchanged += 1,
+        }
+        rows.push(braian_store::ImportRowIn {
+            session_id: id,
+            row_no: row_no as i32,
+            status: outcome.status,
+            object_id: None,
+            object_key: outcome.object_key,
+            base_version: None,
+            cells: outcome.cells,
+            patch: outcome.patch,
+            errors: outcome.errors,
+        });
+    }
+    counters.processed = rows.len() as u64;
+    let kept = state
+        .store
+        .copy_import_rows(id, generation, &rows)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !kept {
+        return Err(DiffError::Superseded);
+    }
+    finish_preview(
+        state,
+        id,
+        generation,
+        session,
+        counters.json(cursor.len() as u64),
+    )
+    .await
+}
 #[allow(clippy::too_many_arguments)]
 async fn flush_chunk(
     state: &AppState,
@@ -423,7 +597,11 @@ async fn flush_chunk(
     seen: &mut std::collections::HashMap<String, u32>,
     counters: &mut Counter,
     last_emit: &mut Instant,
+    overrides: &Value,
 ) -> Result<(), DiffError> {
+    for (row_no, cells) in buffer.iter_mut() {
+        apply_overrides(overrides, *row_no, cells);
+    }
     if !state
         .store
         .import_diff_current(id, generation)
@@ -493,12 +671,8 @@ async fn flush_chunk(
         match classified.outcome.status.as_str() {
             "new" => counters.new += 1,
             "changed" => counters.changed += 1,
-            "delete" => counters.delete += 1,
             "failed" => counters.failed += 1,
-            "unchanged" => {
-                counters.unchanged += 1;
-                continue;
-            }
+            "unchanged" => counters.unchanged += 1,
             _ => {}
         }
         rows.push(braian_store::ImportRowIn {
@@ -670,9 +844,22 @@ fn mapped_columns(mapping: &Value) -> Vec<MappedColumn> {
         .into_iter()
         .flatten()
         .filter_map(|column| {
+            let target = column.get("target")?.as_str()?;
+            // Old mappings may carry the removed action column.
+            if target == "action" {
+                return None;
+            }
             Some(MappedColumn {
                 index: column.get("col")?.as_u64()? as usize,
-                target: column.get("target")?.as_str()?.to_owned(),
+                target: target.to_owned(),
+                clear_empty: mapping
+                    .get("empty_clears")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                skip_invalid: mapping
+                    .get("skip_invalid")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             })
         })
         .collect()
@@ -682,7 +869,6 @@ fn mapped_columns(mapping: &Value) -> Vec<MappedColumn> {
 struct Counter {
     new: u64,
     changed: u64,
-    delete: u64,
     failed: u64,
     unchanged: u64,
     processed: u64,
@@ -693,7 +879,8 @@ impl Counter {
         json!({
             "new": self.new,
             "changed": self.changed,
-            "delete": self.delete,
+            "stale": 0,
+            "excluded": 0,
             "failed": self.failed,
             "unchanged": self.unchanged,
             "processed": self.processed,
@@ -760,4 +947,222 @@ pub fn manual_from_proposal(proposal: &Value) -> Vec<ManualLine> {
             })
         })
         .collect()
+}
+
+fn apply_overrides(overrides: &Value, row_no: u32, cells: &mut Vec<Option<String>>) {
+    let Some(edits) = overrides.get(row_no.to_string()).and_then(Value::as_object) else {
+        return;
+    };
+    for (col, value) in edits {
+        let Ok(index) = col.parse::<usize>() else {
+            continue;
+        };
+        if index >= cells.len() {
+            cells.resize(index + 1, None);
+        }
+        cells[index] = value
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned);
+    }
+}
+
+/// Edits one cell of a draft row, checks the row again and updates the counters.
+pub async fn edit_cell(
+    state: &AppState,
+    id: Uuid,
+    row_no: u32,
+    col: usize,
+    value: &str,
+) -> Result<(Option<braian_store::ImportRowOut>, Value), String> {
+    let session = state
+        .store
+        .import_session(id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "That import does not exist.".to_owned())?;
+    if session.status != "previewed" {
+        return Err("The draft cannot be edited right now.".into());
+    }
+    let before = state
+        .store
+        .import_row(id, row_no as i32)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "That row is not part of the draft.".to_owned())?;
+    let mapping = session
+        .mapping
+        .clone()
+        .ok_or_else(|| "Choose a mapping first.".to_owned())?;
+    let type_token = mapping
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Choose an object type.".to_owned())?
+        .to_owned();
+    let id_column = mapping
+        .get("id_column")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    let columns = mapped_columns(&mapping);
+    let cached = state
+        .models
+        .get(&state.store)
+        .await
+        .map_err(|problem| problem.detail)?;
+    if entity::is_model(&type_token) {
+        let row_overrides = state
+            .store
+            .set_import_override(id, row_no as i32, col as i32, value)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut cursor = RowCursor::open(&session_dir(id)).map_err(|error| error.message)?;
+        let index = (0..cursor.len())
+            .find(|index| cursor.row_no(*index) == Some(row_no))
+            .ok_or_else(|| "That row is not in the file.".to_owned())?;
+        let (_, mut cells) = cursor.read_at(index).map_err(|error| error.message)?;
+        apply_overrides(
+            &json!({ row_no.to_string(): row_overrides }),
+            row_no,
+            &mut cells,
+        );
+        let outcome = entity::classify_attribute(&cached.defs, &columns, id_column, &cells);
+        return store_edited(state, id, row_no, &session, &before, outcome).await;
+    }
+    let targets = mapping::targets_for(&cached.defs, &type_token);
+    let object_type = cached
+        .defs
+        .types
+        .iter()
+        .find(|item| {
+            item.key == type_token
+                || item
+                    .id
+                    .as_uuid()
+                    .to_string()
+                    .eq_ignore_ascii_case(&type_token)
+        })
+        .ok_or_else(|| "That object type does not exist.".to_owned())?;
+    let type_id = object_type.id;
+    let type_key = object_type.key.clone();
+    let row_overrides = state
+        .store
+        .set_import_override(id, row_no as i32, col as i32, value)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut cursor = RowCursor::open(&session_dir(id)).map_err(|error| error.message)?;
+    let index = (0..cursor.len())
+        .find(|index| cursor.row_no(*index) == Some(row_no))
+        .ok_or_else(|| "That row is not in the file.".to_owned())?;
+    let (_, mut cells) = cursor.read_at(index).map_err(|error| error.message)?;
+    apply_overrides(
+        &json!({ row_no.to_string(): row_overrides }),
+        row_no,
+        &mut cells,
+    );
+    let key = id_column.and_then(|position| {
+        cells
+            .get(position)
+            .and_then(|cell| cell.clone())
+            .map(|text| text.trim().to_owned())
+            .filter(|text| !text.is_empty())
+    });
+    let keys: Vec<String> = key.iter().cloned().collect();
+    let existing = state
+        .store
+        .get_by_keys(type_id, &keys)
+        .await
+        .map_err(|error| error.to_string())?;
+    let ids: Vec<Uuid> = existing
+        .values()
+        .map(|item| item.object.id.as_uuid())
+        .collect();
+    let peer_index = state
+        .store
+        .link_peer_index(&ids)
+        .await
+        .map_err(|error| error.to_string())?;
+    let buffer = vec![(row_no, cells.clone())];
+    let refs = preload_refs(
+        state,
+        &cached.model,
+        &cached.defs,
+        &targets,
+        &columns,
+        &buffer,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let found = key.as_ref().and_then(|key| existing.get(key));
+    let mut resolve = |ref_type: &str, ref_key: &str| {
+        refs.get(&(ref_type.to_owned(), ref_key.to_owned()))
+            .copied()
+    };
+    let classified = classify_row(
+        &cached.model,
+        &cached.defs,
+        &targets,
+        &type_key,
+        &columns,
+        id_column,
+        row_no,
+        &cells,
+        found,
+        None,
+        &mut resolve,
+        &current_link_sets(&cached.defs, found, &peer_index),
+    );
+    store_edited(state, id, row_no, &session, &before, classified.outcome).await
+}
+
+async fn store_edited(
+    state: &AppState,
+    id: Uuid,
+    row_no: u32,
+    session: &ImportSession,
+    _before: &braian_store::ImportRowOut,
+    outcome: diff::RowOutcome,
+) -> Result<(Option<braian_store::ImportRowOut>, Value), String> {
+    let status = outcome.status.clone();
+    let row = braian_store::ImportRowIn {
+        session_id: id,
+        row_no: row_no as i32,
+        status: status.clone(),
+        object_id: outcome.object_id,
+        object_key: outcome.object_key,
+        base_version: outcome.base_version,
+        cells: outcome.cells,
+        patch: outcome.patch,
+        errors: outcome.errors,
+    };
+    state
+        .store
+        .replace_import_row(id, row_no as i32, Some(&row))
+        .await
+        .map_err(|error| error.to_string())?;
+    let counts = state
+        .store
+        .import_status_counts(id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut counters = session.counters.clone();
+    if let Some(map) = counters.as_object_mut() {
+        for name in ["new", "changed", "failed", "excluded", "stale", "unchanged"] {
+            map.insert(name.into(), json!(counts.get(name).copied().unwrap_or(0)));
+        }
+    }
+    state
+        .store
+        .set_import_counters(id, &counters)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Ok(Some(updated)) = state.store.import_session(id).await {
+        emit_import(state, &updated);
+    }
+    state.emit(json!({ "op": "proposal", "session": id }));
+    let stored = state
+        .store
+        .import_row(id, row_no as i32)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok((stored, counters))
 }

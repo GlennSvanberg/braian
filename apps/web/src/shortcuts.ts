@@ -36,7 +36,8 @@ export const shortcuts: Shortcut[] = [
     id: 'palette.ai',
     chord: 'Ctrl+J',
     scopes: ['app'],
-    description: 'Open the AI palette',
+    description: 'Open the agent palette',
+    commandId: 'agent:open',
     hotkeys: ['ctrl+j', 'meta+j'],
   },
   {

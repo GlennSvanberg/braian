@@ -22,6 +22,10 @@ pub const SESSION_COOKIE: &str = "braian_session";
 pub struct Identity {
     token: String,
     pub handle: String,
+    /// Login email when this identity is a person session or token owner.
+    pub email: Option<String>,
+    /// Shown name when known; UI falls back to handle.
+    pub display_name: Option<String>,
     pub kind: PrincipalKind,
     pub behalf_handle: Option<String>,
     pub actor: Actor,
@@ -79,6 +83,8 @@ impl Identity {
         Self {
             token: String::new(),
             handle: record.handle.clone().unwrap_or_else(|| record.name.clone()),
+            email: None,
+            display_name: Some(record.name.clone()),
             kind: record.kind,
             behalf_handle: None,
             actor: Actor {
@@ -235,7 +241,9 @@ pub async fn identities_from(store: &Store, raw: &str) -> Result<Vec<Identity>, 
             .ok_or_else(|| Error::Data(format!("principal {} was not stored", spec.handle)))?;
         identities.push(Identity {
             token: spec.token,
-            handle: spec.handle,
+            handle: spec.handle.clone(),
+            email: None,
+            display_name: Some(spec.handle),
             kind: spec.kind,
             behalf_handle: spec.behalf,
             actor: Actor {
@@ -353,6 +361,8 @@ fn identity_from_user(
     Identity {
         token: String::new(),
         handle: user.email.clone(),
+        email: Some(user.email.clone()),
+        display_name: Some(user.display_name.clone()),
         kind,
         behalf_handle: None,
         actor: Actor {
