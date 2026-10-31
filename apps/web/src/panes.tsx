@@ -4,7 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, failureLines, freeObject, jsonRecord, recordNumber, recordTitle, searchQuery, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
 import { attributeByKey, indexSort, readIndexed, sortKeyForColumnId } from './index-fields'
-import { cellEditShouldPatch, cellEditValuesBody } from './cell-edit'
+import { cellEditShouldPatch, cellEditValuesBody, isEditingCell } from './cell-edit'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Slider } from './components/ui/slider'
@@ -890,18 +890,12 @@ export function ObjectTable({
   }, [session])
 
   const onTableKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-
+    // While a cell editor is open, leave every key to the input (caret / selection / typing).
+    if (isEditingCell(event, editingCell)) return
     if (event.ctrlKey || event.altKey || event.metaKey) return
     if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
       event.preventDefault()
       openMenuFromKeyboard(event.target)
-      return
-    }
-    // While a cell editor is open, arrows move the caret — not the active column.
-    const editing =
-      Boolean(editingCell)
-      || (event.target instanceof Element && Boolean(event.target.closest('.cell-editor')))
-    if (editing && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       return
     }
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -1065,19 +1059,20 @@ export function ObjectTable({
             commitCellEdit(row, id, editingDraft)
           }}
           onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-              // Keep caret movement inside the input; do not bubble to onTableKey.
-              event.stopPropagation()
+            // Never let grid / shell shortcuts see keys while the caret is in the editor.
+            // Enter / Escape / Tab are handled here (or by the browser for Tab).
+            event.stopPropagation()
+            // PageUp/PageDown would otherwise scroll the virtualized grid and detach the editor.
+            if (event.key === 'PageUp' || event.key === 'PageDown') {
+              event.preventDefault()
               return
             }
             if (event.key === 'Enter') {
               event.preventDefault()
-              event.stopPropagation()
               commitCellEdit(row, id, editingDraft)
             }
             if (event.key === 'Escape') {
               event.preventDefault()
-              event.stopPropagation()
               cancelCellEdit()
             }
           }}

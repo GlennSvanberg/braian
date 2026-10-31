@@ -27,3 +27,29 @@ export function cellEditValuesBody(args: {
   }
   return { [args.attrKey]: args.nextText }
 }
+
+
+/** True when the event target (or document focus) is inside an inline `.cell-editor`. */
+export function isTextEditingTarget(event: { target: EventTarget | null }): boolean {
+  if (event.target instanceof Element && event.target.closest('.cell-editor')) {
+    return true
+  }
+  if (typeof document !== 'undefined') {
+    const active = document.activeElement
+    if (active instanceof Element && active.closest('.cell-editor')) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * True while ObjectTable has an open cell editor (`editingCell`) or focus is in `.cell-editor`.
+ * Call first in grid / global keydown handlers so Home/End/Ctrl+K/etc. never steal keys from the caret.
+ */
+export function isEditingCell(
+  event: { target: EventTarget | null },
+  editingCell?: { rowId: string; columnId: string } | null,
+): boolean {
+  return Boolean(editingCell) || isTextEditingTarget(event)
+}
