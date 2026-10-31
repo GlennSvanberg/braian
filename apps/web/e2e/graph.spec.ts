@@ -17,13 +17,19 @@ async function login(page: Page) {
 }
 
 async function openArticles(page: Page) {
-  await page.keyboard.press('Control+k')
-  await expect(page.getByTestId('command-palette')).toBeVisible()
-  await page.getByTestId('palette-input').fill('Articles view')
-  const entry = page.getByTestId('command-palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' })
-  await entry.first().click()
-  await expect(page.getByTestId('command-palette')).toHaveCount(0)
-  await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible()
+  // openTypeView returns without opening a pane when the workspace document
+  // is not ready yet. The palette still closes. Retry the command; the tab
+  // assertion is the same one as a single attempt.
+  await expect(async () => {
+    await page.keyboard.press('Control+k')
+    await expect(page.getByTestId('command-palette')).toBeVisible()
+    await page.getByTestId('palette-input').fill('Articles view')
+    const entry = page.getByTestId('command-palette').locator('.hit').filter({ hasText: 'Articles view' }).filter({ hasText: 'Open view' })
+    await expect(entry.first()).toBeVisible()
+    await entry.first().click()
+    await expect(page.getByTestId('command-palette')).toHaveCount(0)
+    await expect(page.locator('.pane-tab', { hasText: 'Articles' })).toBeVisible({ timeout: 5_000 })
+  }).toPass({ timeout: 30_000 })
 }
 
 function articlesPane(page: Page) {

@@ -1417,7 +1417,8 @@ export interface paths {
         get: operations["get_workspace"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a workspace and its views and layouts. Object data is not deleted. Locked or last workspaces are rejected. */
+        delete: operations["delete_workspace"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6766,6 +6767,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["WorkspaceRow"];
                 };
+            };
+            /** @description Missing or unknown token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workspace removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Missing or unknown token */
             401: {

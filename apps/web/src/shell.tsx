@@ -29,6 +29,7 @@ import { AttributeDefinitions } from './attribute-definitions'
 import { ModelTableView } from './model-tables'
 import { clearQueuedViewType, peekQueuedViewType } from './attribute-actions'
 import { FeedbackDialog } from './feedback-dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from './components/ui/dialog'
 import { installClientLog } from './feedback-log'
 import { prepareFeedbackCapture, type FeedbackCapture } from './feedback'
 import { CommandPalette } from './palette'
@@ -167,10 +168,13 @@ export function Shell() {
   }, [])
 
   const [paletteStartAddView, setPaletteStartAddView] = useState(false)
+  const [paletteStartNewFromTemplate, setPaletteStartNewFromTemplate] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackCapture, setFeedbackCapture] = useState<FeedbackCapture | null>(null)
   const [help, setHelp] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [doc, setDoc] = useState<LayoutDoc | null>(null)
   // Gate dock paint while a dangling/incomplete Data model layout is healed in one pass.
   const [layoutHealPending, setLayoutHealPending] = useState(false)
@@ -185,6 +189,9 @@ export function Shell() {
   const openTypeViewRef = useRef<(typeId: string) => void>(() => {})
   const migratedRef = useRef(new Set<string>())
   const ensuredTypes = useRef(new Set<string>())
+  const workspaceIdRef = useRef<string | null>(null)
+  const workspacesRef = useRef<ListedWorkspace[]>([])
+  const requestDeleteActiveRef = useRef<() => void>(() => {})
   const paletteModeRef = useRef(paletteMode)
   paletteModeRef.current = paletteMode
   const openFeedback = () => {
@@ -271,6 +278,10 @@ export function Shell() {
     enabled: booted && me.isSuccess,
     staleTime: 60_000,
   })
+
+  workspaceIdRef.current = workspaceId
+  workspacesRef.current = workspaces.data?.workspaces ?? []
+
   const orderedWorkspaces = useMemo(
     () => orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data)),
     [workspaces.data, defs.data],
@@ -325,12 +336,15 @@ export function Shell() {
       registerCommandRunner('palette:search', () => {
         setFieldsEditColumnId(null)
         setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(false)
         setPaletteMode('list')
         setPaletteEpoch((value) => value + 1)
       }),
 
       registerCommandRunner('feedback:send', () => openFeedback()),
       registerCommandRunner('layout:reset_layout', () => applyRef.current('reset_layout', {})),
+      registerCommandRunner('workspace:delete', () => { requestDeleteActiveRef.current() }),
+
       registerCommandRunner('layout:close_view', (target) =>
         applyRef.current('close_view', target.viewId ? { view: target.viewId } : {}),
       ),
@@ -352,8 +366,16 @@ export function Shell() {
       registerCommandRunner('layout:add-view', () => {
         const focus = docRef.current?.focus
         placeOverride.current = focus ? { target: focus, zone: 'center' } : { zone: 'center' }
+        setPaletteStartNewFromTemplate(false)
         setPaletteStartAddView(true)
         setPaletteMode('list')
+      }),
+      registerCommandRunner('workspace:new', () => {
+        setFieldsEditColumnId(null)
+        setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(true)
+        setPaletteMode('list')
+        setPaletteEpoch((value) => value + 1)
       }),
       registerCommandRunner('selection:new', () => requestNewSelection()),
       registerCommandRunner('layout:split-left', (target) => applyRef.current('split', { view: target.viewId, zone: 'left' })),
@@ -371,10 +393,13 @@ export function Shell() {
       const column = detail.id.slice('columns:show:'.length)
       dispatchUi('ui.show_column', { column })
     }
+    const onWorkspaceDelete = () => { requestDeleteActiveRef.current() }
     window.addEventListener('braian:command', onCommand)
+    window.addEventListener('braian-workspace-delete', onWorkspaceDelete)
     return () => {
       stops.forEach((stop) => stop())
       window.removeEventListener('braian:command', onCommand)
+      window.removeEventListener('braian-workspace-delete', onWorkspaceDelete)
     }
   }, [])
 
@@ -550,6 +575,7 @@ export function Shell() {
       flushSync(() => {
         setFieldsEditColumnId(null)
         setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(false)
         setPaletteMode('list')
         setPaletteEpoch((value) => value + 1)
       })
@@ -841,6 +867,45 @@ export function Shell() {
     openTypeView: (typeId) => openTypeViewRef.current(typeId),
   }
 
+  const requestDeleteActive = () => {
+    const id = workspaceIdRef.current
+    if (!id) return
+    const rows = workspacesRef.current
+    const item = rows.find((row) => row.id === id)
+    if (!item) return
+    if (item.locked || rows.length <= 1) {
+      push(item.locked ? copy.deleteWorkspaceLocked : copy.deleteWorkspaceLast)
+      return
+    }
+    setDeleteConfirm({ id: item.id, name: item.name })
+  }
+  requestDeleteActiveRef.current = requestDeleteActive
+
+  const deleteWorkspace = async (id: string) => {
+    const ordered = orderedWorkspaces
+    const index = ordered.findIndex((item) => item.id === id)
+    const neighbor =
+      index > 0 ? ordered[index - 1]?.id
+      : ordered[index + 1]?.id
+        ?? ordered.find((item) => item.id !== id)?.id
+        ?? null
+    setDeleteBusy(true)
+    try {
+      await api.delete('/v1/workspaces/{id}', { params: { path: { id } } })
+      await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      queryClient.removeQueries({ queryKey: ['workspace', id] })
+      if (workspaceId === id) {
+        if (neighbor) setWorkspaceId(neighbor)
+      }
+      push(copy.deleteWorkspace)
+    } finally {
+      setDeleteBusy(false)
+      setDeleteConfirm(null)
+      setTabMenu(null)
+    }
+  }
+
+
   if (!booted || me.isLoading) return <p className="pane-body">{copy.loading}</p>
   if (me.isError || !me.data) {
     return (
@@ -946,6 +1011,7 @@ export function Shell() {
     })()
   }
 
+
   const toggleLock = (item: ListedWorkspace) => {
     void api.post('/v1/workspaces', { body: {
         id: item.id,
@@ -1010,6 +1076,7 @@ export function Shell() {
             }}
             onAddView={(target) => {
               placeOverride.current = { target, zone: 'center' }
+              setPaletteStartNewFromTemplate(false)
               setPaletteStartAddView(true)
               setPaletteMode('list')
             }}
@@ -1053,7 +1120,7 @@ export function Shell() {
               fieldsMode={paletteMode === 'fields'}
               fieldsEditColumnId={fieldsEditColumnId}
               onFieldsConsumed={() => setFieldsEditColumnId(null)}
-          key={`${paletteMode}:${paletteEpoch}:${paletteStartAddView ? 'add-view' : 'root'}`}
+          key={`${paletteMode}:${paletteEpoch}:${paletteStartAddView ? 'add-view' : paletteStartNewFromTemplate ? 'new-template' : 'root'}`}
           ai={paletteMode === 'ai'}
           session={session}
           workspaces={orderedWorkspaces}
@@ -1062,6 +1129,7 @@ export function Shell() {
           onSendFeedback={openFeedback}
           focusViewId={doc?.focus ?? null}
           startAddView={paletteStartAddView}
+          startNewFromTemplate={paletteStartNewFromTemplate}
           onPrepareAddView={() => {
             const focus = docRef.current?.focus
             placeOverride.current = focus ? { target: focus, zone: 'center' } : { zone: 'center' }
@@ -1069,13 +1137,18 @@ export function Shell() {
           onClose={() => {
             placeOverride.current = undefined
             setPaletteStartAddView(false)
+            setPaletteStartNewFromTemplate(false)
             setPaletteMode(null)
           }}
         />
       ) : null}
       {tabMenu ? (
         <div className="menu" style={{ left: tabMenu.x, top: tabMenu.y }} data-testid="workspace-menu">
-          {workspaces.data?.workspaces.filter((item) => item.id === tabMenu.id).map((item) => (
+          {workspaces.data?.workspaces.filter((item) => item.id === tabMenu.id).map((item) => {
+            const last = orderedWorkspaces.length <= 1
+            const locked = Boolean(item.locked)
+            const deleteTitle = locked ? copy.deleteWorkspaceLocked : last ? copy.deleteWorkspaceLast : copy.deleteWorkspace
+            return (
             <div key={item.id}>
               <button type="button" onClick={() => toggleLock(item)}>{item.locked ? copy.unlockWorkspace : copy.lockWorkspace}</button>
               <button
@@ -1089,19 +1162,30 @@ export function Shell() {
               >
                 {copy.copyShare}
               </button>
+              <button
+                type="button"
+                data-testid="workspace-delete"
+                disabled={locked || last}
+                title={deleteTitle}
+                onClick={() => {
+                  setTabMenu(null)
+                  setDeleteConfirm({ id: item.id, name: item.name })
+                }}
+              >
+                {copy.deleteWorkspace}
+              </button>
             </div>
-          ))}
+            )
+          })}
           <button
             type="button"
+            data-testid="workspace-new-from-template"
             onClick={() => {
-              const template = workspaceTemplates(typeCatalog)[0]
-              if (!template) return
-              void createWorkspaceFromTemplate(template).then((id) => {
-                void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
-                setWorkspaceId(id)
-                push(copy.newWorkspace)
-              })
               setTabMenu(null)
+              setPaletteStartAddView(false)
+              setPaletteStartNewFromTemplate(true)
+              setPaletteMode('list')
+              setPaletteEpoch((n) => n + 1)
             }}
           >
             {copy.newWorkspace}
@@ -1115,8 +1199,29 @@ export function Shell() {
           >
             {copy.resetLayout}
           </button>
-          <button type="button" onClick={() => setTabMenu(null)}>{copy.close}</button>
         </div>
+      ) : null}
+      {deleteConfirm ? (
+        <Dialog open onOpenChange={(open) => { if (!open && !deleteBusy) setDeleteConfirm(null) }}>
+          <DialogContent data-testid="workspace-delete-dialog">
+            <DialogTitle>{copy.deleteWorkspace}</DialogTitle>
+            <DialogDescription>{copy.deleteWorkspaceConfirm}</DialogDescription>
+            <p>{workspaceDisplayName(deleteConfirm.name, workspaces.data?.workspaces.find((w) => w.id === deleteConfirm.id)?.share_token)}</p>
+            <div className="dialog-actions">
+              <button type="button" disabled={deleteBusy} onClick={() => setDeleteConfirm(null)}>{copy.cancel}</button>
+              <button
+                type="button"
+                className="primary"
+                data-testid="workspace-delete-confirm"
+                disabled={deleteBusy}
+                autoFocus
+                onClick={() => { void deleteWorkspace(deleteConfirm.id) }}
+              >
+                {copy.deleteWorkspace}
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       ) : null}
       <ImportScreen />
       {help ? <Help onClose={() => setHelp(false)} placeholder={commandPlaceholder(typeCatalog)} /> : null}

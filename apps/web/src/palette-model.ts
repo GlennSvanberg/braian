@@ -30,6 +30,16 @@ export function askTitle(query: string) {
   return text ? `Ask AI: "${text}"` : 'Ask AI'
 }
 
+
+/** Filter already-built palette rows by the query (used for cmdk submenus). */
+export function filterPaletteRows(rows: PaletteItem[], query: string): PaletteItem[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return rows
+  return rows.filter((item) =>
+    `${item.title} ${item.subtitle} ${(item.keywords ?? []).join(" ")}`.toLowerCase().includes(needle),
+  )
+}
+
 export function visibleRows(
   query: string,
   catalog: PaletteItem[],

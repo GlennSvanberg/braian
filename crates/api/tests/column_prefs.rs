@@ -256,6 +256,16 @@ async fn column_prefs_are_private_to_the_owner() {
         .await
         .unwrap();
     let view = seed_object_table_view(&db, alice.id).await;
+    let workspace = db
+        .store()
+        .view_workspace_id(view)
+        .await
+        .unwrap()
+        .expect("seeded view has a workspace");
+    db.store()
+        .assign_workspace(workspace, bob.id)
+        .await
+        .unwrap();
     let alice_cookie = login_cookie(&app, "alice-prefs@braian.local", "secret-a").await;
     let bob_cookie = login_cookie(&app, "bob-prefs@braian.local", "secret-b").await;
 
