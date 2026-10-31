@@ -30,6 +30,7 @@ export const uiOperations = [
   'ui.open_view',
   'ui.open_template',
   'ui.open_workspace',
+  'ui.open_changes',
   'ui.place',
   'ui.link',
   'ui.filter',

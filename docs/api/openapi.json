@@ -991,6 +991,176 @@
         ]
       }
     },
+    "/v1/import-mappings": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "List saved import mappings",
+        "operationId": "import_mappings_list",
+        "responses": {
+          "200": {
+            "description": "Saved mappings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedMappingList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Save the mapping of an import for reuse",
+        "operationId": "import_mappings_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedMappingBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Mapping saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedMappingView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/import-mappings/{id}": {
+      "delete": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Delete a saved mapping",
+        "operationId": "import_mappings_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mapping id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Rename a saved mapping",
+        "operationId": "import_mappings_rename",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mapping id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedMappingRename"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Renamed"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/imports": {
       "post": {
         "tags": [
@@ -1417,13 +1587,13 @@
         ]
       }
     },
-    "/v1/imports/{id}/save": {
-      "post": {
+    "/v1/imports/{id}/rows/{row_no}": {
+      "patch": {
         "tags": [
           "platform"
         ],
-        "summary": "Save the import",
-        "operationId": "import_save",
+        "summary": "Edit one cell of a draft row",
+        "operationId": "import_row_edit",
         "parameters": [
           {
             "name": "id",
@@ -1434,25 +1604,34 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "row_no",
+            "in": "path",
+            "description": "Row number",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ImportSaveBody"
+                "$ref": "#/components/schemas/ImportRowEdit"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "202": {
-            "description": "Save job accepted",
+          "200": {
+            "description": "The row after it was checked again",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ImportJob"
+                  "$ref": "#/components/schemas/ImportRowEdited"
                 }
               }
             }
@@ -3299,9 +3478,47 @@
         ],
         "summary": "List proposals",
         "operationId": "list_proposals",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open`, `accepted` or `discarded`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "`user`, `agent` or `import`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Recent proposals and the pending summary",
+            "description": "A page of proposals and the pending summary",
             "content": {
               "application/json": {
                 "schema": {
@@ -3510,6 +3727,81 @@
         "responses": {
           "204": {
             "description": "Proposal discarded"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/proposals/{id}/rows": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read one page of a draft's rows",
+        "operationId": "proposal_rows",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Proposal id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Row status filter. Import drafts: `new`, `changed`, `failed`, `stale`, `excluded`.\nOther proposals: `pending`, `accepted`, `rejected`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rows of an import draft or an ordinary proposal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftRowsPage"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or unknown token",
@@ -6075,6 +6367,28 @@
       "AcceptBody": {
         "type": "object",
         "properties": {
+          "exclude_rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Import drafts only. Leave these preview row numbers out."
+          },
+          "only_rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Import drafts only. Write just these preview row numbers."
+          },
           "patches": {
             "$ref": "#/components/schemas/FreeObject",
             "description": "Replacement patches keyed by proposal row. An empty `values` object rejects that row."
@@ -6088,6 +6402,10 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "skip_failed": {
+            "type": "boolean",
+            "description": "Import drafts only. Write the rows that cannot be imported as skipped\ninstead of refusing the approval."
           }
         }
       },
@@ -7145,6 +7463,31 @@
           }
         }
       },
+      "DraftColumn": {
+        "type": "object",
+        "required": [
+          "col",
+          "header",
+          "target",
+          "label"
+        ],
+        "properties": {
+          "col": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "header": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
       "DraftConsequence": {
         "type": "object",
         "required": [
@@ -7228,6 +7571,69 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "DraftRowsPage": {
+        "type": "object",
+        "description": "One page of a draft. Import drafts add the mapped columns and counters.",
+        "required": [
+          "kind",
+          "total",
+          "rows"
+        ],
+        "properties": {
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/DraftColumn"
+            }
+          },
+          "counters": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`import` or `rows`."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "session_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -7997,6 +8403,13 @@
               "$ref": "#/components/schemas/ImportMappingColumn"
             }
           },
+          "empty_clears": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "An empty cell removes the stored value instead of leaving it as it is."
+          },
           "id_column": {
             "type": [
               "integer",
@@ -8004,6 +8417,13 @@
             ],
             "format": "int64",
             "minimum": 0
+          },
+          "skip_invalid": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "A cell that does not validate is left out instead of failing its row."
           },
           "type": {
             "type": "string"
@@ -8083,11 +8503,40 @@
           }
         }
       },
-      "ImportSaveBody": {
+      "ImportRowEdit": {
         "type": "object",
+        "required": [
+          "col",
+          "value"
+        ],
         "properties": {
-          "skip_failed": {
-            "type": "boolean"
+          "col": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportRowEdited": {
+        "type": "object",
+        "required": [
+          "counters"
+        ],
+        "properties": {
+          "counters": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "row": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportPreviewRow"
+              }
+            ]
           }
         }
       },
@@ -8112,6 +8561,14 @@
         "properties": {
           "counters": {
             "$ref": "#/components/schemas/JsonValue"
+          },
+          "draft_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The open draft (proposal) of this import, once it is previewed."
           },
           "error": {
             "type": [
@@ -8796,11 +9253,21 @@
         "type": "object",
         "required": [
           "handle",
+          "email",
+          "display_name",
           "kind",
           "role",
           "feedback"
         ],
         "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Display name when known; otherwise the same as handle."
+          },
+          "email": {
+            "type": "string",
+            "description": "Login email when known; otherwise the same as handle."
+          },
           "feedback": {
             "type": "boolean"
           },
@@ -9622,6 +10089,7 @@
         "type": "object",
         "required": [
           "proposals",
+          "total",
           "pending"
         ],
         "properties": {
@@ -9633,6 +10101,11 @@
             "items": {
               "$ref": "#/components/schemas/ProposalListItem"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Proposals that match the filter, not only this page."
           }
         }
       },
@@ -9644,11 +10117,35 @@
           "source",
           "status",
           "conflict",
-          "created_at"
+          "created_at",
+          "row_count"
         ],
         "properties": {
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "behalf_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "conflict": {
             "type": "boolean"
+          },
+          "counters": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonValue",
+                "description": "Import drafts: new, changed, failed, stale and excluded row counts."
+              }
+            ]
           },
           "created_at": {
             "type": "string"
@@ -9656,6 +10153,19 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "row_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows stored in `proposal_rows`. Import drafts keep theirs elsewhere."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set for import drafts: the import session that holds the rows."
           },
           "source": {
             "type": "string"
@@ -9815,6 +10325,16 @@
               }
             ]
           },
+          "counters": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              }
+            ]
+          },
           "created_at": {
             "type": "string"
           },
@@ -9834,6 +10354,13 @@
             "items": {
               "$ref": "#/components/schemas/ProposalRowView"
             }
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "source": {
             "type": "string"
@@ -9951,6 +10478,79 @@
           },
           "dry_run": {
             "type": "boolean"
+          }
+        }
+      },
+      "SavedMappingBody": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SavedMappingList": {
+        "type": "object",
+        "required": [
+          "mappings"
+        ],
+        "properties": {
+          "mappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedMappingView"
+            }
+          }
+        }
+      },
+      "SavedMappingRename": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SavedMappingView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "headers",
+          "columns",
+          "empty_clears"
+        ],
+        "properties": {
+          "columns": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "empty_clears": {
+            "type": "boolean"
+          },
+          "headers": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
           }
         }
       },

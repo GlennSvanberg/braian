@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Command, CommandInput, CommandList } from '../components/ui/command'
-import { Checkbox } from '../components/ui/checkbox'
-import { Kbd } from '../components/ui/kbd'
+import { FieldPicker } from './field-picker'
 import {
   cardinalityCrumbLabel,
   cardinalityStepForLink,
@@ -860,104 +858,20 @@ export function FieldsMode({ open, columns, fields: catalog, onClose, onToggleCo
     }
   }
 
-  const selected = Math.min(active, Math.max(0, rows.length - 1))
-
   return (
-    <div
-      className="palette"
-      data-testid="fields-mode"
-      onMouseDown={(event) => {
+    <FieldPicker
+      mode="columns"
+      crumbs={crumbParts}
+      query={query}
+      onQuery={setQuery}
+      rows={rows}
+      active={active}
+      onActive={setActive}
+      onKeyDown={onKeyDown}
+      levelKey={`${top.kind}-${top.crumbs.join('/')}`}
+      onBackdrop={(event) => {
         if (!dismissArmed.current) return
         if (event.target === event.currentTarget) onClose()
       }}
-    >
-      <style>{`
-        [data-testid="fields-mode"] .hit.on,
-        [data-testid="fields-mode"] .fields-hit-active {
-          background: color-mix(in srgb, var(--accent) 24%, transparent);
-          box-shadow: inset 3px 0 0 var(--accent);
-        }
-        [data-testid="fields-mode"] .hit:hover:not(.on) {
-          background: color-mix(in srgb, var(--accent) 12%, transparent);
-        }
-        [data-testid="fields-mode"] .fields-check {
-          margin-left: auto;
-          flex: none;
-          pointer-events: none;
-        }
-      `}</style>
-      <Command
-        shouldFilter={false}
-        loop={false}
-        disablePointerSelection
-        onMouseDown={(event) => event.stopPropagation()}
-        onKeyDownCapture={onKeyDown}
-      >
-        <div className="palette-query">
-          <span className="crumb" data-testid="fields-crumb" style={{ marginRight: 8, whiteSpace: 'nowrap' }}>
-            {crumbParts.join(' › ')} ›
-          </span>
-          <CommandInput
-            data-testid="fields-mode-input"
-            autoFocus
-            value={query}
-            placeholder="Filter fields…"
-            onValueChange={(value) => {
-              setQuery(value)
-              setActive(0)
-            }}
-          />
-        </div>
-        <CommandList id="fields-mode-list" data-testid="fields-mode-list">
-          <div className="palette-group" role="listbox">
-            {rows.map((row, index) => (
-              <div
-                key={`${top.kind}-${top.crumbs.join('/')}-${row.id}`}
-                role="option"
-                aria-selected={index === selected}
-                className={index === selected ? 'hit on fields-hit-active' : 'hit'}
-                data-testid={`fields-row-${row.id}`}
-                data-active={index === selected ? 'true' : undefined}
-                onMouseEnter={() => setActive(index)}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  setActive(index)
-                  row.run()
-                }}
-              >
-                <span className="hit-copy">
-                  <span className="hit-title">{row.title}</span>
-                  {row.subtitle ? <small>{row.subtitle}</small> : null}
-                </span>
-                <Checkbox
-                  className="fields-check"
-                  checked={Boolean(row.checked)}
-                  tabIndex={-1}
-                  data-testid={`fields-check-${row.id}`}
-                  aria-label={row.checked ? 'Shown' : 'Hidden'}
-                  onCheckedChange={() => {}}
-                />
-                {row.drill ? <span aria-hidden="true">›</span> : null}
-              </div>
-            ))}
-          </div>
-        </CommandList>
-        <div className="palette-foot" data-testid="fields-mode-foot">
-          <span>
-            <Kbd>Enter</Kbd> toggle / open
-          </span>
-          <span>
-            <Kbd>→</Kbd> drill
-          </span>
-          <span>
-            <Kbd>←</Kbd> back
-          </span>
-          <span>
-            <Kbd>Esc</Kbd> close
-          </span>
-        </div>
-      </Command>
-    </div>
-  )
-}
+    />
+  )}

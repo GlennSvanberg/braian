@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -77,7 +78,7 @@ test('final surfaces', async ({ page }) => {
   await expect(page.getByTestId('data-model').first()).toBeVisible()
   await page.screenshot({ path: `${shots}/data-model-workspace.png` })
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.locator('nav.tabs').getByRole('button', { name: 'Products' }).click()
   await expect(page.getByTestId('object-table')).toBeVisible()
   await page.screenshot({ path: `${shots}/enrich-objects-light.png` })

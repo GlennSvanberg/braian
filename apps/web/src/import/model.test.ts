@@ -8,6 +8,7 @@ import {
   confidenceLabel,
   curve,
   firstDroppedFile,
+  importCellText,
   isFileDrag,
   lineTone,
   mappedLines,
@@ -127,13 +128,19 @@ describe('import mapping helpers', () => {
     expect(path.control.x).toBeGreaterThan(0)
   })
 
+  it('formats measure-shaped cell payloads for display', () => {
+    expect(importCellText('500 g')).toBe('500 g')
+    expect(importCellText({ value: '500', unit: 'g' })).toBe('500 g')
+    expect(importCellText({ value: '12' })).toBe('12')
+  })
+
   it('paints preview rows and the save label', () => {
     expect(rowClass('new')).toContain('new')
     expect(rowClass('delete')).toContain('delete')
     expect(cellClass('changed')).toContain('changed')
     expect(cellClass('error')).toContain('error')
-    expect(saveLabel(0, 12)).toBe('Save 12 changes')
-    expect(saveLabel(3, 12)).toBe('Import the rest, skip 3 failing rows')
+    expect(saveLabel(0, 12)).toBe('Approve 12 rows')
+    expect(saveLabel(3, 12)).toBe('Approve 12 rows')
     expect(stepIndex('mapping')).toBe(1)
     expect(stepIndex('preview')).toBe(2)
     expect(stepIndex('saving')).toBe(3)

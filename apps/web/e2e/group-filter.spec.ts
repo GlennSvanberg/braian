@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -67,8 +68,8 @@ test('selecting a structure group lists the same products as its selection', asy
   await page.waitForTimeout(250)
   await expect(count).toHaveText(grouped)
 
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/group-light.png` })
   await choose(table, 'All')
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 })

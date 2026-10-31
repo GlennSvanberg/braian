@@ -257,6 +257,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/import-mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved import mappings */
+        get: operations["import_mappings_list"];
+        put?: never;
+        /** Save the mapping of an import for reuse */
+        post: operations["import_mappings_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import-mappings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a saved mapping */
+        delete: operations["import_mappings_delete"];
+        options?: never;
+        head?: never;
+        /** Rename a saved mapping */
+        patch: operations["import_mappings_rename"];
+        trace?: never;
+    };
     "/v1/imports": {
         parameters: {
             query?: never;
@@ -377,7 +413,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/imports/{id}/save": {
+    "/v1/imports/{id}/rows/{row_no}": {
         parameters: {
             query?: never;
             header?: never;
@@ -386,12 +422,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Save the import */
-        post: operations["import_save"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Edit one cell of a draft row */
+        patch: operations["import_row_edit"];
         trace?: never;
     };
     "/v1/imports/{id}/sheet": {
@@ -946,6 +982,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/proposals/{id}/rows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one page of a draft's rows */
+        get: operations["proposal_rows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/resolve/{kind}/{id_or_key}": {
         parameters: {
             query?: never;
@@ -1465,9 +1518,18 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AcceptBody: {
+            /** @description Import drafts only. Leave these preview row numbers out. */
+            exclude_rows?: number[] | null;
+            /** @description Import drafts only. Write just these preview row numbers. */
+            only_rows?: number[] | null;
             /** @description Replacement patches keyed by proposal row. An empty `values` object rejects that row. */
             patches?: components["schemas"]["FreeObject"];
             rows?: string[] | null;
+            /**
+             * @description Import drafts only. Write the rows that cannot be imported as skipped
+             *     instead of refusing the approval.
+             */
+            skip_failed?: boolean;
         };
         AcceptResult: {
             accepted: components["schemas"]["JsonValue"][];
@@ -1762,6 +1824,13 @@ export interface components {
             remove?: number | null;
             steps?: components["schemas"]["ModelStep"][];
         };
+        DraftColumn: {
+            /** Format: int64 */
+            col: number;
+            header: string;
+            label: string;
+            target: string;
+        };
         DraftConsequence: {
             /** Format: int64 */
             affected_objects: number;
@@ -1782,6 +1851,20 @@ export interface components {
             /** Format: int64 */
             values: number;
             warnings: string[];
+        };
+        /** @description One page of a draft. Import drafts add the mapped columns and counters. */
+        DraftRowsPage: {
+            columns?: components["schemas"]["DraftColumn"][] | null;
+            counters?: null | components["schemas"]["JsonValue"];
+            /** @description `import` or `rows`. */
+            kind: string;
+            rows: components["schemas"]["JsonValue"][];
+            /** Format: uuid */
+            session_id?: string | null;
+            session_status?: string | null;
+            /** Format: int64 */
+            total: number;
+            type?: string | null;
         };
         DraftView: {
             /** Format: int64 */
@@ -1976,8 +2059,12 @@ export interface components {
         };
         ImportMappingBody: {
             columns?: components["schemas"]["ImportMappingColumn"][] | null;
+            /** @description An empty cell removes the stored value instead of leaving it as it is. */
+            empty_clears?: boolean | null;
             /** Format: int64 */
             id_column?: number | null;
+            /** @description A cell that does not validate is left out instead of failing its row. */
+            skip_invalid?: boolean | null;
             type: string;
         };
         ImportMappingColumn: {
@@ -2000,11 +2087,22 @@ export interface components {
             row_no: number;
             status: string;
         };
-        ImportSaveBody: {
-            skip_failed?: boolean;
+        ImportRowEdit: {
+            /** Format: int32 */
+            col: number;
+            value: string;
+        };
+        ImportRowEdited: {
+            counters: components["schemas"]["JsonValue"];
+            row?: null | components["schemas"]["ImportPreviewRow"];
         };
         ImportSessionView: {
             counters: components["schemas"]["JsonValue"];
+            /**
+             * Format: uuid
+             * @description The open draft (proposal) of this import, once it is previewed.
+             */
+            draft_id?: string | null;
             error?: string | null;
             file_kind: string;
             file_name: string;
@@ -2176,6 +2274,10 @@ export interface components {
             password: string;
         };
         Me: {
+            /** @description Display name when known; otherwise the same as handle. */
+            display_name: string;
+            /** @description Login email when known; otherwise the same as handle. */
+            email: string;
             feedback: boolean;
             handle: string;
             kind: string;
@@ -2419,12 +2521,30 @@ export interface components {
         ProposalList: {
             pending: components["schemas"]["PendingSummary"];
             proposals: components["schemas"]["ProposalListItem"][];
+            /**
+             * Format: int64
+             * @description Proposals that match the filter, not only this page.
+             */
+            total: number;
         };
         ProposalListItem: {
+            actor_name?: string | null;
+            behalf_name?: string | null;
             conflict: boolean;
+            counters?: null | components["schemas"]["JsonValue"];
             created_at: string;
             /** Format: uuid */
             id: string;
+            /**
+             * Format: int64
+             * @description Rows stored in `proposal_rows`. Import drafts keep theirs elsewhere.
+             */
+            row_count: number;
+            /**
+             * Format: uuid
+             * @description Set for import drafts: the import session that holds the rows.
+             */
+            session_id?: string | null;
             source: string;
             status: string;
             title: string;
@@ -2463,12 +2583,15 @@ export interface components {
             behalf_name?: string | null;
             conflict: boolean;
             consequence?: null | components["schemas"]["DraftConsequence"];
+            counters?: null | components["schemas"]["JsonValue"];
             created_at: string;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             on_behalf_of?: string | null;
             rows: components["schemas"]["ProposalRowView"][];
+            /** Format: uuid */
+            session_id?: string | null;
             source: string;
             status: string;
             title: string;
@@ -2502,6 +2625,26 @@ export interface components {
         SaveBody: {
             confirm_name?: string | null;
             dry_run?: boolean;
+        };
+        SavedMappingBody: {
+            name: string;
+            /** Format: uuid */
+            session_id: string;
+        };
+        SavedMappingList: {
+            mappings: components["schemas"]["SavedMappingView"][];
+        };
+        SavedMappingRename: {
+            name: string;
+        };
+        SavedMappingView: {
+            columns: components["schemas"]["JsonValue"];
+            empty_clears: boolean;
+            headers: components["schemas"]["JsonValue"];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            type: string;
         };
         SearchGroup: {
             /** Format: int32 */
@@ -3498,6 +3641,132 @@ export interface operations {
             };
         };
     };
+    import_mappings_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved mappings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedMappingList"];
+                };
+            };
+            /** @description Missing or unknown token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    import_mappings_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedMappingBody"];
+            };
+        };
+        responses: {
+            /** @description Mapping saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedMappingView"];
+                };
+            };
+            /** @description Missing or unknown token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    import_mappings_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Mapping id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    import_mappings_rename: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Mapping id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedMappingRename"];
+            };
+        };
+        responses: {
+            /** @description Renamed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     import_upload: {
         parameters: {
             query?: never;
@@ -3767,29 +4036,31 @@ export interface operations {
             };
         };
     };
-    import_save: {
+    import_row_edit: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 /** @description Import id */
                 id: string;
+                /** @description Row number */
+                row_no: number;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportSaveBody"];
+                "application/json": components["schemas"]["ImportRowEdit"];
             };
         };
         responses: {
-            /** @description Save job accepted */
-            202: {
+            /** @description The row after it was checked again */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImportJob"];
+                    "application/json": components["schemas"]["ImportRowEdited"];
                 };
             };
             /** @description Missing or unknown token */
@@ -5081,14 +5352,21 @@ export interface operations {
     };
     list_proposals: {
         parameters: {
-            query?: never;
+            query?: {
+                offset?: number;
+                limit?: number;
+                /** @description `open`, `accepted` or `discarded`. */
+                status?: string;
+                /** @description `user`, `agent` or `import`. */
+                source?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Recent proposals and the pending summary */
+            /** @description A page of proposals and the pending summary */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5236,6 +5514,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or unknown token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    proposal_rows: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+                /**
+                 * @description Row status filter. Import drafts: `new`, `changed`, `failed`, `stale`, `excluded`.
+                 *     Other proposals: `pending`, `accepted`, `rejected`.
+                 */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Proposal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rows of an import draft or an ordinary proposal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftRowsPage"];
+                };
             };
             /** @description Missing or unknown token */
             401: {

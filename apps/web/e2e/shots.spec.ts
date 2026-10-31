@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -75,7 +76,7 @@ test('clean catalog screenshots', async ({ page }) => {
   await login(page)
   await expect(page.getByTestId('row-count')).toContainText('3013')
   await tour(page, 'dark')
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await tour(page, 'light')
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 })

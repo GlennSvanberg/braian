@@ -217,6 +217,10 @@ async fn health() -> StatusCode {
 #[derive(Serialize, ToSchema)]
 struct Me {
     handle: String,
+    /// Login email when known; otherwise the same as handle.
+    email: String,
+    /// Display name when known; otherwise the same as handle.
+    display_name: String,
     kind: String,
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -237,8 +241,18 @@ struct Me {
     security(("bearer" = []))
 )]
 async fn me(Auth(identity): Auth) -> Json<Me> {
+    let email = identity
+        .email
+        .clone()
+        .unwrap_or_else(|| identity.handle.clone());
+    let display_name = identity
+        .display_name
+        .clone()
+        .unwrap_or_else(|| identity.handle.clone());
     Json(Me {
         handle: identity.handle,
+        email,
+        display_name,
         kind: identity.kind.as_str().to_owned(),
         role: identity.role.as_str().to_owned(),
         on_behalf_of: identity.behalf_handle,
