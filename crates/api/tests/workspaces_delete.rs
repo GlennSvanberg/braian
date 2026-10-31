@@ -1,4 +1,3 @@
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use braian_api::router;
@@ -252,12 +251,10 @@ async fn delete_workspace_rejects_locked_and_last() {
 async fn delete_workspace_rejects_agent() {
     load_env();
     let db = TestDb::create().await;
-    let identities = braian_api::identities(
-        db.store(),
-        "ada:human:token-ada;bot:agent@ada:token-bot",
-    )
-    .await
-    .unwrap();
+    let identities =
+        braian_api::identities(db.store(), "ada:human:token-ada;bot:agent@ada:token-bot")
+            .await
+            .unwrap();
     let app = router(db.store().clone(), identities);
     let hash = braian_api::hash_password("secret-agent").unwrap();
     let user = db

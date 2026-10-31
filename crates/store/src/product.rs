@@ -371,8 +371,6 @@ impl Store {
         Ok(row.get("n"))
     }
 
-
-
     pub async fn list_workspaces(&self, user_id: Uuid) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client

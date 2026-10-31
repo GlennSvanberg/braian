@@ -51,7 +51,10 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/exports/{id}", get(crate::export::download_export))
         .route("/v1/stats", get(stats))
         .route("/v1/workspaces", get(list_workspaces).post(save_workspace))
-        .route("/v1/workspaces/{id}", get(get_workspace).delete(delete_workspace))
+        .route(
+            "/v1/workspaces/{id}",
+            get(get_workspace).delete(delete_workspace),
+        )
         .route(
             "/v1/workspaces/{id}/state",
             get(get_workspace_state)
@@ -2249,7 +2252,6 @@ async fn put_workspace_state(
         "updated_at": updated.to_rfc3339(),
     })))
 }
-
 
 async fn delete_workspace(
     State(state): State<AppState>,
