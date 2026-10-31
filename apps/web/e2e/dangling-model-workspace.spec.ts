@@ -120,10 +120,11 @@ async function waitForWritesToSettle(writes: string[], quietMs = 1200) {
 }
 
 async function watchUnavailableDuringLoad(page: Page) {
-  // Monitor the workspace main area for the whole first heal — not only the end state.
-  await page.evaluate(() => {
+  // Survive openWorkspace()'s reload — install before navigation so the first
+  // paint after seed is monitored, not only the settled end state.
+  await page.addInitScript(() => {
     const w = window as unknown as { __braianHealHits?: string[]; __braianHealObs?: MutationObserver }
-    w.__braianHealHits = []
+    w.__braianHealHits = w.__braianHealHits ?? []
     const scan = () => {
       const root = document.querySelector('main.workspace')
       if (!root) return
@@ -132,11 +133,15 @@ async function watchUnavailableDuringLoad(page: Page) {
         w.__braianHealHits!.push(text.replace(/\s+/g, ' ').trim().slice(0, 240))
       }
     }
-    w.__braianHealObs?.disconnect()
-    const obs = new MutationObserver(scan)
-    obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true })
-    w.__braianHealObs = obs
-    scan()
+    const start = () => {
+      w.__braianHealObs?.disconnect()
+      const obs = new MutationObserver(scan)
+      obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true })
+      w.__braianHealObs = obs
+      scan()
+    }
+    if (document.documentElement) start()
+    else document.addEventListener('DOMContentLoaded', start)
   })
 }
 
