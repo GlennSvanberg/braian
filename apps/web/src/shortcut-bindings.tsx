@@ -19,6 +19,7 @@ export type ShortcutHandlers = {
   moveColumn: (direction: 'left' | 'right') => void
   paletteOpen: boolean
   feedbackEnabled: boolean
+  helpOpen?: boolean
 }
 
 function typingTarget(event: KeyboardEvent) {
@@ -76,7 +77,11 @@ export function useShortcutBindings(handlers: ShortcutHandlers) {
     { enabled: handlers.feedbackEnabled && Boolean(handlers.openFeedback) },
   )
   useRegisteredHotkey('help.open', useCallback(() => handlers.openHelp(), [handlers]))
-  useRegisteredHotkey('help.close', useCallback(() => handlers.closeHelp(), [handlers]))
+  useRegisteredHotkey(
+    'help.close',
+    useCallback(() => handlers.closeHelp(), [handlers]),
+    { enabled: Boolean(handlers.helpOpen) },
+  )
 
   useRegisteredHotkey('workspace.1', useCallback(() => handlers.openWorkspaceAt(0), [handlers]))
   useRegisteredHotkey('workspace.2', useCallback(() => handlers.openWorkspaceAt(1), [handlers]))

@@ -648,6 +648,7 @@ export function Shell() {
       dispatchUi('ui.move_column', { column, direction })
     },
     paletteOpen: Boolean(paletteMode),
+    helpOpen: help,
     feedbackEnabled,
   })
 
