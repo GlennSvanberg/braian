@@ -1,4 +1,5 @@
 import { copy } from './i18n'
+import { chordForCommand } from './shortcuts'
 
 /** Surfaces that can open a context menu. */
 export type MenuContext =
@@ -96,7 +97,7 @@ export const registryCommands: RegistryCommand[] = [
     contexts: ['empty', 'object-detail', 'import', 'dock-view', 'tab'],
     group: 'views',
     keywords: ['search', 'command', 'palette'],
-    kbd: 'Ctrl+K',
+    kbd: chordForCommand('palette:search'),
   },
   {
     id: 'feedback:send',
@@ -104,7 +105,7 @@ export const registryCommands: RegistryCommand[] = [
     contexts: ['empty', 'object-detail', 'import', 'dock-view', 'tab'],
     group: 'views',
     keywords: ['feedback', 'bug'],
-    kbd: 'Ctrl+Shift+B',
+    kbd: chordForCommand('feedback:send'),
     when: (target) => Boolean(target.feedbackEnabled),
   },
   {
@@ -394,49 +395,49 @@ export const registryCommands: RegistryCommand[] = [
     title: copy.moveLeft,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+Alt+←',
+    kbd: chordForCommand('layout:move_view_left'),
   },
   {
     id: 'layout:move_view_right',
     title: copy.moveRight,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+Alt+→',
+    kbd: chordForCommand('layout:move_view_right'),
   },
   {
     id: 'layout:move_view_up',
     title: copy.moveUp,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+Alt+↑',
+    kbd: chordForCommand('layout:move_view_up'),
   },
   {
     id: 'layout:move_view_down',
     title: copy.moveDown,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+Alt+↓',
+    kbd: chordForCommand('layout:move_view_down'),
   },
   {
     id: 'layout:zoom',
     title: copy.maximize,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+Alt+Z',
+    kbd: chordForCommand('layout:zoom'),
   },
   {
     id: 'layout:close_view',
     title: copy.closeView,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+Alt+W',
+    kbd: chordForCommand('layout:close_view'),
   },
   {
     id: 'layout:add-view',
     title: copy.addView,
     contexts: ['dock-view'],
     group: 'views',
-    kbd: 'Ctrl+K',
+    // No chord: Ctrl+K is palette:search. Open Add view from the palette / dock menu.
   },
   {
     id: 'workspace:new',

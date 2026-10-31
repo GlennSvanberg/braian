@@ -50,6 +50,7 @@
     "openapi-fetch": "^0.17.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-hotkeys-hook": "5.3.3",
     "react-resizable-panels": "^4.15.0",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0"

@@ -21,7 +21,7 @@ import { dropReparents, groupKeyFromLabel } from './group-tree'
 import { publishProposal } from './proposal-bus'
 import { formatCount, formatTimestamp } from './format'
 import { copy } from './i18n'
-import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
+import { applyLayoutCommand, migrateLayout, views as layoutViews, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
 import { ModelDraftHost } from './model-draft-ui'
 import { stageModel } from './model-stage'
@@ -37,7 +37,7 @@ import { StateNote } from './states'
 import { requestNewSelection } from './assortment-filter'
 import { dispatchUi } from './ui-bus'
 import { registerCommandRunner, runCommand } from './command-registry'
-import { isTextEditingTarget } from './cell-edit'
+import { useShortcutBindings } from './shortcut-bindings'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
@@ -543,92 +543,49 @@ export function Shell() {
     }
   }, [workspaceId])
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      // Inline cell editors own the keyboard; do not open Ctrl+K / move panes / etc.
-      if (isTextEditingTarget(event)) return
-      const typing = event.target instanceof HTMLElement
-        && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName))
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        event.stopPropagation()
-        // Remount at list root (clears Fields › / stack left from Select fields ›) and
-        // focus synchronously so the first typed character is not dropped.
-        flushSync(() => {
-          setFieldsEditColumnId(null)
-          setPaletteStartAddView(false)
-          setPaletteMode('list')
-          setPaletteEpoch((value) => value + 1)
-        })
-        document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')?.focus()
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        window.dispatchEvent(new Event('braian-review-save'))
-        return
-      }
-      if (feedbackEnabled && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'b') {
-        event.preventDefault()
-        openFeedback()
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
-        event.preventDefault()
-        setPaletteMode('ai')
-        return
-      }
-      if (event.key === 'Escape') {
-        setHelp(false)
-        setTabMenu(null)
-        return
-      }
-      if (event.key === 'F1') {
-        event.preventDefault()
-        setHelp(true)
-        return
-      }
-      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key >= '1' && event.key <= '9') {
-        const index = Number(event.key) - 1
-        const id = orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data))[index]?.id
-        if (id) {
-          event.preventDefault()
-          setWorkspaceId(id)
-        }
-        return
-      }
-      if (paletteModeRef.current || typing) return
-      const arrow = zoneFromKey(event.key)
-      if ((event.ctrlKey || event.metaKey) && event.altKey && event.shiftKey && arrow) {
-        event.preventDefault()
-        const sign = arrow === 'left' || arrow === 'top' ? -1 : 1
-        applyRef.current('resize', { direction: arrow, delta: sign * 0.05 })
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.altKey && arrow) {
-        event.preventDefault()
-        const name = arrow === 'left' ? 'move_view_left' : arrow === 'right' ? 'move_view_right' : arrow === 'top' ? 'move_view_up' : 'move_view_down'
-        applyRef.current(name, {})
-        return
-      }
-      if (event.altKey && !event.ctrlKey && !event.metaKey && arrow) {
-        event.preventDefault()
-        applyRef.current('focus', { direction: arrow })
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'w') {
-        event.preventDefault()
-        applyRef.current('close_view', {})
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        applyRef.current('zoom', {})
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [workspaces.data, defs.data, feedbackEnabled])
+  useShortcutBindings({
+    openPalette: () => {
+      // Remount at list root (clears Fields › / stack left from Select fields ›) and
+      // focus synchronously so the first typed character is not dropped.
+      flushSync(() => {
+        setFieldsEditColumnId(null)
+        setPaletteStartAddView(false)
+        setPaletteMode('list')
+        setPaletteEpoch((value) => value + 1)
+      })
+      document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')?.focus()
+    },
+    openAi: () => setPaletteMode('ai'),
+    saveReview: () => window.dispatchEvent(new Event('braian-review-save')),
+    openFeedback: feedbackEnabled ? openFeedback : undefined,
+    openHelp: () => setHelp(true),
+    closeHelp: () => {
+      setHelp(false)
+      setTabMenu(null)
+    },
+    openWorkspaceAt: (index) => {
+      const id = orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data))[index]?.id
+      if (id) setWorkspaceId(id)
+    },
+    focusPane: (direction) => applyRef.current('focus', { direction }),
+    moveView: (direction) => {
+      const name =
+        direction === 'left'
+          ? 'move_view_left'
+          : direction === 'right'
+            ? 'move_view_right'
+            : direction === 'top'
+              ? 'move_view_up'
+              : 'move_view_down'
+      applyRef.current(name, {})
+    },
+    resize: (direction, delta) => applyRef.current('resize', { direction, delta }),
+    zoom: () => applyRef.current('zoom', {}),
+    closeView: () => applyRef.current('close_view', {}),
+    paletteOpen: Boolean(paletteMode),
+    feedbackEnabled,
+  })
+
 
   useEffect(() => {
     publishMarked(objectId)
