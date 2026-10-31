@@ -31,6 +31,9 @@ jobs:
         with:
           # Job name, not one key shared by every job: parallel jobs build
           # different profiles and a GitHub cache key cannot be updated once saved.
+          # prefix-key starts a new immutable entry. The v0 entry was saved
+          # before source mtimes were pinned, and GitHub will not update it.
+          prefix-key: v1-rust-mtime
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
           cache-workspace-crates: "true"
@@ -99,6 +102,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.changes.outputs.mode == 'full'
         with:
+          prefix-key: v1-rust-mtime
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
           cache-workspace-crates: "true"
@@ -163,27 +167,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.plan.outputs.compile == 'true'
         with:
+          prefix-key: v1-rust-mtime
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
           cache-workspace-crates: "true"
           cache-on-failure: "true"
-      - name: Install Hurl
-        if: steps.changes.outputs.mode == 'full'
-        run: |
-          sudo apt-get update
-          # Hurl 8.0.1 links libxml2.so.2; Ubuntu 26.04+ provides libxml2.so.16 via libxml2-16.
-          sudo apt-get install -y libxml2-16 || sudo apt-get install -y libxml2
-          if [ ! -f /usr/lib/x86_64-linux-gnu/libxml2.so.2 ] && [ -f /usr/lib/x86_64-linux-gnu/libxml2.so.16 ]; then
-            sudo ln -sf /usr/lib/x86_64-linux-gnu/libxml2.so.16 /usr/lib/x86_64-linux-gnu/libxml2.so.2
-          fi
-          curl -fsSL -o /tmp/hurl.tar.gz https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz
-          tar -xzf /tmp/hurl.tar.gz -C /tmp
-          sudo find /tmp -type f -name hurl -exec mv {} /usr/local/bin/hurl \;
-          sudo chmod +x /usr/local/bin/hurl
-          hurl --version
-      - name: Start Postgres and Typesense
+      - name: Services and release build
         if: steps.changes.outputs.mode != 'skip'
         run: |
+          set -euo pipefail
           cat > .env << 'EOF'
           POSTGRES_USER=braian
           POSTGRES_PASSWORD=braian
@@ -195,15 +187,36 @@ jobs:
           BRAIAN_TEST_DATABASE_URL=postgres://braian:braian@localhost:5433/postgres
           TYPESENSE_URL=http://localhost:8108
           EOF
-          docker compose up -d --wait postgres typesense
-      - name: Build release binaries
-        if: steps.plan.outputs.compile == 'true'
-        run: |
-          cargo build --release --locked -p braian-bench -p braian-server
-          mkdir -p "${RUNNER_TEMP}/ci-bins"
-          cp -a target/release/braian target/release/braian-bench "${RUNNER_TEMP}/ci-bins/"
-          test -x "${RUNNER_TEMP}/ci-bins/braian"
-          test -x "${RUNNER_TEMP}/ci-bins/braian-bench"
+          docker compose up -d --wait postgres typesense > "${RUNNER_TEMP}/docker.log" 2>&1 &
+          docker_pid=$!
+          hurl_pid=""
+          if [ "${{ steps.changes.outputs.mode }}" = full ]; then
+            (
+              sudo apt-get update
+              # Hurl 8.0.1 links libxml2.so.2; Ubuntu 26.04+ provides libxml2.so.16 via libxml2-16.
+              sudo apt-get install -y libxml2-16 || sudo apt-get install -y libxml2
+              if [ ! -f /usr/lib/x86_64-linux-gnu/libxml2.so.2 ] && [ -f /usr/lib/x86_64-linux-gnu/libxml2.so.16 ]; then
+                sudo ln -sf /usr/lib/x86_64-linux-gnu/libxml2.so.16 /usr/lib/x86_64-linux-gnu/libxml2.so.2
+              fi
+              curl -fsSL -o /tmp/hurl.tar.gz https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz
+              tar -xzf /tmp/hurl.tar.gz -C /tmp
+              sudo find /tmp -type f -name hurl -exec mv {} /usr/local/bin/hurl \;
+              sudo chmod +x /usr/local/bin/hurl
+              hurl --version
+            ) > "${RUNNER_TEMP}/hurl.log" 2>&1 &
+            hurl_pid=$!
+          fi
+          if [ "${{ steps.plan.outputs.compile }}" = true ]; then
+            cargo build --release --locked -p braian-bench -p braian-server
+            mkdir -p "${RUNNER_TEMP}/ci-bins"
+            cp -a target/release/braian target/release/braian-bench "${RUNNER_TEMP}/ci-bins/"
+            test -x "${RUNNER_TEMP}/ci-bins/braian"
+            test -x "${RUNNER_TEMP}/ci-bins/braian-bench"
+          fi
+          wait "$docker_pid" || { cat "${RUNNER_TEMP}/docker.log"; exit 1; }
+          if [ -n "$hurl_pid" ]; then
+            wait "$hurl_pid" || { cat "${RUNNER_TEMP}/hurl.log"; exit 1; }
+          fi
       - name: Save release binaries
         if: steps.plan.outputs.compile == 'true' && steps.bins.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -281,14 +294,12 @@ jobs:
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
-          # Three processes. Each file gets a new database and Typesense alias.
-          # Sharing one database across files left a second object table and
-          # failed strict-mode lookups. Default pools are 24+8+2 per process;
-          # three of those exceed Postgres max_connections (100).
-          BRAIAN_E2E_WORKERS: "3"
-          BRAIAN_POOL_INTERACTIVE: "8"
-          BRAIAN_POOL_BULK: "4"
-          BRAIAN_INDEXER_POOL: "2"
+          # Two processes. Three made the long specs slower on a shared runner
+          # (layout 51s → 1.4m, field-picker 1.1m → 1.8m). Each file gets a new
+          # database and Typesense alias; a shared database left a second object
+          # table and failed strict-mode lookups. Two servers at the default
+          # pools (24+8+2) stay under Postgres max_connections (100).
+          BRAIAN_E2E_WORKERS: "2"
           BRAIAN_BIN: ${{ runner.temp }}/ci-bins/braian
         run: |
           test -x "${BRAIAN_BIN}"
