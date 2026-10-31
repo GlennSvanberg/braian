@@ -42,6 +42,7 @@ const specs = [
   'e2e/model-table-row-selection.spec.ts',
   'e2e/cell-edit-key-guard.spec.ts',
   'e2e/status-select-cell-edit.spec.ts',
+  'e2e/persist-active-workspace.spec.ts',
 ]
 
 function workerCount() {
