@@ -17,7 +17,9 @@ test('model structure tree starts collapsed and adds a child under the node', as
   test.setTimeout(120_000)
   await login(page)
   await page.getByRole('button', { name: 'Data model' }).click()
-  const tree = page.getByTestId('data-model').first()
+  await expect(page.locator('.pane-tab').filter({ hasText: 'Structures' }).first()).toBeVisible({ timeout: 30_000 })
+  await page.locator('.pane-tab').filter({ hasText: 'Structures' }).first().click()
+  const tree = page.getByTestId('data-model').filter({ has: page.getByTestId('group-dairy') }).first()
   const dairy = tree.getByTestId('group-dairy')
   await expect(dairy).toBeVisible()
   await expect(dairy.getByRole('button', { name: 'Dairy & eggs' })).toHaveAttribute('aria-expanded', 'false')
@@ -30,6 +32,7 @@ test('model structure tree starts collapsed and adds a child under the node', as
   await expect(page.getByTestId('structure-tree').getByRole('treeitem', { name: 'Cheese' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Data model' }).click()
+  await page.locator('.pane-tab').filter({ hasText: 'Structures' }).first().click()
   await dairy.locator('.twist').click()
   await expect(dairy.getByRole('button', { name: 'Dairy & eggs' })).toHaveAttribute('aria-expanded', 'true')
   await expect(tree.getByTestId('group-cheese')).toBeVisible()
