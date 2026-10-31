@@ -2173,6 +2173,34 @@ async fn save_workspace(
 
 const LAYOUT_DOCUMENT_LIMIT: usize = 512 * 1024;
 
+/// Workspace must exist and the signed-in user must be a member.
+/// Returns the same 404 as a missing workspace so callers cannot probe ids.
+async fn require_workspace_member(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<(), Problem> {
+    let exists = state
+        .store
+        .workspace(id)
+        .await
+        .map_err(store_status)?
+        .is_some();
+    let member = state
+        .store
+        .workspace_is_member(id, user_id)
+        .await
+        .map_err(store_status)?;
+    if !exists || !member {
+        return Err(Problem::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "workspace",
+        ));
+    }
+    Ok(())
+}
+
 async fn require_workspace(state: &AppState, id: Uuid) -> Result<(), Problem> {
     if state
         .store
@@ -2269,7 +2297,7 @@ async fn delete_workspace(
             "sign in to delete a workspace",
         ));
     };
-    require_workspace(&state, id).await?;
+    require_workspace_member(&state, id, user_id).await?;
     if state
         .store
         .workspace_locked(id)

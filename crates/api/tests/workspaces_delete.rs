@@ -272,3 +272,61 @@ async fn delete_workspace_rejects_agent() {
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn delete_workspace_foreign_member_is_not_found() {
+    let (db, app) = app().await;
+    let (user_a, cookie_a) = login(&app, &db, "del-a@braian.local", "secret-del").await;
+    let (user_b, cookie_b) = login(&app, &db, "del-b@braian.local", "secret-del").await;
+    let _spare_a = save_ws(&db, user_a, "A spare", false).await;
+    let b_keep = save_ws(&db, user_b, "B keep", false).await;
+    let b_target = save_ws(&db, user_b, "B target", false).await;
+
+    let view_id = Uuid::now_v7();
+    db.store()
+        .register_view_type("table", "Table", None)
+        .await
+        .unwrap();
+    db.store()
+        .save_view(view_id, b_target, "table", "B view", "main", 0, &json!({}))
+        .await
+        .unwrap();
+
+    let (status, body) = call(
+        &app,
+        "DELETE",
+        &format!("/v1/workspaces/{b_target}"),
+        Some(&cookie_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["code"], "not_found");
+
+    // B still has the workspace and its view.
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/v1/workspaces/{b_target}"),
+        Some(&cookie_b),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "B target");
+    let views = body["views"].as_array().cloned().unwrap_or_default();
+    assert!(
+        views.iter().any(|view| view["id"] == view_id.to_string()),
+        "expected view {view_id} to remain, got {views:?}"
+    );
+
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/v1/workspaces/{b_keep}"),
+        Some(&cookie_b),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

@@ -73,7 +73,9 @@ jobs:
             base="${{ github.event.before }}"
           fi
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            git diff --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | xargs -r touch
+            git diff --diff-filter=d --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | while IFS= read -r f; do
+                  [ -e "$f" ] && touch "$f"
+                done
           else
             find crates docs/api -type f \( -name '*.rs' -o -name 'openapi.json' \) -exec touch {} +
           fi
@@ -175,7 +177,9 @@ jobs:
             base="${{ github.event.before }}"
           fi
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            git diff --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | xargs -r touch
+            git diff --diff-filter=d --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | while IFS= read -r f; do
+                  [ -e "$f" ] && touch "$f"
+                done
           else
             find crates docs/api -type f \( -name '*.rs' -o -name 'openapi.json' \) -exec touch {} +
           fi
@@ -278,7 +282,9 @@ jobs:
             base="${{ github.event.before }}"
           fi
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            git diff --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | xargs -r touch
+            git diff --diff-filter=d --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | while IFS= read -r f; do
+                  [ -e "$f" ] && touch "$f"
+                done
           else
             find crates docs/api -type f \( -name '*.rs' -o -name 'openapi.json' \) -exec touch {} +
           fi
