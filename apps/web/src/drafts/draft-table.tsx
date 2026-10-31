@@ -16,7 +16,7 @@ type DraftRow = {
   cells: Record<string, Cell>
   errors?: unknown
 }
-type DraftColumn = { col: number; header: string; label?: string }
+type DraftColumn = { col: number; header: string; label?: string; options?: Array<{ value: string; label: string }> | null }
 type Page = {
   total: number
   kind?: string
@@ -206,7 +206,23 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
                         }
                       }}
                     >
-                      {active ? (
+                      {active && column.options ? (
+                        <select
+                          autoFocus
+                          aria-label={`Edit ${column.label ?? column.header}`}
+                          data-testid={`draft-select-${row.row_no}-${column.col}`}
+                          value={editing.text}
+                          onChange={(event) => setEditing({ ...editing, text: event.target.value })}
+                          onKeyDown={onEditKey as unknown as (event: KeyboardEvent<HTMLSelectElement>) => void}
+                          onBlur={() => void commit()}
+                          style={{ width: '100%' }}
+                        >
+                          {column.options.some((option) => option.value === editing.text) ? null : <option value={editing.text}>{editing.text}</option>}
+                          {column.options.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      ) : active ? (
                         <input
                           autoFocus
                           aria-label={`Edit ${column.label ?? column.header}`}

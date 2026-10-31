@@ -867,7 +867,17 @@ pub(crate) async fn draft_rows(
             let label = mapping::find_target(&targets, target)
                 .map(|item| item.label.clone())
                 .unwrap_or_else(|| target.to_owned());
-            Some(json!({ "col": col, "header": header, "target": target, "label": label }))
+            let options = mapping::find_target(&targets, target)
+                .filter(|item| item.kind == "value_list")
+                .and_then(|item| item.attribute_id.as_deref())
+                .map(|id| value_list_options(&cached.defs, id));
+            Some(json!({
+                "col": col,
+                "header": header,
+                "target": target,
+                "label": label,
+                "options": options,
+            }))
         })
         .collect();
     let total = state
@@ -897,6 +907,40 @@ pub(crate) async fn draft_rows(
             "errors": row.errors,
         })).collect::<Vec<_>>(),
     }))
+}
+
+/// The choices of a value list attribute: shared list first, then inline options.
+/// The label is what the cell shows and what an edit sends back.
+fn value_list_options(defs: &braian_model::DefinitionSet, attribute_id: &str) -> Vec<Value> {
+    let Some(attribute) = defs
+        .attributes
+        .iter()
+        .find(|item| item.id.as_uuid().to_string().eq_ignore_ascii_case(attribute_id))
+    else {
+        return Vec::new();
+    };
+    let braian_model::AttributeKind::ValueList { options, list } = &attribute.kind else {
+        return Vec::new();
+    };
+    let shared = list
+        .as_deref()
+        .and_then(|key| defs.value_lists.iter().find(|item| item.key == key))
+        .map(|item| item.options.iter().collect::<Vec<_>>())
+        .unwrap_or_default();
+    shared
+        .into_iter()
+        .chain(options.iter())
+        .map(|option| {
+            let label = option
+                .labels
+                .iter()
+                .find(|(tag, _)| tag.as_str() == "en")
+                .or_else(|| option.labels.iter().next())
+                .map(|(_, text)| text.clone())
+                .unwrap_or_else(|| option.code.clone());
+            json!({ "value": label, "label": label, "code": option.code })
+        })
+        .collect()
 }
 
 async fn patch_row(
