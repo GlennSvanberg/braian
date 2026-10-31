@@ -976,8 +976,10 @@ export function Shell() {
   }
   const user = me.data
   const signOut = () => {
-    queryClient.removeQueries({ queryKey: ['me'] })
-    void api.post('/v1/logout')
+    void queryClient.cancelQueries({ queryKey: ['me'] })
+    void api.post('/v1/logout').then(() => {
+      queryClient.removeQueries({ queryKey: ['me'] })
+    })
   }
   const surface = workspace.data
 

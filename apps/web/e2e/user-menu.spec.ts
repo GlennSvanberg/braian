@@ -99,6 +99,10 @@ test('the status bar is empty when normal and shows offline while disconnected',
 
 test('Ctrl+K Sign out returns to the login form', async ({ page }) => {
   await login(page)
+  const loggedOut = page.waitForResponse(
+    (res) => res.url().includes('/v1/logout') && res.request().method() === 'POST' && res.ok(),
+  )
   await runPaletteCommand(page, 'sign out', 'Sign out')
+  await loggedOut
   await expect(page.getByTestId('email')).toBeVisible({ timeout: 20_000 })
 })
