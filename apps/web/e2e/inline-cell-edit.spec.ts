@@ -27,9 +27,10 @@ test('inline Name cell edit keeps caret and persists after Enter', async ({ page
   const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
   await expect(row).toBeVisible({ timeout: 60_000 })
   // Pin by DOM id — after fill() the name cell no longer contains "Mature cheddar".
+  // object-row-<uuid> needs no CSS.escape (CSS is browser-only; Playwright runs in Node).
   const rowId = await row.getAttribute('id')
-  expect(rowId).toBeTruthy()
-  const stableRow = page.locator(`#${CSS.escape(rowId!)}`)
+  expect(rowId).toMatch(/^object-row-/)
+  const stableRow = page.locator(`[id="${rowId}"]`)
 
   const nameCell = stableRow.locator('[data-column="name"]').first()
   // Activate the Name column so .active-cell is present before we edit.
