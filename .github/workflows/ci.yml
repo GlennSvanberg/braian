@@ -14,28 +14,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Heavy steps stay in this job so a required check still completes green
-      # when every file is docs/**, markdown, or the landing page.
+      # when the diff is docs, markdown, the landing page, or web-only.
+      # Web-only diffs do not compile Rust; stack still runs e2e on a cached binary.
       - name: Detect code changes
         id: changes
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-          code=false
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            case "$f" in
-              docs/api/*) code=true; break ;;
-              docs/*|*.md|apps/landing/*) ;;
-              *) code=true; break ;;
-            esac
-          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "code=$code"
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - run: rustup show
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
       - uses: Swatinem/rust-cache@v2
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
+        with:
+          # Job name, not one key shared by every job: parallel jobs build
+          # different profiles and a GitHub cache key cannot be updated once saved.
+          shared-key: ${{ github.job }}
+          cache-all-crates: "true"
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
       - name: Start Postgres
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         run: |
           cat > .env << 'EOF'
           POSTGRES_USER=braian
@@ -49,7 +47,7 @@ jobs:
           EOF
           docker compose up -d --wait postgres
       - name: Baseline migrations from main
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         run: |
           git fetch --no-tags --depth=1 origin main
           dest="${RUNNER_TEMP}/baseline-migrations"
@@ -58,27 +56,27 @@ jobs:
           test -f "$dest/V3__app.sql"
           echo "BRAIAN_BASELINE_MIGRATIONS=$dest" >> "$GITHUB_ENV"
       - run: cargo fmt --all --check
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
       - run: cargo clippy --workspace --all-targets -- -D warnings
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
       - name: Cache cargo-nextest
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-nextest
           key: cargo-nextest-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - uses: taiki-e/install-action@v2
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         with:
           tool: nextest
       - name: Test
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         run: cargo nextest run --workspace --no-tests=pass
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
       - name: rules måste kompilera till WebAssembly
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         run: cargo build -p braian-rules -p braian-rules-wasm --target wasm32-unknown-unknown
 
   phase-1:
@@ -89,37 +87,33 @@ jobs:
         id: changes
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-          code=false
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            case "$f" in
-              docs/api/*) code=true; break ;;
-              docs/*|*.md|apps/landing/*) ;;
-              *) code=true; break ;;
-            esac
-          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "code=$code"
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
       - run: rustup show
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
       - uses: Swatinem/rust-cache@v2
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
+        with:
+          shared-key: ${{ github.job }}
+          cache-all-crates: "true"
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
       - uses: actions/setup-node@v4
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         with:
           node-version: 22
       - uses: taiki-e/install-action@v2
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         with:
           tool: just,wasm-bindgen-cli@0.2.129
       - run: just demo-1
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
       - run: just test-wasm
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
 
-  # phase-2, phase-3 and the old stack job. One runner, one apt install,
-  # one target/ directory. demo-2 and demo-3 share the release bench binary;
-  # the indexer and server builds share the dev profile.
+  # Phase 2, phase 3, release-profile store/indexer tests, and Playwright.
+  # One release build feeds demo-2, demo-3 and e2e. `cargo test` defaults to the
+  # separate `test` profile, which does not reuse `release` artifacts, so the
+  # store and indexer tests pass `--profile release`.
   stack:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -129,27 +123,39 @@ jobs:
         id: changes
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-          code=false
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            case "$f" in
-              docs/api/*) code=true; break ;;
-              docs/*|*.md|apps/landing/*) ;;
-              *) code=true; break ;;
-            esac
-          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD)
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "code=$code"
-      - run: rustup show
-        if: steps.changes.outputs.code == 'true'
-      - uses: Swatinem/rust-cache@v2
-        if: steps.changes.outputs.code == 'true'
-      - uses: taiki-e/install-action@v2
-        if: steps.changes.outputs.code == 'true'
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Restore release binaries
+        id: bins
+        if: steps.changes.outputs.mode != 'skip'
+        uses: actions/cache@v4
         with:
-          tool: just
+          path: ${{ runner.temp }}/ci-bins
+          # Exact key only. A prefix restore would replay a binary from older Rust.
+          key: braian-bins-v1-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/**', 'testdata/**') }}
+      - name: Plan Rust build
+        id: plan
+        if: steps.changes.outputs.mode != 'skip'
+        run: |
+          mode="${{ steps.changes.outputs.mode }}"
+          hit="${{ steps.bins.outputs.cache-hit }}"
+          echo "mode=$mode bin-cache-hit=$hit"
+          if [ "$mode" = full ] || [ "$hit" != true ]; then
+            echo "compile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "compile=false" >> "$GITHUB_OUTPUT"
+            echo "Web-only diff; reusing the release binary for this Rust hash."
+          fi
+      - run: rustup show
+        if: steps.plan.outputs.compile == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.plan.outputs.compile == 'true'
+        with:
+          shared-key: ${{ github.job }}
+          cache-all-crates: "true"
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
       - name: Install Hurl
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode == 'full'
         run: |
           sudo apt-get update
           # Hurl 8.0.1 links libxml2.so.2; Ubuntu 26.04+ provides libxml2.so.16 via libxml2-16.
@@ -163,7 +169,7 @@ jobs:
           sudo chmod +x /usr/local/bin/hurl
           hurl --version
       - name: Start Postgres and Typesense
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         run: |
           cat > .env << 'EOF'
           POSTGRES_USER=braian
@@ -177,61 +183,76 @@ jobs:
           TYPESENSE_URL=http://localhost:8108
           EOF
           docker compose up -d --wait postgres typesense
-      - name: Phase 2 load
-        if: steps.changes.outputs.code == 'true'
-        run: just demo-2
-      - name: Phase 3 Hurl
-        if: steps.changes.outputs.code == 'true'
-        run: just demo-3
-      - name: Change log resumes, coalesces and wakes listeners
-        if: steps.changes.outputs.code == 'true'
+      - name: Build release binaries
+        if: steps.plan.outputs.compile == 'true'
         run: |
-          cargo test -p braian-store --test change_log -- --test-threads=1
-          cargo test -p braian-indexer --test log -- --test-threads=1
+          cargo build --release --locked -p braian-bench -p braian-server
+          mkdir -p "${RUNNER_TEMP}/ci-bins"
+          cp -a target/release/braian target/release/braian-bench "${RUNNER_TEMP}/ci-bins/"
+          test -x "${RUNNER_TEMP}/ci-bins/braian"
+          test -x "${RUNNER_TEMP}/ci-bins/braian-bench"
+      - name: Phase 2 load
+        if: steps.changes.outputs.mode == 'full'
+        env:
+          DATABASE_URL: postgres://braian:braian@localhost:5433/braian
+        run: |
+          test -x "${RUNNER_TEMP}/ci-bins/braian-bench"
+          "${RUNNER_TEMP}/ci-bins/braian-bench" demo-2 --tier light --count 100000
+      - name: Phase 3 Hurl
+        if: steps.changes.outputs.mode == 'full'
+        env:
+          DATABASE_URL: postgres://braian:braian@localhost:5433/braian
+        run: |
+          "${RUNNER_TEMP}/ci-bins/braian-bench" demo-3
+      - name: Change log resumes, coalesces and wakes listeners
+        if: steps.changes.outputs.mode == 'full'
+        run: |
+          cargo test --profile release --locked -p braian-store -p braian-api --test change_log -- --test-threads=1
+          cargo test --profile release --locked -p braian-indexer -p braian-api --test log -- --test-threads=1
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
       - name: Indexer converges and reindex swaps the alias
-        if: steps.changes.outputs.code == 'true'
-        run: cargo test -p braian-indexer --test converge -- --test-threads=1
+        if: steps.changes.outputs.mode == 'full'
+        run: cargo test --profile release --locked -p braian-indexer -p braian-api --test converge -- --test-threads=1
         env:
           BRAIAN_TEST_DATABASE_URL: postgres://braian:braian@localhost:5433/postgres
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
           TYPESENSE_URL: http://localhost:8108
           TYPESENSE_API_KEY: ci
       - uses: pnpm/action-setup@v4
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         with:
           version: 10.25.0
       - uses: actions/setup-node@v4
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         with:
           node-version: 22
           cache: pnpm
       - name: Install npm dependencies
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         run: pnpm install --frozen-lockfile
       - name: Playwright version
         id: playwright-version
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         run: |
           version=$(pnpm --dir apps/web exec node -p "require('@playwright/test/package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
         id: playwright-cache
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
       - name: Install Playwright browsers
-        if: steps.changes.outputs.code == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.changes.outputs.mode != 'skip' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --dir apps/web exec playwright install --with-deps chromium
       - name: Install Playwright system dependencies
-        if: steps.changes.outputs.code == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
+        if: steps.changes.outputs.mode != 'skip' && steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --dir apps/web exec playwright install-deps chromium
       - name: Playwright smoke against an isolated database
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.mode != 'skip'
         env:
           DATABASE_URL: postgres://braian:braian@localhost:5433/braian
           POSTGRES_USER: braian
@@ -241,8 +262,14 @@ jobs:
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
+          # Four servers at the dev pool size (24+8+2) would pass Postgres' default 100 connections.
+          BRAIAN_POOL_INTERACTIVE: "8"
+          BRAIAN_POOL_BULK: "4"
+          BRAIAN_INDEXER_POOL: "2"
+          BRAIAN_E2E_WORKERS: "4"
+          BRAIAN_BIN: ${{ runner.temp }}/ci-bins/braian
         run: |
-          cargo build -p braian-server
+          test -x "${BRAIAN_BIN}"
           node scripts/e2e.mjs
 
   web:
