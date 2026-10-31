@@ -965,23 +965,20 @@ export function Shell() {
   }
 
 
-  if (!booted || me.isLoading) return <p className="pane-body">{copy.loading}</p>
+  if (!booted || (me.isPending && !me.data)) return <p className="pane-body">{copy.loading}</p>
   if (!me.data) {
-    if (me.isError) {
-      return (
-        <>
-          <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
-          <ImportScreen />
-        </>
-      )
-    }
-    return <p className="pane-body">{copy.loading}</p>
+    return (
+      <>
+        <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+        <ImportScreen />
+      </>
+    )
   }
   const user = me.data
-  const signOut = () =>
-    void api.post('/v1/logout').then(() => {
-      queryClient.removeQueries({ queryKey: ['me'] })
-    })
+  const signOut = () => {
+    queryClient.removeQueries({ queryKey: ['me'] })
+    void api.post('/v1/logout')
+  }
   const surface = workspace.data
 
   const commitDoc = (next: LayoutDoc) => {
