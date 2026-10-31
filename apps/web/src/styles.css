@@ -1890,6 +1890,7 @@ button, .pane-tab, .hit, .class-row, .attr-card {
 .import-row.new { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .import-row.delete { text-decoration: line-through; color: var(--muted); }
 .import-cell.changed { background: var(--amber-bg); border-radius: var(--r-sm); }
+.import-cell.warning { box-shadow: inset 0 0 0 1px var(--amber, #d9a400); border-radius: var(--r-sm); }
 .import-cell.error { box-shadow: inset 0 0 0 1px var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); border-radius: var(--r-sm); }
 .import-popover { position: fixed; right: 24px; bottom: 72px; z-index: 2; min-width: 220px; justify-items: stretch; }
 .import-confirm { position: fixed; inset: 0; margin: auto; height: max-content; z-index: 3; }
@@ -2033,3 +2034,14 @@ button[aria-disabled="true"]:hover,
   color: transparent;
   user-select: none;
 }
+
+.import-field-drop { border-radius: var(--r-md); }
+.import-field-drop.over { outline: 1px dashed var(--accent); background: var(--accent-dim); }
+.import-field-drop.mapped { background: var(--accent-dim); }
+
+.import-empty-clears { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.import-empty-clears input { margin: 0; }
+
+.import-preparing { margin: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 15px; }
+.import-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: import-spin 0.8s linear infinite; }
+@keyframes import-spin { to { transform: rotate(360deg); } }

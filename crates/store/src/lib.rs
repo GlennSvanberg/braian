@@ -23,7 +23,7 @@ mod types;
 
 pub use error::{Conflict, Error};
 pub use ids::{Actor, BatchId, BatchKind, ChangeOp, PrincipalId, PrincipalKind, SYSTEM_PRINCIPAL};
-pub use imports::{ImportRowIn, ImportRowOut, ImportSession};
+pub use imports::{ImportRowIn, ImportRowOut, ImportSession, SavedMapping};
 pub use log::{ChangeListener, LogClaim, LogEvent};
 pub use ops::{ProposalLock, ProposalWrite};
 pub use pressure::InteractiveGuard;

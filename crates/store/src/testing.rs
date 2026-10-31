@@ -177,6 +177,9 @@ fn template_name() -> String {
         include_str!("../migrations/V24__attribute_paths.sql"),
         include_str!("../migrations/V25__proposal_claim.sql"),
         include_str!("../migrations/V26__view_column_prefs.sql"),
+        include_str!("../migrations/V27__model_table_view_types.sql"),
+        include_str!("../migrations/V28__import_drafts.sql"),
+        include_str!("../migrations/V29__import_overrides_and_mappings.sql"),
     ];
     for sql in sqls {
         for byte in sql.as_bytes() {

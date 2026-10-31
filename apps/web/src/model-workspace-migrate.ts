@@ -28,6 +28,7 @@ export const KNOWN_VIEW_TYPES = new Set([
   'value_lists',
   'value_list_values',
   'units',
+  'import_mappings',
   'data_model',
   'attribute_definitions',
   'proposal',

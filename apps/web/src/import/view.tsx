@@ -18,6 +18,8 @@ import {
   requestCloseImport,
   discardImport,
   saveImport,
+  setImportEmptyClears,
+  saveImportMapping,
   selectColumn,
   setImportFilter,
   setImportIdColumn,
@@ -26,8 +28,10 @@ import {
   subscribeImport,
   undoImport,
   type ImportSession,
+  type ImportTarget,
 } from './controller'
-import { TargetMenu } from './target-menu'
+import { TargetPicker } from './target-picker'
+import { DraftTable } from '../drafts/draft-table'
 import {
   alternativeChoices,
   ariaMap,
@@ -105,7 +109,6 @@ const fixtureRows: PreviewRow[] = [
     cells: { '0': { value: 'A-300', state: 'same' }, '1': { value: '??', state: 'error', error: { message: 'Not a number' } } },
     errors: [{ message: 'Not a number' }],
   },
-  { row_no: 5, status: 'delete', object_key: 'A-400', cells: { '0': { value: 'A-400', state: 'same' }, '1': { value: 'Old', state: 'same' } } },
 ]
 
 export function ImportScreen() {
@@ -161,6 +164,12 @@ export function ImportScreen() {
           {snap.phase === 'empty' || snap.phase === 'error' ? <Empty snap={snap} /> : null}
           {snap.phase === 'uploading' ? <Uploading name={snap.fileName} ratio={snap.upload} /> : null}
           {snap.phase === 'mapping' && snap.session ? <Mapping /> : null}
+          {snap.phase === 'mapping' && !snap.session ? (
+            <div className="import-preparing" role="status" data-testid="import-ai-pending">
+              <span className="import-spinner" aria-hidden="true" />
+              <span>{copy.importPreparing}</span>
+            </div>
+          ) : null}
           {(snap.phase === 'preview' || snap.phase === 'saving' || snap.phase === 'done') && snap.session ? <Preview /> : null}
           {snap.confirm ? (
             <div className="import-confirm" role="dialog">
@@ -241,11 +250,20 @@ function Mapping() {
   const suggested = session.proposal?.type?.value
   const typeConfidence = showTypeConfidence(snap.typeKey, suggested, session.proposal?.type?.confidence)
   const [menu, setMenu] = useState<number | null>(null)
+  const waiting = session.status === 'mapping' && (!session.proposal || session.proposal.ai === 'pending')
+  if (waiting) {
+    return (
+      <div className="import-preparing" role="status" data-testid="import-ai-pending">
+        <span className="import-spinner" aria-hidden="true" />
+        <span>{copy.importPreparing}</span>
+      </div>
+    )
+  }
 
   return (
     <div className="import-map" data-testid="import-mapping">
       <p className="import-banner" data-testid="import-banner">
-        {matchSummary(snap.columns)}
+        {' '}{matchSummary(snap.columns)}
         {snap.idColumn === 'none' ? ` ${copy.importNoId}` : ''}
       </p>
       <div className="import-map-bar">
@@ -271,6 +289,10 @@ function Mapping() {
           </select>
         </label>
       </div>
+      <label className="import-empty-clears">
+        <input type="checkbox" data-testid="import-empty-clears" checked={snap.emptyClears} onChange={(event) => setImportEmptyClears(event.target.checked)} />
+        {' '}{copy.importEmptyClears}
+      </label>
       <div className="import-map-head">
         <span>{copy.importFileColumn}</span>
         <span>{copy.importAttribute}</span>
@@ -317,8 +339,9 @@ function Mapping() {
                   {column.target !== 'unmapped' ? labelOf(column.target) : copy.importChooseField}
                 </button>
                 {menu === header.index ? (
-                  <TargetMenu
+                  <TargetPicker
                     targets={choices}
+                    current={column.target}
                     onPick={(target) => {
                       assignImportTarget(header.index, target)
                       setMenu(null)
@@ -349,12 +372,24 @@ function Mapping() {
       <footer className="import-actions">
         <button
           type="button"
+          data-testid="import-save-mapping"
+          disabled={mappedLines(snap.columns).length === 0 || !snap.typeKey}
+          onClick={() => {
+            const name = window.prompt(copy.importSaveMappingAs, session.file_name.replace(/\.[^.]+$/, ''))
+            if (!name?.trim()) return
+            void saveImportMapping(name.trim()).then(() => toast(copy.importMappingSaved)).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
+          }}
+        >
+          {copy.importSaveMappingAs}
+        </button>
+        <button
+          type="button"
           className="primary"
           data-testid="import-approve"
-          disabled={mappedLines(snap.columns).length === 0 || !snap.typeKey}
+          disabled={waiting && !session.proposal || mappedLines(snap.columns).length === 0 || !snap.typeKey}
           onClick={() => void approveImport().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Approve failed'))}
         >
-          {copy.importApprove}
+          {copy.importNext}
         </button>
       </footer>
     </div>
@@ -366,12 +401,13 @@ function Preview() {
   const session = snap.session!
   const counters = session.counters ?? {}
   const failed = Number(counters.failed ?? 0)
-  const changes = Number(counters.new ?? 0) + Number(counters.changed ?? 0) + Number(counters.delete ?? 0)
+  const changes = Number(counters.new ?? 0) + Number(counters.changed ?? 0)
   const parent = useRef<HTMLDivElement>(null)
+  const [excluded, setExcluded] = useState<number[]>([])
   const fixture = session.id === 'fixture'
   const localRows = fixtureRows.filter((row) => snap.filter === 'all' || row.status === snap.filter)
   const probe = useQuery({
-    queryKey: ['import-rows', session.id, snap.filter, 'count'],
+    queryKey: ['import-rows', session.id, snap.filter, 'count', session.status, counters.processed ?? 0],
     queryFn: () => api.get('/v1/imports/{id}/rows', { params: { path: { id: session.id }, query: { offset: 0, limit: 1, status: snap.filter } } }),
     enabled: !fixture,
   })
@@ -386,7 +422,7 @@ function Preview() {
   const pages = fixture ? [] : [...new Set(visible.map((item) => Math.floor(item.index / 100)))]
   const windows = useQueries({
     queries: pages.map((page) => ({
-      queryKey: ['import-rows', session.id, snap.filter, page],
+      queryKey: ['import-rows', session.id, snap.filter, page, session.status, total],
       queryFn: () => api.get('/v1/imports/{id}/rows', { params: { path: { id: session.id }, query: { offset: Number(page * 100), limit: 100, status: snap.filter } } }),
     })),
   })
@@ -408,16 +444,27 @@ function Preview() {
 
   return (
     <div className="import-preview" data-testid="import-preview">
-      <span className="chip" data-testid="source-badge">{copy.importJob}</span>
       <div className="import-counters">
         {chip('new', copy.importNew, counters.new, 'ok')}
         {chip('changed', copy.importChanged, counters.changed, 'warn')}
-        {chip('delete', copy.importDelete, counters.delete, 'danger')}
         {chip('failed', copy.importErrors, counters.failed, 'danger')}
         {chip('all', copy.importUnchanged, counters.unchanged, 'neutral')}
       </div>
       {session.status === 'diffing' ? <p>{copy.importChecking} {percent}%</p> : null}
       {session.status === 'saving' ? <p>{copy.importChecking}</p> : null}
+      {!fixture ? (
+        session.draft_id && session.status !== 'diffing' ? (
+          <DraftTable
+            proposalId={session.draft_id}
+            version={`${session.status}:${JSON.stringify(counters)}`}
+            excluded={excluded}
+            onExcludedChange={setExcluded}
+            editable={session.status === 'previewed'}
+          />
+        ) : (
+          <div className="import-table" role="status" data-testid="import-checking" />
+        )
+      ) : (
       <div className="import-table" ref={parent}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((item) => {
@@ -431,7 +478,7 @@ function Preview() {
                 style={{ position: 'absolute', top: 0, transform: `translateY(${item.start}px)`, height: 28 }}
               >
                 <span>{row.row_no}</span>
-                <span>{row.status === 'delete' ? '🗑' : row.status === 'failed' ? '⛔' : row.status === 'new' ? '＋' : '•'}</span>
+                <span>{row.status === 'failed' ? '⛔' : row.status === 'new' ? '＋' : '•'}</span>
                 {headers.map((header) => {
                   const cell = row.cells[String(header.index)]
                   const title = cellTitle(cell)
@@ -452,6 +499,7 @@ function Preview() {
           })}
         </div>
       </div>
+      )}
       <footer className="import-actions">
         <button type="button" onClick={backToMapping}>{copy.importBack}</button>
         {failed > 0 ? (
@@ -459,7 +507,7 @@ function Preview() {
         ) : null}
         {snap.phase === 'done' ? (
           <p>
-            Imported {counters.new ?? 0} · Updated {counters.changed ?? 0} · Deleted {counters.delete ?? 0} · Skipped {failed}
+            Imported {counters.new ?? 0} · Updated {counters.changed ?? 0} · Skipped {failed}
           </p>
         ) : (
           <>
@@ -470,11 +518,7 @@ function Preview() {
               data-testid="import-save"
               disabled={fixture || session.status !== 'previewed'}
               onClick={() => {
-                if (Number(counters.delete ?? 0) > 0) {
-                  const ok = window.confirm(`${copy.importDeleteObjects} ${counters.delete} ${copy.importObjectsWord}`)
-                  if (!ok) return
-                }
-                void saveImport().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
+                                void saveImport(excluded).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
               }}
             >
               {saveLabel(failed, changes)}

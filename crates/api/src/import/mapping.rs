@@ -120,10 +120,13 @@ struct Scored {
 }
 
 pub fn targets_for(defs: &DefinitionSet, type_key: &str) -> Vec<Target> {
+    if super::entity::is_model(type_key) {
+        return super::entity::targets(type_key);
+    }
     let Some(object_type) = defs.types.iter().find(|item| {
         item.key == type_key || item.id.as_uuid().to_string().eq_ignore_ascii_case(type_key)
     }) else {
-        return vec![action_target()];
+        return Vec::new();
     };
     let key_attribute = defs
         .attributes
@@ -197,7 +200,6 @@ pub fn targets_for(defs: &DefinitionSet, type_key: &str) -> Vec<Target> {
     }
     push_link_targets(defs, object_type, &mut targets);
     targets.sort_by(|left, right| left.id.cmp(&right.id));
-    targets.push(action_target());
     targets
 }
 
@@ -259,24 +261,6 @@ fn link_target(link: &braian_model::ObjectType, key: &str, label: &str, outgoing
         group_key: None,
         unit: None,
         attribute_id: Some(link.id.as_uuid().to_string()),
-        structure_id: None,
-        group_id: None,
-    }
-}
-
-fn action_target() -> Target {
-    Target {
-        id: "action".into(),
-        label: "Action (create/update/delete)".into(),
-        kind: "action".to_owned(),
-        key_attribute: false,
-        source: "Action".into(),
-        attribute_key: None,
-        language: None,
-        structure_key: None,
-        group_key: None,
-        unit: None,
-        attribute_id: None,
         structure_id: None,
         group_id: None,
     }
@@ -524,13 +508,6 @@ pub fn score_column(header: &str, target: &Target, units: &[String]) -> f64 {
     let name = normalize_header(header);
     if name.is_empty() {
         return 0.0;
-    }
-    if target.id == "action" {
-        return if is_synonym(&name, &["action", "op", "operation"]) {
-            0.95
-        } else {
-            jw_score(&name, "action")
-        };
     }
     let Some(key) = target.attribute_key.as_deref() else {
         let membership = target
@@ -1223,12 +1200,8 @@ pub fn cap_choices(
     let mut picked: Vec<String> = ranked
         .into_iter()
         .map(|item| item.target)
-        .filter(|id| id != "action")
-        .take(MAX_CHOICES - 2)
+        .take(MAX_CHOICES - 1)
         .collect();
-    if !picked.iter().any(|id| id == "action") {
-        picked.push("action".into());
-    }
     picked.push("unmapped".into());
     picked.truncate(MAX_CHOICES);
     picked
@@ -1940,7 +1913,7 @@ mod tests {
                 .iter()
                 .any(|target| target.id == "membership:catalog")
         );
-        assert!(targets.iter().any(|target| target.id == "action"));
+        assert!(!targets.iter().any(|target| target.id == "action"));
         assert_eq!(
             targets
                 .iter()
@@ -1972,8 +1945,7 @@ mod tests {
         assert_eq!(weight[0].target, "type:weight");
         assert!((weight[0].score - 0.97).abs() < 1e-9);
         let action = rank_targets("operation", &targets, &units);
-        assert_eq!(action[0].target, "action");
-        assert!((action[0].score - 0.95).abs() < 1e-9);
+        assert!(action.iter().all(|item| item.target != "action"));
     }
 
     #[test]
@@ -2031,7 +2003,7 @@ mod tests {
         assert!(choices.len() <= 255);
         assert!(choices.len() >= 2);
         assert!(choices.iter().any(|choice| choice.value == "unmapped"));
-        assert!(choices.iter().any(|choice| choice.value == "action"));
+        assert!(choices.iter().all(|choice| choice.value != "action"));
         let unique: BTreeSet<_> = choices.iter().map(|choice| choice.value.as_str()).collect();
         assert_eq!(unique.len(), choices.len());
     }

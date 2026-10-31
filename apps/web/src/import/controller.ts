@@ -52,6 +52,7 @@ export type ImportSession = {
   mapping: { type?: string; id_column?: number | null; columns?: Array<{ col: number; target: string }> } | null
   counters: Record<string, number>
   job_id: string | null
+  draft_id?: string | null
   error: string | null
 }
 
@@ -75,6 +76,7 @@ export type ImportSnapshot = {
   pendingFile: File | null
   typeKey: string
   idColumn: string
+  emptyClears: boolean
 }
 
 const initial: ImportSnapshot = {
@@ -97,6 +99,7 @@ const initial: ImportSnapshot = {
   pendingFile: null,
   typeKey: '',
   idColumn: 'none',
+  emptyClears: false,
 }
 
 let state: ImportSnapshot = initial
@@ -215,6 +218,16 @@ export function setImportIdColumn(idColumn: string) {
   patch({ idColumn })
 }
 
+export async function saveImportMapping(name: string) {
+  const session = await persistMapping()
+  if (!session) return
+  await api.post('/v1/import-mappings', { body: { session_id: session.id, name } })
+}
+
+export function setImportEmptyClears(emptyClears: boolean) {
+  patch({ emptyClears })
+}
+
 export function assignImportTarget(col: number, target: string) {
   const result = setTarget(state.columns, col, target)
   const notice = result.displaced
@@ -272,31 +285,39 @@ export function onImportLive(raw: string) {
   void refresh(event.id)
 }
 
-export async function approveImport() {
+async function persistMapping() {
   const session = state.session
-  if (!session) return
+  if (!session) return null
   const idColumn = state.idColumn.startsWith('col:') ? Number(state.idColumn.slice(4)) : null
   await api.put('/v1/imports/{id}/mapping', { params: { path: { id: session.id } }, body: {
       type: state.typeKey,
       id_column: idColumn,
+      empty_clears: state.emptyClears,
       columns: state.columns.map((column) => ({ col: column.col, target: column.target })),
     } })
+  return session
+}
+
+export async function approveImport() {
+  const session = await persistMapping()
+  if (!session) return
   await api.post('/v1/imports/{id}/approve', { params: { path: { id: session.id } } })
   patch({ phase: 'preview', dirty: false, filter: 'all' })
   await refresh(session.id)
 }
 
-export async function saveImport() {
+export async function saveImport(excluded: number[] = []) {
   const session = state.session
   if (!session) return
+  const draftId = session.draft_id
+  if (!draftId) throw new Error('The draft is not ready yet.')
   const failed = Number(session.counters.failed ?? 0)
-  const body = await api.post('/v1/imports/{id}/save', {
-    params: { path: { id: session.id } },
-    body: { skip_failed: failed > 0 },
-  })
-  patch({ phase: 'saving', session: { ...session, job_id: body.job_id, status: 'saving' } })
+  const body = (await api.post('/v1/proposals/{id}/accept', {
+    params: { path: { id: draftId } },
+    body: { skip_failed: failed > 0, exclude_rows: excluded },
+  })) as { job_id?: string }
+  patch({ phase: 'saving', session: { ...session, job_id: body.job_id ?? null, status: 'saving' } })
 }
-
 export async function resumeImport(id: string) {
   patch({ open: true, phase: 'mapping', error: '' })
   try {
@@ -327,6 +348,7 @@ function sessionFromApi(raw: Schemas['ImportSessionView']): ImportSession {
     mapping: mappingFrom(raw.mapping),
     counters: countersFrom(raw.counters),
     job_id: raw.job_id ?? null,
+    draft_id: raw.draft_id ?? null,
     error: raw.error ?? null,
   }
 }
@@ -618,7 +640,6 @@ export function showImportFixture(kind: 'map' | 'diff') {
       { id: 'type:active', label: 'Active', kind: 'boolean', source: 'Article' },
       { id: 'type:launched', label: 'Launched', kind: 'date', source: 'Article' },
       { id: 'type:weight', label: 'Weight', kind: 'number', source: 'Article' },
-      { id: 'action', label: 'Action (create/update/delete)', kind: 'action' },
     ],
     proposal: {
       ai: 'skipped',
@@ -627,7 +648,7 @@ export function showImportFixture(kind: 'map' | 'diff') {
       columns,
     },
     mapping: null,
-    counters: { new: 2, changed: 1, delete: 1, failed: 1, unchanged: 0 },
+    counters: { new: 2, changed: 1, failed: 1, unchanged: 0 },
     job_id: null,
     error: null,
   }

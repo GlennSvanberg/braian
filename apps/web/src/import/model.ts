@@ -218,12 +218,13 @@ export function rowClass(status: string): string {
 export function cellClass(state: string): string {
   if (state === 'changed') return 'import-cell changed'
   if (state === 'error') return 'import-cell error'
+  if (state === 'warning') return 'import-cell warning'
   return 'import-cell'
 }
 
 export function saveLabel(failed: number, changes: number): string {
-  if (failed > 0) return `Import the rest, skip ${failed} failing rows`
-  return `Save ${changes} changes`
+  if (failed > 0) return `Approve ${changes} rows, skip ${failed} failing`
+  return `Approve ${changes} rows`
 }
 
 export function phaseOf(status: string): ImportPhase {

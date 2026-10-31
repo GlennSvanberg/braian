@@ -54,6 +54,7 @@ import {
   typeOfView,
 } from './type-labels'
 import { publishProposal } from './proposal-bus'
+import { DraftTable } from './drafts/draft-table'
 import { rollbackTargetSeq } from './history-rollback'
 import { StateNote } from './states'
 import { classSections } from './class-sections'
@@ -2797,9 +2798,30 @@ export function ProposalView({ session }: { session: PanesSession }) {
         {proposals.map((row) => (
           <button key={String(row.id)} onClick={() => session.setProposalId(String(row.id))}>
             {String(row.title)} · <MetaChip tone={statusTone(String(row.status))}>{String(row.status)}</MetaChip> · {sourceLabel(row)}
+            {row.counters ? ` · ${Number((row.counters as Json).new ?? 0)} new, ${Number((row.counters as Json).changed ?? 0)} changed, ${Number((row.counters as Json).failed ?? 0)} errors` : row.row_count != null ? ` · ${Number(row.row_count)} rows` : ''}
+            {row.actor_name ? ` · ${String(row.actor_name)}` : ''}
           </button>
         ))}
         {proposals.length === 0 ? <p>{copy.proposals}</p> : null}
+      </div>
+    )
+  }
+  if (proposal.data?.session_id) {
+    return (
+      <div data-testid="proposal">
+        <div className="proposal-switch">
+          {proposals.map((row) => (
+            <button key={String(row.id)} type="button" className={String(row.id) === session.proposalId ? 'primary' : ''} onClick={() => session.setProposalId(String(row.id))}>
+              {String(row.title)}
+            </button>
+          ))}
+        </div>
+        <ImportDraftTable proposal={proposal.data as Json} onDone={(message) => {
+          session.push(message)
+          void queryClient.invalidateQueries({ queryKey: ['proposals'] })
+          void queryClient.invalidateQueries({ queryKey: ['proposal'] })
+          void queryClient.invalidateQueries({ queryKey: ['objects'] })
+        }} />
       </div>
     )
   }
@@ -2853,6 +2875,52 @@ export function ProposalView({ session }: { session: PanesSession }) {
   )
 }
 
+/** An import draft in the review pane: the shared DraftTable plus approve and discard. */
+function ImportDraftTable({ proposal, onDone }: { proposal: Json; onDone: (message: string) => void }) {
+  const id = String(proposal.id)
+  const open = proposal.status === 'open'
+  const counters = (proposal.counters as Record<string, number> | undefined) ?? {}
+  const [excluded, setExcluded] = useState<number[]>([])
+  const [error, setError] = useState('')
+  const failed = Number(counters.failed ?? 0)
+  const writes = Number(counters.new ?? 0) + Number(counters.changed ?? 0)
+  const accept = useMutation({
+    mutationFn: () =>
+      api.post('/v1/proposals/{id}/accept', { params: { path: { id } }, body: { skip_failed: failed > 0, exclude_rows: excluded } }),
+    onSuccess: () => onDone(copy.saved),
+    onError: (reason: unknown) => setError(reason instanceof Error ? reason.message : copy.validation),
+  })
+  const discard = useMutation({
+    mutationFn: () => api.post('/v1/proposals/{id}/discard', { params: { path: { id } } }),
+    onSuccess: () => onDone(copy.discard),
+    onError: (reason: unknown) => setError(reason instanceof Error ? reason.message : copy.validation),
+  })
+  return (
+    <div className="import-draft" data-testid="import-draft">
+      <div className="toolbar">
+        <strong>{String(proposal.title ?? '')}</strong>
+        <span className="chip" data-testid="source-badge">{sourceLabel(proposal)}</span>
+        <MetaChip tone={statusTone(String(proposal.status))}>{String(proposal.status)}</MetaChip>
+        {open ? (
+          <>
+            <button type="button" className="primary" data-testid="save-all" disabled={accept.isPending || discard.isPending || writes - excluded.length <= 0} onClick={() => accept.mutate()}>
+              {copy.saveAll}
+            </button>
+            <button type="button" data-testid="discard-all" disabled={accept.isPending || discard.isPending} onClick={() => discard.mutate()}>{copy.discardAll}</button>
+          </>
+        ) : null}
+        {error ? <p className="error" data-testid="proposal-error">{error}</p> : null}
+      </div>
+      <DraftTable
+        proposalId={id}
+        version={`${String(proposal.status)}:${JSON.stringify(counters)}`}
+        excluded={excluded}
+        onExcludedChange={setExcluded}
+        editable={open}
+      />
+    </div>
+  )
+}
 function SuggestionCard({
   row,
   current,

@@ -1,0 +1,7 @@
+Supplier no,Company,Country,City,Lead time (days),Website
+SYN-000000,Harvest Foods Ltd,GB,York,5,https://supplier0.example
+SYN-000001,Meadow Foods Ltd,GB,Leeds,9,https://supplier1.example
+SYN-000002,Nordic Mill Foods,SE,Norwich,four,https://supplier2.example
+SUP-NEW-01,Baltic Bakers,LV,Riga,7,https://baltic.example
+SUP-NEW-02,Alpine Dairy,XX,Zurich,3,https://alpine.example
+SUP-NEW-03,Fjord Fish,NO,Bergen,12,

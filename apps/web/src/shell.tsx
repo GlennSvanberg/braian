@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ImportMappingsView } from './import/mappings-view'
 import { flushSync } from 'react-dom'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
@@ -739,6 +740,7 @@ export function Shell() {
     return onUi((event) => {
       if (event.name === 'ui.set_theme') setTheme(event.args.theme === 'light' ? 'light' : 'dark')
       if (event.name === 'ui.open_workspace' && typeof event.args.id === 'string') setWorkspaceId(event.args.id)
+      if (event.name === 'ui.open_changes') applyRef.current('ui.open_view', { title: 'Changes', zone: 'center' })
       if (event.name === 'ui.open_template' && typeof event.args.id === 'string') {
         setWorkspaceId(event.args.id)
         void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
@@ -1216,6 +1218,7 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'data_model') return <DataModel view={view} />
   if (view.type === 'attribute_definitions') return <AttributeDefinitions />
   if (view.type === 'proposal') return <ProposalView session={session} />
+  if (view.type === 'import_mappings') return <ImportMappingsView />
   if (view.type === 'batch_log') return <BatchLog />
   if (view.type === 'job_history') return <JobHistory view={view} />
   if (view.type === 'embed') return <EmbedView session={session} view={view} />
