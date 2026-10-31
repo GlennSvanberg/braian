@@ -41,6 +41,11 @@ import { isTextEditingTarget } from './cell-edit'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
+import {
+  readActiveWorkspaceId,
+  resolveActiveWorkspaceId,
+  writeActiveWorkspaceId,
+} from './active-workspace'
 import { healDataModelWorkspace, isKnownViewType, layoutHasMissingViews, migrateLegacyModelViews } from './model-workspace-migrate'
 import { persistWorkspaceMigration } from './workspace-migration-persist'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
@@ -271,10 +276,18 @@ export function Shell() {
     [workspaces.data, defs.data],
   )
   useEffect(() => {
-    const preferred = orderedWorkspaces.find((item) => item.share_token?.startsWith('braian-type-'))
-    const first = preferred?.id ?? orderedWorkspaces[1]?.id ?? orderedWorkspaces[0]?.id
-    if (!workspaceId && first) setWorkspaceId(first)
-  }, [orderedWorkspaces, workspaceId])
+    const user = me.data?.user_id ?? ''
+    if (!user || orderedWorkspaces.length === 0) return
+    const stored = readActiveWorkspaceId(user)
+    const next = resolveActiveWorkspaceId(orderedWorkspaces, workspaceId, stored)
+    if (next && next !== workspaceId) setWorkspaceId(next)
+  }, [orderedWorkspaces, workspaceId, me.data?.user_id])
+
+  useEffect(() => {
+    const user = me.data?.user_id ?? ''
+    if (!user || !workspaceId) return
+    writeActiveWorkspaceId(user, workspaceId)
+  }, [workspaceId, me.data?.user_id])
 
   useEffect(() => {
     const rows = workspaces.data?.workspaces
