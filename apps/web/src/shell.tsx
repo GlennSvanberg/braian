@@ -792,12 +792,24 @@ export function Shell() {
             ...(view.type ? { type: view.type } : {}),
           })
         }
-        for (const view of created) byId.set(view.id, view as typeof listed[number])
+        for (const view of created) {
+          byId.set(view.id, {
+            id: view.id,
+            type: view.type,
+            title: view.title,
+            pane: view.pane,
+            position: view.position,
+            state: freeObject(view.state as object),
+          } as typeof listed[number])
+        }
         const nextViews = [...byId.values()]
+        const nextLayout = freeObject(
+          (patch.layout && typeof patch.layout === 'object' ? patch.layout : current.layout) as object,
+        )
         const nextWorkspace = {
           ...current,
           name: patch.name ?? current.name,
-          layout: patch.layout ?? current.layout,
+          layout: nextLayout,
           views: nextViews,
         }
         queryClient.setQueryData(['workspace', current.id], nextWorkspace)
