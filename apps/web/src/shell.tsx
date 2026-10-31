@@ -37,6 +37,7 @@ import { StateNote } from './states'
 import { requestNewSelection } from './assortment-filter'
 import { dispatchUi } from './ui-bus'
 import { registerCommandRunner, runCommand } from './command-registry'
+import { isTextEditingTarget } from './cell-edit'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
@@ -531,6 +532,8 @@ export function Shell() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Inline cell editors own the keyboard; do not open Ctrl+K / move panes / etc.
+      if (isTextEditingTarget(event)) return
       const typing = event.target instanceof HTMLElement
         && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName))
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {

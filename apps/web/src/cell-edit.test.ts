@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { cellEditShouldPatch, cellEditValuesBody } from './cell-edit'
+import { cellEditShouldPatch, cellEditValuesBody, isEditingCell, isTextEditingTarget } from './cell-edit'
 
 describe('cellEditShouldPatch', () => {
   it('returns false for identical strings (Enter/blur must not PATCH)', () => {
@@ -66,5 +67,45 @@ describe('cellEditValuesBody', () => {
     })
     expect(oldWrong).not.toEqual(fixed)
     expect(fixed).toEqual({ name: { en: 'Aged cheddar' } })
+  })
+})
+
+describe('isTextEditingTarget / isEditingCell', () => {
+  it('is true when the event target is inside .cell-editor', () => {
+    const wrap = document.createElement('div')
+    wrap.className = 'cell-editor'
+    const input = document.createElement('input')
+    wrap.appendChild(input)
+    document.body.appendChild(wrap)
+    expect(isTextEditingTarget({ target: input })).toBe(true)
+    expect(isEditingCell({ target: input })).toBe(true)
+    wrap.remove()
+  })
+
+  it('is true when document.activeElement is inside .cell-editor even if target is not', () => {
+    const wrap = document.createElement('div')
+    wrap.className = 'cell-editor'
+    const input = document.createElement('input')
+    wrap.appendChild(input)
+    document.body.appendChild(wrap)
+    input.focus()
+    expect(isTextEditingTarget({ target: document.body })).toBe(true)
+    wrap.remove()
+  })
+
+  it('is false for ordinary grid targets without editingCell', () => {
+    const cell = document.createElement('div')
+    cell.className = 'active-cell'
+    document.body.appendChild(cell)
+    expect(isTextEditingTarget({ target: cell })).toBe(false)
+    expect(isEditingCell({ target: cell }, null)).toBe(false)
+    cell.remove()
+  })
+
+  it('is true when editingCell is set even if focus is elsewhere', () => {
+    const cell = document.createElement('div')
+    document.body.appendChild(cell)
+    expect(isEditingCell({ target: cell }, { rowId: 'r1', columnId: 'name' })).toBe(true)
+    cell.remove()
   })
 })
