@@ -4,7 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, failureLines, freeObject, jsonRecord, recordNumber, recordTitle, searchQuery, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
 import { attributeByKey, indexSort, readIndexed, sortKeyForColumnId } from './index-fields'
-import { cellEditShouldPatch, cellEditValuesBody, isEditingCell, isEditableColumn, valueListKeyForColumn, columnBaseKey } from './cell-edit'
+import { cellEditShouldPatch, cellEditValuesBody, isEditingCell, isEditableColumn, resolveCellEditInitial, valueListKeyForColumn, columnBaseKey } from './cell-edit'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Slider } from './components/ui/slider'
@@ -1036,6 +1036,43 @@ export function ObjectTable({
     setEditingDraft('')
   }
 
+  /** Open the inline editor from row / path-values data — never from a loading placeholder. */
+  const beginCellEdit = (row: ObjRow, column: string) => {
+    if (!isEditableColumn(column)) return
+    const listKey = valueListKeyForColumn(column, defs.data)
+    if (listKey) {
+      const current = columnBaseKey(column) === 'status'
+        ? row.status
+        : readIndexed(row.doc, defs.data, columnBaseKey(column))
+      editingOriginalRef.current = current
+      skipBlurCommitRef.current = false
+      setEditingDraft(current)
+      setEditingCell({ rowId: row.id, columnId: column })
+      return
+    }
+    const needs = columnNeedsPathValues(column)
+    // Prefer the live query/cache over paint-hold so edit seed matches server data.
+    const source = needs ? pathValues.data : undefined
+    const rowMap = source?.values?.[row.id]
+    // Row present in the batch ⇒ cell is loaded (missing path key = empty, not pending).
+    const pathValuesForCell = needs
+      ? (rowMap ? (cellPathValues(rowMap, column) ?? []) : undefined)
+      : undefined
+    const initial = resolveCellEditInitial({
+      needsPathValues: needs,
+      pathValuesPending,
+      pathValuesHasData: Boolean(pathValues.data),
+      pathValuesForCell,
+      fallbackText: cellDisplayText(row, column),
+      formatPathValues: (values) => summarizePathValues(values).text,
+    })
+    if (!initial.ok) return
+    editingOriginalRef.current = initial.text
+    skipBlurCommitRef.current = false
+    setEditingDraft(initial.text)
+    setEditingCell({ rowId: row.id, columnId: column })
+  }
+
   const cell = (row: ObjRow, id: string) => {
     if (editingCell && editingCell.rowId === row.id && editingCell.columnId === id) {
       const listKey = valueListKeyForColumn(id, defs.data)
@@ -1504,15 +1541,7 @@ export function ObjectTable({
                         onActivate={onRowClick}
                         onMenu={onRowMenu}
                         onCellDoubleClick={(row, column) => {
-                          if (!isEditableColumn(column)) return
-                          const listKey = valueListKeyForColumn(column, defs.data)
-                          const current = listKey
-                            ? (columnBaseKey(column) === 'status' ? row.status : readIndexed(row.doc, defs.data, columnBaseKey(column)))
-                            : cellDisplayText(row, column)
-                          editingOriginalRef.current = current
-                          skipBlurCommitRef.current = false
-                          setEditingDraft(current)
-                          setEditingCell({ rowId: row.id, columnId: column })
+                          beginCellEdit(row, column)
                         }}
                         onFocusGrid={focusGrid}
                       />
@@ -1546,15 +1575,7 @@ export function ObjectTable({
                   onActivate={onRowClick}
                   onMenu={onRowMenu}
                   onCellDoubleClick={(row, column) => {
-                    if (!isEditableColumn(column)) return
-                    const listKey = valueListKeyForColumn(column, defs.data)
-                    const current = listKey
-                      ? (columnBaseKey(column) === 'status' ? row.status : readIndexed(row.doc, defs.data, columnBaseKey(column)))
-                      : cellDisplayText(row, column)
-                    editingOriginalRef.current = current
-                    skipBlurCommitRef.current = false
-                    setEditingDraft(current)
-                    setEditingCell({ rowId: row.id, columnId: column })
+                    beginCellEdit(row, column)
                   }}
                   onFocusGrid={focusGrid}
                   style={{ position: 'absolute', transform: `translateY(${item.start}px)`, width: '100%' }}

@@ -107,3 +107,47 @@ export function isEditingCell(
 ): boolean {
   return Boolean(editingCell) || isTextEditingTarget(event)
 }
+
+/** Outcome when seeding an inline cell editor from row / path-values data. */
+export type CellEditInitial =
+  | { ok: true; text: string }
+  | { ok: false; reason: 'unloaded' }
+
+/**
+ * Resolve the draft for an inline cell editor.
+ *
+ * Path-values columns (Description, hops, …) must not open from the painted
+ * loading placeholder — that copies "" into the draft and can PATCH an empty
+ * string over a real value. Block until the path-values batch has an entry for
+ * the cell; then seed from that data (or from fallbackText for indexed columns).
+ */
+export function resolveCellEditInitial(args: {
+  needsPathValues: boolean
+  /** First path-values response for this page is still outstanding. */
+  pathValuesPending: boolean
+  /** Query has produced a data object (may be empty maps). */
+  pathValuesHasData: boolean
+  /**
+   * Values for this row+column from the path-values response.
+   * `undefined` = key missing (row not in batch yet); `[]` = loaded empty.
+   */
+  pathValuesForCell: string[] | undefined
+  /** Indexed / Typesense text when the column does not need path-values. */
+  fallbackText: string
+  /** Optional formatter for loaded path-values (defaults to join with ", "). */
+  formatPathValues?: (values: string[]) => string
+}): CellEditInitial {
+  if (!args.needsPathValues) {
+    return { ok: true, text: args.fallbackText }
+  }
+  if (args.pathValuesPending || !args.pathValuesHasData) {
+    return { ok: false, reason: 'unloaded' }
+  }
+  if (args.pathValuesForCell === undefined) {
+    return { ok: false, reason: 'unloaded' }
+  }
+  const format =
+    args.formatPathValues
+    ?? ((values: string[]) => values.map((item) => String(item ?? '').trim()).filter(Boolean).join(', '))
+  return { ok: true, text: format(args.pathValuesForCell) }
+}
