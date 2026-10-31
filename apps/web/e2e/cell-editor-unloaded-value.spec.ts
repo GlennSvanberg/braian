@@ -61,7 +61,7 @@ test.describe('cell editor unloaded path-values (Notion 111)', () => {
 
     await login(page)
     await openProducts(page)
-    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByTestId('object-table').getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
     // Ensure Description (en) is a visible pathValues column.
     await openFieldsPalette(page)
@@ -81,27 +81,29 @@ test.describe('cell editor unloaded path-values (Notion 111)', () => {
 
     await page.reload()
     await expect(page.getByTestId('object-table')).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+    // Same pattern as move-col-flash-sse: do not wait on Name text while pathValues is gated;
+    // the path-cell loading marker proves the column is mounted and still pending.
+    const loading = page.locator('[data-testid^="path-cell-description"][data-loading="true"]').first()
+    await expect(loading).toBeVisible({ timeout: 60_000 })
 
-    const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
-    const descCell = row.locator('[data-column^="description"]').first()
-    await expect(descCell).toBeVisible({ timeout: 30_000 })
-    await expect(descCell.locator('[data-loading="true"]').or(descCell)).toBeVisible()
-    // Prefer the path-cell loading marker when present.
-    const loading = row.locator('[data-testid^="path-cell-description"][data-loading="true"]').first()
-    await expect(loading).toBeVisible({ timeout: 30_000 })
-
+    const loadingRow = page.locator('[data-testid="object-row"]').filter({
+      has: page.locator('[data-testid^="path-cell-description"][data-loading="true"]'),
+    }).first()
+    const descCell = loadingRow.locator('[data-column^="description"]').first()
     await descCell.dblclick()
     await expect(page.locator('[data-testid^="cell-editor-description"]')).toHaveCount(0)
 
     release?.()
+    // Prefer the seed cheddar row once Names are painted after the batch lands.
+    await expect(page.getByTestId('object-table').getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
+    const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
     await expect(row.locator('[data-testid^="path-cell-description"]').first()).toContainText(
       /firm cow'?s-milk cheddar/i,
       { timeout: 30_000 },
     )
     await expect(row.locator('[data-testid^="path-cell-description"][data-loading="true"]')).toHaveCount(0)
 
-    await descCell.dblclick()
+    await row.locator('[data-column^="description"]').first().dblclick()
     const editor = page.locator('[data-testid^="cell-editor-description"]').first()
     await expect(editor).toBeVisible({ timeout: 10_000 })
     await expect(editor).toHaveValue(/firm cow'?s-milk cheddar/i)
