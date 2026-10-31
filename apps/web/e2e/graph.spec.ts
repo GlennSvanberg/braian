@@ -18,9 +18,8 @@ async function login(page: Page) {
 }
 
 async function openArticles(page: Page) {
-  // openTypeView returns without opening a pane when the workspace document
-  // is not ready yet. The palette still closes. Retry the command; the tab
-  // assertion is the same one as a single attempt.
+  // Notion 112 queues openTypeView until the workspace doc is ready; keep a
+  // short retry for unrelated timing flake on the Articles tab paint.
   await expect(async () => {
     await page.keyboard.press('Control+k')
     await expect(page.getByTestId('command-palette')).toBeVisible()

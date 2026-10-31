@@ -46,6 +46,7 @@ export const copy = {
   shortText: 'Short text',
   longText: 'Long text',
   loading: 'Loading…',
+  workspaceOpeningWhenReady: 'Opening when the workspace is ready…',
   saved: 'Saved',
   conflict: 'Conflict',
   agent: 'Agent',
