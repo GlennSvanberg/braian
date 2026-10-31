@@ -358,6 +358,21 @@ impl Store {
         Ok(())
     }
 
+    pub async fn workspace_count_for_user(&self, user_id: Uuid) -> Result<i64, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*)::bigint AS n
+                 FROM workspace_members
+                 WHERE user_id = $1",
+                &[&user_id],
+            )
+            .await?;
+        Ok(row.get("n"))
+    }
+
+
+
     pub async fn list_workspaces(&self, user_id: Uuid) -> Result<Vec<Value>, Error> {
         let client = self.pool().get().await?;
         let rows = client

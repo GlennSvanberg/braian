@@ -51,7 +51,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/exports/{id}", get(crate::export::download_export))
         .route("/v1/stats", get(stats))
         .route("/v1/workspaces", get(list_workspaces).post(save_workspace))
-        .route("/v1/workspaces/{id}", get(get_workspace))
+        .route("/v1/workspaces/{id}", get(get_workspace).delete(delete_workspace))
         .route(
             "/v1/workspaces/{id}/state",
             get(get_workspace_state)
@@ -2248,6 +2248,56 @@ async fn put_workspace_state(
         "environment": environment,
         "updated_at": updated.to_rfc3339(),
     })))
+}
+
+
+async fn delete_workspace(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, Problem> {
+    require(&identity, Role::Editor)?;
+    if !identity.may_commit() {
+        return Err(crate::auth::delete_forbidden());
+    }
+    let Some(user_id) = identity.user_id else {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "no_user",
+            "sign in to delete a workspace",
+        ));
+    };
+    require_workspace(&state, id).await?;
+    if state
+        .store
+        .workspace_locked(id)
+        .await
+        .map_err(store_status)?
+    {
+        return Err(Problem::new(
+            StatusCode::FORBIDDEN,
+            "locked",
+            "unlock the workspace before deleting it",
+        ));
+    }
+    let remaining = state
+        .store
+        .workspace_count_for_user(user_id)
+        .await
+        .map_err(store_status)?;
+    if remaining <= 1 {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "last_workspace",
+            "the last workspace cannot be deleted",
+        ));
+    }
+    state
+        .store
+        .delete_workspace(id)
+        .await
+        .map_err(store_status)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_workspace_state(
