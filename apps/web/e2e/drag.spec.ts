@@ -100,13 +100,19 @@ test('dragging a pane tab docks it and can be restored', async ({ page }) => {
 })
 
 test('a group shows attributes inherited from its ancestors', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(120_000)
   await login(page)
   await page.getByRole('button', { name: 'Data model' }).click()
+  // Wait for the model workspace to finish any heal/migrate remount before expanding.
+  await expect(page.locator('.pane-tab').filter({ hasText: 'Structures' })).toBeVisible({ timeout: 30_000 })
   const tree = page.getByTestId('data-model').first()
+  await expect(tree.getByTestId('group-dairy')).toBeVisible()
   await tree.getByTestId('group-dairy').locator('.twist').click()
   await expect(tree.getByTestId('group-yoghurt')).toBeVisible()
-  await tree.getByTestId('group-yoghurt').locator('.model-node').click()
+  // Tree can remount when workspace queries invalidate; re-query until the click sticks.
+  await expect(async () => {
+    await page.getByTestId('data-model').first().getByTestId('group-yoghurt').locator('.model-node').click({ timeout: 3_000 })
+  }).toPass({ timeout: 30_000 })
   const table = page.getByTestId('attribute-table')
   await expect(table).toContainText('Fat content')
   await expect(table).toContainText('from Dairy')

@@ -40,7 +40,8 @@ import { registerCommandRunner, runCommand } from './command-registry'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
-import { isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
+import { healDataModelWorkspace, isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
+import { persistWorkspaceMigration } from './workspace-migration-persist'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
 import { panesFromCatalog, publishFrame, publishMarked } from './ui-context'
@@ -705,7 +706,8 @@ export function Shell() {
       types.length > 0
         ? migrateSavedWorkspace(current, viewRows(current.views), types)
         : { changed: false as const, name: undefined, views: [] as Array<{ id: string; title: string; state: Json; type?: string }> }
-    const modelPatch = migrateLegacyModelViews(current, viewRows(current.views))
+    const listed = viewRows(current.views)
+    const modelPatch = healDataModelWorkspace(current, listed, migrateLayout(current.layout))
     const patch = {
       changed: objectPatch.changed || modelPatch.changed,
       name: objectPatch.name,
@@ -715,7 +717,11 @@ export function Shell() {
     }
     migratedRef.current.add(current.id)
     if (!patch.changed) return
-    void persistWorkspaceMigration(current, patch)
+    void persistWorkspaceMigration(current, patch, {
+      postView: (body) => api.post('/v1/views', { body }),
+      postWorkspace: (body) => api.post('/v1/workspaces', { body }),
+      freeObject,
+    })
       .then(async () => {
         await queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
         await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
@@ -744,7 +750,8 @@ export function Shell() {
         }
       })
       .catch(() => {
-        // Migration is best-effort; never surface as an unhandled page error.
+        // Allow a later open/reload to retry; never surface as an unhandled page error.
+        migratedRef.current.delete(current.id)
       })
   }, [workspace.data, defs.data, queryClient, userId])
 
@@ -1511,52 +1518,6 @@ function singularFromLive(raw: string, defs: Json | undefined) {
     return undefined
   }
 }
-
-async function persistWorkspaceMigration(
-  workspace: Workspace,
-  patch: {
-    name?: string
-    views: Array<{ id: string; title: string; state: Json; type?: string }>
-    create?: Array<{ id: string; type: string; title: string; state: Json; pane?: string; position?: number }>
-    layout?: unknown
-  },
-) {
-  const layout = patch.layout ?? workspace.layout ?? { tabs: [] }
-  if ((patch.name && patch.name !== workspace.name) || patch.layout) {
-    await api.post('/v1/workspaces', { body: {
-        id: workspace.id,
-        name: patch.name ?? workspace.name,
-        locked: workspace.locked,
-        share_token: workspace.share_token,
-        layout: freeObject(layout && typeof layout === 'object' ? layout : { tabs: [] }),
-      } })
-  }
-  for (const view of patch.views) {
-    const full = viewRows(workspace.views).find((item) => item.id === view.id)
-    if (!full) continue
-    await api.post('/v1/views', { body: {
-        id: full.id,
-        workspace_id: workspace.id,
-        type: view.type ?? full.type,
-        title: view.title,
-        pane: full.pane ?? 'center',
-        position: full.position ?? 0,
-        state: freeObject(view.state),
-      } })
-  }
-  for (const view of patch.create ?? []) {
-    await api.post('/v1/views', { body: {
-        id: view.id,
-        workspace_id: workspace.id,
-        type: view.type,
-        title: view.title,
-        pane: view.pane ?? 'main',
-        position: view.position ?? 0,
-        state: freeObject(view.state),
-      } })
-  }
-}
-
 
 function Help({ onClose, placeholder }: { onClose: () => void; placeholder: string }) {
   return (
