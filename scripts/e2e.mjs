@@ -82,14 +82,23 @@ function withDatabase(url, name) {
   return `${base.slice(0, slash + 1)}${name}${query}`
 }
 
-function ensureDatabase(name) {
+function psql(sql) {
   const user = process.env.POSTGRES_USER || 'braian'
+  execFileSync(
+    'docker',
+    ['compose', 'exec', '-T', 'postgres', 'psql', '-U', user, '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', sql],
+    { cwd: root, stdio: 'pipe' },
+  )
+}
+
+function databaseNameOk(name) {
+  return /^[a-z][a-z0-9_]*$/.test(name)
+}
+
+function ensureDatabase(name) {
+  if (!databaseNameOk(name)) throw new Error(`refusing database name ${name}`)
   try {
-    execFileSync(
-      'docker',
-      ['compose', 'exec', '-T', 'postgres', 'psql', '-U', user, '-d', 'postgres', '-c', `CREATE DATABASE ${name}`],
-      { cwd: root, stdio: 'pipe' },
-    )
+    psql(`CREATE DATABASE ${name}`)
   } catch (error) {
     const text = `${error.stderr ?? ''} ${error.stdout ?? ''}`
     if (!text.includes('already exists')) {
@@ -97,6 +106,12 @@ function ensureDatabase(name) {
       throw error
     }
   }
+}
+
+function resetDatabase(name) {
+  if (!databaseNameOk(name)) throw new Error(`refusing database name ${name}`)
+  psql(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`)
+  psql(`CREATE DATABASE ${name}`)
 }
 
 async function waitFor(url) {
@@ -195,12 +210,7 @@ export default mergeConfig(base, {
   return args
 }
 
-const slots = groups.map((files, index) => {
-  const db = groups.length === 1 ? 'braian_e2e' : `braian_e2e_${index}`
-  const apiPort = 8095 + index
-  const webPort = 3010 + index
-  const alias = groups.length === 1 ? 'braian_e2e' : `braian_e2e_${index}`
-  ensureDatabase(db)
+function apiEnvFor(db, apiPort, alias) {
   const apiEnv = { ...process.env }
   delete apiEnv.KAFKA_BROKERS
   apiEnv.DATABASE_URL = withDatabase(source, db)
@@ -209,12 +219,19 @@ const slots = groups.map((files, index) => {
   apiEnv.BRAIAN_SEED_COUNT = process.env.BRAIAN_E2E_SEED_COUNT || '250'
   apiEnv.BRAIAN_AGENT_MOCK = process.env.BRAIAN_AGENT_MOCK || '1'
   apiEnv.BRAIAN_E2E = '1'
-  const api = spawnLogged(binary, ['all'], apiEnv)
+  return apiEnv
+}
+
+const slots = groups.map((files, index) => {
+  const db = groups.length === 1 ? 'braian_e2e' : `braian_e2e_${index}`
+  const apiPort = 8095 + index
+  const webPort = 3010 + index
+  const alias = groups.length === 1 ? 'braian_e2e' : `braian_e2e_${index}`
   const web = spawnLogged(pnpm, viteDevArgs(webPort, groups.length > 1), {
     ...process.env,
     BRAIAN_API_PROXY: `http://127.0.0.1:${apiPort}`,
   })
-  return { files, db, apiPort, webPort, alias, api, web }
+  return { files, db, apiPort, webPort, alias, web }
 })
 
 function exitCode(error) {
@@ -238,18 +255,51 @@ function runPlaywright(files, webUrl) {
   })
 }
 
+function waitExit(child) {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve()
+    const timer = setTimeout(() => child.kill('SIGKILL'), 10_000)
+    child.on('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
+async function withApi(slot, files, alias) {
+  const api = spawnLogged(binary, ['all'], apiEnvFor(slot.db, slot.apiPort, alias))
+  try {
+    await waitFor(`http://127.0.0.1:${slot.apiPort}/healthz`)
+    console.log(`e2e db=${slot.db} alias=${alias} api=${slot.apiPort} web=${slot.webPort} files=${files.join(' ')}`)
+    return await runPlaywright(files, `http://127.0.0.1:${slot.webPort}`)
+  } finally {
+    if (api.exitCode === null && !api.killed) api.kill('SIGTERM')
+    await waitExit(api)
+    await delay(200)
+  }
+}
+
+async function runSlot(slot) {
+  await waitFor(`http://127.0.0.1:${slot.webPort}/`)
+  if (groups.length === 1) {
+    ensureDatabase(slot.db)
+    return withApi(slot, slot.files, slot.alias)
+  }
+  // Each file gets a reseeded database and its own Typesense alias. Files that
+  // share a database leave a second object table, and the next file's strict
+  // lookup fails.
+  for (let i = 0; i < slot.files.length; i += 1) {
+    resetDatabase(slot.db)
+    const alias = `${slot.alias}_${i}`
+    const status = await withApi(slot, [slot.files[i]], alias)
+    if (status !== 0) return status
+  }
+  return 0
+}
+
 let code = 1
 try {
-  const results = await Promise.all(
-    slots.map(async (slot) => {
-      await waitFor(`http://127.0.0.1:${slot.apiPort}/healthz`)
-      await waitFor(`http://127.0.0.1:${slot.webPort}/`)
-      console.log(
-        `e2e slot ready db=${slot.db} alias=${slot.alias} api=${slot.apiPort} web=${slot.webPort} files=${slot.files.join(' ')}`,
-      )
-      return runPlaywright(slot.files, `http://127.0.0.1:${slot.webPort}`)
-    }),
-  )
+  const results = await Promise.all(slots.map((slot) => runSlot(slot)))
   const failed = results.find((status) => status !== 0)
   code = failed ?? 0
 } catch (error) {

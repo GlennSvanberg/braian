@@ -21,6 +21,9 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Stabilize Rust source mtimes
+        if: steps.changes.outputs.mode == 'full'
+        run: find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
       - uses: Swatinem/rust-cache@v2
@@ -88,6 +91,9 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD | bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Stabilize Rust source mtimes
+        if: steps.changes.outputs.mode == 'full'
+        run: find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.changes.outputs.mode == 'full'
       - uses: Swatinem/rust-cache@v2
@@ -145,6 +151,13 @@ jobs:
             echo "compile=false" >> "$GITHUB_OUTPUT"
             echo "Web-only diff; reusing the release binary for this Rust hash."
           fi
+      - name: Stabilize Rust source mtimes
+        if: steps.plan.outputs.compile == 'true'
+        run: |
+          # Cargo fingerprints local crates by mtime. A fresh checkout is newer
+          # than the cached fingerprints, so workspace crates recompile on every
+          # hit. Pin the mtimes before restore and before the build.
+          find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
         if: steps.plan.outputs.compile == 'true'
       - uses: Swatinem/rust-cache@v2
@@ -268,8 +281,9 @@ jobs:
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
-          # Two processes keep a file's tests on one database. Four saturated the
-          # 4-core runner and failed timing-sensitive layout tests.
+          # Two processes, and scripts/e2e.mjs reseeds the database for each file.
+          # Sharing one database across files left a second object table and
+          # failed strict-mode lookups. Four processes saturated the runner.
           BRAIAN_E2E_WORKERS: "2"
           BRAIAN_BIN: ${{ runner.temp }}/ci-bins/braian
         run: |
