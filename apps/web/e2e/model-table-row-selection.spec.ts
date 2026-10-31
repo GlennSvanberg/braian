@@ -12,9 +12,12 @@ async function login(page: Page) {
 
 async function openDataModelTab(page: Page, label: string, tableTestId: string) {
   await page.getByRole('button', { name: 'Data model' }).click()
-  await expect(page.locator('.pane-tab').filter({ hasText: label }).first()).toBeVisible({ timeout: 30_000 })
-  await page.locator('.pane-tab').filter({ hasText: label }).first().click()
-  await expect(page.getByTestId(tableTestId)).toBeVisible()
+  const tab = page.locator('.pane-tab').filter({ hasText: label }).first()
+  await expect(tab).toBeVisible({ timeout: 30_000 })
+  await tab.click()
+  const table = page.getByTestId(tableTestId)
+  await expect(table).toBeVisible()
+  await expect(table.locator('[data-testid="standard-grid-row"]').first()).toBeVisible()
 }
 
 async function assertRowSelection(page: Page, tableTestId: string) {
