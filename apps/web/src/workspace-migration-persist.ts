@@ -25,9 +25,27 @@ export type PersistPatch = {
   layout?: unknown
 }
 
+export type PersistViewBody = {
+  id: string
+  workspace_id: string
+  type: string
+  title: string
+  pane: string
+  position: number
+  state: { [key: string]: unknown }
+}
+
+export type PersistWorkspaceBody = {
+  id: string
+  name: string
+  locked: boolean
+  share_token?: string | null
+  layout: { [key: string]: unknown }
+}
+
 export type PersistDeps = {
-  postView: (body: Record<string, unknown>) => Promise<unknown>
-  postWorkspace: (body: Record<string, unknown>) => Promise<unknown>
+  postView: (body: PersistViewBody) => Promise<unknown>
+  postWorkspace: (body: PersistWorkspaceBody) => Promise<unknown>
   freeObject: (value: object) => { [key: string]: unknown }
 }
 
