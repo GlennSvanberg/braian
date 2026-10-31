@@ -588,6 +588,11 @@ export function CommandPalette({
       onClose()
       return
     }
+    if (id === 'workspace:delete') {
+      window.dispatchEvent(new Event('braian-workspace-delete'))
+      onClose()
+      return
+    }
     if (id.startsWith('workspace:')) {
       const workspaceId = id.slice('workspace:'.length)
       dispatchUi('ui.open_workspace', { id: workspaceId })
@@ -1081,6 +1086,7 @@ function buildCatalog(
     { id: 'layout:zoom', group: 'views', title: 'Maximize pane', subtitle: 'Show only the focused pane', kbd: 'Ctrl+Alt+Z', shortcut: 'Ctrl+Alt+Z' },
     { id: 'layout:close_view', group: 'views', title: 'Close view', subtitle: 'Close the focused view', kbd: 'Ctrl+Alt+W', shortcut: 'Ctrl+Alt+W' },
     { id: 'layout:reset_layout', group: 'views', title: 'Reset layout', subtitle: 'Restore the saved workspace layout' },
+    { id: 'workspace:delete', group: 'views', title: 'Delete workspace', subtitle: 'Remove the active workspace and its layout', keywords: ['delete', 'remove', 'workspace'] },
     addViewRootItem(),
   ]
   if (feedbackEnabled) {

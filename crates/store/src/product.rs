@@ -350,12 +350,40 @@ impl Store {
         Ok(())
     }
 
+    pub async fn workspace_is_member(
+        &self,
+        workspace_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_opt(
+                "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+                &[&workspace_id, &user_id],
+            )
+            .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn delete_workspace(&self, id: Uuid) -> Result<(), Error> {
         let client = self.pool().get().await?;
         client
             .execute("DELETE FROM workspaces WHERE id = $1", &[&id])
             .await?;
         Ok(())
+    }
+
+    pub async fn workspace_count_for_user(&self, user_id: Uuid) -> Result<i64, Error> {
+        let client = self.pool().get().await?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*)::bigint AS n
+                 FROM workspace_members
+                 WHERE user_id = $1",
+                &[&user_id],
+            )
+            .await?;
+        Ok(row.get("n"))
     }
 
     pub async fn list_workspaces(&self, user_id: Uuid) -> Result<Vec<Value>, Error> {

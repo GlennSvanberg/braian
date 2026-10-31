@@ -43,6 +43,7 @@ const specs = [
   'e2e/cell-edit-key-guard.spec.ts',
   'e2e/status-select-cell-edit.spec.ts',
   'e2e/persist-active-workspace.spec.ts',
+  'e2e/delete-workspace.spec.ts',
 ]
 
 function workerCount() {
@@ -85,6 +86,7 @@ const measuredSeconds = {
   'e2e/inline-cell-edit.spec.ts': 7,
   'e2e/model-table-row-selection.spec.ts': 5,
   'e2e/cell-edit-key-guard.spec.ts': 4,
+  'e2e/delete-workspace.spec.ts': 28,
 }
 
 const reseedSeconds = 4
