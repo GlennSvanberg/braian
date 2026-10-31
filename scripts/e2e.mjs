@@ -47,6 +47,7 @@ const specs = [
   'e2e/persist-active-workspace.spec.ts',
   'e2e/delete-workspace.spec.ts',
   'e2e/template-picker.spec.ts',
+  'e2e/shortcut-registry.spec.ts',
   'e2e/user-menu.spec.ts',
 ]
 
@@ -95,6 +96,7 @@ const measuredSeconds = {
   'e2e/user-menu.spec.ts': 25,
   'e2e/delete-workspace.spec.ts': 28,
   'e2e/open-type-view-ready.spec.ts': 25,
+  'e2e/shortcut-registry.spec.ts': 20,
 }
 
 const reseedSeconds = 4

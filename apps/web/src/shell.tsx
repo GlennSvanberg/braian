@@ -32,7 +32,7 @@ import {
   takeQueuedOpenTypeView,
 } from './open-type-view-queue'
 import { copy } from './i18n'
-import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
+import { applyLayoutCommand, migrateLayout, views as layoutViews, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
 import { ModelDraftHost } from './model-draft-ui'
 import { stageModel } from './model-stage'
@@ -48,8 +48,10 @@ import { SharedContextMenuHost } from './shared-context-menu'
 import { StateNote } from './states'
 import { requestNewSelection } from './assortment-filter'
 import { dispatchUi } from './ui-bus'
+import { readUiContext } from './ui-context'
 import { registerCommandRunner, runCommand } from './command-registry'
-import { isTextEditingTarget } from './cell-edit'
+import { useShortcutBindings } from './shortcut-bindings'
+import { shortcuts } from './shortcuts'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
@@ -148,6 +150,9 @@ export function Shell() {
   const queryClient = useQueryClient()
   const me = useQuery({ queryKey: ['me'], queryFn: () => api.get('/v1/me'), retry: false })
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const themeRef = useRef(theme)
+  themeRef.current = theme
+  const signOutRef = useRef<() => void>(() => {})
   const [booted, setBooted] = useState(false)
   const [signedOut, setSignedOut] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
@@ -357,6 +362,19 @@ export function Shell() {
       }),
 
       registerCommandRunner('feedback:send', () => openFeedback()),
+      registerCommandRunner('theme:toggle', () => {
+        setTheme(themeRef.current === 'dark' ? 'light' : 'dark')
+      }),
+      registerCommandRunner('agent:open', () => {
+        setFieldsEditColumnId(null)
+        setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(false)
+        setPaletteMode('ai')
+        setPaletteEpoch((value) => value + 1)
+      }),
+      registerCommandRunner('session:sign-out', () => {
+        signOutRef.current()
+      }),
       registerCommandRunner('layout:reset_layout', () => applyRef.current('reset_layout', {})),
       registerCommandRunner('workspace:delete', () => { requestDeleteActiveRef.current() }),
 
@@ -591,93 +609,56 @@ export function Shell() {
     }
   }, [workspaceId])
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      // Inline cell editors own the keyboard; do not open Ctrl+K / move panes / etc.
-      if (isTextEditingTarget(event)) return
-      const typing = event.target instanceof HTMLElement
-        && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName))
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        event.stopPropagation()
-        // Remount at list root (clears Fields › / stack left from Select fields ›) and
-        // focus synchronously so the first typed character is not dropped.
-        flushSync(() => {
-          setFieldsEditColumnId(null)
-          setPaletteStartAddView(false)
-          setPaletteStartNewFromTemplate(false)
-          setPaletteMode('list')
-          setPaletteEpoch((value) => value + 1)
-        })
-        document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')?.focus()
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        window.dispatchEvent(new Event('braian-review-save'))
-        return
-      }
-      if (feedbackEnabled && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'b') {
-        event.preventDefault()
-        openFeedback()
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
-        event.preventDefault()
-        setPaletteMode('ai')
-        return
-      }
-      if (event.key === 'Escape') {
-        setHelp(false)
-        setTabMenu(null)
-        return
-      }
-      if (event.key === 'F1') {
-        event.preventDefault()
-        setHelp(true)
-        return
-      }
-      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key >= '1' && event.key <= '9') {
-        const index = Number(event.key) - 1
-        const id = orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data))[index]?.id
-        if (id) {
-          event.preventDefault()
-          setWorkspaceId(id)
-        }
-        return
-      }
-      if (paletteModeRef.current || typing) return
-      const arrow = zoneFromKey(event.key)
-      if ((event.ctrlKey || event.metaKey) && event.altKey && event.shiftKey && arrow) {
-        event.preventDefault()
-        const sign = arrow === 'left' || arrow === 'top' ? -1 : 1
-        applyRef.current('resize', { direction: arrow, delta: sign * 0.05 })
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.altKey && arrow) {
-        event.preventDefault()
-        const name = arrow === 'left' ? 'move_view_left' : arrow === 'right' ? 'move_view_right' : arrow === 'top' ? 'move_view_up' : 'move_view_down'
-        applyRef.current(name, {})
-        return
-      }
-      if (event.altKey && !event.ctrlKey && !event.metaKey && arrow) {
-        event.preventDefault()
-        applyRef.current('focus', { direction: arrow })
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'w') {
-        event.preventDefault()
-        applyRef.current('close_view', {})
-        return
-      }
-      if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        applyRef.current('zoom', {})
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [workspaces.data, defs.data, feedbackEnabled])
+  useShortcutBindings({
+    openPalette: () => {
+      // Remount at list root (clears Fields › / stack left from Select fields ›) and
+      // focus synchronously so the first typed character is not dropped.
+      flushSync(() => {
+        setFieldsEditColumnId(null)
+        setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(false)
+        setPaletteMode('list')
+        setPaletteEpoch((value) => value + 1)
+      })
+      document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')?.focus()
+    },
+    openAi: () => { void runCommand('agent:open') },
+    saveReview: () => window.dispatchEvent(new Event('braian-review-save')),
+    openFeedback: feedbackEnabled ? openFeedback : undefined,
+    openHelp: () => setHelp(true),
+    closeHelp: () => {
+      setHelp(false)
+      setTabMenu(null)
+    },
+    openWorkspaceAt: (index) => {
+      const id = orderWorkspaces(workspaces.data?.workspaces ?? [], typeNames(defs.data))[index]?.id
+      if (id) setWorkspaceId(id)
+    },
+    focusPane: (direction) => applyRef.current('focus', { direction }),
+    moveView: (direction) => {
+      const name =
+        direction === 'left'
+          ? 'move_view_left'
+          : direction === 'right'
+            ? 'move_view_right'
+            : direction === 'top'
+              ? 'move_view_up'
+              : 'move_view_down'
+      applyRef.current(name, {})
+    },
+    resize: (direction, delta) => applyRef.current('resize', { direction, delta }),
+    zoom: () => applyRef.current('zoom', {}),
+    closeView: () => applyRef.current('close_view', {}),
+    moveColumn: (direction) => {
+      const column = readUiContext().activeColumn
+      if (!column) return
+      dispatchUi('ui.move_column', { column, direction })
+    },
+    paletteOpen: Boolean(paletteMode),
+    helpOpen: help,
+    feedbackEnabled,
+  })
+
 
   useEffect(() => {
     publishMarked(objectId)
@@ -1016,6 +997,7 @@ export function Shell() {
       queryClient.setQueryData(['me'], undefined)
     })
   }
+  signOutRef.current = signOut
   const surface = workspace.data
 
   const commitDoc = (next: LayoutDoc) => {
@@ -1162,8 +1144,8 @@ export function Shell() {
           role={user.role}
           connection={isConnected(online, liveState) ? 'online' : 'offline'}
           theme={theme}
-          onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          onSignOut={signOut}
+          onToggleTheme={() => { void runCommand('theme:toggle') }}
+          onSignOut={() => { void runCommand('session:sign-out') }}
         />
       </header>
       <main className="workspace" data-testid="workspace">
@@ -1225,7 +1207,7 @@ export function Shell() {
           feedbackEnabled={feedbackEnabled}
           onSendFeedback={openFeedback}
           theme={theme}
-          onSignOut={signOut}
+          onSignOut={() => { void runCommand('session:sign-out') }}
           focusViewId={doc?.focus ?? null}
           startAddView={paletteStartAddView}
           startNewFromTemplate={paletteStartNewFromTemplate}
@@ -1795,19 +1777,18 @@ function singularFromLive(raw: string, defs: Json | undefined) {
 }
 
 function Help({ onClose, placeholder }: { onClose: () => void; placeholder: string }) {
+  // F1 overlay only — theme / Agent / Sign out stay in the user menu; Ctrl+K uses the registry.
+  const rows = shortcuts.filter((item) => item.id !== 'help.close' && item.id !== 'palette.search')
   return (
-    <div className="help" onClick={onClose}>
+    <div className="help" data-testid="help-shortcuts" onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()}>
         <strong>{copy.shortcuts}</strong>
         <p><Kbd>Ctrl</Kbd>+<Kbd>K</Kbd> {placeholder}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>J</Kbd> {copy.agent}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+arrows move the focused view</p>
-        <p><Kbd>Alt</Kbd>+arrows focus the neighbour</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>Shift</Kbd>+arrows resize</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>Z</Kbd> {copy.maximize}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>W</Kbd> {copy.closeView}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>1</Kbd>…<Kbd>9</Kbd> workspaces</p>
-        <p><Kbd>F1</Kbd> {copy.shortcuts}</p>
+        {rows.map((item) => (
+          <p key={item.id} data-shortcut-id={item.id}>
+            <Kbd>{item.chord}</Kbd> {item.description}
+          </p>
+        ))}
         <button onClick={onClose}>{copy.close}</button>
       </div>
     </div>

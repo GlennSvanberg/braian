@@ -48,7 +48,7 @@ test.describe('palette root and first-key focus', () => {
     await expect(page.getByText('Mature cheddar')).toBeVisible({ timeout: 60_000 })
 
     // Deterministic: the Ctrl+K handler must leave #palette-input focused in the
-    // same turn (flushSync). Without that, this evaluate sees no input yet and
+    // same turn (flushSync) via the document-capture hotkey listener. Without that, this evaluate sees no input yet and
     // Playwright's later type() can still win the race — which is why a plain
     // press→type loop is only sporadically red under automation.
     for (let round = 0; round < 8; round += 1) {
@@ -64,7 +64,7 @@ test.describe('palette root and first-key focus', () => {
           bubbles: true,
           cancelable: true,
         })
-        window.dispatchEvent(event)
+        document.dispatchEvent(event)
         const input = document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')
         if (!input) return { focused: false, hasInput: false }
         return {
