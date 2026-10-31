@@ -142,6 +142,7 @@ export function Shell() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api.get('/v1/me'), retry: false })
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [booted, setBooted] = useState(false)
+  const [signedOut, setSignedOut] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [group, setGroup] = useState<string | null>(null)
   const [objectId, setObjectId] = useState<string | null>(null)
@@ -965,17 +966,23 @@ export function Shell() {
   }
 
 
-  if (!booted || (me.isPending && !me.data)) return <p className="pane-body">{copy.loading}</p>
-  if (!me.data) {
+  if (!booted || (me.isPending && !me.data && !signedOut)) return <p className="pane-body">{copy.loading}</p>
+  if (signedOut || !me.data) {
     return (
       <>
-        <Login onDone={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+        <Login
+          onDone={() => {
+            setSignedOut(false)
+            void queryClient.invalidateQueries({ queryKey: ['me'] })
+          }}
+        />
         <ImportScreen />
       </>
     )
   }
   const user = me.data
   const signOut = () => {
+    setSignedOut(true)
     void queryClient.cancelQueries({ queryKey: ['me'] })
     void api.post('/v1/logout').then(() => {
       queryClient.setQueryData(['me'], undefined)
