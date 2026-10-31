@@ -978,7 +978,7 @@ export function Shell() {
   const signOut = () => {
     void queryClient.cancelQueries({ queryKey: ['me'] })
     void api.post('/v1/logout').then(() => {
-      queryClient.removeQueries({ queryKey: ['me'] })
+      queryClient.setQueryData(['me'], undefined)
     })
   }
   const surface = workspace.data
