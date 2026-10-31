@@ -20,6 +20,13 @@ import { structureCaption } from './graph-scene'
 import { dropReparents, groupKeyFromLabel } from './group-tree'
 import { publishProposal } from './proposal-bus'
 import { formatCount, formatTimestamp } from './format'
+import { toast } from 'sonner'
+import {
+  clearQueuedOpenTypeView,
+  peekQueuedOpenTypeView,
+  queueOpenTypeView,
+  takeQueuedOpenTypeView,
+} from './open-type-view-queue'
 import { copy } from './i18n'
 import { applyLayoutCommand, migrateLayout, views as layoutViews, zoneFromKey, type LayoutDoc, type Place } from './layout'
 import { ConsequenceHost } from './consequence'
@@ -680,6 +687,27 @@ export function Shell() {
     })
   }, [doc, workspace.data, workspaceId])
 
+
+  const openTypeQueueWorkspaceRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (openTypeQueueWorkspaceRef.current === null) {
+      openTypeQueueWorkspaceRef.current = workspaceId
+      return
+    }
+    if (openTypeQueueWorkspaceRef.current !== workspaceId) {
+      openTypeQueueWorkspaceRef.current = workspaceId
+      clearQueuedOpenTypeView()
+    }
+  }, [workspaceId])
+
+  useEffect(() => {
+    const typeId = peekQueuedOpenTypeView()
+    if (!typeId) return
+    if (!workspace.data || workspace.data.id !== workspaceId || !docRef.current) return
+    takeQueuedOpenTypeView()
+    openTypeViewRef.current(typeId)
+  }, [workspace.data, workspaceId, doc])
+
   useEffect(() => {
     const surface = workspace.data
     const wanted = peekQueuedViewType()
@@ -1005,7 +1033,13 @@ export function Shell() {
   openTypeViewRef.current = (typeId: string) => {
     const surfaceNow = workspaceRef.current
     const docNow = docRef.current
-    if (!surfaceNow || !docNow) return
+    if (!surfaceNow || !docNow) {
+      // Notion 112: palette already closes on select — queue until doc+workspace paint.
+      queueOpenTypeView(typeId)
+      toast.message(copy.workspaceOpeningWhenReady)
+      return
+    }
+    clearQueuedOpenTypeView()
     const type = typeNames(queryClient.getQueryData<Json>(['definitions'])).find((item) => item.id === typeId)
     if (!type) return
     void (async () => {
