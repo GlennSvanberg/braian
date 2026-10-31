@@ -296,7 +296,7 @@ jobs:
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
           # Two processes. Three made the long specs slower on a shared runner
-          # (layout 51s → 1.4m, field-picker 1.1m → 1.8m). Each file gets a new
+          # (layout 51s → 1.4m, field-picker 1.1m → 1.8m). Each spec file gets a new
           # database and Typesense alias; a shared database left a second object
           # table and failed strict-mode lookups. Two servers at the default
           # pools (24+8+2) stay under Postgres max_connections (100).
