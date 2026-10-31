@@ -26,8 +26,17 @@ test('inline Name cell edit keeps caret and persists after Enter', async ({ page
 
   const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
   await expect(row).toBeVisible({ timeout: 60_000 })
+  // Pin by DOM id — after fill() the name cell no longer contains "Mature cheddar".
+  const rowId = await row.getAttribute('id')
+  expect(rowId).toBeTruthy()
+  const stableRow = page.locator(`#${CSS.escape(rowId!)}`)
 
-  const nameCell = row.locator('[data-column="name"]').first()
+  const nameCell = stableRow.locator('[data-column="name"]').first()
+  // Activate the Name column so .active-cell is present before we edit.
+  await nameCell.click()
+  await expect(stableRow.locator('.active-cell')).toHaveAttribute('data-column', 'name')
+  const activeBefore = await stableRow.locator('.active-cell').getAttribute('data-column')
+
   await nameCell.dblclick()
   const editor = page.getByTestId('cell-editor-name')
   await expect(editor).toBeVisible()
@@ -44,12 +53,11 @@ test('inline Name cell edit keeps caret and persists after Enter', async ({ page
   const caretBefore = await editor.evaluate((el: HTMLInputElement) => el.selectionStart)
   expect(caretBefore).toBe('Aged cheddar e2e'.length)
 
-  const activeBefore = await row.locator('.active-cell').getAttribute('data-column')
   await editor.press('ArrowLeft')
   const caretAfter = await editor.evaluate((el: HTMLInputElement) => el.selectionStart)
   expect(caretAfter, 'ArrowLeft should move caret left by one').toBe((caretBefore ?? 0) - 1)
   await expect(editor).toBeVisible()
-  const activeAfter = await row.locator('.active-cell').getAttribute('data-column')
+  const activeAfter = await stableRow.locator('.active-cell').getAttribute('data-column')
   expect(activeAfter, 'active column must stay on name while editing').toBe(activeBefore ?? 'name')
 
   // Enter commits; value must stick after settle (and not snap back to Mature cheddar).
