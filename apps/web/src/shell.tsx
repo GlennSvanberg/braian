@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ImportMappingsView } from './import/mappings-view'
 import { flushSync } from 'react-dom'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Moon, Sun } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen } from 'lucide-react'
+import { StatusBar, useOnline } from './status-bar'
+import { isConnected, type LiveState } from './status-message'
+import { UserMenu } from './user-menu'
 import { api, freeObject, jsonRecord, keepaliveJsonPut, operationId, recordTitle, textValue, type Json } from './api'
 import { AssortmentList, NewSelectionDialog } from './assortments'
 import { humanizeLive, objectIdFromLive } from './activity'
@@ -73,6 +76,7 @@ import {
   ObjectDetail,
   ObjectTable,
   ProposalView,
+  ProposalListView,
 } from './panes'
 
 type View = { id: string; type: string; title: string; pane?: string; position?: number; state: Json }
@@ -144,8 +148,11 @@ export function Shell() {
   const [listType, setListType] = useState<string | null>(null)
   const [proposalId, setProposalId] = useState<string | null>(null)
   const [logText, setLogText] = useState('')
-  const [liveState, setLiveState] = useState('closed')
-  const [statusLine, setStatusLine] = useState<string>(copy.activity)
+  const [liveState, setLiveState] = useState<LiveState>('connecting')
+  const liveStateRef = useRef<LiveState>('connecting')
+  liveStateRef.current = liveState
+  const [streamEpoch, setStreamEpoch] = useState(0)
+  const online = useOnline()
   const [paletteMode, setPaletteMode] = useState<null | 'list' | 'ai' | 'fields'>(null)
   /** Bumped on every Ctrl+K / palette:search so list opens at root even if mode was already list. */
   const [paletteEpoch, setPaletteEpoch] = useState(0)
@@ -264,7 +271,6 @@ export function Shell() {
   const push = (line: string) => {
     const stamp = formatTimestamp(new Date())
     const text = `${stamp} ${line}`
-    setStatusLine(text)
     setLogText((current) => [text, ...current.split('\n').filter(Boolean)].slice(0, 6).join('\n'))
   }
 
@@ -435,13 +441,21 @@ export function Shell() {
       refresh.onEvent(event.data)
     }
     source.onerror = () => {
-      if (source.readyState === EventSource.CLOSED) push(copy.offline)
+      // CONNECTING: the browser retries on its own. CLOSED: only a new stream recovers.
+      setLiveState(source.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting')
     }
     return () => {
       refresh.dispose()
       source.close()
     }
-  }, [booted, me.isSuccess, queryClient])
+  }, [booted, me.isSuccess, queryClient, streamEpoch])
+
+  // Back online with a broken stream: reconnect now instead of waiting for the retry timer.
+  useEffect(() => {
+    if (online && liveStateRef.current !== 'open' && liveStateRef.current !== 'message' && liveStateRef.current !== 'connecting') {
+      setStreamEpoch((value) => value + 1)
+    }
+  }, [online])
 
   const userId = me.data?.user_id ?? ''
   const workspaceRef = useRef(workspace.data)
@@ -961,8 +975,7 @@ export function Shell() {
     )
   }
   const user = me.data
-  const userName = user.handle || ''
-  const userEmail = user.handle || ''
+  const signOut = () => void api.post('/v1/logout').then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))
   const surface = workspace.data
 
   const commitDoc = (next: LayoutDoc) => {
@@ -1096,18 +1109,16 @@ export function Shell() {
           ))}
         </nav>
         <span className="spacer" />
-        <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? <Sun aria-hidden="true" size={14} /> : <Moon aria-hidden="true" size={14} />}
-          {theme === 'dark' ? copy.themeLight : copy.themeDark}
-        </button>
-        <button className="icon-btn" onClick={() => setPaletteMode('ai')}>{copy.agent}</button>
-        <span className="who">{userName}</span>
-        <button
-          className="icon-btn"
-          onClick={() => void api.post('/v1/logout').then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))}
-        >
-          {copy.signOut}
-        </button>
+        <UserMenu
+          name={user.display_name}
+          email={user.email}
+          handle={user.handle}
+          role={user.role}
+          connection={isConnected(online, liveState) ? 'online' : 'offline'}
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onSignOut={signOut}
+        />
       </header>
       <main className="workspace" data-testid="workspace">
         {doc && surface && !layoutHealPending ? (
@@ -1130,15 +1141,10 @@ export function Shell() {
           <p data-testid="layout-heal-loading">{copy.loading}</p>
         )}
       </main>
-      <pre className="activity" data-testid="activity-log" data-live={liveState}>{logText}</pre>
-      <footer className="status">
-        <span>{userEmail}</span>
-        <span>{user.role}</span>
-        <span data-testid="live-flag">{copy.connected}</span>
-        {workspace.data?.locked ? <span>{copy.locked}</span> : null}
-        <span className="grow" />
-        <span>{statusLine}</span>
-      </footer>
+      <div className="bottom-bar">
+        <pre className="activity" data-testid="activity-log" data-live={liveState}>{logText}</pre>
+        <StatusBar online={online} live={liveState} locked={Boolean(workspace.data?.locked)} />
+      </div>
       <ModelDraftHost />
       <ConsequenceHost session={session} />
       <SharedContextMenuHost feedbackEnabled={feedbackEnabled} />
@@ -1150,7 +1156,7 @@ export function Shell() {
             setFeedbackCapture(null)
           }}
           capture={feedbackCapture}
-          user={{ handle: user.handle || userName, role: user.role }}
+          user={{ handle: user.handle || '', role: user.role }}
           object={objectId ? {
             id: objectId,
             type: String(opened.data?.type ?? ''),
@@ -1172,6 +1178,8 @@ export function Shell() {
           views={workspace.data?.views ?? []}
           feedbackEnabled={feedbackEnabled}
           onSendFeedback={openFeedback}
+          theme={theme}
+          onSignOut={signOut}
           focusViewId={doc?.focus ?? null}
           startAddView={paletteStartAddView}
           startNewFromTemplate={paletteStartNewFromTemplate}
@@ -1302,7 +1310,7 @@ function Login({ onDone }: { onDone: () => void }) {
           {copy.password}
           <Input data-testid="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
-        {error ? <p className="error">{error}</p> : <p className="hint">{copy.loginHint}</p>}
+        {error ? <p className="error">{error}</p> : null}
         <Button type="submit">{copy.signIn}</Button>
       </form>
     </div>
@@ -1323,6 +1331,7 @@ function ViewBody({ view, session, workspace }: { view: View; session: Session; 
   if (view.type === 'data_model') return <DataModel view={view} />
   if (view.type === 'attribute_definitions') return <AttributeDefinitions />
   if (view.type === 'proposal') return <ProposalView session={session} />
+  if (view.type === 'proposal_list') return <ProposalListView session={session} />
   if (view.type === 'import_mappings') return <ImportMappingsView />
   if (view.type === 'batch_log') return <BatchLog />
   if (view.type === 'job_history') return <JobHistory view={view} />

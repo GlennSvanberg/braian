@@ -3,12 +3,13 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import * as api from '../api/client'
 import { StandardTableChrome } from '../standard-table'
-import { cellClass, rowClass } from '../import/model'
+import { cellClass, importCellText, rowClass } from '../import/model'
+import { setSkipInvalid } from '../import/controller'
 
 const PAGE = 100
 const ROW = 30
 
-type Cell = { value?: string | null; before?: string | null; state?: string; error?: { message?: string }; warning?: { message?: string } }
+type Cell = { value?: unknown; before?: unknown; state?: string; error?: { message?: string }; warning?: { message?: string } }
 type DraftRow = {
   row_no: number
   status: string
@@ -23,6 +24,7 @@ type Page = {
   session_id?: string
   columns?: DraftColumn[]
   counters?: Record<string, number>
+  skip_invalid?: boolean
   rows?: DraftRow[]
 }
 
@@ -31,6 +33,7 @@ const FILTERS: Array<{ id: string; label: string; tone: string }> = [
   { id: 'new', label: 'New', tone: 'ok' },
   { id: 'changed', label: 'Changed', tone: 'warn' },
   { id: 'failed', label: 'Errors', tone: 'danger' },
+  { id: 'unchanged', label: 'Unchanged', tone: 'neutral' },
   { id: 'excluded', label: 'Excluded', tone: 'neutral' },
 ]
 
@@ -66,6 +69,22 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
   const columns = head.data?.columns ?? []
   const counters = head.data?.counters ?? {}
   const sessionId = head.data?.session_id
+  const skipInvalid = head.data?.skip_invalid === true
+  const [busy, setBusy] = useState(false)
+  const changeSkipInvalid = async (value: boolean) => {
+    if (!sessionId) return
+    setBusy(true)
+    try {
+      await setSkipInvalid(sessionId, value)
+      setError('')
+      await queryClient.invalidateQueries({ queryKey: ['draft-rows', proposalId] })
+      await queryClient.invalidateQueries({ queryKey: ['proposal', proposalId] })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The change failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
   const virtualizer = useVirtualizer({ count: total, getScrollElement: () => parent.current, estimateSize: () => ROW, overscan: 12 })
   const visible = virtualizer.getVirtualItems()
   const pages = [...new Set(visible.map((item) => Math.floor(item.index / PAGE)))]
@@ -82,7 +101,7 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
   })
   const needle = text.trim().toLowerCase()
   const matches = (row: DraftRow) =>
-    !needle || Object.values(row.cells).some((cell) => String(cell?.value ?? '').toLowerCase().includes(needle))
+    !needle || Object.values(row.cells).some((cell) => importCellText(cell?.value).toLowerCase().includes(needle))
 
   useEffect(() => {
     setEditing(null)
@@ -119,7 +138,7 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
   const template = `${editable ? '28px ' : ''}56px 28px repeat(${Math.max(columns.length, 1)}, minmax(110px, 1fr))`
   const count = (id: string) =>
     id === 'all'
-      ? ['new', 'changed', 'failed', 'unchanged'].reduce((sum, key) => sum + Number(counters[key] ?? 0), 0)
+      ? ['new', 'changed', 'failed', 'unchanged', 'excluded'].reduce((sum, key) => sum + Number(counters[key] ?? 0), 0)
       : Number(counters[id] ?? 0)
 
   return (
@@ -142,7 +161,19 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
             {item.label} {count(item.id)}
           </button>
         ))}
-        {excluded.length > 0 ? <span className="chip">{excluded.length} left out</span> : null}
+        {excluded.length > 0 ? <span className="meta-chip neutral">{excluded.length} left out</span> : null}
+        {editable && sessionId ? (
+          <label className="import-empty-clears" title="Rows with an invalid cell are imported without that cell instead of being skipped.">
+            <input
+              type="checkbox"
+              data-testid="draft-skip-invalid"
+              checked={skipInvalid}
+              disabled={busy}
+              onChange={(event) => void changeSkipInvalid(event.target.checked)}
+            />
+            {' '}Leave out invalid cells instead of skipping the row
+          </label>
+        ) : null}
         {error ? <span className="error" role="alert" data-testid="draft-error">{error}</span> : null}
       </div>
       <div className="import-table" ref={parent} style={{ maxHeight: '70vh' }}>
@@ -198,11 +229,11 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
                       title={cell?.error?.message ?? cell?.warning?.message}
                       data-testid={`draft-cell-${row.row_no}-${column.col}`}
                       tabIndex={editable ? 0 : undefined}
-                      onDoubleClick={() => editable && setEditing({ row: row.row_no, col: column.col, text: String(cell?.value ?? '') })}
+                      onDoubleClick={() => editable && setEditing({ row: row.row_no, col: column.col, text: importCellText(cell?.value) })}
                       onKeyDown={(event) => {
                         if (editable && (event.key === 'Enter' || event.key === 'F2') && !active) {
                           event.preventDefault()
-                          setEditing({ row: row.row_no, col: column.col, text: String(cell?.value ?? '') })
+                          setEditing({ row: row.row_no, col: column.col, text: importCellText(cell?.value) })
                         }
                       }}
                     >
@@ -234,12 +265,12 @@ export function DraftTable({ proposalId, version = '', excluded, onExcludedChang
                         />
                       ) : cell?.state === 'changed' && cell.before ? (
                         <>
-                          <span className="diff-old">{cell.before}</span>
+                          <span className="diff-old">{importCellText(cell.before)}</span>
                           <span className="diff-arrow">{' -> '}</span>
-                          <span className="diff-new">{cell.value ?? ''}</span>
+                          <span className="diff-new">{importCellText(cell.value)}</span>
                         </>
                       ) : (
-                        cell?.value ?? ''
+                        importCellText(cell?.value)
                       )}
                     </span>
                   )

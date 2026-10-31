@@ -21,6 +21,8 @@ pub struct MappedColumn {
     pub target: String,
     /// An empty cell removes the stored value instead of leaving it alone.
     pub clear_empty: bool,
+    /// A cell that does not validate is left out (and marked) instead of failing the row.
+    pub skip_invalid: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +80,7 @@ pub fn classify_row(
     let mut groups = BTreeMap::new();
     let mut link_plans: Vec<Value> = Vec::new();
     let mut clears: BTreeSet<usize> = BTreeSet::new();
+    let skip_invalid = columns.iter().any(|column| column.skip_invalid);
     for column in columns {
         if column.target == "unmapped" {
             continue;
@@ -126,7 +129,9 @@ pub fn classify_row(
                     column.index.to_string(),
                     json!({ "value": text, "state": "error", "error": error }),
                 );
-                errors.push(error);
+                if !skip_invalid {
+                    errors.push(error);
+                }
             }
         }
     }
@@ -206,7 +211,39 @@ pub fn classify_row(
                 },
             };
         }
-        let report = model.validate_patch(&existing.object, &patch);
+        let mut report = model.validate_patch(&existing.object, &patch);
+        if skip_invalid {
+            for _ in 0..8 {
+                if report.errors.is_empty() || report.errors.iter().any(|e| e.attribute.is_none()) {
+                    break;
+                }
+                attach_validation(&mut cell_view, model, columns, targets, &report.errors);
+                let mut removed = false;
+                for error in &report.errors {
+                    if let Some(id) = error.attribute {
+                        removed |= patch.values.attributes.remove(&id).is_some();
+                    }
+                }
+                if !removed {
+                    break;
+                }
+                report = model.validate_patch(&existing.object, &patch);
+            }
+            if report.errors.is_empty() && patch.is_empty() && !links_changed {
+                return Classified {
+                    key: key.or(Some(existing.key.clone())),
+                    outcome: RowOutcome {
+                        status: "unchanged".into(),
+                        object_id: Some(existing.object.id.as_uuid()),
+                        object_key: Some(existing.key.clone()),
+                        base_version: Some(existing.version as i64),
+                        cells: Value::Object(cell_view),
+                        patch: None,
+                        errors: Value::Array(Vec::new()),
+                    },
+                };
+            }
+        }
         if !report.errors.is_empty() {
             attach_validation(&mut cell_view, model, columns, targets, &report.errors);
             return Classified {
@@ -239,14 +276,32 @@ pub fn classify_row(
             },
         };
     }
-    let object = Object {
+    let mut object = Object {
         id: ObjectId::from_uuid(Uuid::now_v7()),
         type_id,
         model_revision: defs.model_revision,
         groups,
         values,
     };
-    let validation = model.validate(&object);
+    let mut validation = model.validate(&object);
+    if skip_invalid {
+        for _ in 0..8 {
+            if validation.is_empty() || validation.iter().any(|e| e.attribute.is_none()) {
+                break;
+            }
+            attach_validation(&mut cell_view, model, columns, targets, &validation);
+            let mut removed = false;
+            for error in &validation {
+                if let Some(id) = error.attribute {
+                    removed |= object.values.remove(&id).is_some();
+                }
+            }
+            if !removed {
+                break;
+            }
+            validation = model.validate(&object);
+        }
+    }
     if !validation.is_empty() {
         attach_validation(&mut cell_view, model, columns, targets, &validation);
         return Classified {
@@ -1301,16 +1356,19 @@ mod tests {
         let columns = vec![
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 0,
                 target: "type:sku".into(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 1,
                 target: "type:name".into(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 2,
                 target: "unmapped".into(),
             },
@@ -1410,21 +1468,25 @@ mod tests {
         let columns = vec![
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 0,
                 target: "type:sku".into(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 1,
                 target: "type:name".into(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 2,
                 target: "type:made".into(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 3,
                 target: "type:active".into(),
             },
@@ -1533,16 +1595,19 @@ mod tests {
         let columns = vec![
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 0,
                 target: "type:number".into(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 1,
                 target: product.id.clone(),
             },
             MappedColumn {
                 clear_empty: false,
+                skip_invalid: false,
                 index: 2,
                 target: supplier.id.clone(),
             },

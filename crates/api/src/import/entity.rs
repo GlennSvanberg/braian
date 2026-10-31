@@ -351,6 +351,7 @@ mod tests {
                 index,
                 target: format!("{ATTRIBUTE}:{name}"),
                 clear_empty: false,
+                skip_invalid: false,
             })
             .collect()
     }

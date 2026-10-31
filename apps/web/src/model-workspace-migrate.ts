@@ -32,6 +32,7 @@ export const KNOWN_VIEW_TYPES = new Set([
   'data_model',
   'attribute_definitions',
   'proposal',
+  'proposal_list',
   'batch_log',
   'job_history',
   'embed',

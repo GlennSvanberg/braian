@@ -733,6 +733,9 @@ pub struct ImportMappingBody {
     /// An empty cell removes the stored value instead of leaving it as it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub empty_clears: Option<bool>,
+    /// A cell that does not validate is left out instead of failing its row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_invalid: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<ImportMappingColumn>>,
 }

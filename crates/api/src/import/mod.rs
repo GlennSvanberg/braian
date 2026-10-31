@@ -895,6 +895,7 @@ pub(crate) async fn draft_rows(
         "total": total,
         "session_id": session_id,
         "session_status": session.status,
+        "skip_invalid": mapping.get("skip_invalid").and_then(Value::as_bool).unwrap_or(false),
         "type": type_key,
         "columns": columns,
         "counters": session.counters,

@@ -8418,6 +8418,13 @@
             "format": "int64",
             "minimum": 0
           },
+          "skip_invalid": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "A cell that does not validate is left out instead of failing its row."
+          },
           "type": {
             "type": "string"
           }

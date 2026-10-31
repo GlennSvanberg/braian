@@ -1,5 +1,15 @@
 /** Pure import helpers. The screen and the tests share these. */
 
+import { textValue } from '../api'
+
+/** Draft/preview cells use plain strings; `before` for measures is often `{ value, unit? }`. */
+export function importCellText(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return textValue(value)
+}
+
 export type ColumnLine = {
   col: number
   target: string
@@ -222,9 +232,8 @@ export function cellClass(state: string): string {
   return 'import-cell'
 }
 
-export function saveLabel(failed: number, changes: number): string {
-  if (failed > 0) return `Approve ${changes} rows, skip ${failed} failing`
-  return `Approve ${changes} rows`
+export function saveLabel(_failed: number, changes: number): string {
+  return `Approve ${changes} ${changes === 1 ? 'row' : 'rows'}`
 }
 
 export function phaseOf(status: string): ImportPhase {

@@ -74,12 +74,14 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
     name: 'Review',
     summary: 'Changes waiting for review, batches and jobs',
     views: [
-      { type: 'proposal', title: 'Changes', state: {} },
+      { type: 'proposal_list', title: 'Proposals', state: {} },
+      { type: 'proposal', title: 'Proposal', state: {} },
       { type: 'batch_log', title: 'Batch log', state: {} },
       { type: 'job_history', title: 'Jobs', state: {} },
       { type: 'import_mappings', title: 'Import mappings', state: {} },
     ],
-    layout: (ids) => splitPair('horizontal', 0.62, tabGroup([ids[0]]), tabGroup(ids.slice(1))),
+    layout: (ids) =>
+      splitPair('horizontal', 0.3, tabGroup([ids[0]]), splitPair('horizontal', 0.74, tabGroup([ids[1]]), tabGroup(ids.slice(2)))),
   },
   ]
 }

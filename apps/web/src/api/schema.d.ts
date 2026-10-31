@@ -2063,6 +2063,8 @@ export interface components {
             empty_clears?: boolean | null;
             /** Format: int64 */
             id_column?: number | null;
+            /** @description A cell that does not validate is left out instead of failing its row. */
+            skip_invalid?: boolean | null;
             type: string;
         };
         ImportMappingColumn: {

@@ -71,6 +71,8 @@ export function CommandPalette({
   ai,
   feedbackEnabled,
   onSendFeedback,
+  theme = 'dark',
+  onSignOut,
   focusViewId,
   onPrepareAddView,
   startAddView,
@@ -86,6 +88,8 @@ export function CommandPalette({
   ai?: boolean
   feedbackEnabled?: boolean
   onSendFeedback?: () => void
+  theme?: 'dark' | 'light'
+  onSignOut?: () => void
   focusViewId?: string | null
   onPrepareAddView?: () => void
   startAddView?: boolean
@@ -167,7 +171,7 @@ export function CommandPalette({
   const tableColumns = useMemo(() => readUiContext().columns, [])
   const catalog = useMemo(
     () => [
-      ...buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled),
+      ...buildCatalog(workspaces, views, session.objectId, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, theme),
       {
         id: 'selections',
         group: 'views' as const,
@@ -224,7 +228,7 @@ export function CommandPalette({
           ]),
       { id: 'attr:new', group: 'object' as const, title: copy.newAttribute, subtitle: copy.attributeDefinitions, keywords: ['attribute', 'create'] },
     ],
-    [workspaces, views, session.objectId, session.group, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, tableColumns, defs.data],
+    [workspaces, views, session.objectId, session.group, types, selectedSingular, selectedKey, suggestionTotal, feedbackEnabled, theme, tableColumns, defs.data],
   )
   const hits: PaletteItem[] = ((found.data?.hits as Json[] | undefined) ?? []).map((hit) => {
     const row = (hit.document as Json) ?? hit
@@ -687,8 +691,19 @@ export function CommandPalette({
       onClose()
       return
     }
-    if (id === 'theme:light' || id === 'theme:dark') {
-      dispatchUi('ui.set_theme', { theme: id.endsWith('light') ? 'light' : 'dark' })
+    if (id === 'theme:toggle') {
+      dispatchUi('ui.set_theme', { theme: theme === 'dark' ? 'light' : 'dark' })
+      onClose()
+      return
+    }
+    if (id === 'agent:open') {
+      setQuery('')
+      setActive(null)
+      setMode('ai')
+      return
+    }
+    if (id === 'session:sign-out') {
+      onSignOut?.()
       onClose()
     }
   }
@@ -952,7 +967,7 @@ export function CommandPalette({
             {proposal ? (
               <div data-testid="palette-proposal">
                 <strong>{proposal.title}</strong>
-                {proposal.source ? <span className="chip" data-testid="source-badge">{sourceLabel(proposal)}</span> : null}
+                {proposal.source ? <span className="meta-chip neutral" data-testid="source-badge">{sourceLabel(proposal)}</span> : null}
                 <p>{proposal.rows.length} rows</p>
                 {proposal.lines.length > 0 ? (
                   <ul className="proposal-tree">
@@ -1056,6 +1071,7 @@ function buildCatalog(
   openTypeKey: string,
   suggestions: number,
   feedbackEnabled?: boolean,
+  theme: 'dark' | 'light' = 'dark',
 ): PaletteItem[] {
   const items: PaletteItem[] = [
     ...(suggestions > 0
@@ -1096,8 +1112,15 @@ function buildCatalog(
     { id: 'model:rename-key', group: 'views', title: copy.renameKey, subtitle: 'Change a key. External integrations that use the old key will stop working', keywords: ['rename', 'key', 'attribute'] },
     { id: 'object:move-group', group: 'views', title: copy.moveToGroup, subtitle: 'Place the open object in a group', keywords: ['move', 'group', 'place'] },
     { id: 'model:allowed-trees', group: 'views', title: copy.allowedTrees, subtitle: 'Choose the trees a type may use', keywords: ['tree', 'structure', 'type'] },
-    { id: 'theme:light', group: 'views', title: 'Light', subtitle: 'Switch theme', shortcut: undefined },
-    { id: 'theme:dark', group: 'views', title: 'Dark', subtitle: 'Switch theme' },
+    {
+      id: 'theme:toggle',
+      group: 'views',
+      title: theme === 'dark' ? copy.lightMode : copy.darkMode,
+      subtitle: 'Toggle theme',
+      keywords: ['theme', 'toggle', 'light', 'dark', 'mode'],
+    },
+    { id: 'agent:open', group: 'views', title: copy.openAgent, subtitle: 'Ask the agent', kbd: 'Ctrl+J', keywords: ['agent', 'ai', 'ask'] },
+    { id: 'session:sign-out', group: 'views', title: copy.signOut, subtitle: 'End this session', keywords: ['logout', 'log out', 'sign out', 'session'] },
     { id: 'layout:move_view_left', group: 'views', title: 'Move view left', subtitle: 'Move the focused view left', kbd: 'Ctrl+Alt+←', shortcut: 'Ctrl+Alt+Left' },
     { id: 'layout:move_view_right', group: 'views', title: 'Move view right', subtitle: 'Move the focused view right', kbd: 'Ctrl+Alt+→', shortcut: 'Ctrl+Alt+Right' },
     { id: 'layout:move_view_up', group: 'views', title: 'Move view up', subtitle: 'Move the focused view up', kbd: 'Ctrl+Alt+↑', shortcut: 'Ctrl+Alt+Up' },

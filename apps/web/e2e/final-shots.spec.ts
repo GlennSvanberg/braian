@@ -1,3 +1,4 @@
+import { setTheme } from './ui'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { demoCredentials } from './demo'
@@ -51,9 +52,9 @@ test('final data-model and polish shots', async ({ page }) => {
   await page.getByTestId('object-row').first().click()
   await expect(page.getByTestId('object-detail')).toBeVisible()
   await page.screenshot({ path: `${shots}/detail-dark.png` })
-  await page.getByRole('button', { name: 'Light' }).click()
+  await setTheme(page, 'light')
   await page.screenshot({ path: `${shots}/detail-light.png` })
-  await page.getByRole('button', { name: 'Dark' }).click()
+  await setTheme(page, 'dark')
 
   await page.getByRole('button', { name: 'Graph' }).click()
   await expect(page.locator('canvas[data-testid=graph]')).toBeVisible()

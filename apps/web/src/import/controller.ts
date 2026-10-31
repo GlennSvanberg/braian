@@ -49,7 +49,7 @@ export type ImportSession = {
     id_column?: { value?: string | null; confidence?: number }
     columns?: ColumnLine[]
   } | null
-  mapping: { type?: string; id_column?: number | null; columns?: Array<{ col: number; target: string }> } | null
+  mapping: { type?: string; id_column?: number | null; skip_invalid?: boolean; columns?: Array<{ col: number; target: string }> } | null
   counters: Record<string, number>
   job_id: string | null
   draft_id?: string | null
@@ -77,6 +77,8 @@ export type ImportSnapshot = {
   typeKey: string
   idColumn: string
   emptyClears: boolean
+  /** Shown inside a workspace pane instead of the full-screen dialog. */
+  embedded: boolean
 }
 
 const initial: ImportSnapshot = {
@@ -100,6 +102,7 @@ const initial: ImportSnapshot = {
   typeKey: '',
   idColumn: 'none',
   emptyClears: false,
+  embedded: false,
 }
 
 let state: ImportSnapshot = initial
@@ -136,6 +139,8 @@ export function openImport() {
 export function requestCloseImport() {
   if (!state.open) return
   if (state.phase === 'saving') {
+    generation += 1
+    stopPoll()
     forgetImport()
     patch({ open: false, drag: false, confirm: null })
     return
@@ -293,9 +298,22 @@ async function persistMapping() {
       type: state.typeKey,
       id_column: idColumn,
       empty_clears: state.emptyClears,
+      skip_invalid: session.mapping?.skip_invalid ?? false,
       columns: state.columns.map((column) => ({ col: column.col, target: column.target })),
     } })
   return session
+}
+
+/** Turns "leave out invalid cells" on or off for a draft and checks the rows again. */
+export async function setSkipInvalid(sessionId: string, value: boolean) {
+  const raw = (await api.get('/v1/imports/{id}', { params: { path: { id: sessionId } } })) as { mapping?: Record<string, unknown> | null }
+  if (!raw.mapping) return
+  await api.put('/v1/imports/{id}/mapping', {
+    params: { path: { id: sessionId } },
+    body: { ...raw.mapping, skip_invalid: value } as never,
+  })
+  await api.post('/v1/imports/{id}/approve', { params: { path: { id: sessionId } } })
+  if (state.session?.id === sessionId) await refresh(sessionId)
 }
 
 export async function approveImport() {
@@ -318,6 +336,27 @@ export async function saveImport(excluded: number[] = []) {
   })) as { job_id?: string }
   patch({ phase: 'saving', session: { ...session, job_id: body.job_id ?? null, status: 'saving' } })
 }
+/** Works through an import draft inside a workspace pane (no dialog). */
+export async function attachImport(id: string) {
+  if (state.open && !state.embedded) return
+  if (state.embedded && state.session?.id === id) return
+  generation += 1
+  stopPoll()
+  patch({ ...initial, embedded: true, phase: 'preview' })
+  try {
+    await refresh(id)
+  } catch (error) {
+    patch({ phase: 'error', error: error instanceof Error ? error.message : 'That import does not exist.' })
+  }
+}
+
+export function detachImport() {
+  if (!state.embedded) return
+  generation += 1
+  stopPoll()
+  patch({ ...initial })
+}
+
 export async function resumeImport(id: string) {
   patch({ open: true, phase: 'mapping', error: '' })
   try {
@@ -460,6 +499,7 @@ function mappingFrom(value: unknown): ImportSession['mapping'] {
     ...(typeof record.type === 'string' ? { type: record.type } : {}),
     id_column: typeof record.id_column === 'number' ? record.id_column : null,
     ...(columns ? { columns } : {}),
+    ...(record.skip_invalid === true ? { skip_invalid: true } : {}),
   }
 }
 
@@ -473,7 +513,7 @@ function adopt(session: ImportSession) {
     ? state.idColumn
     : session.proposal?.id_column?.value || (session.mapping?.id_column == null ? 'none' : `col:${session.mapping.id_column}`)
   patch({
-    open: true,
+    open: !state.embedded,
     session,
     columns,
     typeKey: typeKey || '',
@@ -510,6 +550,7 @@ function stopPoll() {
 }
 
 function remember(id: string) {
+  if (state.embedded || !state.open) return
   const url = new URL(window.location.href)
   if (url.searchParams.get('import') === id) return
   url.searchParams.set('import', id)
@@ -521,6 +562,7 @@ function beginUpload(file: File) {
   stopPoll()
   patch({
     open: true,
+    embedded: false,
     phase: 'uploading',
     fileName: file.name,
     upload: 0,

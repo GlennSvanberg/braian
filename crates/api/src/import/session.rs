@@ -549,10 +549,7 @@ async fn diff_model_session(
             "new" => counters.new += 1,
             "changed" => counters.changed += 1,
             "failed" => counters.failed += 1,
-            _ => {
-                counters.unchanged += 1;
-                continue;
-            }
+            _ => counters.unchanged += 1,
         }
         rows.push(braian_store::ImportRowIn {
             session_id: id,
@@ -675,10 +672,7 @@ async fn flush_chunk(
             "new" => counters.new += 1,
             "changed" => counters.changed += 1,
             "failed" => counters.failed += 1,
-            "unchanged" => {
-                counters.unchanged += 1;
-                continue;
-            }
+            "unchanged" => counters.unchanged += 1,
             _ => {}
         }
         rows.push(braian_store::ImportRowIn {
@@ -860,6 +854,10 @@ fn mapped_columns(mapping: &Value) -> Vec<MappedColumn> {
                 target: target.to_owned(),
                 clear_empty: mapping
                     .get("empty_clears")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                skip_invalid: mapping
+                    .get("skip_invalid")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
             })
@@ -1121,7 +1119,7 @@ async fn store_edited(
     id: Uuid,
     row_no: u32,
     session: &ImportSession,
-    before: &braian_store::ImportRowOut,
+    _before: &braian_store::ImportRowOut,
     outcome: diff::RowOutcome,
 ) -> Result<(Option<braian_store::ImportRowOut>, Value), String> {
     let status = outcome.status.clone();
@@ -1136,10 +1134,9 @@ async fn store_edited(
         patch: outcome.patch,
         errors: outcome.errors,
     };
-    let keep = status != "unchanged";
     state
         .store
-        .replace_import_row(id, row_no as i32, keep.then_some(&row))
+        .replace_import_row(id, row_no as i32, Some(&row))
         .await
         .map_err(|error| error.to_string())?;
     let counts = state
@@ -1148,13 +1145,10 @@ async fn store_edited(
         .await
         .map_err(|error| error.to_string())?;
     let mut counters = session.counters.clone();
-    let unchanged_gain = i64::from(!keep && before.status != "unchanged");
     if let Some(map) = counters.as_object_mut() {
-        for name in ["new", "changed", "failed", "excluded", "stale"] {
+        for name in ["new", "changed", "failed", "excluded", "stale", "unchanged"] {
             map.insert(name.into(), json!(counts.get(name).copied().unwrap_or(0)));
         }
-        let unchanged = map.get("unchanged").and_then(Value::as_i64).unwrap_or(0);
-        map.insert("unchanged".into(), json!(unchanged + unchanged_gain));
     }
     state
         .store

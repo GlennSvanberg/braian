@@ -7,6 +7,8 @@ import { copy } from '../i18n'
 import { handleAppContextMenu } from '../app-context-menu'
 import {
   approveImport,
+  attachImport,
+  detachImport,
   assignImportTarget,
   backToMapping,
   confirmImport,
@@ -44,6 +46,7 @@ import {
   matchSummary,
   rowClass,
   cellClass,
+  importCellText,
   saveLabel,
   showTypeConfidence,
   stepIndex,
@@ -53,7 +56,7 @@ type PreviewRow = {
   row_no: number
   status: string
   object_key?: string | null
-  cells: Record<string, { value?: string; before?: string; state?: string; error?: { message?: string } }>
+  cells: Record<string, { value?: unknown; before?: unknown; state?: string; error?: { message?: string } }>
   errors?: Array<{ message?: string }>
 }
 
@@ -76,8 +79,8 @@ function cellsFrom(value: unknown): PreviewRow['cells'] {
     if (!cell) continue
     const error = jsonRecord(cell.error)
     cells[key] = {
-      ...(typeof cell.value === 'string' ? { value: cell.value } : {}),
-      ...(typeof cell.before === 'string' ? { before: cell.before } : {}),
+      ...(cell.value != null && cell.value !== '' ? { value: cell.value } : {}),
+      ...(cell.before != null && cell.before !== '' ? { before: cell.before } : {}),
       ...(typeof cell.state === 'string' ? { state: cell.state } : {}),
       ...(error ? { error: { ...(typeof error.message === 'string' ? { message: error.message } : {}) } } : {}),
     }
@@ -181,6 +184,56 @@ export function ImportScreen() {
         </section>
       ) : null}
     </>
+  )
+}
+
+/**
+ * One import draft worked through in a workspace pane: the same Map and Check steps as
+ * the import dialog, without the dialog chrome. `onChanged` fires when the draft was saved,
+ * `onGone` when it was discarded.
+ */
+export function ImportWorkspace({ sessionId, onChanged, onGone }: { sessionId: string; onChanged: () => void; onGone: () => void }) {
+  const snap = useSyncExternalStore(subscribeImport, getImportSnapshot, getImportSnapshot)
+  const seen = useRef(false)
+  useEffect(() => {
+    seen.current = false
+    void attachImport(sessionId)
+    return () => detachImport()
+  }, [sessionId])
+  useEffect(() => {
+    if (snap.session?.id === sessionId) seen.current = true
+    else if (seen.current && !snap.session && !snap.embedded) {
+      seen.current = false
+      onGone()
+    }
+  }, [snap.session, snap.embedded, sessionId, onGone])
+  useEffect(() => {
+    if (snap.embedded && snap.phase === 'done') onChanged()
+  }, [snap.embedded, snap.phase, onChanged])
+
+  if (snap.open && !snap.embedded) {
+    return <p className="muted" data-testid="import-workspace-busy">Another import is open. Finish or close it first.</p>
+  }
+  return (
+    <section className="import-screen import-embedded" data-testid="import-workspace" aria-label={copy.importFile}>
+      <header className="import-top">
+        <div>
+          <strong>{snap.fileName || copy.importFile}</strong>
+        </div>
+        <Steps phase={snap.phase} />
+        <span />
+      </header>
+      {snap.notice ? <p className="import-notice">{snap.notice}</p> : null}
+      {snap.phase === 'error' ? <p className="error" role="alert">{snap.error || 'That import could not be opened.'}</p> : null}
+      {snap.phase === 'mapping' && snap.session ? <Mapping /> : null}
+      {(snap.phase === 'preview' || snap.phase === 'saving' || snap.phase === 'done') && snap.session ? <Preview /> : null}
+      {!snap.session && snap.phase !== 'error' ? (
+        <div className="import-preparing" role="status">
+          <span className="import-spinner" aria-hidden="true" />
+          <span>{copy.importPreparing}</span>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -444,12 +497,6 @@ function Preview() {
 
   return (
     <div className="import-preview" data-testid="import-preview">
-      <div className="import-counters">
-        {chip('new', copy.importNew, counters.new, 'ok')}
-        {chip('changed', copy.importChanged, counters.changed, 'warn')}
-        {chip('failed', copy.importErrors, counters.failed, 'danger')}
-        {chip('all', copy.importUnchanged, counters.unchanged, 'neutral')}
-      </div>
       {session.status === 'diffing' ? <p>{copy.importChecking} {percent}%</p> : null}
       {session.status === 'saving' ? <p>{copy.importChecking}</p> : null}
       {!fixture ? (
@@ -486,11 +533,11 @@ function Preview() {
                     <span key={header.index} className={cellClass(cell?.state ?? 'same')} title={title}>
                       {cell?.state === 'changed' && cell.before ? (
                         <>
-                          <span className="diff-old">{cell.before}</span>
+                          <span className="diff-old">{importCellText(cell.before)}</span>
                           <span className="diff-arrow">{' -> '}</span>
-                          <span className="diff-new">{cell.value ?? ''}</span>
+                          <span className="diff-new">{importCellText(cell.value)}</span>
                         </>
-                      ) : cell?.value ?? ''}
+                      ) : importCellText(cell?.value)}
                     </span>
                   )
                 })}
@@ -501,16 +548,19 @@ function Preview() {
       </div>
       )}
       <footer className="import-actions">
-        <button type="button" onClick={backToMapping}>{copy.importBack}</button>
-        {failed > 0 ? (
-          <a href={fixture ? undefined : `/v1/imports/${session.id}/failed.xlsx`}>{copy.importFailedDownload}</a>
-        ) : null}
+        <div className="import-actions-start">
+          <button type="button" className="btn-ghost" onClick={backToMapping}>{copy.importBack}</button>
+          {failed > 0 ? (
+            <a className="import-link" href={fixture ? undefined : `/v1/imports/${session.id}/failed.xlsx`}>{copy.importFailedDownload}</a>
+          ) : null}
+        </div>
         {snap.phase === 'done' ? (
-          <p>
+          <p className="import-note">
             Imported {counters.new ?? 0} · Updated {counters.changed ?? 0} · Skipped {failed}
           </p>
         ) : (
-          <>
+          <div className="import-actions-end">
+            {failed > 0 ? <span className="import-note">{failed} with errors will be skipped</span> : null}
             <button type="button" data-testid="import-discard" onClick={discardImport}>{copy.discard}</button>
             <button
               type="button"
@@ -518,23 +568,15 @@ function Preview() {
               data-testid="import-save"
               disabled={fixture || session.status !== 'previewed'}
               onClick={() => {
-                                void saveImport(excluded).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
+                void saveImport(excluded).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Save failed'))
               }}
             >
               {saveLabel(failed, changes)}
             </button>
-          </>
+          </div>
         )}
       </footer>
     </div>
-  )
-}
-
-function chip(filter: string, label: string, value: number | undefined, tone: string) {
-  return (
-    <button type="button" className={`meta-chip ${tone}`} onClick={() => setImportFilter(filter === 'all' ? 'all' : filter)}>
-      {label} {value ?? 0}
-    </button>
   )
 }
 
@@ -546,10 +588,12 @@ function sampleOf(session: ImportSession, index: number) {
     .join(' · ')
 }
 
-function cellTitle(cell: { before?: string; state?: string; error?: { message?: string } } | undefined) {
+function cellTitle(cell: { before?: unknown; state?: string; error?: { message?: string } } | undefined) {
   if (!cell) return undefined
   const parts: string[] = []
-  if (cell.before && cell.state !== 'same' && cell.state !== 'new') parts.push(`was: ${cell.before}`)
+  if (cell.before != null && cell.before !== '' && cell.state !== 'same' && cell.state !== 'new') {
+    parts.push(`was: ${importCellText(cell.before)}`)
+  }
   if (cell.error?.message) parts.push(cell.error.message)
   return parts.join(' · ') || undefined
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as api from '../api/client'
-import { StandardTableChrome } from '../standard-table'
+import { StandardEditableTable, type StandardColumn } from '../standard-editable-table'
 
 type Saved = { id: string; name: string; type: string; headers: unknown; columns: unknown; empty_clears: boolean }
 
@@ -9,7 +9,7 @@ type Saved = { id: string; name: string; type: string; headers: unknown; columns
 export function ImportMappingsView() {
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState('')
-  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null)
+  const [drafts, setDrafts] = useState<Record<string, Saved>>({})
   const [error, setError] = useState('')
   const list = useQuery({ queryKey: ['import-mappings'], queryFn: () => api.get('/v1/import-mappings') })
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['import-mappings'] })
@@ -17,63 +17,83 @@ export function ImportMappingsView() {
     mutationFn: (item: { id: string; name: string }) =>
       api.patch('/v1/import-mappings/{id}', { params: { path: { id: item.id } }, body: { name: item.name } }),
     onSuccess: () => {
-      setEditing(null)
       setError('')
       void refresh()
     },
     onError: (reason: unknown) => setError(reason instanceof Error ? reason.message : 'Rename failed'),
+    onSettled: (_data, _error, item) =>
+      setDrafts((current) => {
+        const { [item.id]: _removed, ...rest } = current
+        return rest
+      }),
   })
   const remove = useMutation({
     mutationFn: (id: string) => api.del('/v1/import-mappings/{id}', { params: { path: { id } } }),
     onSuccess: () => void refresh(),
     onError: (reason: unknown) => setError(reason instanceof Error ? reason.message : 'Delete failed'),
   })
-  const needle = filter.trim().toLowerCase()
-  const items = ((list.data?.mappings ?? []) as Saved[]).filter(
-    (item) => !needle || `${item.name} ${item.type}`.toLowerCase().includes(needle),
-  )
+  const all = (list.data?.mappings ?? []) as Saved[]
+  const columns: Array<StandardColumn<Saved>> = [
+    {
+      id: 'name',
+      header: 'Name',
+      type: 'text',
+      truncate: true,
+      read: (row) => row.name,
+      write: (row, value) => ({ ...row, name: value }),
+    },
+    { id: 'type', header: 'Object type', type: 'readonly', truncate: true, read: (row) => row.type },
+    {
+      id: 'columns',
+      header: 'Columns',
+      type: 'readonly',
+      width: 100,
+      read: (row) => (Array.isArray(row.columns) ? row.columns.length : 0),
+    },
+    {
+      id: 'delete',
+      header: 'Delete',
+      type: 'readonly',
+      width: 90,
+      read: () => '',
+      display: (row) => (
+        <button
+          type="button"
+          aria-label={`Delete ${row.name}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            remove.mutate(row.id)
+          }}
+        >
+          Delete
+        </button>
+      ),
+    },
+  ]
+  // No Review-and-save step: a cell edit is persisted at once; the draft only bridges until the refetch.
+  const onDraftRowsChange = (next: Record<string, Saved>) => {
+    for (const [id, row] of Object.entries(next)) {
+      const original = all.find((item) => item.id === id)
+      const name = row.name.trim()
+      if (!original || !name || name === original.name || drafts[id]?.name === row.name) continue
+      rename.mutate({ id, name })
+    }
+    setDrafts(next)
+  }
   return (
-    <StandardTableChrome testId="import-mappings" rowCount={items.length} filterValue={filter} onFilterChange={setFilter}>
+    <>
       {error ? <p className="error" role="alert">{error}</p> : null}
-      <table className="table" data-testid="import-mappings-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Object type</th>
-            <th>Columns</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={item.id} data-testid={`import-mapping-${item.id}`}>
-              <td>
-                {editing?.id === item.id ? (
-                  <input
-                    autoFocus
-                    aria-label="Mapping name"
-                    value={editing.name}
-                    onChange={(event) => setEditing({ id: item.id, name: event.target.value })}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') rename.mutate(editing)
-                      if (event.key === 'Escape') setEditing(null)
-                    }}
-                    onBlur={() => setEditing(null)}
-                  />
-                ) : (
-                  <button type="button" className="link" onClick={() => setEditing({ id: item.id, name: item.name })}>{item.name}</button>
-                )}
-              </td>
-              <td>{item.type}</td>
-              <td>{Array.isArray(item.columns) ? item.columns.length : 0}</td>
-              <td>
-                <button type="button" aria-label={`Delete ${item.name}`} onClick={() => remove.mutate(item.id)}>Delete</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {items.length === 0 && !list.isLoading ? <p className="muted">No saved mappings yet. Save one from the mapping step of an import.</p> : null}
-    </StandardTableChrome>
+      <StandardEditableTable<Saved>
+        testId="import-mappings"
+        columns={columns}
+        rows={all}
+        draftRows={drafts}
+        onDraftRowsChange={onDraftRowsChange}
+        filterValue={filter}
+        onFilterChange={setFilter}
+        getRowTestId={(row) => `import-mapping-${row.id}`}
+        emptyLabel="No saved mappings yet. Save one from the mapping step of an import."
+      />
+    </>
   )
 }
