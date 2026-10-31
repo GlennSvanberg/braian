@@ -913,11 +913,12 @@ pub(crate) async fn draft_rows(
 /// The choices of a value list attribute: shared list first, then inline options.
 /// The label is what the cell shows and what an edit sends back.
 fn value_list_options(defs: &braian_model::DefinitionSet, attribute_id: &str) -> Vec<Value> {
-    let Some(attribute) = defs
-        .attributes
-        .iter()
-        .find(|item| item.id.as_uuid().to_string().eq_ignore_ascii_case(attribute_id))
-    else {
+    let Some(attribute) = defs.attributes.iter().find(|item| {
+        item.id
+            .as_uuid()
+            .to_string()
+            .eq_ignore_ascii_case(attribute_id)
+    }) else {
         return Vec::new();
     };
     let braian_model::AttributeKind::ValueList { options, list } = &attribute.kind else {

@@ -9253,11 +9253,21 @@
         "type": "object",
         "required": [
           "handle",
+          "email",
+          "display_name",
           "kind",
           "role",
           "feedback"
         ],
         "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Display name when known; otherwise the same as handle."
+          },
+          "email": {
+            "type": "string",
+            "description": "Login email when known; otherwise the same as handle."
+          },
           "feedback": {
             "type": "boolean"
           },

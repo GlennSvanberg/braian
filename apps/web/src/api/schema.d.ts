@@ -2274,6 +2274,10 @@ export interface components {
             password: string;
         };
         Me: {
+            /** @description Display name when known; otherwise the same as handle. */
+            display_name: string;
+            /** @description Login email when known; otherwise the same as handle. */
+            email: string;
             feedback: boolean;
             handle: string;
             kind: string;

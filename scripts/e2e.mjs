@@ -46,6 +46,7 @@ const specs = [
   'e2e/persist-active-workspace.spec.ts',
   'e2e/delete-workspace.spec.ts',
   'e2e/template-picker.spec.ts',
+  'e2e/user-menu.spec.ts',
 ]
 
 function workerCount() {
@@ -90,6 +91,7 @@ const measuredSeconds = {
   'e2e/model-table-row-selection.spec.ts': 5,
   'e2e/cell-edit-key-guard.spec.ts': 4,
   'e2e/template-picker.spec.ts': 25,
+  'e2e/user-menu.spec.ts': 25,
   'e2e/delete-workspace.spec.ts': 28,
 }
 
