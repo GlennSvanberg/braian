@@ -51,7 +51,10 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/v1/exports/{id}", get(crate::export::download_export))
         .route("/v1/stats", get(stats))
         .route("/v1/workspaces", get(list_workspaces).post(save_workspace))
-        .route("/v1/workspaces/{id}", get(get_workspace))
+        .route(
+            "/v1/workspaces/{id}",
+            get(get_workspace).delete(delete_workspace),
+        )
         .route(
             "/v1/workspaces/{id}/state",
             get(get_workspace_state)
@@ -2179,6 +2182,8 @@ async fn get_workspace(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
+    let user_id = membership_user_id(&identity)?;
+    require_workspace_member(&state, id, user_id).await?;
     let mut workspace = state
         .store
         .workspace(id)
@@ -2203,6 +2208,11 @@ async fn save_workspace(
         ));
     };
     let id = body.id.unwrap_or_else(Uuid::now_v7);
+    let existing = state.store.workspace(id).await.map_err(store_status)?;
+    if existing.is_some() {
+        // Do not let an Editor overwrite another user's workspace UUID (incl. lock).
+        require_workspace_member(&state, id, owner).await?;
+    }
     if state.store.workspace_locked(id).await.unwrap_or(false) && identity.role != Role::Admin {
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
@@ -2226,6 +2236,73 @@ async fn save_workspace(
 }
 
 const LAYOUT_DOCUMENT_LIMIT: usize = 512 * 1024;
+
+/// Workspace must exist and the signed-in user must be a member.
+/// Returns the same 404 as a missing workspace so callers cannot probe ids.
+pub(crate) async fn require_workspace_member(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<(), Problem> {
+    let exists = state
+        .store
+        .workspace(id)
+        .await
+        .map_err(store_status)?
+        .is_some();
+    let member = state
+        .store
+        .workspace_is_member(id, user_id)
+        .await
+        .map_err(store_status)?;
+    if !exists || !member {
+        return Err(Problem::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "workspace",
+        ));
+    }
+    Ok(())
+}
+
+/// View must exist and the caller must be a member of its workspace.
+/// Always `404 not_found` / `view` — do not reveal existence to non-members.
+pub(crate) async fn require_view_member(
+    state: &AppState,
+    view_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), Problem> {
+    let not_found = || Problem::new(StatusCode::NOT_FOUND, "not_found", "view");
+    let Some(workspace_id) = state
+        .store
+        .view_workspace_id(view_id)
+        .await
+        .map_err(store_status)?
+    else {
+        return Err(not_found());
+    };
+    let exists = state
+        .store
+        .workspace(workspace_id)
+        .await
+        .map_err(store_status)?
+        .is_some();
+    let member = state
+        .store
+        .workspace_is_member(workspace_id, user_id)
+        .await
+        .map_err(store_status)?;
+    if !exists || !member {
+        return Err(not_found());
+    }
+    Ok(())
+}
+
+fn membership_user_id(identity: &crate::auth::Identity) -> Result<Uuid, Problem> {
+    identity
+        .user_id
+        .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "workspace"))
+}
 
 async fn require_workspace(state: &AppState, id: Uuid) -> Result<(), Problem> {
     if state
@@ -2251,9 +2328,9 @@ async fn get_workspace_state(
     Query(query): Query<StateQuery>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Viewer)?;
-    require_workspace(&state, id).await?;
-    let environment = layout_environment(query.environment.as_deref());
     let owner = layout_owner(&identity)?;
+    require_workspace_member(&state, id, owner).await?;
+    let environment = layout_environment(query.environment.as_deref());
     let stored = state
         .store
         .workspace_state(owner, &environment, id)
@@ -2277,7 +2354,8 @@ async fn put_workspace_state(
     Json(body): Json<StateBody>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Editor)?;
-    require_workspace(&state, id).await?;
+    let owner = layout_owner(&identity)?;
+    require_workspace_member(&state, id, owner).await?;
     if !body.document.is_object() {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
@@ -2298,13 +2376,62 @@ async fn put_workspace_state(
     let environment = layout_environment(body.environment.as_deref());
     let updated = state
         .store
-        .put_workspace_state(layout_owner(&identity)?, &environment, id, &body.document)
+        .put_workspace_state(owner, &environment, id, &body.document)
         .await
         .map_err(store_status)?;
     Ok(Json(json!({
         "environment": environment,
         "updated_at": updated.to_rfc3339(),
     })))
+}
+
+async fn delete_workspace(
+    State(state): State<AppState>,
+    Auth(identity): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, Problem> {
+    require(&identity, Role::Editor)?;
+    if !identity.may_commit() {
+        return Err(crate::auth::delete_forbidden());
+    }
+    let Some(user_id) = identity.user_id else {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "no_user",
+            "sign in to delete a workspace",
+        ));
+    };
+    require_workspace_member(&state, id, user_id).await?;
+    if state
+        .store
+        .workspace_locked(id)
+        .await
+        .map_err(store_status)?
+    {
+        return Err(Problem::new(
+            StatusCode::FORBIDDEN,
+            "locked",
+            "unlock the workspace before deleting it",
+        ));
+    }
+    let remaining = state
+        .store
+        .workspace_count_for_user(user_id)
+        .await
+        .map_err(store_status)?;
+    if remaining <= 1 {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "last_workspace",
+            "the last workspace cannot be deleted",
+        ));
+    }
+    state
+        .store
+        .delete_workspace(id)
+        .await
+        .map_err(store_status)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_workspace_state(
@@ -2317,11 +2444,12 @@ async fn delete_workspace_state(
     if !identity.may_commit() {
         return Err(crate::auth::delete_forbidden());
     }
-    require_workspace(&state, id).await?;
+    let owner = layout_owner(&identity)?;
+    require_workspace_member(&state, id, owner).await?;
     let environment = layout_environment(query.environment.as_deref());
     state
         .store
-        .delete_workspace_state(layout_owner(&identity)?, &environment, id)
+        .delete_workspace_state(owner, &environment, id)
         .await
         .map_err(store_status)?;
     Ok(StatusCode::NO_CONTENT)
@@ -2334,6 +2462,8 @@ async fn assign_workspace(
     Json(body): Json<AssignBody>,
 ) -> Result<StatusCode, Problem> {
     require(&identity, Role::Admin)?;
+    // Admin grants membership; caller need not be a member. Still 404 if missing.
+    require_workspace(&state, id).await?;
     let user = state
         .store
         .user_by_email(&body.email)
@@ -2382,6 +2512,18 @@ async fn save_view(
     Json(body): Json<ViewBody>,
 ) -> Result<Json<Value>, Problem> {
     require(&identity, Role::Editor)?;
+    let user_id = membership_user_id(&identity)?;
+    require_workspace_member(&state, body.workspace_id, user_id).await?;
+    let id = body.id.unwrap_or_else(Uuid::now_v7);
+    if let Some(existing_ws) = state
+        .store
+        .view_workspace_id(id)
+        .await
+        .map_err(store_status)?
+    {
+        // Updating an existing view: must already be a member of its workspace.
+        require_workspace_member(&state, existing_ws, user_id).await?;
+    }
     if state
         .store
         .workspace_locked(body.workspace_id)
@@ -2395,7 +2537,6 @@ async fn save_view(
             "layout is locked",
         ));
     }
-    let id = body.id.unwrap_or_else(Uuid::now_v7);
     let mut view_state = body.state.unwrap_or(json!({}));
     if let Ok(cached) = state.models.get(&state.store).await {
         braian_model::translate_view_state(&mut view_state, &cached.defs);

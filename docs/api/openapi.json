@@ -6110,6 +6110,45 @@
             "bearer": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Delete a workspace and its views and layouts. Object data is not deleted. Locked or last workspaces are rejected.",
+        "operationId": "delete_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Workspace removed"
+          },
+          "401": {
+            "description": "Missing or unknown token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/workspaces/{id}/assign": {

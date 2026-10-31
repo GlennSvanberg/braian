@@ -177,6 +177,18 @@ fn operations() -> Vec<(HttpMethod, &'static str, Operation)> {
             "Workspace and its views",
             true,
         ),
+        call(
+            HttpMethod::Delete,
+            "/v1/workspaces/{id}",
+            "delete_workspace",
+            "Delete a workspace and its views and layouts. Object data is not deleted. Locked or last workspaces are rejected.",
+            vec![path_uuid("id", "Workspace id")],
+            None,
+            None,
+            "204",
+            "Workspace removed",
+            true,
+        ),
         query::<crate::platform::StateQuery>(
             HttpMethod::Get,
             "/v1/workspaces/{id}/state",

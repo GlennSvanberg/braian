@@ -2,7 +2,7 @@ import { api, type Json } from './api'
 import { splitPair, tabGroup, type Node } from './layout'
 import type { TypeName } from './type-labels'
 import { MODEL_WORKSPACE_VIEW_SPECS, modelWorkspaceLayout } from './model-workspace-migrate'
-import { typeUsesTree } from './type-workspaces'
+import { typeShareToken, typeUsesTree } from './type-workspaces'
 
 export type WorkspaceTemplate = {
   id: string
@@ -84,16 +84,40 @@ export function workspaceTemplates(types: TypeName[] = []): WorkspaceTemplate[] 
   ]
 }
 
+
+/** Stable share token for seeded / type workspaces. Undefined → personal user-* copy. */
+export function canonicalShareToken(template: WorkspaceTemplate): string | undefined {
+  if (template.id === 'model') return 'braian-model'
+  if (template.id === 'review') return 'braian-review'
+  if (template.id.startsWith('type:')) return typeShareToken(template.id.slice('type:'.length))
+  return undefined
+}
+
 export async function createWorkspaceFromTemplate(template: WorkspaceTemplate, options?: { shareToken?: string }) {
+  const shareToken = options?.shareToken ?? canonicalShareToken(template)
+  if (shareToken) {
+    const listed = await api.get('/v1/workspaces')
+    const existing = listed.workspaces?.find((row) => row.share_token === shareToken)
+    if (existing?.id) return existing.id
+  }
   const workspaceId = crypto.randomUUID()
   const viewIds = template.views.map(() => crypto.randomUUID())
-  await api.post('/v1/workspaces', { body: {
-      id: workspaceId,
-      name: template.name,
-      locked: false,
-      share_token: options?.shareToken ?? `user-${workspaceId.slice(0, 8)}`,
-      layout: template.layout(viewIds),
-    } })
+  const token = shareToken ?? `user-${workspaceId.slice(0, 8)}`
+  try {
+    await api.post('/v1/workspaces', { body: {
+        id: workspaceId,
+        name: template.name,
+        locked: false,
+        share_token: token,
+        layout: template.layout(viewIds),
+      } })
+  } catch (error) {
+    // Unique share_token race: another tab created the canonical workspace first.
+    const listed = await api.get('/v1/workspaces')
+    const existing = listed.workspaces?.find((row) => row.share_token === token)
+    if (existing?.id) return existing.id
+    throw error
+  }
   for (const [index, view] of template.views.entries()) {
     await api.post('/v1/views', { body: {
         id: viewIds[index],
