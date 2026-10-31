@@ -195,6 +195,25 @@ export const shortcuts: Shortcut[] = [
     hotkeys: ['ctrl+alt+w', 'meta+alt+w'],
     layoutOnly: true,
   },
+  {
+    id: 'table.column.move-left',
+    chord: 'Ctrl+Shift+←',
+    scopes: ['table'],
+    description: 'Move the active column left',
+    commandId: 'column:move-left',
+    // Explicit Control only — not meta — so Mac word-selection chords stay free.
+    hotkeys: ['ctrl+shift+left'],
+    layoutOnly: true,
+  },
+  {
+    id: 'table.column.move-right',
+    chord: 'Ctrl+Shift+→',
+    scopes: ['table'],
+    description: 'Move the active column right',
+    commandId: 'column:move-right',
+    hotkeys: ['ctrl+shift+right'],
+    layoutOnly: true,
+  },
 ]
 
 function workspaceNumberShortcuts(): Shortcut[] {
@@ -249,4 +268,32 @@ export function assertNoShortcutConflicts(list: Shortcut[] = shortcuts) {
   if (conflicts.length === 0) return
   const lines = conflicts.map((item) => `${item.a} vs ${item.b} on ${item.chord} [${item.scopes.join(',')}]`)
   throw new Error(`Shortcut conflicts:\n${lines.join('\n')}`)
+}
+
+const SCOPE_HEADINGS: Record<ShortcutScope, string> = {
+  app: 'App',
+  layout: 'Layout',
+  table: 'Table',
+}
+
+/** Markdown reference generated from the typed registry (docs/shortcuts.md). */
+export function formatShortcutsMarkdown(list: Shortcut[] = shortcuts): string {
+  const lines: string[] = [
+    '# Keyboard shortcuts',
+    '',
+    'Generated from `apps/web/src/shortcuts.ts`. Do not edit by hand — run `node scripts/gen-shortcuts-md.mjs`.',
+    '',
+  ]
+  for (const scope of ['app', 'layout', 'table'] as ShortcutScope[]) {
+    const rows = list.filter((item) => item.scopes.includes(scope))
+    if (rows.length === 0) continue
+    lines.push(`## ${SCOPE_HEADINGS[scope]}`, '')
+    lines.push('| Chord | Action |')
+    lines.push('| --- | --- |')
+    for (const item of rows) {
+      lines.push(`| ${item.chord} | ${item.description} |`)
+    }
+    lines.push('')
+  }
+  return `${lines.join('\n').trimEnd()}\n`
 }

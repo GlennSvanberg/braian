@@ -49,4 +49,12 @@ describe('shortcut registry', () => {
     expect(chordForCommand('layout:add-view')).toBeUndefined()
     expect(chordForCommand('layout:focus:left')).toBe('Alt+←')
   })
+
+  it('binds Ctrl+Shift column moves (Control only) and exposes command chords', () => {
+    expect(chordForCommand('column:move-left')).toBe('Ctrl+Shift+←')
+    expect(chordForCommand('column:move-right')).toBe('Ctrl+Shift+→')
+    const left = shortcuts.find((item) => item.id === 'table.column.move-left')
+    expect(left?.hotkeys).toEqual(['ctrl+shift+left'])
+    expect(left?.hotkeys.some((key) => key.includes('meta'))).toBe(false)
+  })
 })

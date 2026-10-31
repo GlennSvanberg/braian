@@ -37,8 +37,10 @@ import { SharedContextMenuHost } from './shared-context-menu'
 import { StateNote } from './states'
 import { requestNewSelection } from './assortment-filter'
 import { dispatchUi } from './ui-bus'
+import { readUiContext } from './ui-context'
 import { registerCommandRunner, runCommand } from './command-registry'
 import { useShortcutBindings } from './shortcut-bindings'
+import { shortcuts } from './shortcuts'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
@@ -608,6 +610,11 @@ export function Shell() {
     resize: (direction, delta) => applyRef.current('resize', { direction, delta }),
     zoom: () => applyRef.current('zoom', {}),
     closeView: () => applyRef.current('close_view', {}),
+    moveColumn: (direction) => {
+      const column = readUiContext().activeColumn
+      if (!column) return
+      dispatchUi('ui.move_column', { column, direction })
+    },
     paletteOpen: Boolean(paletteMode),
     feedbackEnabled,
   })
@@ -1694,19 +1701,18 @@ function singularFromLive(raw: string, defs: Json | undefined) {
 }
 
 function Help({ onClose, placeholder }: { onClose: () => void; placeholder: string }) {
+  // F1 overlay only — theme / Agent / Sign out stay in the header (Notion 114 is separate).
+  const rows = shortcuts.filter((item) => item.id !== 'help.close' && item.id !== 'palette.search')
   return (
-    <div className="help" onClick={onClose}>
+    <div className="help" data-testid="help-shortcuts" onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()}>
         <strong>{copy.shortcuts}</strong>
         <p><Kbd>Ctrl</Kbd>+<Kbd>K</Kbd> {placeholder}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>J</Kbd> {copy.agent}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+arrows move the focused view</p>
-        <p><Kbd>Alt</Kbd>+arrows focus the neighbour</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>Shift</Kbd>+arrows resize</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>Z</Kbd> {copy.maximize}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>Alt</Kbd>+<Kbd>W</Kbd> {copy.closeView}</p>
-        <p><Kbd>Ctrl</Kbd>+<Kbd>1</Kbd>…<Kbd>9</Kbd> workspaces</p>
-        <p><Kbd>F1</Kbd> {copy.shortcuts}</p>
+        {rows.map((item) => (
+          <p key={item.id} data-shortcut-id={item.id}>
+            <Kbd>{item.chord}</Kbd> {item.description}
+          </p>
+        ))}
         <button onClick={onClose}>{copy.close}</button>
       </div>
     </div>

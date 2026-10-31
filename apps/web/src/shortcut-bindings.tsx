@@ -16,6 +16,7 @@ export type ShortcutHandlers = {
   resize: (direction: 'left' | 'right' | 'top' | 'bottom', delta: number) => void
   zoom: () => void
   closeView: () => void
+  moveColumn: (direction: 'left' | 'right') => void
   paletteOpen: boolean
   feedbackEnabled: boolean
 }
@@ -102,6 +103,17 @@ export function useShortcutBindings(handlers: ShortcutHandlers) {
   useRegisteredHotkey('layout.resize.down', useCallback(() => handlers.resize('bottom', 0.05), [handlers]), layout)
   useRegisteredHotkey('layout.zoom', useCallback(() => handlers.zoom(), [handlers]), layout)
   useRegisteredHotkey('layout.close', useCallback(() => handlers.closeView(), [handlers]), layout)
+
+  useRegisteredHotkey(
+    'table.column.move-left',
+    useCallback(() => handlers.moveColumn('left'), [handlers]),
+    layout,
+  )
+  useRegisteredHotkey(
+    'table.column.move-right',
+    useCallback(() => handlers.moveColumn('right'), [handlers]),
+    layout,
+  )
 }
 
 /** Same guards the bindings use — for unit tests without mounting React. */

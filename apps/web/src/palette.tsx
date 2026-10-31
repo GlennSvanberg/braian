@@ -1157,6 +1157,8 @@ function columnEntries(columns: UiColumn[], activeColumn: string | null): Palett
         title: `${copy.moveColumnLeft} · ${header}`,
         subtitle: header,
         keywords: ['column', 'move', 'left', 'reorder', header],
+        kbd: chordForCommand('column:move-left'),
+        shortcut: chordForCommand('column:move-left'),
       },
       {
         id: 'column:move-right',
@@ -1164,6 +1166,8 @@ function columnEntries(columns: UiColumn[], activeColumn: string | null): Palett
         title: `${copy.moveColumnRight} · ${header}`,
         subtitle: header,
         keywords: ['column', 'move', 'right', 'reorder', header],
+        kbd: chordForCommand('column:move-right'),
+        shortcut: chordForCommand('column:move-right'),
       },
     )
   }
