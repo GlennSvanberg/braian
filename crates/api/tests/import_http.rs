@@ -124,23 +124,31 @@ fn csv() -> Vec<u8> {
 
 /// The open draft of an import session, as the staging area lists it.
 async fn draft_of(app: &axum::Router, session: &str) -> Value {
-    let (status, list) = call(
-        app,
-        "GET",
-        "/v1/proposals?status=open&source=import",
-        HUMAN,
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{list}");
-    list["proposals"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|item| item["session_id"] == session)
-        .cloned()
-        .unwrap_or_else(|| panic!("no open draft for {session}: {list}"))
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        let (status, list) = call(
+            app,
+            "GET",
+            "/v1/proposals?status=open&source=import",
+            HUMAN,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        last = list.clone();
+        if let Some(draft) = list["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["session_id"] == session)
+        {
+            return draft.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    panic!("no open draft for {session}: {last}");
 }
 
 async fn accept_draft(

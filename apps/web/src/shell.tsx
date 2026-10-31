@@ -978,7 +978,10 @@ export function Shell() {
     return <p className="pane-body">{copy.loading}</p>
   }
   const user = me.data
-  const signOut = () => void api.post('/v1/logout').then(() => queryClient.invalidateQueries({ queryKey: ['me'] }))
+  const signOut = () =>
+    void api.post('/v1/logout').then(() => {
+      queryClient.removeQueries({ queryKey: ['me'] })
+    })
   const surface = workspace.data
 
   const commitDoc = (next: LayoutDoc) => {
