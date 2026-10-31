@@ -21,7 +21,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::auth::{Auth, Identity, Role};
-use crate::platform::require;
+use crate::platform::{require, require_view_member};
 use crate::problem::{Problem, store_status};
 use crate::state::AppState;
 use crate::wire;
@@ -83,6 +83,17 @@ async fn require_view(state: &AppState, view_id: Uuid) -> Result<(String, Value)
         .await
         .map_err(store_status)?
         .ok_or_else(|| Problem::new(StatusCode::NOT_FOUND, "not_found", "view"))
+}
+
+async fn require_view_for_member(
+    state: &AppState,
+    identity: &Identity,
+    view_id: Uuid,
+) -> Result<(String, Value), Problem> {
+    let owner = prefs_owner(state, identity).await?;
+    // 404 if view missing or caller is not a member of its workspace.
+    require_view_member(state, view_id, owner).await?;
+    require_view(state, view_id).await
 }
 
 fn bound_type_token(state: &Value) -> Option<&str> {
@@ -346,7 +357,7 @@ pub async fn get_column_prefs(
     require(&identity, Role::Viewer)?;
     let owner = prefs_owner(&state, &identity).await?;
     let env = environment(query.environment.as_deref());
-    let (_type_key, view_state) = require_view(&state, view_id).await?;
+    let (_type_key, view_state) = require_view_for_member(&state, &identity, view_id).await?;
     let stored = state
         .store
         .view_column_prefs(owner, &env, view_id)
@@ -397,7 +408,7 @@ pub async fn put_column_prefs(
     require(&identity, Role::Viewer)?;
     let owner = prefs_owner(&state, &identity).await?;
     let env = environment(body.environment.as_deref());
-    let (_type_key, view_state) = require_view(&state, view_id).await?;
+    let (_type_key, view_state) = require_view_for_member(&state, &identity, view_id).await?;
     let type_id = resolve_type_id(&state, &view_state).await?.ok_or_else(|| {
         Problem::new(
             StatusCode::BAD_REQUEST,
@@ -442,7 +453,7 @@ pub async fn delete_column_prefs(
     require(&identity, Role::Viewer)?;
     let owner = prefs_owner(&state, &identity).await?;
     let env = environment(query.environment.as_deref());
-    require_view(&state, view_id).await?;
+    require_view_for_member(&state, &identity, view_id).await?;
     state
         .store
         .delete_view_column_prefs(owner, &env, view_id)
