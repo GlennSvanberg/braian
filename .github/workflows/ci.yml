@@ -127,7 +127,7 @@ jobs:
       - name: Restore release binaries
         id: bins
         if: steps.changes.outputs.mode != 'skip'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/ci-bins
           # Exact key only. A prefix restore would replay a binary from older Rust.
@@ -191,6 +191,12 @@ jobs:
           cp -a target/release/braian target/release/braian-bench "${RUNNER_TEMP}/ci-bins/"
           test -x "${RUNNER_TEMP}/ci-bins/braian"
           test -x "${RUNNER_TEMP}/ci-bins/braian-bench"
+      - name: Save release binaries
+        if: steps.plan.outputs.compile == 'true' && steps.bins.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ci-bins
+          key: braian-bins-v1-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/**', 'testdata/**') }}
       - name: Phase 2 load
         if: steps.changes.outputs.mode == 'full'
         env:
@@ -262,11 +268,9 @@ jobs:
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
-          # Four servers at the dev pool size (24+8+2) would pass Postgres' default 100 connections.
-          BRAIAN_POOL_INTERACTIVE: "8"
-          BRAIAN_POOL_BULK: "4"
-          BRAIAN_INDEXER_POOL: "2"
-          BRAIAN_E2E_WORKERS: "4"
+          # Two processes keep a file's tests on one database. Four saturated the
+          # 4-core runner and failed timing-sensitive layout tests.
+          BRAIAN_E2E_WORKERS: "2"
           BRAIAN_BIN: ${{ runner.temp }}/ci-bins/braian
         run: |
           test -x "${BRAIAN_BIN}"

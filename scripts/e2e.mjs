@@ -8,7 +8,7 @@
 // inside each Playwright process so tests in one file keep their order.
 
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -51,14 +51,25 @@ function workerCount() {
   return parsed
 }
 
+function fileWeight(file) {
+  const text = readFileSync(join(root, 'apps/web', file), 'utf8')
+  const matches = text.match(/^\s*test(?:\.[A-Za-z]+)?\(/gm)
+  return matches ? matches.length : 1
+}
+
+// Lightest-bin assignment keeps every file's tests on one database, in the
+// original relative order, and keeps the processes close in test count.
 function partition(list, workers) {
-  const size = Math.ceil(list.length / workers)
-  const chunks = []
-  for (let i = 0; i < workers; i += 1) {
-    const slice = list.slice(i * size, (i + 1) * size)
-    if (slice.length > 0) chunks.push(slice)
+  const bins = Array.from({ length: workers }, () => ({ files: [], weight: 0 }))
+  for (const file of list) {
+    let lightest = bins[0]
+    for (const bin of bins) {
+      if (bin.weight < lightest.weight) lightest = bin
+    }
+    lightest.files.push(file)
+    lightest.weight += fileWeight(file)
   }
-  return chunks
+  return bins.filter((bin) => bin.files.length > 0).map((bin) => bin.files)
 }
 
 function withDatabase(url, name) {
@@ -232,7 +243,7 @@ try {
       await waitFor(`http://127.0.0.1:${slot.apiPort}/healthz`)
       await waitFor(`http://127.0.0.1:${slot.webPort}/`)
       console.log(
-        `e2e slot ready db=${slot.db} alias=${slot.alias} api=${slot.apiPort} web=${slot.webPort} files=${slot.files.length}`,
+        `e2e slot ready db=${slot.db} alias=${slot.alias} api=${slot.apiPort} web=${slot.webPort} files=${slot.files.join(' ')}`,
       )
       return runPlaywright(slot.files, `http://127.0.0.1:${slot.webPort}`)
     }),
