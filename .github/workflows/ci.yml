@@ -45,7 +45,8 @@ jobs:
           lookup-only: "true"
           # One key per job. Parallel jobs build different profiles, and a
           # GitHub cache entry cannot be updated once saved. v2 is the
-          # generation that contains profile.ci artifacts.
+          # generation that contains profile.ci artifacts, filled by the first
+          # full run of this prefix and then by pushes to main.
           prefix-key: v2-rust-ci
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
