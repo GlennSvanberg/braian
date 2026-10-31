@@ -281,7 +281,7 @@ export function formatShortcutsMarkdown(list: Shortcut[] = shortcuts): string {
   const lines: string[] = [
     '# Keyboard shortcuts',
     '',
-    'Generated from `apps/web/src/shortcuts.ts`. Do not edit by hand — run `node scripts/gen-shortcuts-md.mjs`.',
+    'Generated from `apps/web/src/shortcuts.ts`. Do not edit by hand — run `node apps/web/scripts/gen-shortcuts-md.mjs`.',
     '',
   ]
   for (const scope of ['app', 'layout', 'table'] as ShortcutScope[]) {
