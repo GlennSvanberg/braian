@@ -4,7 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, failureLines, freeObject, jsonRecord, recordNumber, recordTitle, searchQuery, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
 import { attributeByKey, indexSort, readIndexed, sortKeyForColumnId } from './index-fields'
-import { cellEditShouldPatch, cellEditValuesBody, isEditingCell } from './cell-edit'
+import { cellEditShouldPatch, cellEditValuesBody, isEditingCell, isEditableColumn, valueListKeyForColumn, columnBaseKey } from './cell-edit'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Slider } from './components/ui/slider'
@@ -988,14 +988,6 @@ export function ObjectTable({
   const paintPathValues = tableBusy ? stableTableRef.current.pathValues : pathValues.data
   const rowAtPainted = (index: number) =>
     groupBy ? stableTableRef.current!.groupedRows[index] : stableTableRef.current!.byIndex.get(index)
-  const isEditableColumn = (id: string) => {
-    if (isHopPath(id)) return false
-    const path = parseColumnId(id).path
-    const base = (path.split('@')[0] ?? path).split('.')[0] ?? path
-    if (base === 'type' || base === 'version' || base === 'key') return false
-    return true
-  }
-
   const cellDisplayText = (row: ObjRow, id: string) => {
     const apiPath = parseColumnId(id).path
     if (columnNeedsPathValues(id)) {
@@ -1044,6 +1036,52 @@ export function ObjectTable({
 
   const cell = (row: ObjRow, id: string) => {
     if (editingCell && editingCell.rowId === row.id && editingCell.columnId === id) {
+      const listKey = valueListKeyForColumn(id, defs.data)
+      if (listKey) {
+        const lists = (defs.data?.value_lists as Json[] | undefined) ?? []
+        const options = optionsFor(lists, listKey)
+        return (
+          <div
+            className="cell-editor"
+            data-testid={`cell-editor-${id}`}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <Select
+              value={editingDraft || undefined}
+              defaultOpen
+              onValueChange={(code) => {
+                setEditingDraft(code)
+                commitCellEdit(row, id, code)
+              }}
+              onOpenChange={(open) => {
+                if (open) return
+                window.setTimeout(() => {
+                  // onValueChange clears editingCell first; otherwise Esc / click-away cancels.
+                  if (skipBlurCommitRef.current) {
+                    skipBlurCommitRef.current = false
+                    return
+                  }
+                  cancelCellEdit()
+                }, 0)
+              }}
+            >
+              <SelectTrigger
+                className="cell-editor-trigger"
+                data-testid={`cell-editor-${id}-trigger`}
+                aria-label={listKey}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((option) => (
+                  <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )
+      }
       return (
         <input
           data-testid={`cell-editor-${id}`}
@@ -1465,7 +1503,10 @@ export function ObjectTable({
                         onMenu={onRowMenu}
                         onCellDoubleClick={(row, column) => {
                           if (!isEditableColumn(column)) return
-                          const current = cellDisplayText(row, column)
+                          const listKey = valueListKeyForColumn(column, defs.data)
+                          const current = listKey
+                            ? (columnBaseKey(column) === 'status' ? row.status : readIndexed(row.doc, defs.data, columnBaseKey(column)))
+                            : cellDisplayText(row, column)
                           editingOriginalRef.current = current
                           skipBlurCommitRef.current = false
                           setEditingDraft(current)
@@ -1504,7 +1545,10 @@ export function ObjectTable({
                   onMenu={onRowMenu}
                   onCellDoubleClick={(row, column) => {
                     if (!isEditableColumn(column)) return
-                    const current = cellDisplayText(row, column)
+                    const listKey = valueListKeyForColumn(column, defs.data)
+                    const current = listKey
+                      ? (columnBaseKey(column) === 'status' ? row.status : readIndexed(row.doc, defs.data, columnBaseKey(column)))
+                      : cellDisplayText(row, column)
                     editingOriginalRef.current = current
                     skipBlurCommitRef.current = false
                     setEditingDraft(current)
