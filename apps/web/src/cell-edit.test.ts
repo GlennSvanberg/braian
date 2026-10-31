@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { cellEditShouldPatch, cellEditValuesBody, isEditingCell, isTextEditingTarget } from './cell-edit'
+import {
+  cellEditShouldPatch,
+  cellEditValuesBody,
+  columnBaseKey,
+  isEditableColumn,
+  isEditingCell,
+  isTextEditingTarget,
+  valueListKeyForColumn,
+} from './cell-edit'
 
 describe('cellEditShouldPatch', () => {
   it('returns false for identical strings (Enter/blur must not PATCH)', () => {
@@ -107,5 +115,45 @@ describe('isTextEditingTarget / isEditingCell', () => {
     document.body.appendChild(cell)
     expect(isEditingCell({ target: cell }, { rowId: 'r1', columnId: 'name' })).toBe(true)
     cell.remove()
+  })
+})
+
+
+describe('isEditableColumn', () => {
+  it('blocks hops and system columns', () => {
+    expect(isEditableColumn('supplier>name')).toBe(false)
+    expect(isEditableColumn('type')).toBe(false)
+    expect(isEditableColumn('version')).toBe(false)
+    expect(isEditableColumn('key')).toBe(false)
+    expect(isEditableColumn('number')).toBe(false)
+    expect(isEditableColumn('created_at')).toBe(false)
+    expect(isEditableColumn('updated_at')).toBe(false)
+    expect(isEditableColumn('updated_by')).toBe(false)
+  })
+
+  it('allows name and status (value_list) columns', () => {
+    expect(isEditableColumn('name')).toBe(true)
+    expect(isEditableColumn('name@en')).toBe(true)
+    expect(isEditableColumn('status')).toBe(true)
+  })
+})
+
+describe('valueListKeyForColumn', () => {
+  const defs = {
+    attributes: [
+      { key: 'status', kind: { type: 'value_list', list: 'status' } },
+      { key: 'name', kind: { type: 'text' } },
+      { key: 'lifecycle', kind: { type: 'lifecycle', list: 'product_life' } },
+    ],
+  }
+
+  it('returns the list key for value_list / lifecycle attrs', () => {
+    expect(valueListKeyForColumn('status', defs)).toBe('status')
+    expect(valueListKeyForColumn('lifecycle', defs)).toBe('product_life')
+  })
+
+  it('returns null for free-text columns', () => {
+    expect(valueListKeyForColumn('name', defs)).toBeNull()
+    expect(columnBaseKey('name@en')).toBe('name')
   })
 })
