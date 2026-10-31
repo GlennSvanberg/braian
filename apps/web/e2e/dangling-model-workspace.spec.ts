@@ -82,6 +82,10 @@ async function seedDanglingModelWorkspace(page: Page, name: string) {
   })
   expect(structures.ok(), `create Structures ${structures.status()}`).toBeTruthy()
   // Intentionally do not create ghostLeft/Mid/Right — that is the bug.
+  const listed = await page.request.get('/v1/workspaces')
+  expect(listed.ok()).toBeTruthy()
+  const body = (await listed.json()) as { workspaces: Array<{ id: string; name: string }> }
+  expect(body.workspaces.some((row) => row.id === workspaceId)).toBe(true)
   return { workspaceId, ghostLeft, ghostMid, ghostRight }
 }
 
@@ -90,8 +94,10 @@ async function openWorkspace(page: Page, name: string) {
   await page.reload()
   await expect(page.getByTestId('dock')).toBeVisible()
   await page.evaluate(() => sessionStorage.removeItem('braian.layout.suppressFlush'))
+  // Tab buttons append a shortcut index (<span class="tab-index">), so the
+  // accessible name is "Name N". Match the name as a substring (same as legacy).
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const tab = page.locator('nav.tabs').getByRole('button', { name: new RegExp(`^${escaped}$`) })
+  const tab = page.locator('nav.tabs').getByRole('button', { name: new RegExp(escaped) })
   await expect(tab).toBeVisible({ timeout: 30_000 })
   await tab.click()
 }
