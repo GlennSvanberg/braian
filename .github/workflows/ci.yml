@@ -150,23 +150,26 @@ jobs:
           mode="${{ steps.changes.outputs.mode }}"
           hit="${{ steps.bins.outputs.cache-hit }}"
           echo "mode=$mode bin-cache-hit=$hit"
-          if [ "$mode" = full ] || [ "$hit" != true ]; then
+          # The cache key is a hash of the Rust sources. A hit is this tree's
+          # binary, including on a full diff that did not touch Rust. A miss
+          # compiles, so e2e never runs a stale server.
+          if [ "$hit" != true ]; then
             echo "compile=true" >> "$GITHUB_OUTPUT"
           else
             echo "compile=false" >> "$GITHUB_OUTPUT"
-            echo "Web-only diff; reusing the release binary for this Rust hash."
+            echo "Release binary cache hit for this Rust hash; cargo build skipped."
           fi
       - name: Stabilize Rust source mtimes
-        if: steps.plan.outputs.compile == 'true'
+        if: steps.changes.outputs.mode == 'full'
         run: |
           # Cargo fingerprints local crates by mtime. A fresh checkout is newer
           # than the cached fingerprints, so workspace crates recompile on every
           # hit. Pin the mtimes before restore and before the build.
           find crates testdata Cargo.toml Cargo.lock rust-toolchain.toml -exec touch -d '2020-01-01T00:00:00Z' {} +
       - run: rustup show
-        if: steps.plan.outputs.compile == 'true'
+        if: steps.changes.outputs.mode == 'full'
       - uses: Swatinem/rust-cache@v2
-        if: steps.plan.outputs.compile == 'true'
+        if: steps.changes.outputs.mode == 'full'
         with:
           prefix-key: v1-rust-mtime
           shared-key: ${{ github.job }}
@@ -295,12 +298,10 @@ jobs:
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
-          # Two processes. Three made the long specs slower on a shared runner
-          # (layout 51s → 1.4m, field-picker 1.1m → 1.8m). Each spec file gets a new
-          # database and Typesense alias; a shared database left a second object
-          # table and failed strict-mode lookups. Two servers at the default
-          # pools (24+8+2) stay under Postgres max_connections (100).
-          BRAIAN_E2E_WORKERS: "2"
+          # One Playwright process and one database, in the historical file order.
+          # Two processes were not faster: reseeding around every file cost more
+          # than the overlap, and a third process slowed the long specs.
+          BRAIAN_E2E_WORKERS: "1"
           BRAIAN_BIN: ${{ runner.temp }}/ci-bins/braian
         run: |
           test -x "${BRAIAN_BIN}"
