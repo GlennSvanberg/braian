@@ -965,7 +965,10 @@ export function ObjectTable({
     // so Description and Version can swap together instead of flashing '—'.
     placeholderData: (previous) => previous,
   })
-  const pathValuesPending = pathValueColumns.length > 0 && pathValues.isPending && !pathValues.data
+  const pathValuesPending =
+    pathValueColumns.length > 0 &&
+    !pathValues.data &&
+    (pathValues.isPending || pathValues.isFetching)
   const objectsFetching = probe.isFetching || windows.some((result) => result.isFetching)
   const pathBusy = pathValueColumns.length > 0 && pathValues.isFetching
   // Hold Typesense hits and pathValues until both refreshes settle so a live
