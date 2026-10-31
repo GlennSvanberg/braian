@@ -7,6 +7,7 @@ import {
   isEditableColumn,
   isEditingCell,
   isTextEditingTarget,
+  resolveCellEditInitial,
   valueListKeyForColumn,
 } from './cell-edit'
 
@@ -155,5 +156,79 @@ describe('valueListKeyForColumn', () => {
   it('returns null for free-text columns', () => {
     expect(valueListKeyForColumn('name', defs)).toBeNull()
     expect(columnBaseKey('name@en')).toBe('name')
+  })
+})
+
+
+describe('resolveCellEditInitial', () => {
+  it('uses fallback text for indexed columns without waiting on path-values', () => {
+    expect(
+      resolveCellEditInitial({
+        needsPathValues: false,
+        pathValuesPending: true,
+        pathValuesHasData: false,
+        pathValuesForCell: undefined,
+        fallbackText: 'Mature cheddar',
+      }),
+    ).toEqual({ ok: true, text: 'Mature cheddar' })
+  })
+
+  it('blocks path-values columns while the batch is pending', () => {
+    expect(
+      resolveCellEditInitial({
+        needsPathValues: true,
+        pathValuesPending: true,
+        pathValuesHasData: false,
+        pathValuesForCell: undefined,
+        fallbackText: '',
+      }),
+    ).toEqual({ ok: false, reason: 'unloaded' })
+  })
+
+  it('blocks when data arrived but this cell key is still missing', () => {
+    expect(
+      resolveCellEditInitial({
+        needsPathValues: true,
+        pathValuesPending: false,
+        pathValuesHasData: true,
+        pathValuesForCell: undefined,
+        fallbackText: '',
+      }),
+    ).toEqual({ ok: false, reason: 'unloaded' })
+  })
+
+  it('seeds from loaded path-values (including a legitimately empty cell)', () => {
+    expect(
+      resolveCellEditInitial({
+        needsPathValues: true,
+        pathValuesPending: false,
+        pathValuesHasData: true,
+        pathValuesForCell: ["firm cow's-milk cheddar"],
+        fallbackText: '',
+      }),
+    ).toEqual({ ok: true, text: "firm cow's-milk cheddar" })
+
+    expect(
+      resolveCellEditInitial({
+        needsPathValues: true,
+        pathValuesPending: false,
+        pathValuesHasData: true,
+        pathValuesForCell: [],
+        fallbackText: 'painted leftover',
+      }),
+    ).toEqual({ ok: true, text: '' })
+  })
+
+  it('uses formatPathValues when provided (summary shape)', () => {
+    expect(
+      resolveCellEditInitial({
+        needsPathValues: true,
+        pathValuesPending: false,
+        pathValuesHasData: true,
+        pathValuesForCell: ['A', 'B', 'C'],
+        fallbackText: '',
+        formatPathValues: (values) => values.slice(0, 2).join(', ') + ' +1',
+      }),
+    ).toEqual({ ok: true, text: 'A, B +1' })
   })
 })
