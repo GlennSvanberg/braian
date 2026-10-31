@@ -62,6 +62,21 @@ jobs:
           # Restore order is this ref, then the PR base, then main. An exact
           # hit is not uploaded again, so a PR does not copy main's cache.
           save-if: ${{ steps.rust-cache-lookup.outputs.cache-hit != 'true' }}
+
+      - name: Dirty changed Rust sources after cache restore
+        if: steps.changes.outputs.mode == 'full'
+        run: |
+          # Shared main cache + pinned 2020 mtimes otherwise skip recompiling
+          # crates this PR changed (e.g. openapi_spec vs docs/api/openapi.json).
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git diff --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | xargs -r touch
+          else
+            find crates docs/api -type f \( -name '*.rs' -o -name 'openapi.json' \) -exec touch {} +
+          fi
       - name: Start Postgres
         if: steps.changes.outputs.mode == 'full'
         run: |
@@ -149,6 +164,21 @@ jobs:
           # Restore order is this ref, then the PR base, then main. An exact
           # hit is not uploaded again, so a PR does not copy main's cache.
           save-if: ${{ steps.rust-cache-lookup.outputs.cache-hit != 'true' }}
+
+      - name: Dirty changed Rust sources after cache restore
+        if: steps.changes.outputs.mode == 'full'
+        run: |
+          # Shared main cache + pinned 2020 mtimes otherwise skip recompiling
+          # crates this PR changed (e.g. openapi_spec vs docs/api/openapi.json).
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git diff --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | xargs -r touch
+          else
+            find crates docs/api -type f \( -name '*.rs' -o -name 'openapi.json' \) -exec touch {} +
+          fi
       - uses: actions/setup-node@v4
         if: steps.changes.outputs.mode == 'full'
         with:
@@ -237,6 +267,21 @@ jobs:
           # Restore order is this ref, then the PR base, then main. An exact
           # hit is not uploaded again, so a PR does not copy main's cache.
           save-if: ${{ steps.rust-cache-lookup.outputs.cache-hit != 'true' }}
+
+      - name: Dirty changed Rust sources after cache restore
+        if: steps.changes.outputs.mode == 'full'
+        run: |
+          # Shared main cache + pinned 2020 mtimes otherwise skip recompiling
+          # crates this PR changed (e.g. openapi_spec vs docs/api/openapi.json).
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git diff --name-only "$base" -- crates docs/api Cargo.toml Cargo.lock rust-toolchain.toml               | xargs -r touch
+          else
+            find crates docs/api -type f \( -name '*.rs' -o -name 'openapi.json' \) -exec touch {} +
+          fi
       - name: Services and release build
         if: steps.changes.outputs.mode != 'skip'
         run: |
