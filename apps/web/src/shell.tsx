@@ -40,7 +40,7 @@ import { registerCommandRunner, runCommand } from './command-registry'
 import { registerModelCommandRunners } from './model-commands'
 import { createWorkspaceFromTemplate, typeWorkspaceTemplate, workspaceTemplates } from './templates'
 import { missingTypeWorkspaces, orderWorkspaces, typeKeyFromShare, typeShareToken } from './type-workspaces'
-import { healDataModelWorkspace, isKnownViewType, migrateLegacyModelViews } from './model-workspace-migrate'
+import { healDataModelWorkspace, isKnownViewType, layoutHasMissingViews, migrateLegacyModelViews } from './model-workspace-migrate'
 import { persistWorkspaceMigration } from './workspace-migration-persist'
 import { commandPlaceholder, displayViewTitle, migrateSavedWorkspace, singularOf, typeNames } from './type-labels'
 import { onUi } from './ui-bus'
@@ -166,7 +166,10 @@ export function Shell() {
   const [help, setHelp] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [doc, setDoc] = useState<LayoutDoc | null>(null)
+  // Gate dock paint while a dangling/incomplete Data model layout is healed in one pass.
+  const [layoutHealPending, setLayoutHealPending] = useState(false)
   const docRef = useRef<LayoutDoc | null>(null)
+  const healPendingFor = useRef<string | null>(null)
   const dirtyRef = useRef(false)
   const saveGen = useRef(0)
   const canonicalRef = useRef<LayoutDoc['layout'] | undefined>(undefined)
@@ -421,15 +424,45 @@ export function Shell() {
     canonicalRef.current = canonical.layout
     const local = readLayoutStore(key)
     const painted = local ? migrateDoc(local.document) : canonical
+    const listed = viewRows(current.views)
+    // Heal against the layout we would paint (local/personal), not only the server
+    // workspace layout — otherwise a healed server + stale personal doc keeps
+    // Unavailable tabs across reloads without re-entering heal.
+    const pendingHeal = healDataModelWorkspace(current, listed, painted.layout).changed
+      || healDataModelWorkspace(current, listed, canonical.layout).changed
     dirtyRef.current = false
+    if (pendingHeal) {
+      // Force the heal effect to run even if a prior no-op marked this id.
+      migratedRef.current.delete(current.id)
+      healPendingFor.current = current.id
+      setLayoutHealPending(true)
+      docRef.current = null
+      setDoc(null)
+      return
+    }
+    healPendingFor.current = null
+    setLayoutHealPending(false)
     docRef.current = painted
     setDoc(painted)
     let cancelled = false
     void api.get('/v1/workspaces/{id}/state', { params: { path: { id: workspaceId }, query: { environment: LAYOUT_ENVIRONMENT } } })
       .then((server) => {
         if (cancelled || dirtyRef.current || loadedFor.current !== stamp) return
+        if (healPendingFor.current === current.id) return
         const fresh = readLayoutStore(key)
         const next = reconcileLayout(fresh, server, canonical)
+        if (
+          layoutHasMissingViews(next.layout, listed)
+          || healDataModelWorkspace(current, listed, next.layout).changed
+        ) {
+          // Stale personal state still references missing views — let heal rebuild once.
+          healPendingFor.current = current.id
+          setLayoutHealPending(true)
+          docRef.current = null
+          setDoc(null)
+          migratedRef.current.delete(current.id)
+          return
+        }
         const serverAt = server.updated_at ? Date.parse(server.updated_at) : 0
         const serverDoc = server.document ? migrateDoc(server.document) : null
         const diverged = Boolean(
@@ -707,7 +740,13 @@ export function Shell() {
         ? migrateSavedWorkspace(current, viewRows(current.views), types)
         : { changed: false as const, name: undefined, views: [] as Array<{ id: string; title: string; state: Json; type?: string }> }
     const listed = viewRows(current.views)
-    const modelPatch = healDataModelWorkspace(current, listed, migrateLayout(current.layout))
+    const key = userId ? layoutStorageKey(userId, current.id) : ''
+    const local = key ? readLayoutStore(key) : null
+    // Prefer the layout the user would see (local/personal), then server canonical.
+    const paintedLayout = local ? migrateDoc(local.document).layout : migrateLayout(current.layout)
+    const modelFromPainted = healDataModelWorkspace(current, listed, paintedLayout)
+    const modelFromServer = healDataModelWorkspace(current, listed, migrateLayout(current.layout))
+    const modelPatch = modelFromPainted.changed ? modelFromPainted : modelFromServer
     const patch = {
       changed: objectPatch.changed || modelPatch.changed,
       name: objectPatch.name,
@@ -716,21 +755,69 @@ export function Shell() {
       layout: modelPatch.layout,
     }
     migratedRef.current.add(current.id)
-    if (!patch.changed) return
+    if (!patch.changed) {
+      if (healPendingFor.current === current.id) {
+        healPendingFor.current = null
+        setLayoutHealPending(false)
+      }
+      return
+    }
+    healPendingFor.current = current.id
+    setLayoutHealPending(true)
     void persistWorkspaceMigration(current, patch, {
       postView: (body) => api.post('/v1/views', { body }),
       postWorkspace: (body) => api.post('/v1/workspaces', { body }),
       freeObject,
     })
       .then(async () => {
-        await queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
-        await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
-        // Template reset replaces the layout; drop any personal/local doc so tabs
-        // show the new Structures / Object types set instead of Model / Preview.
+        // Merge creates into the workspace cache before painting so dock never
+        // briefly resolves new template ids as Unavailable / Nothing to show.
+        const created = (patch.create ?? []).map((view) => ({
+          id: view.id,
+          workspace_id: current.id,
+          type: view.type,
+          title: view.title,
+          pane: view.pane ?? 'main',
+          position: view.position ?? 0,
+          state: view.state,
+        }))
+        const byId = new Map(listed.map((view) => [view.id, view]))
+        for (const view of patch.views) {
+          const prev = byId.get(view.id)
+          if (!prev) continue
+          byId.set(view.id, {
+            ...prev,
+            title: view.title,
+            state: view.state,
+            ...(view.type ? { type: view.type } : {}),
+          })
+        }
+        for (const view of created) {
+          byId.set(view.id, {
+            id: view.id,
+            type: view.type,
+            title: view.title,
+            pane: view.pane,
+            position: view.position,
+            state: freeObject(view.state as object),
+          } as typeof listed[number])
+        }
+        const nextViews = [...byId.values()]
+        const nextLayout = freeObject(
+          (patch.layout && typeof patch.layout === 'object' ? patch.layout : current.layout) as object,
+        )
+        const nextWorkspace = {
+          ...current,
+          name: patch.name ?? current.name,
+          layout: nextLayout,
+          views: nextViews,
+        }
+        queryClient.setQueryData(['workspace', current.id], nextWorkspace)
+        workspaceRef.current = nextWorkspace
         if (patch.layout) {
           const next = canonicalDoc({
             id: current.id,
-            name: current.name,
+            name: patch.name ?? current.name,
             layout: patch.layout,
             owner_id: current.owner_id,
           })
@@ -741,17 +828,26 @@ export function Shell() {
           canonicalRef.current = next.layout
           if (userId) {
             loadedFor.current = `${userId}:${current.id}`
-            // Keep personal layout state in sync so a reload does not PUT a divergent doc.
             void api.put('/v1/workspaces/{id}/state', {
               params: { path: { id: current.id } },
               body: { environment: LAYOUT_ENVIRONMENT, document: freeObject(next) },
             })
           }
         }
+        healPendingFor.current = null
+        setLayoutHealPending(false)
+        await queryClient.invalidateQueries({ queryKey: ['workspace', current.id] })
+        await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
       })
       .catch(() => {
         // Allow a later open/reload to retry; never surface as an unhandled page error.
         migratedRef.current.delete(current.id)
+        healPendingFor.current = null
+        setLayoutHealPending(false)
+        // Fall back to canonical so the shell is not stuck on a blank gate.
+        const fallback = canonicalDoc(current)
+        docRef.current = fallback
+        setDoc(fallback)
       })
   }, [workspace.data, defs.data, queryClient, userId])
 
@@ -930,7 +1026,7 @@ export function Shell() {
         </button>
       </header>
       <main className="workspace" data-testid="workspace">
-        {doc && surface ? (
+        {doc && surface && !layoutHealPending ? (
           <WorkspaceDock
             doc={doc}
             views={viewRows(surface.views).map((view) => ({ ...view, title: displayViewTitle(view, typeCatalog, openTypeKey) }))}
@@ -946,7 +1042,7 @@ export function Shell() {
             }}
           />
         ) : (
-          <p>{copy.loading}</p>
+          <p data-testid="layout-heal-loading">{copy.loading}</p>
         )}
       </main>
       <pre className="activity" data-testid="activity-log" data-live={liveState}>{logText}</pre>

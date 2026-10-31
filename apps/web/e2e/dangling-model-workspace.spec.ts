@@ -119,6 +119,42 @@ async function waitForWritesToSettle(writes: string[], quietMs = 1200) {
     .toBe('quiet')
 }
 
+async function watchUnavailableDuringLoad(page: Page) {
+  // Survive openWorkspace()'s reload — install before navigation so the first
+  // paint after seed is monitored, not only the settled end state.
+  await page.addInitScript(() => {
+    const w = window as unknown as { __braianHealHits?: string[]; __braianHealObs?: MutationObserver }
+    w.__braianHealHits = w.__braianHealHits ?? []
+    const scan = () => {
+      const root = document.querySelector('main.workspace')
+      if (!root) return
+      const text = root.textContent ?? ''
+      if (text.includes('Unavailable') || text.includes('Nothing to show')) {
+        w.__braianHealHits!.push(text.replace(/\s+/g, ' ').trim().slice(0, 240))
+      }
+    }
+    const start = () => {
+      w.__braianHealObs?.disconnect()
+      const obs = new MutationObserver(scan)
+      obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true })
+      w.__braianHealObs = obs
+      scan()
+    }
+    if (document.documentElement) start()
+    else document.addEventListener('DOMContentLoaded', start)
+  })
+}
+
+async function stopUnavailableWatch(page: Page) {
+  return page.evaluate(() => {
+    const w = window as unknown as { __braianHealHits?: string[]; __braianHealObs?: MutationObserver }
+    w.__braianHealObs?.disconnect()
+    const hits = w.__braianHealHits ?? []
+    w.__braianHealHits = []
+    return hits
+  })
+}
+
 test('dangling Data model panes heal to the standard template without UUID tabs', async ({ page }) => {
   test.setTimeout(180_000)
   await login(page)
@@ -133,6 +169,7 @@ test('dangling Data model panes heal to the standard template without UUID tabs'
     }
   }
   page.on('request', onFirst)
+  await watchUnavailableDuringLoad(page)
   await openWorkspace(page, name)
 
   const paneTabs = page.locator('.pane-tab')
@@ -142,10 +179,16 @@ test('dangling Data model panes heal to the standard template without UUID tabs'
   await expect(paneTabs.filter({ hasText: 'Value lists' })).toBeVisible()
   await expect(paneTabs.filter({ hasText: 'Units' })).toBeVisible()
   await expect(paneTabs.filter({ hasText: 'Type attributes' })).toBeVisible()
+  await expect(paneTabs.filter({ hasText: 'Attribute definitions' })).toBeVisible()
+  await expect(paneTabs.filter({ hasText: 'List values' })).toBeVisible()
   for (const ghost of [ghostLeft, ghostMid, ghostRight]) {
     await expect(paneTabs.filter({ hasText: ghost })).toHaveCount(0)
   }
   await expect(paneTabs.filter({ hasText: /[0-9a-f]{8}-[0-9a-f]{4}-/i })).toHaveCount(0)
+  await expect(paneTabs.filter({ hasText: 'Unavailable' })).toHaveCount(0)
+  await expect(page.locator('main.workspace')).not.toContainText('Nothing to show')
+  const healHits = await stopUnavailableWatch(page)
+  expect(healHits, `Unavailable/Nothing to show during first heal: ${healHits.join(' | ')}`).toEqual([])
   await expect.poll(() => firstWrites.length).toBeGreaterThan(0)
   await waitForWritesToSettle(firstWrites)
   page.off('request', onFirst)
@@ -160,6 +203,8 @@ test('dangling Data model panes heal to the standard template without UUID tabs'
   await openWorkspace(page, name)
   await expect(paneTabs.filter({ hasText: 'Structures' })).toBeVisible()
   await expect(paneTabs.filter({ hasText: 'Object types' })).toHaveCount(1)
+  await expect(paneTabs.filter({ hasText: 'Unavailable' })).toHaveCount(0)
+  await expect(page.locator('main.workspace')).not.toContainText('Nothing to show')
   await waitForWritesToSettle(secondWrites, 1500)
   expect(secondWrites, `unexpected writes on reload: ${secondWrites.join(', ')}`).toEqual([])
 })

@@ -144,6 +144,13 @@ export function pruneMissingViewIds(layout: Node, existingIds: Set<string>): { l
   return { layout: next, removed }
 }
 
+/** True when the dock would paint Unavailable / empty panes for missing view ids. */
+export function layoutHasMissingViews(layout: Node | undefined, views: SavedView[]): boolean {
+  if (!layout) return false
+  const existingIds = new Set(views.map((view) => view.id))
+  return viewsFromLayout(layout).some((id) => Boolean(id) && !existingIds.has(id))
+}
+
 function viewsFromLayout(layout: Node): string[] {
   return layoutViews(layout)
 }
