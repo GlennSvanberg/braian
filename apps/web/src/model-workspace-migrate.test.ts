@@ -3,6 +3,7 @@ import { tabGroup } from './layout'
 import {
   MODEL_WORKSPACE_VIEW_SPECS,
   healDataModelWorkspace,
+  layoutHasMissingViews,
   hasFullModelTemplate,
   isKnownViewType,
   isLegacyPreviewView,
@@ -149,5 +150,12 @@ describe('dangling Data model layout heal', () => {
     expect(patch.changed).toBe(false)
     expect(patch.layout).toBeUndefined()
     expect(patch.removed).toEqual([])
+  })
+
+  it('layoutHasMissingViews detects dangling pane ids', () => {
+    const ghost = '03a1fbaf-aa57-43e7-aaaa-bbbbbbbbbbbb'
+    const views = [{ id: 'v-model', type: 'data_model', title: 'Structures', state: { mode: 'tree' } }]
+    expect(layoutHasMissingViews(tabGroup(['v-model', ghost]), views)).toBe(true)
+    expect(layoutHasMissingViews(tabGroup(['v-model']), views)).toBe(false)
   })
 })
