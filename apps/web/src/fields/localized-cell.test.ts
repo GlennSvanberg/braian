@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { attributeByKey } from '../index-fields'
 import { parseColumnId } from './columns'
 import { readPathFromDoc, summarizePathValues } from '../path-cell'
-import { cellEditShouldPatch } from '../cell-edit'
+import { cellEditShouldPatch, cellEditValuesBody } from '../cell-edit'
 import type { Json } from '../api'
 
 const defs = JSON.parse(
@@ -70,5 +70,21 @@ describe('cell edit commit policy', () => {
     const original: string = "A firm cow's-milk cheddar"
     // cancel restores original; commit gate must see equality
     expect(cellEditShouldPatch(original, original)).toBe(false)
+  })
+})
+
+describe('inline Name cell PATCH shape', () => {
+  it('name is language_dependent and needs a map without @lang', () => {
+    const attr = attributeByKey(defs, 'name')
+    expect(attr?.language_dependent).toBe(true)
+    // Grid column id is bare "name" — same as Products table.
+    expect(
+      cellEditValuesBody({
+        attrKey: 'name',
+        nextText: 'Aged cheddar',
+        languageDependent: Boolean(attr?.language_dependent),
+        uiLanguage: 'en',
+      }),
+    ).toEqual({ name: { en: 'Aged cheddar' } })
   })
 })

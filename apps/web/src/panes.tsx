@@ -4,7 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ApiError, api, catalogName, failureLines, freeObject, jsonRecord, recordNumber, recordTitle, searchQuery, textValue, type Json } from './api'
 import { newObjectBody } from './new-object'
 import { attributeByKey, indexSort, readIndexed, sortKeyForColumnId } from './index-fields'
-import { cellEditShouldPatch } from './cell-edit'
+import { cellEditShouldPatch, cellEditValuesBody } from './cell-edit'
 import { batchGetObjects } from './batch'
 import { MetaChip, optionLabel, statusTone, typeLabel } from './chips'
 import { Slider } from './components/ui/slider'
@@ -897,6 +897,13 @@ export function ObjectTable({
       openMenuFromKeyboard(event.target)
       return
     }
+    // While a cell editor is open, arrows move the caret — not the active column.
+    const editing =
+      Boolean(editingCell)
+      || (event.target instanceof Element && Boolean(event.target.closest('.cell-editor')))
+    if (editing && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      return
+    }
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
       const at = shown.indexOf(cellColumn)
@@ -1014,9 +1021,14 @@ export function ObjectTable({
     const langMatch = path.includes('@') ? path.split('@') : null
     const attrKey = (langMatch ? langMatch[0]! : path).split('.')[0] ?? path
     const language = langMatch?.[1]
-    const bodyValues: Json = language
-      ? { [attrKey]: { [language]: nextText } }
-      : { [attrKey]: nextText }
+    const attr = attributeByKey(defs.data, attrKey)
+    const bodyValues: Json = cellEditValuesBody({
+      attrKey,
+      nextText,
+      columnLanguage: language,
+      languageDependent: Boolean(attr?.language_dependent),
+      uiLanguage,
+    })
     void api.patch('/v1/objects/{id}', { params: { path: { id: row.id }, header: { 'If-Match': Number(row.version ?? 0) } }, body: { values: freeObject(bodyValues) } })
       .then(() => {
         session.push(copy.saved)
@@ -1053,6 +1065,11 @@ export function ObjectTable({
             commitCellEdit(row, id, editingDraft)
           }}
           onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              // Keep caret movement inside the input; do not bubble to onTableKey.
+              event.stopPropagation()
+              return
+            }
             if (event.key === 'Enter') {
               event.preventDefault()
               event.stopPropagation()
