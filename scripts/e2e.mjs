@@ -54,17 +54,56 @@ function workerCount() {
   return parsed
 }
 
-function fileWeight(file) {
-  const text = readFileSync(join(root, 'apps/web', file), 'utf8')
-  const matches = text.match(/^\s*test(?:\.[A-Za-z]+)?\(/gm)
-  return matches ? matches.length : 1
+// Playwright's own duration on a 2-core GitHub runner (run 41194243730),
+// plus a few seconds to drop and recreate the database and start the API.
+// Test count is a poor weight: layout is 3 tests and 51s, field-picker is
+// 10 tests and 66s, and a 1-test file is often ~6s. A file missing from
+// this map uses 12s per test, which matched the short specs on that run.
+const measuredSeconds = {
+  'e2e/smoke.spec.ts': 16,
+  'e2e/drag.spec.ts': 12,
+  'e2e/layout.spec.ts': 51,
+  'e2e/graph.spec.ts': 26,
+  'e2e/history.spec.ts': 6,
+  'e2e/import.spec.ts': 4,
+  'e2e/structure.spec.ts': 6,
+  'e2e/group-filter.spec.ts': 7,
+  'e2e/type-workspace.spec.ts': 6,
+  'e2e/pane-scroll.spec.ts': 5,
+  'e2e/model-tree.spec.ts': 6,
+  'e2e/change-flow.spec.ts': 20,
+  'e2e/record.spec.ts': 6,
+  'e2e/field-picker.spec.ts': 66,
+  'e2e/column-prefs-multitab.spec.ts': 10,
+  'e2e/column-drag-and-system-fields.spec.ts': 11,
+  'e2e/table-flash-sort-palette.spec.ts': 16,
+  'e2e/move-col-flash-sse.spec.ts': 9,
+  'e2e/palette-root-focus.spec.ts': 10,
+  'e2e/legacy-model-workspace.spec.ts': 17,
+  'e2e/dangling-model-workspace.spec.ts': 10,
+  'e2e/inline-cell-edit.spec.ts': 7,
+  'e2e/model-table-row-selection.spec.ts': 5,
+  'e2e/cell-edit-key-guard.spec.ts': 4,
 }
 
-// Lightest-bin assignment keeps every file's tests on one database, in the
-// original relative order, and keeps the processes close in test count.
+const reseedSeconds = 4
+
+function fileWeight(file) {
+  const measured = measuredSeconds[file]
+  if (measured) return measured + reseedSeconds
+  const text = readFileSync(join(root, 'apps/web', file), 'utf8')
+  const matches = text.match(/^\s*test(?:\.[A-Za-z]+)?\(/gm)
+  const tests = matches ? matches.length : 1
+  return tests * 12 + reseedSeconds
+}
+
+// Longest-first assignment. Each file still runs on one database, in its
+// original relative order. The previous list-order pack left field-picker
+// and layout on the same worker, so that process ran about a minute longer.
 function partition(list, workers) {
   const bins = Array.from({ length: workers }, () => ({ files: [], weight: 0 }))
-  for (const file of list) {
+  const ranked = [...list].sort((a, b) => fileWeight(b) - fileWeight(a) || list.indexOf(a) - list.indexOf(b))
+  for (const file of ranked) {
     let lightest = bins[0]
     for (const bin of bins) {
       if (bin.weight < lightest.weight) lightest = bin
@@ -72,7 +111,10 @@ function partition(list, workers) {
     lightest.files.push(file)
     lightest.weight += fileWeight(file)
   }
-  return bins.filter((bin) => bin.files.length > 0).map((bin) => bin.files)
+  const order = new Map(list.map((file, index) => [file, index]))
+  return bins
+    .filter((bin) => bin.files.length > 0)
+    .map((bin) => bin.files.sort((a, b) => order.get(a) - order.get(b)))
 }
 
 function withDatabase(url, name) {
@@ -153,6 +195,11 @@ const binary = resolveBinary()
 const workers = workerCount()
 const groups = partition(specs, workers)
 console.log(`e2e workers ${groups.length} (Playwright processes, 1 browser worker each)`)
+for (const [index, files] of groups.entries()) {
+  const weight = files.reduce((sum, file) => sum + fileWeight(file), 0)
+  console.log(`e2e slot ${index} weight=${weight}s files=${files.join(' ')}`)
+}
+if (process.env.BRAIAN_E2E_PLAN === '1') process.exit(0)
 
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const windows = process.platform === 'win32'

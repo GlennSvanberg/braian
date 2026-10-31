@@ -281,10 +281,14 @@ jobs:
           BRAIAN_DEMO_PASSWORD: braian-demo
           BRAIAN_DEMO_TOKEN: braian-demo-token
           BRAIAN_AGENT_MOCK: "1"
-          # Two processes, and scripts/e2e.mjs reseeds the database for each file.
+          # Three processes. Each file gets a new database and Typesense alias.
           # Sharing one database across files left a second object table and
-          # failed strict-mode lookups. Four processes saturated the runner.
-          BRAIAN_E2E_WORKERS: "2"
+          # failed strict-mode lookups. Default pools are 24+8+2 per process;
+          # three of those exceed Postgres max_connections (100).
+          BRAIAN_E2E_WORKERS: "3"
+          BRAIAN_POOL_INTERACTIVE: "8"
+          BRAIAN_POOL_BULK: "4"
+          BRAIAN_INDEXER_POOL: "2"
           BRAIAN_BIN: ${{ runner.temp }}/ci-bins/braian
         run: |
           test -x "${BRAIAN_BIN}"
