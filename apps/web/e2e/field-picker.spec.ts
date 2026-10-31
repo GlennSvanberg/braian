@@ -416,6 +416,10 @@ test.describe('field picker on Products', () => {
     const row = page.locator('[data-testid="object-row"]').filter({ hasText: 'Mature cheddar' }).first()
     const descCell = row.locator('[data-column^="description"]').first()
     await expect(descCell).toBeVisible({ timeout: 30_000 })
+    // Description is loaded through pathValues. The editor copies the painted
+    // text once, so a double-click on the loading placeholder opens an empty
+    // input and the value never shows up.
+    await expect(descCell).toContainText(/firm cow'?s-milk cheddar/i, { timeout: 30_000 })
     await descCell.dblclick()
     const editor = page.locator('[data-testid^="cell-editor-description"]').first()
     await expect(editor).toBeVisible({ timeout: 10_000 })

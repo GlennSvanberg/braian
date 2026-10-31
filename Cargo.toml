@@ -10,6 +10,14 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 
+# CI server, bench, and the store/indexer integration tests share this profile.
+# It stays optimized like release, and it keeps the checks release turns off,
+# so a passing `cargo test --profile ci` still runs debug assertions.
+[profile.ci]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
