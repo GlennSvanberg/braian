@@ -33,6 +33,7 @@ jobs:
           # different profiles and a GitHub cache key cannot be updated once saved.
           # prefix-key starts a new immutable entry. The v0 entry was saved
           # before source mtimes were pinned, and GitHub will not update it.
+          # v1 is populated by the first full run after this line landed.
           prefix-key: v1-rust-mtime
           shared-key: ${{ github.job }}
           cache-all-crates: "true"
