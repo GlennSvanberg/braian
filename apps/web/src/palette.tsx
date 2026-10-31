@@ -15,8 +15,9 @@ import { sourceLabel, suggestedTitle } from './field-diff'
 import { copy, uiLanguage } from './i18n'
 import { mergeFrecency, readFrecency, touch, writeFrecency } from './frecency'
 import { withModelCommand } from './model-command'
-import { askIndex, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
+import { askIndex, filterPaletteRows, visibleRows, groupTitle, type PaletteGroup, type PaletteItem } from './palette-model'
 import { addViewRootItem, addViewSubmenuRows, isAddViewRoot, parseAddViewChoice } from './palette-add-view'
+import { isNewFromTemplateRoot, newFromTemplateRootItem, newFromTemplateSubmenuRows } from './palette-new-from-template'
 import { publishProposal } from './proposal-bus'
 import { modelFocus, openModelDialog, requestDiscardDraft, requestReview, stageModel } from './model-stage'
 import { isStandardAttribute, queueViewType, requestAttributeAction } from './attribute-actions'
@@ -73,6 +74,7 @@ export function CommandPalette({
   focusViewId,
   onPrepareAddView,
   startAddView,
+  startNewFromTemplate,
   onClose,
   fieldsMode,
   fieldsEditColumnId,
@@ -87,6 +89,7 @@ export function CommandPalette({
   focusViewId?: string | null
   onPrepareAddView?: () => void
   startAddView?: boolean
+  startNewFromTemplate?: boolean
   onClose: () => void
   fieldsMode?: boolean
   fieldsEditColumnId?: string | null
@@ -254,9 +257,20 @@ export function CommandPalette({
     // Mount-only: right-click Add view opens the submenu immediately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startAddView])
+  useEffect(() => {
+    if (!startNewFromTemplate) return
+    setStack([{
+      label: `${copy.newWorkspace} ›`,
+      rows: newFromTemplateSubmenuRows(types),
+    }])
+    setActive(0)
+    // Mount-only: tab menu "New from template" opens the submenu immediately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startNewFromTemplate])
 
   const rootRows = withModelCommand(query, visibleRows(query, catalog, hits, frecency))
-  const rows = stack.at(-1)?.rows ?? rootRows
+  const stackRows = stack.at(-1)?.rows
+  const rows = stackRows ? filterPaletteRows(stackRows, query) : rootRows
   const activeRow = active == null ? undefined : rows[active]
 
   useEffect(() => {
@@ -280,6 +294,15 @@ export function CommandPalette({
       setStack((current) => [...current, {
         label: item.title,
         rows: addViewSubmenuRows(views, types, selectedKey),
+      }])
+      setQuery('')
+      setActive(0)
+      return
+    }
+    if (isNewFromTemplateRoot(id)) {
+      setStack((current) => [...current, {
+        label: item.title,
+        rows: newFromTemplateSubmenuRows(types),
       }])
       setQuery('')
       setActive(0)
@@ -731,6 +754,11 @@ export function CommandPalette({
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
+      // Opened straight into New from template: Esc closes the palette.
+      if (startNewFromTemplate && mode === 'list' && stack.length > 0) {
+        onClose()
+        return
+      }
       if (stack.length > 0 && mode === 'list') {
         setStack((current) => current.slice(0, -1))
         setActive(null)
@@ -1054,12 +1082,7 @@ function buildCatalog(
       title: displayViewTitle(view, types, openTypeKey),
       subtitle: 'Open view',
     })),
-    ...workspaceTemplates(types).map((template) => ({
-      id: `template:${template.id}`,
-      group: 'views' as const,
-      title: template.name,
-      subtitle: `Template · ${template.summary}`,
-    })),
+    newFromTemplateRootItem(),
     { id: 'import:file', group: 'views', title: copy.importFile, subtitle: 'Drop an Excel or CSV file' },
     ...(!views.some((view) => view.type === 'attribute_definitions')
       ? [{

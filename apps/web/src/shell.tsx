@@ -168,6 +168,7 @@ export function Shell() {
   }, [])
 
   const [paletteStartAddView, setPaletteStartAddView] = useState(false)
+  const [paletteStartNewFromTemplate, setPaletteStartNewFromTemplate] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackCapture, setFeedbackCapture] = useState<FeedbackCapture | null>(null)
   const [help, setHelp] = useState(false)
@@ -335,6 +336,7 @@ export function Shell() {
       registerCommandRunner('palette:search', () => {
         setFieldsEditColumnId(null)
         setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(false)
         setPaletteMode('list')
         setPaletteEpoch((value) => value + 1)
       }),
@@ -364,8 +366,16 @@ export function Shell() {
       registerCommandRunner('layout:add-view', () => {
         const focus = docRef.current?.focus
         placeOverride.current = focus ? { target: focus, zone: 'center' } : { zone: 'center' }
+        setPaletteStartNewFromTemplate(false)
         setPaletteStartAddView(true)
         setPaletteMode('list')
+      }),
+      registerCommandRunner('workspace:new', () => {
+        setFieldsEditColumnId(null)
+        setPaletteStartAddView(false)
+        setPaletteStartNewFromTemplate(true)
+        setPaletteMode('list')
+        setPaletteEpoch((value) => value + 1)
       }),
       registerCommandRunner('selection:new', () => requestNewSelection()),
       registerCommandRunner('layout:split-left', (target) => applyRef.current('split', { view: target.viewId, zone: 'left' })),
@@ -572,6 +582,7 @@ export function Shell() {
         flushSync(() => {
           setFieldsEditColumnId(null)
           setPaletteStartAddView(false)
+          setPaletteStartNewFromTemplate(false)
           setPaletteMode('list')
           setPaletteEpoch((value) => value + 1)
         })
@@ -1108,6 +1119,7 @@ export function Shell() {
             }}
             onAddView={(target) => {
               placeOverride.current = { target, zone: 'center' }
+              setPaletteStartNewFromTemplate(false)
               setPaletteStartAddView(true)
               setPaletteMode('list')
             }}
@@ -1151,7 +1163,7 @@ export function Shell() {
               fieldsMode={paletteMode === 'fields'}
               fieldsEditColumnId={fieldsEditColumnId}
               onFieldsConsumed={() => setFieldsEditColumnId(null)}
-          key={`${paletteMode}:${paletteEpoch}:${paletteStartAddView ? 'add-view' : 'root'}`}
+          key={`${paletteMode}:${paletteEpoch}:${paletteStartAddView ? 'add-view' : paletteStartNewFromTemplate ? 'new-template' : 'root'}`}
           ai={paletteMode === 'ai'}
           session={session}
           workspaces={orderedWorkspaces}
@@ -1160,6 +1172,7 @@ export function Shell() {
           onSendFeedback={openFeedback}
           focusViewId={doc?.focus ?? null}
           startAddView={paletteStartAddView}
+          startNewFromTemplate={paletteStartNewFromTemplate}
           onPrepareAddView={() => {
             const focus = docRef.current?.focus
             placeOverride.current = focus ? { target: focus, zone: 'center' } : { zone: 'center' }
@@ -1167,6 +1180,7 @@ export function Shell() {
           onClose={() => {
             placeOverride.current = undefined
             setPaletteStartAddView(false)
+            setPaletteStartNewFromTemplate(false)
             setPaletteMode(null)
           }}
         />
@@ -1208,12 +1222,13 @@ export function Shell() {
           })}
           <button
             type="button"
+            data-testid="workspace-new-from-template"
             onClick={() => {
               setTabMenu(null)
               setPaletteStartAddView(false)
+              setPaletteStartNewFromTemplate(true)
               setPaletteMode('list')
               setPaletteEpoch((n) => n + 1)
-              push(copy.deleteWorkspacePickTemplate)
             }}
           >
             {copy.newWorkspace}
