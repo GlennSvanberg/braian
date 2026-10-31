@@ -39,6 +39,8 @@ const specs = [
   'e2e/legacy-model-workspace.spec.ts',
   'e2e/dangling-model-workspace.spec.ts',
   'e2e/inline-cell-edit.spec.ts',
+  'e2e/model-table-row-selection.spec.ts',
+  'e2e/cell-edit-key-guard.spec.ts',
 ]
 
 function workerCount() {
